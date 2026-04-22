@@ -23,7 +23,7 @@
     "@turf/turf": "^7.2.0",
     "azure-maps-drawing-tools": "^1.0.4",
     "bootstrap": "^5.3.3",
-    "brace-expansion": "^4.0.1",
+    "brace-expansion": "^5.0.5",
     "chart.js": "^4.4.4",
     "clipper-lib": "^6.4.2",
     "cross-spawn": "^7.0.6",
