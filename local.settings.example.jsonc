@@ -1,0 +1,63 @@
+// local.settings.template.json
+{
+  "IsEncrypted": false,
+  "Values": {
+    // ===== REQUIRED: Azure Functions Core Settings =====
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
+
+    // ===== REQUIRED: Storage Configuration =====
+    // Supported formats: "blob", "localfilesystem"
+    "METADATA_STORAGE_TYPE": "blob",
+    "IMAGERY_STORAGE_TYPE": "blob",
+    "ARTIFACT_STORAGE_TYPE": "blob",
+
+    // ===== REQUIRED: Azure Storage Connection if using blob storage =====
+    // Get from: Azure Portal → Storage Account → Access Keys
+    "BLOB_CONNECTION_STRING": "<REPLACE_WITH_STORAGE_CONNECTION_STRING>",
+    "AzureWebJobsStorage": "<REPLACE_WITH_STORAGE_CONNECTION_STRING>",
+    "QUEUE_ACCOUNT_URL": "https://<STORAGE_ACCOUNT_NAME>.queue.core.windows.net",
+    "BLOB_ACCOUNT_URL": "https://<STORAGE_ACCOUNT_NAME>.blob.core.windows.net",
+    "BLOB_CONTAINER": "data",
+
+    // ===== REQUIRED: Azure Batch Configuration if using Azure Batch service =====
+    // Get from: Azure Portal → Batch Account → Keys
+    "AZURE_BATCH_ACCOUNT_NAME": "<REPLACE_WITH_BATCH_ACCOUNT_NAME>",
+    "AZURE_BATCH_ACCOUNT_KEY": "<REPLACE_WITH_BATCH_ACCOUNT_KEY>",
+    "AZURE_BATCH_TRAINING_POOL_ID": "<REPLACE_WITH_POOL_ID>",
+    "AZURE_BATCH_IMAGERYPREP_POOL_ID": "<REPLACE_WITH_POOL_ID>",
+
+    // ===== REQUIRED: Queue Names =====
+    // Use unique names for local development to avoid conflicts
+    "IMAGE_QUEUE_NAME": "my-local-image-queue",
+    "TRAIN_QUEUE_NAME": "my-local-train-queue",
+    "INFERENCE_QUEUE_NAME": "my-local-inference-queue",
+    "STATS_QUEUE_NAME": "my-local-stats-queue",
+    "ZIP_QUEUE_NAME": "my-local-zip-queue",
+
+    // ===== REQUIRED: Docker Images =====
+    "AZURE_BATCH_DOCKER_IMAGE": "<ACR_NAME>.azurecr.io/hastetraining:<TAG>",
+    "AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE": "<ACR_NAME>.azurecr.io/hasteimageryprep:<TAG>",
+    "AZURE_BATCH_REGISTRY_SERVER_URL": "https://<ACR_NAME>.azurecr.io",
+
+    // ===== REQUIRED: Local Development Paths =====
+    "DATA_PATH": "/absolute/path/to/haste/localtmp/data",
+    "TEMP_DATA_PATH": "/absolute/path/to/haste/localtmp/tempdata",
+
+    // ===== REQUIRED: Static Web App & Email Configuration =====
+    "STATIC_APP_SUBSCRIPTION_ID": "<AZURE_SUBSCRIPTION_ID>",
+    "STATIC_APP_RESOURCE_GROUP": "<RESOURCE_GROUP_NAME>",
+    "STATIC_APP_NAME": "<STATIC_WEB_APP_NAME>",
+    "STATIC_APP_DOMAIN": "<YOUR_DOMAIN>",
+    "EMAIL_CONNECTION_STRING": "<AZURE_COMMUNICATION_SERVICES_CONNECTION_STRING>",
+    "EMAIL_SENDER": "DoNotReply@notifications.<YOUR_DOMAIN>",
+
+    // ===== OPTIONAL: TiTiler Endpoint =====
+    "TITILER_ENDPOINT": "https://<TITILER_FUNCTION_APP>.azurewebsites.net/"
+  },
+  "Host": {
+    "LocalHttpPort": 7071,
+    // Use explicit local origins for development. Do not use wildcard CORS in production.
+    "CORS": "http://localhost:5173,http://localhost:4280"
+  }
+}

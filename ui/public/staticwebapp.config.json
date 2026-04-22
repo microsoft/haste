@@ -1,0 +1,30 @@
+{
+  "routes": [
+    {
+      "route": "/login",
+      "headers": {
+      "cache-control": "no-store, must-revalidate",
+      "set-cookie": "session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0"
+      },      
+      "redirect": "/.auth/login/aad"
+    },
+    {
+      "route": "/logout",
+      "redirect": "/.auth/logout"
+    },
+    {
+      "route": "/*",
+      "allowedRoles": ["administrators", "contributors"]
+    }
+  ],
+  "responseOverrides": {
+    "401": {
+      "statusCode": 302,
+      "redirect": "/login"
+    }
+  },
+  "navigationFallback": {
+    "rewrite": "index.html",
+    "exclude": ["*.{svg,png,jpg,gif}", "*.{css,scss}", "*.js", "*.jsx"]
+  }
+}

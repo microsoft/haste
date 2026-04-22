@@ -1,0 +1,10 @@
+# This environment is used for building the haste core package.
+name: haste_build
+channels:
+  - conda-forge
+  - osgeo
+dependencies:
+  - python=3.11  # don't use the very latest version of python in case wheels aren't made for everything
+  - pip
+  - pip:
+    - hatch

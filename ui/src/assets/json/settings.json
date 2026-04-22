@@ -1,0 +1,136 @@
+{
+  "labelingToolSettings": {
+    "drawingTools": {
+      "polygon": true,
+      "rectangle": true,
+      "circle": true
+    },
+    "grid": {
+      "gridStrokeColor": "#FFA742"
+    },
+    "defaultPrimaryClasses": [
+      {
+        "name": "Background",
+        "color": "#02009b"
+      },
+      {
+        "name": "Building",
+        "color": "#009b05"
+      },
+      {
+        "name": "Damaged Building",
+        "color": "#9b0000"
+      },
+      {
+        "name": "Cloud",
+        "color": "#BBBBBB"
+      }
+    ],
+    "tileServerSettings": "http://localhost:7071/api/titiler/"
+  },
+  "eventTypeList": [
+    {
+      "name": "General",
+      "defaultPrimaryClasses": [
+        {
+          "id": 1
+        },
+        {
+          "id": 2
+        },
+        {
+          "id": 3
+        },
+        {
+          "id": 4
+        }
+      ]
+    },
+    {
+      "name": "Earthquake",
+      "defaultPrimaryClasses": [
+        {
+          "id": 1
+        },
+        {
+          "id": 2
+        },
+        {
+          "id": 3
+        },
+        {
+          "id": 4
+        },
+        {
+          "id": 5
+        }
+      ]
+    },
+    {
+      "name": "Fire",
+      "defaultPrimaryClasses": [
+        {
+          "id": 1
+        },
+        {
+          "id": 2
+        },
+        {
+          "id": 3
+        },
+        {
+          "id": 4
+        },
+        {
+          "id": 5
+        }
+      ]
+    },
+    {
+      "name": "Flood",
+      "defaultPrimaryClasses": [
+        {
+          "id": 1
+        },
+        {
+          "id": 6
+        },
+        {
+          "id": 4
+        }
+      ]
+    }
+  ],
+  "primaryClassesList": [
+    {
+      "id": 1,
+      "name": "Background",
+      "color": "#02009b"
+    },
+    {
+      "id": 2,
+      "name": "Building",
+      "color": "#009b05"
+    },
+    {
+      "id": 3,
+      "name": "Damaged Building",
+      "color": "#9b0000"
+    },
+    {
+      "id": 4,
+      "name": "Cloud",
+      "color": "#BBBBBB"
+    },
+    {
+      "id": 5,
+      "name": "No Damage",
+      "color": "#000000"
+    },
+    {
+      "id": 6,
+      "name": "Flood Extent",
+      "color": "#FF4560"
+    }
+  ]
+}

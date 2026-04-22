@@ -1,0 +1,243 @@
+# Docker Compose for HASTE local development
+#
+# IMPORTANT: This configuration is intended for local development and evaluation
+# only. It uses development defaults (Azurite storage emulator, DEVELOPMENT_MODE,
+# wildcard CORS, well-known Azurite credentials) that are NOT suitable for
+# production use. For production deployment see docs/deployment.md.
+#
+# Usage:
+#   Local development:  docker-compose up
+#   Build only:         docker-compose build
+#
+# Environment:
+#   - RUNNER_TYPE: "local" (default for this compose) or "azure_batch" (for remote)
+#   - DEVELOPMENT_MODE: "true" for local, "false" for production
+
+services:
+  # ==============================================================================
+  # INFRASTRUCTURE SERVICES
+  # ==============================================================================
+
+  # The connection strings throughout this file use the Azurite well-known
+  # development key. This is a public default documented at:
+  # https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azurite
+  # It is NOT a secret and will NOT grant access to any real Azure resources.
+  azurite:
+    build:
+      context: ..
+      dockerfile: ./docker/emulators/Dockerfile
+    ports:
+      - "10000:10000"
+      - "10001:10001"
+      - "10002:10002"
+    volumes:
+      - azurite-data:/data  # Shared volume for blob storage
+
+  # Initialize Azurite with data files
+  data-init:
+    build:
+      context: ..
+      dockerfile: ./docker/data-init/Dockerfile
+    volumes:
+      - azurite-data:/shared/azurite
+    command: >
+      sh -c 'chmod -R 777 /shared/azurite && python /upload_data.py'
+    depends_on:
+      - azurite
+    restart: "no"  # Run once and exit
+
+  # NGINX proxy for CORS handling
+  api-proxy:
+    image: mcr.microsoft.com/oss/nginx/nginx:1.21.6
+    ports:
+      - "7071:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - hastefuncapi
+
+  titiler:
+    build:
+      context: ..
+      dockerfile: ./docker/titiler/Dockerfile
+    image: haste-titiler
+    ports:
+      - "8000:8000"
+    depends_on:
+      - azurite
+
+  # ==============================================================================
+  # API SERVICES
+  # ==============================================================================
+
+  hastefuncapi:
+    build:
+      context: ..
+      dockerfile: ./api/hastefuncapi/Dockerfile
+    environment:
+      AzureWebJobsStorage: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret
+      ASPNETCORE_URLS: "http://+:8080"
+      DATA_PATH: "/app/data"
+      DEVELOPMENT_MODE: "true"
+      FUNCTIONS_WORKER_RUNTIME: "python"
+      AzureWebJobsFeatureFlags: "EnableWorkerIndexing"
+      AzureWebJobsDisableHomepage: "true"
+      AZURE_FUNCTIONS_ENVIRONMENT: "Development"
+      languageWorkers__python__requests__postUri: "http://127.0.0.1:8080/admin/host/ping"
+      AzureFunctionsJobHost__logging__logLevel__default: "Debug"
+      AzureFunctionsJobHost__logging__logLevel__Host: "Information"
+      AzureFunctionsJobHost__logging__logLevel__Function: "Information"
+      AzureFunctionsJobHost__logging__logLevel__Worker: "Debug"
+      BLOB_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret
+      QUEUE_ACCOUNT_URL: "http://azurite:10001/devstoreaccount1"
+      BLOB_ACCOUNT_URL: "http://azurite:10000/devstoreaccount1"
+      IMAGE_QUEUE_NAME: "local-image-queue"
+      TRAIN_QUEUE_NAME: "local-train-queue"
+      STATS_QUEUE_NAME: "local-stats-queue"
+      ZIP_QUEUE_NAME: "local-zip-queue"
+      INFERENCE_QUEUE_NAME: "local-inference-queue"
+      BLOB_CONTAINER: "data"
+      METADATA_STORAGE_TYPE: "blob"
+      IMAGERY_STORAGE_TYPE: "blob"
+      ARTIFACT_STORAGE_TYPE: "blob"
+      TITILER_ENDPOINT: "http://titiler:8000/"
+      TITILER_PUBLIC_ENDPOINT: "http://${HOST_IP:-localhost}:7071/api/titiler/"
+    volumes:
+      - ../data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-1001}"
+    depends_on:
+      - azurite
+      - data-init
+      - titiler
+
+  hastefuncqueues:
+    build:
+      context: ..
+      dockerfile: ./api/hastefuncqueues/Dockerfile
+    environment:
+      AzureWebJobsStorage: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret
+      ASPNETCORE_URLS: "http://+:8080"
+      DATA_PATH: "/app/data"
+      DEVELOPMENT_MODE: "true"
+      FUNCTIONS_WORKER_RUNTIME: "python"
+      AzureWebJobsFeatureFlags: "EnableWorkerIndexing"
+      AzureWebJobsDisableHomepage: "true"
+      AZURE_FUNCTIONS_ENVIRONMENT: "Development"
+      languageWorkers__python__requests__postUri: "http://127.0.0.1:8080/admin/host/ping"
+      AzureFunctionsJobHost__logging__logLevel__default: "Information"
+      AzureFunctionsJobHost__logging__logLevel__Host: "Information"
+      AzureFunctionsJobHost__logging__logLevel__Function: "Information"
+      AzureFunctionsJobHost__logging__logLevel__Worker: "Information"
+      AzureFunctionsJobHost__logging__logLevel__haste: "Information"
+      BLOB_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret
+      QUEUE_ACCOUNT_URL: "http://azurite:10001/devstoreaccount1"
+      BLOB_ACCOUNT_URL: "http://azurite:10000/devstoreaccount1"
+      IMAGE_QUEUE_NAME: "local-image-queue"
+      TRAIN_QUEUE_NAME: "local-train-queue"
+      STATS_QUEUE_NAME: "local-stats-queue"
+      ZIP_QUEUE_NAME: "local-zip-queue"
+      INFERENCE_QUEUE_NAME: "local-inference-queue"
+      BLOB_CONTAINER: "data"
+      METADATA_STORAGE_TYPE: "blob"
+      IMAGERY_STORAGE_TYPE: "blob"
+      ARTIFACT_STORAGE_TYPE: "blob"
+      RUNNER_TYPE: "local"
+      AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret
+      AZURE_STORAGE_USE_EMULATOR: "true"
+      AZURE_STORAGE_EMULATOR_HOST: "azurite:10000"
+      AZURE_BATCH_DOCKER_IMAGE: "haste-training:latest"
+      AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE: "haste-imageryprep:latest"
+      HASTE_DEBUG_VERBOSE: "1"
+      HASTE_OUTPUT_DIR: "/shared/azurite"
+      HASTE_ENABLE_GPU: "1"
+      HASTE_GPU_DEVICES: "all"
+      HASTE_DATALOADER_WORKERS: "8"
+      TITILER_ENDPOINT: "http://titiler:8000/"
+      TITILER_PUBLIC_ENDPOINT: "http://${HOST_IP:-localhost}:7071/api/titiler/"
+      # Docker volume/network names (prefixed by docker-compose project name)
+      HASTE_DOCKER_NETWORK: "docker_default"
+      HASTE_DOCKER_AZURITE_VOLUME: "docker_azurite-data"
+      # Memory settings for training containers (increase for large VMs)
+      HASTE_DOCKER_SHM_SIZE: "${HASTE_DOCKER_SHM_SIZE:-64g}"
+      HASTE_DOCKER_MEM_LIMIT: "${HASTE_DOCKER_MEM_LIMIT:-256g}"
+    volumes:
+      - ../data:/app/data
+      - azurite-data:/shared/azurite  # Mount azurite blob storage for LocalRunner access
+      - /var/run/docker.sock:/var/run/docker.sock  # Enable Docker access for LocalRunner
+    group_add:
+      - "${DOCKER_GID:-1001}"
+    depends_on:
+      - azurite
+      - data-init
+      - training_image
+      - imageryprep_image
+      - titiler
+
+  # ==============================================================================
+  # UI SERVICE
+  # ==============================================================================
+
+  ui:
+    build: ../ui
+    ports:
+      - "4280:4280"
+    environment:
+      # Use VM's public IP for external access, or use /api/ for SWA proxy
+      VITE_API_URL: "http://${HOST_IP:-localhost}:7071/api/"
+      VITE_STORAGE_APIM_URL: "http://${HOST_IP:-localhost}:10000"
+      VITE_PROJECT_STORAGE_APIM_URL: "http://${HOST_IP:-localhost}:10000"
+      VITE_TITILER_URL: "http://${HOST_IP:-localhost}:7071/api/titiler/"
+      VITE_AZURE_MAPS_KEY: "${VITE_AZURE_MAPS_KEY:-placeholder}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - hastefuncapi
+      - hastefuncqueues
+      - titiler
+
+  # ==============================================================================
+  # BUILD-ONLY SERVICES (used by LocalRunner via docker run)
+  # ==============================================================================
+
+  # Training workflow image
+  training_image:
+    build:
+      context: ..
+      dockerfile: ./docker/training/Dockerfile
+    image: haste-training
+
+  # Imagery preparation image
+  imageryprep_image:
+    build:
+      context: ..
+      dockerfile: ./docker/imageryprep/Dockerfile
+    image: haste-imageryprep
+
+  # ==============================================================================
+  # STANDALONE TRAINING SERVICE (for direct training runs, optional)
+  # ==============================================================================
+
+  training:
+    shm_size: '20gb'
+    deploy:
+      resources:
+        limits:
+          memory: 32g
+    build:
+      context: ./training
+      dockerfile: Dockerfile
+    command: ["ls -la /app/training && source activate bda && conda info --envs && python fine_tune.py --config configs/config.yml --overwrite | tee -a /app/training/fine_tune.log"]
+    volumes:
+      - ../data/training:/app/training
+    profiles:
+      - standalone  # Only start with: docker-compose --profile standalone up training
+
+# ==============================================================================
+# SHARED VOLUMES
+# ==============================================================================
+
+volumes:
+  azurite-data:
+    driver: local

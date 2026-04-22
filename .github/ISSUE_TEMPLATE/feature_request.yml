@@ -1,0 +1,63 @@
+name: Feature Request
+description: Suggest an improvement or new capability for HASTE
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement! Please describe the problem you're trying to solve and what you'd like to see.
+        For open-ended discussion, consider starting a [GitHub Discussion](../../discussions) instead.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem or limitation are you experiencing? What are you trying to accomplish?
+      placeholder: "When I do X, I can't Y because..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the change or feature you'd like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative approaches or workarounds you've tried or considered.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of HASTE does this relate to?
+      options:
+        - API (Azure Functions)
+        - Frontend (React UI)
+        - Core library (hastelib)
+        - Infrastructure / deployment
+        - Documentation
+        - CI / GitHub Actions
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other context, screenshots, or references that would help.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues and this has not already been requested.
+          required: true

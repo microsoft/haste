@@ -1,0 +1,28 @@
+repos:
+  - repo: https://github.com/psf/black
+    rev: 23.7.0
+    hooks:
+      - id: black
+        args: [--line-length=79]
+        files: ^(api/|hastelib/|docker/training/code/).*\.py$
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        args: [--profile=black, --line-length=79]
+        files: ^(api/|hastelib/|docker/training/code/).*\.py$
+
+  - repo: https://github.com/pycqa/flake8
+    rev: 6.0.0
+    hooks:
+      - id: flake8
+        args: ["--max-line-length=79", "--extend-ignore=E202,E203,E221,E231,E501,E713,W503"]
+        files: ^(api/|hastelib/|docker/training/code/).*\.py$
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        # Scan staged files and block commits when potential secrets are detected.
+        args: ["--exclude-files", "^azurite/"]

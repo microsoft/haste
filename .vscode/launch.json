@@ -1,0 +1,88 @@
+{
+  "version": "0.2.0",
+  "compounds": [
+    {
+      "name": "Launch React-Azurite-Functions",
+      "configurations": [
+        "Launch React",
+        "Launch Azurite",
+        "Launch Functions API",
+        "Launch Functions QueueTriggers"
+      ]
+    },
+    {
+      "name": "Launch Azurerite-Functions",
+      "configurations": [
+        "Launch Azurite",
+        "Launch Functions API",
+        "Launch Functions QueueTriggers"
+      ]
+    },
+    {
+      "name": "Launch Functions",
+      "configurations": [
+        "Launch Functions API",
+        "Launch Functions QueueTriggers"
+      ]
+    }
+  ],
+  "configurations": [
+    {
+      "name": "Launch React",
+      "type": "msedge",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/ui",
+      "preLaunchTask": "swa: start"
+    },
+    {
+      "name": "Launch Functions API",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": {
+        "host": "localhost",
+        "port": 7071
+      },
+      "preLaunchTask": "conda func: host start api"
+    },
+    {
+      "name": "Launch Functions QueueTriggers",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": {
+        "host": "localhost",
+        "port": 7071
+      },
+      "preLaunchTask": "conda func: host start triggers"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Launch Azurite",
+      "program": "${workspaceFolder}/node_modules/azurite/dist/src/azurite.js",
+      "args": [
+        "--silent",
+        "--location",
+        "${workspaceFolder}/azurite",
+        "--debug",
+        "${workspaceFolder}/azurite/debug.log",
+        "--blobHost",
+        "127.0.0.1",
+        "--blobPort",
+        "10000",
+        "--queueHost",
+        "127.0.0.1",
+        "--queuePort",
+        "10001",
+        "--tableHost",
+        "127.0.0.1",
+        "--tablePort",
+        "10002"
+      ],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "preLaunchTask": "npm install azurerite"
+    }
+  ]
+
+}

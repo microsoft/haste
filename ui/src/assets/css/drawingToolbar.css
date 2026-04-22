@@ -1,0 +1,38 @@
+/* Copyright (c) Microsoft Corporation. All rights reserved.
+ * Licensed under the MIT License.
+ */
+#drawingToolbar {
+    position: absolute;
+    right: 10px;
+    top: 10px;
+    background-color: rgba(255, 255, 255, 1);
+    padding: 10px 10px;
+    border-radius: 5px;
+    z-index: 1000;
+    display: flex;
+    gap: 5px;
+  }
+  
+  .drawing-button {
+    padding: 4px 8px;
+    border-width: 1px;
+    border-style: solid;
+    border-color: #ccc;
+    background: #fff;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  
+  .drawing-button.active {
+    background: #999999;
+    color: white;
+    border-color: #999999;
+  }
+  
+  .drawing-button.disabled {
+    background: #f3f2f1;
+    color: #a19f9d;
+    cursor: not-allowed;
+    border-color: #e1dfdd;
+  }
+  

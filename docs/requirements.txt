@@ -1,0 +1,45 @@
+# Jupyter Book documentation requirements
+#
+# Usage (from repo root):
+#   python -m venv docs/.venv
+#   docs/.venv/Scripts/activate          (Windows)
+#   source docs/.venv/bin/activate       (Linux/Mac)
+#   pip install -r docs/requirements.txt
+#   pip install --no-deps hastegeo @ https://researchlabwuopendata.blob.core.windows.net/haste-binaries/haste-0.0.67-py3-none-any.whl
+#   cd docs && jupyter-book build .
+
+# --- Doc tooling ---
+jupyter-book>=0.15,<1.0
+sphinx-autodoc-typehints>=1.0,<2.0
+
+# --- haste deps (everything except gdal/rasterio/opencv which need system libs) ---
+pydantic
+azure-cosmos
+azure-storage-blob
+azure-storage-file-datalake
+azure-storage-queue
+azure-mgmt-containerregistry
+azure-batch
+azure-core
+azure-identity
+azure-mgmt-web
+azure-communication-email
+azure-functions
+psycopg2-binary
+requests
+requests-auth
+pyyaml
+boto3
+tensorboard
+tenacity
+email_validator
+typing-extensions
+numpy
+shapely
+
+# NOTE: The haste wheel must be installed separately with --no-deps
+# because its metadata declares gdal==3.9.2 which can't build from source
+# on most platforms. The GDAL whl on blob storage is linux-only.
+# Run:  pip install --no-deps hastegeo @ https://researchlabwuopendata.blob.core.windows.net/haste-binaries/haste-0.0.67-py3-none-any.whl
+#
+# osgeo/gdal, rasterio, and opencv-python are mocked in conf.py.

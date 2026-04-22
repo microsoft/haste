@@ -1,0 +1,161 @@
+{
+  "users": [
+    {
+      "userId": 1,
+      "name": "John Doe",
+      "email": "john.doe@example.com",
+      "type": "Administrator",
+      "creationDate": "2024-08-01 09:15:00PM"
+    },
+    {
+      "userId": 2,
+      "name": "Jane Smith",
+      "email": "jane.smith@example.com",
+      "type": "Contributor",
+      "creationDate": "2024-08-02 10:30:00PM"
+    },
+    {
+      "userId": 3,
+      "name": "Robert Johnson",
+      "email": "robert.johnson@example.com",
+      "type": "Labeler",
+      "creationDate": "2024-08-03 11:45:00PM"
+    },
+    {
+      "userId": 4,
+      "name": "Emily Davis",
+      "email": "emily.davis@example.com",
+      "type": "Administrator",
+      "creationDate": "2024-08-04 12:00:00AM"
+    },
+    {
+      "userId": 5,
+      "name": "Michael Brown",
+      "email": "michael.brown@example.com",
+      "type": "Contributor",
+      "creationDate": "2024-08-05 10:15:00PM"
+    },
+    {
+      "userId": 6,
+      "name": "Sarah Wilson",
+      "email": "sarah.wilson@example.com",
+      "type": "Labeler",
+      "creationDate": "2024-08-06 10:30:00AM"
+    },
+    {
+      "userId": 7,
+      "name": "David Martinez",
+      "email": "david.martinez@example.com",
+      "type": "Administrator",
+      "creationDate": "2024-08-07 10:45:00AM"
+    },
+    {
+      "userId": 8,
+      "name": "Laura Garcia",
+      "email": "laura.garcia@example.com",
+      "type": "Contributor",
+      "creationDate": "2024-08-08 01:00:00PM"
+    },
+    {
+      "userId": 9,
+      "name": "James Rodriguez",
+      "email": "james.rodriguez@example.com",
+      "type": "Labeler",
+      "creationDate": "2024-08-09 09:15:00AM"
+    },
+    {
+      "userId": 10,
+      "name": "Olivia Hernandez",
+      "email": "olivia.hernandez@example.com",
+      "type": "Administrator",
+      "creationDate": "2024-08-10 01:30:00PM"
+    }
+  ],
+  "sourceTypes": [
+    {
+      "sourceTypeId": 1,
+      "name": "Url",
+      "baseURL": "",
+      "creationDate": "2024-08-10 01:30:00PM"
+    },
+    {
+      "sourceTypeId": 1,
+      "name": "Maxar",
+      "baseURL": "https://Maxar.example.com",
+      "creationDate": "2024-08-10 01:30:00PM"
+    },
+    {
+      "sourceTypeId": 2,
+      "name": "Planet",
+      "baseURL": "https://Planet.example.com",
+      "creationDate": "2024-08-10 01:30:00PM"
+    },
+    {
+      "sourceTypeId": 3,
+      "name": "NASA ISERV",
+      "baseURL": "https://NASA-ISERV.example.com",
+      "creationDate": "2024-08-10 01:30:00PM"
+    },
+    {
+      "sourceTypeId": 4,
+      "name": "OpenArialMap",
+      "baseURL": "https://OpenArialMap.example.com",
+      "creationDate": "2024-08-10 01:30:00PM"
+    },
+    {
+      "sourceTypeId": 5,
+      "name": "AWS S3",
+      "baseURL": "https://AWS-S3.example.com",
+      "creationDate": "2024-08-10 01:30:00PM"
+    },
+    {
+      "sourceTypeId": 6,
+      "name": "Azure Blob",
+      "baseURL": "https://AzureBlobSource.example.com",
+      "creationDate": "2024-08-10 01:30:00PM"
+    }
+  ],
+  "baseModels": [
+    {
+      "baseModelId": 1,
+      "name": "ImageNet",
+      "sourceURL": "https://ImageNet.example.com",
+      "creationDate": "2024-08-10 01:30:00PM"
+    },
+    {
+      "baseModelId": 2,
+      "name": "Other Model",
+      "sourceURL": "https://OtherModel.example.com",
+      "creationDate": "2024-08-10 01:30:00PM"
+    }
+  ],
+  "labelingToolSettings": {
+    "drawingTools": {
+      "polygon": true,
+      "rectangle": true,
+      "circle": true
+    },
+    "grid": {
+      "gridStrokeColor": "#b1cc00"
+    },
+    "defaultPrimaryClasses": [
+      {
+        "name": "Background",
+        "color": "#02009b"
+      },
+      {
+        "name": "Building",
+        "color": "#009b05"
+      },
+      {
+        "name": "Damaged Building",
+        "color": "#9b0000"
+      },
+      {
+        "name": "Cloud",
+        "color": "#BBBBBB"
+      }
+    ],
+    "tileServerSettings": "http://localhost:7071/api/titiler/"
+  }
+}

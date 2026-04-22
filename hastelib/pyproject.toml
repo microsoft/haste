@@ -1,0 +1,114 @@
+[build-system]
+requires = ["hatchling", "azure-storage-blob==12.23.0", "azure-identity==1.18.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.hooks.custom]
+path = "haste_build.py"
+
+[project]
+name = "hastegeo"
+dynamic = ["version"]
+description = 'Core Python library for the HASTE disaster assessment framework'
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "HASTE Maintainers", email = "opencode@microsoft.com" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+  "pydantic",
+  "azure-cosmos",
+  "azure-storage-blob",
+  "azure-storage-file-datalake",
+  "azure-storage-queue",
+  "azure-mgmt-containerregistry",
+  "azure-batch",
+  "azure-core",
+  "azure-identity",
+  "psycopg2-binary",
+  "requests",
+  "requests-auth",
+  "rasterio",
+  "opencv-python",
+  "gdal==3.9.2",
+  "shapely",
+  "pyyaml",
+  "boto3",
+  "tensorboard",
+  "tenacity",
+  "email_validator",
+  "typing-extensions"
+]
+
+[project.urls]
+Documentation = "https://microsoft.github.io/haste"
+Issues = "https://github.com/microsoft/haste/issues"
+Source = "https://github.com/microsoft/haste"
+
+[project.scripts]
+prepare-imagery = "hastegeo.workflows.prepare_imagery:main"
+zip-artifacts = "hastegeo.workflows.zip_artifacts:main"
+
+[tool.hatch.version]
+path = "src/hastegeo/__about__.py"
+
+[tool.hatch.envs.types]
+extra-dependencies = [
+  "mypy>=1.0.0",
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/hastegeo tests}"
+
+# This is the conda environment used for testing
+[tool.hatch.envs.test]
+environment-file = "dev_env.yml"
+type = "conda"
+dependencies = [
+  "coverage-enable-subprocess==1.0",
+  "coverage[toml]~=7.4",
+  "pytest~=8.1",
+  "pytest-mock~=3.12",
+  "pytest-randomly~=3.15",
+  "pytest-rerunfailures~=14.0",
+  "pytest-xdist[psutil]~=3.5",
+]
+
+[tool.hatch.envs.test.env-vars]
+DATA_PATH = "haste_test_data"
+TEMP_DATA_PATH = "haste_test_tmp"
+METADATA_STORAGE_TYPE = "blob"
+ARTIFACT_STORAGE_TYPE = "blob"
+# Azurite Storage Emulator connection string
+BLOB_CONNECTION_STRING = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"  # pragma: allowlist secret
+BLOB_CONTAINER = "haste-unittests"
+
+[tool.coverage.run]
+source_pkgs = ["hastegeo", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/hastegeo/__about__.py",
+]
+
+[tool.coverage.paths]
+hastegeo = ["src/hastegeo", "*/hastegeo/src/hastegeo"]
+tests = ["tests", "*/hastegeo/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]

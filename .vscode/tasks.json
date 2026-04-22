@@ -1,0 +1,233 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "swa: start",
+      "type": "shell",
+      "options": {
+        "cwd": "${workspaceFolder}/ui"
+      },
+      "command": "swa start --app-devserver-url http://localhost:5173 --config-name local --run 'npm run dev' ",
+      "problemMatcher": [],
+      "dependsOn": "npm install all UI packages"
+    },
+    {
+      "label": "npm install azurerite",
+      "type": "shell",
+      "command": "npm install azurite",
+      "problemMatcher": []
+    },
+    {
+      "label": "npm install all UI packages",
+      "type": "shell",
+      "command": "npm install",
+      "options": {
+        "cwd": "${workspaceFolder}/ui"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Create Virtual Environment",
+      "type": "shell",
+      "windows": {
+        "command": "python",
+        "args": [
+          "-m",
+          "venv",
+          "${workspaceFolder}/api/hastefuncapi/.venv"
+        ]
+      },
+      "osx": {
+        "command": "python3.11",
+        "args": [
+          "-m",
+          "venv",
+          "${workspaceFolder}/api/hastefuncapi/.venv"
+        ]
+      },
+      "linux": {
+        "command": "python3.11",
+        "args": [
+          "-m",
+          "venv",
+          "${workspaceFolder}/api/hastefuncapi/.venv"
+        ]
+      },
+      "problemMatcher": [],
+      "group": "build",
+      "dependsOn": "Install Python and GDAL"
+    },
+    {
+      "label": "Install Requirements",
+      "type": "shell",
+      "windows": {
+        "command": "${workspaceFolder}/api/hastefuncapi/.venv/Scripts/pip",
+        "args": [
+        "install",
+        "-r",
+        "${workspaceFolder}/api/hastefuncapi/requirements.txt"
+      ]
+      },
+      "osx": {
+        "command": "${workspaceFolder}/api/hastefuncapi/.venv/bin/pip",
+        "args": [
+          "install",
+          "-r",
+          "${workspaceFolder}/api/hastefuncapi/requirements.txt"
+        ]
+      },
+      "linux": {
+        "command": "${workspaceFolder}/api/hastefuncapi/.venv/bin/pip",
+        "args": [
+          "install",
+          "-r",
+          "${workspaceFolder}/api/hastefuncapi/requirements.txt"
+        ]
+      },
+      "problemMatcher": [],
+      "dependsOn": "Create Virtual Environment",
+      "group": "build"
+    },
+    {
+      "label": "func: host start",
+      "type": "shell",
+      "windows": {
+        "command": "cmd",
+        "args": [
+          "/c",
+          ".venv\\Scripts\\activate && func host start"
+        ],
+        "options": {
+          "env": {
+            "PYTHON_VERSION": "3.11"
+          }
+        }
+
+      },
+      "osx": {
+        "command": ". .venv/bin/activate && func host start"
+      },
+      "linux": {
+        "command": "bash",
+        "args": [
+          "-c",
+          ". .venv/bin/activate && func host start"
+        ]
+      },
+      "problemMatcher": [],
+      "options": {
+        "cwd": "${workspaceFolder}/api/hastefuncapi"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "dependsOn": "Install Requirements"
+    },
+    {
+      "label": "Install Python and GDAL",
+      "type": "shell",
+      "windows": {
+        "command": "powershell",
+        "args": [
+          "-File",
+          "${workspaceFolder}/setup/install_python.ps1"
+        ]
+      },
+      "osx": {
+        "command": "pwsh",
+        "args": [
+          "-File",
+          "${workspaceFolder}/setup/install_python.ps1"
+        ]
+      },
+      "linux": {
+        "command": "pwsh",
+        "args": [
+          "-File",
+          "${workspaceFolder}/setup/install_python.ps1"
+        ]
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "Create conda env",
+      "detail": "Creates a virtual environment using conda to install python and all other OS dependencies",
+      "type": "shell",
+      "windows":{
+        "command": "powershell",
+        "args": [
+          "-c",
+          "conda info --envs | Select-String -Pattern ^haste_env\b ? Write-Output 'found existing conda env: haste_env' : Write-Output 'no existing conda env found, creating it... ' && conda env create -f ${workspaceFolder}/env.yml"
+        ]
+      },
+      "linux":{
+        "command": "bash",
+        "args": [
+          "./setup/create_conda_env.sh",
+          "${workspaceFolder}/env.yml"
+        ]
+      },
+      "osx":{
+        "command": "./setup/create_conda_env.sh ${workspaceFolder}/env.yml"
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "conda func: host start api",
+      "detail": "Launches Azure functions app for APIs in the conda virtual environment",
+      "type": "shell",
+      "windows": {
+        "command": "cmd",
+        "args": [
+          "/c",
+          ". $CONDA_PREFIX/etc/profile.d/conda.sh conda activate haste_env && func host start"
+        ]
+      },
+      "osx": {
+        "command": "source $CONDA_PREFIX/etc/profile.d/conda.sh && conda activate haste_env && func host start"
+      },
+      "linux": {
+        "command": "CONDA_ROOT=$(conda config --show root_prefix | cut -d' ' -f2) && source $CONDA_ROOT/etc/profile.d/conda.sh && conda activate haste_env && func host start"
+      },
+      "problemMatcher": [],
+      "options": {
+        "cwd": "${workspaceFolder}/api/hastefuncapi"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "dependsOn": "Create conda env"
+    },
+    {
+      "label": "conda func: host start triggers",
+      "detail": "Launches Azure functions app for queue triggers in the conda virtual environment",
+      "type": "shell",
+      "windows": {
+        "command": "cmd",
+        "args": [
+          "/c",
+          ". $CONDA_PREFIX/etc/profile.d/conda.sh conda activate haste_env && func host start"
+        ]
+      },
+      "osx": {
+        "command": "source $CONDA_PREFIX/etc/profile.d/conda.sh && conda activate haste_env && func host start"
+      },
+      "linux": {
+        "command": "CONDA_ROOT=$(conda config --show root_prefix | cut -d' ' -f2) && source $CONDA_ROOT/etc/profile.d/conda.sh && conda activate haste_env && func host start"
+      },
+      "problemMatcher": [],
+      "options": {
+        "cwd": "${workspaceFolder}/api/hastefuncqueues"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "dependsOn": "Create conda env"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+/* Copyright (c) Microsoft Corporation. All rights reserved.
+ * Licensed under the MIT License.
+ */
+:root {
+  --primary-color: #0066b4;
+  --secondry-color: #FFFFFF;
+  --tertiary-color: #CCCCCC;
+  --quaternary-color: #EAEAEA;
+  --quinary-color: #666666;
+  --table-td-border-color: #DDDDDD;
+  --home-box-background-color: #FFFFFF;  
+  --box-background-color: #F5F5F5;
+  --box-background-color-light: #BBBBBB;
+  --box-border-color-dark: #0078d4;
+}

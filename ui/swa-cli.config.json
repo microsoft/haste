@@ -1,0 +1,33 @@
+{
+  "$schema": "https://aka.ms/azure/static-web-apps-cli/schema",
+  "configurations": {
+    "dev": {
+      "appLocation": ".",
+      "outputLocation": "dist",
+      "buildCommand": "env-cmd -f .env.dev1 npm run build --mode dev1",
+      "run": "npm run dev",
+      "appDevserverUrl": "http://localhost:5173"
+    },
+    "dev1": {
+      "appLocation": ".",
+      "outputLocation": "dist",
+      "appBuildCommand": "env-cmd -f .env.dev1 npm run build:dev1",
+      "run": "npm run dev",
+      "appDevserverUrl": "http://localhost:5173"
+    },    
+    "test": {
+      "appLocation": ".",
+      "outputLocation": "dist",
+      "buildCommand": "env-cmd -f .env.testing npx run build --mode testing",
+      "run": "npm run test",
+      "appDevserverUrl": "http://localhost:5173"
+    },
+    "local": {
+      "appLocation": ".",
+      "outputLocation": "dist",
+      "appBuildCommand": "npm run build",
+      "run": "npm run dev",
+      "appDevserverUrl": "http://localhost:5173"
+    }
+  }
+}

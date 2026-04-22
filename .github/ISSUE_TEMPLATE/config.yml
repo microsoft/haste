@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & Discussions
+    url: https://github.com/microsoft/haste/discussions
+    about: Ask questions and discuss HASTE — the right place for "how do I?" and general conversation.
+  - name: Report a Security Vulnerability
+    url: https://github.com/microsoft/haste/security/advisories/new
+    about: Please report security issues through GitHub Security Advisories, not public issues.
+  - name: Microsoft Code of Conduct
+    url: https://opensource.microsoft.com/codeofconduct/
+    about: Questions about the Code of Conduct? Email opencode@microsoft.com.

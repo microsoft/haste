@@ -1,0 +1,77 @@
+name: Bug Report
+description: Report a reproducible bug in HASTE
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report a bug. Please fill out the sections below so we can reproduce and fix it.
+        Before submitting, search [existing issues](../../issues) to check it hasn't already been reported.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Exact steps to reproduce the behavior.
+      placeholder: |
+        1. Run `...`
+        2. Call endpoint `...`
+        3. Observe error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened. Include screenshots if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        Provide details about your environment. Example:
+        - OS: Ubuntu 22.04 / Windows 11 / WSL2
+        - Python version: 3.11.5
+        - HASTE version / commit SHA: v1.4.1
+        - Azure region: eastus
+        - Deployment type: local / Azure Functions
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Stack Trace
+      description: Paste relevant logs or error messages (redact any secrets or personal data).
+      render: shell
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues and confirmed this is not a duplicate.
+          required: true
+        - label: I have redacted any secrets, keys, or personal data from logs above.
+          required: true

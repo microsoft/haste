@@ -1,0 +1,30 @@
+format: jb-book
+root: intro
+parts:
+  - caption: User Guide
+    chapters:
+      - file: getting-started
+      - file: architecture
+      - file: api-overview
+      - file: deployment
+  - caption: API Reference
+    chapters:
+      - file: api/modules
+        sections:
+          - file: api/hastefuncapi
+          - file: api/hastefuncqueues
+          - file: api/titilerfuncapi
+      - file: hastelib/modules
+        sections:
+          - file: hastelib/config
+          - file: hastelib/models
+          - file: hastelib/processors
+          - file: hastelib/data-layer
+          - file: hastelib/artifact-storage
+          - file: hastelib/runners
+          - file: hastelib/utils
+          - file: hastelib/workflows
+  - caption: Development
+    chapters:
+      - file: development
+      - file: contributing

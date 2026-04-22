@@ -1,0 +1,77 @@
+# Book settings
+title: HASTE Documentation
+author: Microsoft
+copyright: "2025, Microsoft"
+logo: ""
+
+exclude_patterns:
+  - _build
+  - .venv
+  - Thumbs.db
+  - .DS_Store
+
+execute:
+  execute_notebooks: "off"
+
+launch_buttons:
+  thebe: false
+
+parse:
+  myst_enable_extensions:
+    - colon_fence
+    - deflist
+    - dollarmath
+    - fieldlist
+    - substitution
+
+sphinx:
+  extra_extensions:
+    - sphinx.ext.autodoc
+    - sphinx.ext.viewcode
+    - sphinx.ext.napoleon
+    - sphinx.ext.intersphinx
+    - sphinx.ext.todo
+    - sphinx.ext.autosummary
+    - azure_functions_simple
+  local_extensions:
+    azure_functions_simple: .
+  config:
+    autodoc_default_options:
+      members: true
+      undoc-members: true
+      show-inheritance: true
+      special-members: "__init__"
+      exclude-members: "__weakref__"
+    autodoc_typehints: "description"
+    autodoc_typehints_description_target: "documented"
+    autodoc_member_order: "alphabetical"
+    autodoc_preserve_defaults: true
+    autosummary_generate: true
+    napoleon_google_docstring: true
+    napoleon_numpy_docstring: true
+    napoleon_use_param: true
+    napoleon_use_rtype: true
+    intersphinx_mapping:
+      python:
+        - "https://docs.python.org/3"
+        - null
+    todo_include_todos: true
+    suppress_warnings:
+      - "myst.header"
+      - "autodoc"
+      - "ref.doc"
+    bibtex_bibfiles: []
+    keep_warnings: false
+    exclude_patterns:
+      - _build
+      - .venv
+      - Thumbs.db
+      - .DS_Store
+
+html:
+  use_issues_button: true
+  use_repository_button: true
+
+repository:
+  url: https://github.com/microsoft/haste
+  branch: main

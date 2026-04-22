@@ -1,0 +1,85 @@
+/* Copyright (c) Microsoft Corporation. All rights reserved.
+ * Licensed under the MIT License.
+ */
+.absolute-labels {
+    background-color: #FFFFFF;
+    padding: 12px;
+    position: absolute;
+    z-index: 1;
+    border-radius: 5px;
+    max-width: 450px;
+    box-shadow: 5px 5px 10px 0px rgba(0, 0, 0, 0.2);
+    margin-top: 56px;
+}
+
+.back-button {
+    bottom: 110px;
+    left: 10px;
+}
+
+
+.imagery-controls {
+    margin-top: 160px;
+    top: 10px;
+    left: 10px;
+}
+
+
+.pre-disaster {
+    top: 10px;
+    left: 10px;
+}
+
+.post-disaster {
+    top: 10px;
+    right: 10px;
+}
+
+.info-panel {
+    bottom: 30px;
+    right: 10px;
+    max-width: 320px;
+}
+
+.visualizer-information-mobile {
+    margin-top: 2px;
+    right: 10px;
+    max-width: 900px;
+}
+
+.labels-back-button {
+    margin-top: 2px;
+    padding: 1px;
+}
+
+.info-panel-checkboxes-wrapper {
+    border: 3px solid #eaeaea;
+    border-radius: 5px;
+    padding: 10px;
+    margin-bottom: 10px;
+}
+
+.map-legend {
+    width: 170px;
+    height: auto;
+}
+
+
+@media screen and (max-width: 1200px) {
+    .absolute-labels {
+        padding: 5px;
+        max-width: fit-content;
+    }
+
+    .map-legend {
+        width: 130px;
+        height: auto;
+    }
+
+    .imagery-controls {
+        margin-top: 137px;
+        top: 10px;
+        left: 10px;
+    }
+
+}

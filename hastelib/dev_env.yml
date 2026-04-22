@@ -1,0 +1,10 @@
+# This environment is used for local development and testing of the HASTE project.
+name: haste_dev_env
+channels:
+  - conda-forge
+  - osgeo
+dependencies:
+  - gdal=3.9.2 # installed using conda because pip fails to install it
+  - python=3.11  # don't use the very latest version of python in case wheels aren't made for everything
+  - pip
+  - xarray

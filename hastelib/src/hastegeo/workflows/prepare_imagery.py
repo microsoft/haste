@@ -1,0 +1,491 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+
+"""Helper script for running the imagery preprocess workflow."""
+
+import argparse
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from string import Template
+
+from hastegeo.core.config import Config
+from hastegeo.core.utils.downloader import ImageryDownloader
+from hastegeo.core.utils.imagery import ImageryUtils
+from hastegeo.core.utils.imagery import logger as imagery_utils_logger
+from hastegeo.core.utils.logs import Logger as HasteLogger
+
+WORKDIR = os.getenv("WORKDIR", ".")
+LOG_DIR = os.path.join(WORKDIR, "logs")
+LOG_FILE = "imagery_verbose.log"
+os.makedirs(LOG_DIR, exist_ok=True)
+
+logger = HasteLogger.get_logger(
+    "run_imagery_preprocess", log_dir=LOG_DIR, log_file=LOG_FILE
+)
+logger.info("Executing %s", __file__)
+
+imagery_utils_logger = HasteLogger.get_logger(
+    imagery_utils_logger.name, log_dir=LOG_DIR, log_file=LOG_FILE
+)
+
+hasteconfig = Config()
+GDAL_WARP_PARAMS = (
+    os.getenv("GDAL_WARP_PARAMS") or hasteconfig.gdal_warp_params
+)
+GDAL_TRANSLATE_PARAMS = (
+    os.getenv("GDAL_TRANSLATE_PARAMS") or hasteconfig.gdal_translate_params
+)
+
+PRE_EVENT_RAW_PREFIX = hasteconfig.get_artifact_types().PRE_EVENT_RAW.value
+PRE_EVENT_PREVIEW_PREFIX = (
+    hasteconfig.get_artifact_types().PRE_EVENT_PREVIEW.value
+)
+PRE_EVENT_MOSAIC_PREFIX = (
+    hasteconfig.get_artifact_types().PRE_EVENT_MOSAIC.value
+)
+PRE_EVENT_PROCESSED_COG_PREFIX = (
+    hasteconfig.get_artifact_types().PRE_EVENT_PROCESSED_COG.value
+)
+
+POST_EVENT_RAW_PREFIX = hasteconfig.get_artifact_types().POST_EVENT_RAW.value
+POST_EVENT_PREVIEW_PREFIX = (
+    hasteconfig.get_artifact_types().POST_EVENT_PREVIEW.value
+)
+POST_EVENT_MOSAIC_PREFIX = (
+    hasteconfig.get_artifact_types().POST_EVENT_MOSAIC.value
+)
+POST_EVENT_PROCESSED_COG_PREFIX = (
+    hasteconfig.get_artifact_types().POST_EVENT_PROCESSED_COG.value
+)
+
+
+class ImageryWorkflow:
+    """Class to handle all steps in the imagery workflow."""
+
+    def __init__(
+        self,
+        pre_event_urls=None,
+        post_event_urls=None,
+        source_type_pre_event=None,
+        source_type_post_event=None,
+        project_id=None,
+        image_layer_id=None,
+        fine_tune=False,
+        dst_directory=None,
+    ):
+        """Initialize the ImageryWorkflow class.
+        Args:
+            pre_event_urls (list): List of URLs for pre-event imagery.
+            post_event_urls (list): List of URLs for post-event imagery.
+            source_type_pre_event (str): Source of pre-event imagery (e.g., "maxar", "planet")
+            source_type_post_event (str): Source of post-event imagery (e.g., "maxar", "planet")
+            project_id (str): Project ID.
+            image_layer_id (str): Image layer ID.
+            fine_tune (bool): Flag to indicate if fine-tuning is needed.
+            dst_directory (str): Directory to save processed files.
+        """
+        self.pre_event_urls = pre_event_urls
+        self.post_event_urls = post_event_urls
+        self.source_type_pre_event = source_type_pre_event
+        self.source_type_post_event = source_type_post_event
+        self.project_id = project_id
+        self.image_layer_id = image_layer_id
+        self.fine_tune = fine_tune
+        self.dst_directory = dst_directory or os.path.join(".", "outputs")
+
+        self.pre_event_raw_paths = []
+        self.pre_event_preview_paths = []
+        self.mosaic_pre_event_tif_filepath = ""
+        self.pre_event_processed_path = ""
+
+        self.post_event_raw_paths = []
+        self.post_event_preview_paths = []
+        self.mosaic_post_event_tif_filepath = ""
+        self.post_event_processed_path = ""
+
+        self.normalization_means = []
+        self.normalization_stds = []
+
+    def generate_prefix(self, prefix: Template):
+        """Generate a prefix for the output files based on the project ID and image layer ID."""
+        return prefix.substitute(
+            projectId=self.project_id,
+            imageLayerId=self.image_layer_id,
+        )
+
+    def download_pre_event(self):
+        """Download pre-event imagery from provided URLs.
+        Save the downloaded files with a prefix based on the project ID and image layer ID.
+        """
+        preevent_tif_files = _download_imagery(
+            urls=self.pre_event_urls,
+            dst_directory=self.dst_directory,
+        )
+        if preevent_tif_files:
+            raw_prefix = self.generate_prefix(PRE_EVENT_RAW_PREFIX)
+            (
+                self.pre_event_raw_paths,
+                self.pre_event_preview_paths,
+            ) = _save_raw_imagery(
+                files_paths=preevent_tif_files,
+                generate_preview=False,
+                raw_prefix=raw_prefix,
+            )
+
+    def download_post_event(self):
+        """Download post-event imagery from provided URLs.
+        Save the downloaded files with a prefix based on the project ID and image layer ID.
+        """
+        postevent_tif_files = _download_imagery(
+            urls=self.post_event_urls,
+            dst_directory=self.dst_directory,
+        )
+        if not postevent_tif_files:
+            raise RuntimeError("No post event imagery to process. ")
+        if not postevent_tif_files or len(postevent_tif_files) == 0:
+            raise RuntimeError("Unable to download raw imagery")
+        elif not _are_all_valid_tif_files(postevent_tif_files):
+            raise RuntimeError("Invalid files found.")
+
+        raw_prefix = self.generate_prefix(POST_EVENT_RAW_PREFIX)
+        preview_prefix = self.generate_prefix(POST_EVENT_PREVIEW_PREFIX)
+
+        (
+            self.post_event_raw_paths,
+            self.post_event_preview_paths,
+        ) = _save_raw_imagery(
+            files_paths=postevent_tif_files,
+            generate_preview=True,
+            raw_prefix=raw_prefix,
+            preview_prefix=preview_prefix,
+        )
+
+    def process_pre_event(self):
+        """Process pre-event imagery.
+        Create a mosaic of the pre-event imagery and convert it to a COG format.
+        Save the processed file with a prefix based on the project ID and image layer ID.
+        """
+        if not self.pre_event_raw_paths or len(self.pre_event_raw_paths) == 0:
+            logger.info("No pre event imagery to process")
+            return
+        save_as_prefix = self.generate_prefix(PRE_EVENT_MOSAIC_PREFIX)
+        self.mosaic_pre_event_tif_filepath = _create_mosaic_cog(
+            self.pre_event_raw_paths,
+            dst_directory=self.dst_directory,
+            save_as_prefix=save_as_prefix,
+        )
+
+        cog_file_name = self.generate_prefix(PRE_EVENT_PROCESSED_COG_PREFIX)
+        self.pre_event_processed_path = ImageryUtils.convert_to_rgb_cog(
+            tif_file=self.mosaic_pre_event_tif_filepath,
+            output_file_path=os.path.join(
+                self.dst_directory, f"{cog_file_name}.tif"
+            ),
+            gdal_translate_params=GDAL_TRANSLATE_PARAMS,
+            source_type=self.source_type_pre_event,
+            scale_rgb_params=_determine_scale_rgb_params(
+                self.source_type_pre_event
+            ),
+        )
+
+        if (
+            not self.pre_event_processed_path
+            or os.path.getsize(self.pre_event_processed_path) == 0
+        ):
+            raise RuntimeError(
+                "Error creating RGB adjusted COG GeoTIFF for pre event imagery, invalid input file(s)."
+            )
+
+    def process_post_event(self):
+        """Process post-event imagery.
+        Create a mosaic of the post-event imagery and convert it to a COG format.
+        Fine tune it if specified.
+        Additionally, calculate normalization means and standard deviations."""
+        # The raw mosaic COG (without RGB band and scale adjustments) serves as primary input to training and inference
+
+        scale_rgb_params = _determine_scale_rgb_params(
+            self.source_type_post_event
+        )
+        save_as_prefix = self.generate_prefix(POST_EVENT_MOSAIC_PREFIX)
+        self.mosaic_post_event_tif_filepath = _create_mosaic_cog(
+            self.post_event_raw_paths,
+            dst_directory=self.dst_directory,
+            save_as_prefix=save_as_prefix,
+        )
+
+        # The RGB band and scale adjusted imagery serves as supporting input to training and inference
+        cog_file_name = self.generate_prefix(POST_EVENT_PROCESSED_COG_PREFIX)
+
+        self.post_event_processed_path = ImageryUtils.convert_to_rgb_cog(
+            tif_file=self.mosaic_post_event_tif_filepath,
+            output_file_path=os.path.join(
+                self.dst_directory, f"{cog_file_name}.tif"
+            ),
+            gdal_translate_params=GDAL_TRANSLATE_PARAMS,
+            source_type=self.source_type_post_event,
+            scale_rgb_params=scale_rgb_params,
+        )
+        if (
+            not self.post_event_processed_path
+            or os.path.getsize(self.post_event_processed_path) == 0
+        ):
+            raise RuntimeError(
+                "Error creating RGB adjusted COG GeoTIFF for post event imagery, invalid input file(s)."
+            )
+
+        # Fine tuned file is generated with the same name as the processed file
+        if self.fine_tune:
+            self.post_event_processed_path = fine_tune_file(
+                self.post_event_processed_path,
+                scale_rgb_params=scale_rgb_params,
+                dst_directory=self.dst_directory,
+                save_as_prefix=cog_file_name,
+                source_type=self.source_type_post_event,
+            )
+
+        self.normalization_means = ImageryUtils.get_normalization_means(
+            self.mosaic_post_event_tif_filepath,
+            source_type=self.source_type_post_event,
+        )
+
+        self.normalization_stds = ImageryUtils.get_normalization_std_devs(
+            self.mosaic_post_event_tif_filepath,
+            source_type=self.source_type_post_event,
+        )
+
+
+def _download_imagery(urls, dst_directory):
+    """Download imagery from provided URLs.
+    Args:
+        urls (list): List of URLs to download.
+        dst_directory (str): Directory to save downloaded files.
+    Returns:
+        list: List of downloaded file paths.
+    """
+    if not urls:
+        return []
+    downloader = ImageryDownloader(
+        sourceType="url", log_dir=LOG_DIR, log_file=LOG_FILE
+    )
+    download_params = {"urls": urls, "dst_directory": dst_directory}
+    downloadedUrls = downloader.download_imagery(**download_params) or []
+    if not downloadedUrls:
+        raise RuntimeError(f"Unable to download raw imagery from URLs {urls}")
+    return downloadedUrls
+
+
+def _save_raw_imagery(
+    files_paths,
+    generate_preview=False,
+    raw_prefix: str = None,
+    preview_prefix: str = None,
+):
+    """Save raw imagery files with a specified prefix.
+    Generates previews if specified.
+    Args:
+        files_paths (list): List of file paths to save.
+        generate_preview (bool): (Optional) Flag to indicate if preview images should be generated.
+                                Defaults to False
+        save_as_prefix (str): (Optional) Prefix for the saved files.
+    Returns:
+        tuple: Tuple containing lists of raw image paths and preview image paths.
+    """
+    raw_image_paths = []
+    preview_image_paths = []
+    for file_path in files_paths:
+        base_filename = os.path.basename(file_path)
+        new_name = f"{raw_prefix}_{base_filename}"
+        new_path = os.path.join(os.path.dirname(file_path), new_name)
+        if generate_preview:
+            preview_name = (
+                f"{preview_prefix}_{os.path.splitext(base_filename)[0]}.jpeg"
+            )
+            preview_path = os.path.join(
+                os.path.dirname(file_path), preview_name
+            )
+            ImageryUtils.convert_tif_to_jpeg(file_path, preview_path)
+            preview_image_paths.append(preview_path)
+        os.rename(file_path, new_path)
+        raw_image_paths.append(new_path)
+    return raw_image_paths, preview_image_paths
+
+
+def _create_mosaic_cog(tif_files, dst_directory=None, save_as_prefix=None):
+    """Create a mosaic of TIFF files and convert to COG.
+    Args:
+        tif_files (list): List of TIFF files to mosaic (combine).
+        dst_directory (str): (Optional) Directory to save the mosaic file. Defaults to current directory
+        save_as_prefix (str): (Optional) Prefix for the saved mosaic file.
+    Returns:
+        str: Path to the created mosaic file."""
+    dst_directory = dst_directory or "."
+    return ImageryUtils.mosaic_imagery(
+        tif_files,
+        os.path.join(dst_directory, f"{save_as_prefix}.tif"),
+        GDAL_WARP_PARAMS,
+    )
+
+
+def _determine_scale_rgb_params(source_type):
+    """Determine if scale RGB parameters are needed based on the source type.
+    Args:
+        source_type (str): Source type of the imagery.
+    Returns:
+        bool: True if scale RGB parameters are needed, False otherwise.
+    """
+    if source_type in ["planet_scope", "planet_skysat", "mercy_corps"]:
+        return True
+    return False
+
+
+def _are_all_valid_tif_files(tif_files):
+    """Check if all files in the list are valid TIFF files.
+    Args:
+        tif_files (list): List of TIFF files to check.
+    Returns:
+        bool: True if all files are valid TIFF files, False otherwise.
+    Raises:
+        RuntimeError: If no TIFF files are found or if any file is not a valid TIFF file.
+    """
+    if not tif_files or len(tif_files) == 0:
+        raise RuntimeError("No TIFF files found")
+
+    for tif_file in tif_files:
+        if not tif_file or not ImageryUtils.is_gtiff(tif_file):
+            raise RuntimeError(f"Invalid TIFF file: {tif_file}")
+    return True
+
+
+def fine_tune_file(
+    post_event_processed_path,
+    scale_rgb_params,
+    dst_directory=None,
+    save_as_prefix=None,
+    source_type=None,
+):
+    """Fine-tune a GeoTIFF file.
+    Args:
+        post_event_processed_path (str): Path to the input GeoTIFF file.
+        scale_rgb_params (bool): Flag to indicate if scale RGB parameters are needed.
+        dst_directory (str): (Optional) Directory to save the fine-tuned file. Defaults to current directory.
+        save_as_prefix (str): (Optional) Prefix for the saved fine-tuned file.
+        source_type (str): Source type of the imagery."""
+    dst_directory = dst_directory or "."
+    os.makedirs(os.path.join(WORKDIR, "temp"), exist_ok=True)
+    temp_path = os.path.join(WORKDIR, "temp", f"temp_{save_as_prefix}.tif")
+    if post_event_processed_path:
+        ImageryUtils.fine_tune_gtiff(
+            file_path=post_event_processed_path,
+            output_path=temp_path,
+        )
+        return ImageryUtils.convert_to_rgb_cog(
+            tif_file=temp_path,
+            output_file_path=os.path.join(
+                dst_directory, f"{save_as_prefix}.tif"
+            ),
+            gdal_translate_params=GDAL_TRANSLATE_PARAMS,
+            source_type=source_type,
+            scale_rgb_params=scale_rgb_params,
+        )
+    raise RuntimeError("Unable to fine-tune COG GeoTIFF, invalid file.")
+
+
+def log_progress(message):
+    """Write progress steps and messages to a file"""
+    # Create a directory for logs if it doesn't exist
+    log_file = os.path.join(LOG_DIR, "imagery_friendly.log")
+
+    with open(log_file, "a") as f:
+        f.write(f"{datetime.now(timezone.utc).isoformat()}|{message}\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--config", type=str, required=True, help="Path to config file"
+    )
+
+    args = parser.parse_args()
+
+    if not os.path.exists(args.config):
+        logger.error("No config file found at location %s", args.config)
+        sys.exit(1)
+
+    with open(args.config) as f:
+        config = json.load(f)
+
+    if not config:
+        logger.error("Config file is empty")
+        sys.exit(1)
+
+    output_dir = os.path.join(WORKDIR, config.get("output_dir", "outputs"))
+    os.makedirs(output_dir, exist_ok=True)
+
+    try:
+        imagery_workflow = ImageryWorkflow(
+            pre_event_urls=config.get("pre_event_imagery_urls"),
+            post_event_urls=config.get("post_event_imagery_urls"),
+            project_id=config.get("project_id"),
+            image_layer_id=config.get("image_layer_id"),
+            source_type_pre_event=config.get("source_type_pre_event"),
+            source_type_post_event=config.get("source_type_post_event"),
+            fine_tune=config.get("fine_tune", False),
+            dst_directory=output_dir,
+        )
+
+        log_progress("Downloading imagery")
+        imagery_workflow.download_pre_event()
+        config["raw_pre_event_filenames"] = [
+            os.path.basename(f) for f in imagery_workflow.pre_event_raw_paths
+        ]
+        config["preview_pre_event_filenames"] = [
+            os.path.basename(f)
+            for f in imagery_workflow.pre_event_preview_paths
+        ]
+
+        imagery_workflow.download_post_event()
+        config["raw_post_event_filenames"] = [
+            os.path.basename(f) for f in imagery_workflow.post_event_raw_paths
+        ]
+        config["preview_post_event_filenames"] = [
+            os.path.basename(f)
+            for f in imagery_workflow.post_event_preview_paths
+        ]
+
+        log_progress("Converting to COG")
+        imagery_workflow.process_pre_event()
+        config["pre_event_mosaic_filename"] = os.path.basename(
+            imagery_workflow.mosaic_pre_event_tif_filepath
+        )
+        config["pre_event_processed_filename"] = os.path.basename(
+            imagery_workflow.pre_event_processed_path
+        )
+
+        imagery_workflow.process_post_event()
+        config["post_event_mosaic_filename"] = os.path.basename(
+            imagery_workflow.mosaic_post_event_tif_filepath
+        )
+        config["post_event_processed_filename"] = os.path.basename(
+            imagery_workflow.post_event_processed_path
+        )
+        config["normalization_means"] = imagery_workflow.normalization_means
+        config["normalization_stds"] = imagery_workflow.normalization_stds
+
+        log_progress("Finalizing outputs")
+        with open(os.path.join(output_dir, "imagery_manifest.json"), "w") as f:
+            json.dump(config, f, indent=4)
+        logger.info("Imagery preprocessing completed successfully.")
+    except Exception as e:
+        logger.error("Error during imagery preprocessing", exc_info=True)
+        log_progress(f"Error during imagery preprocessing: {e}")
+        raise e
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        logger.error(f"Error during main execution: {e}", exc_info=True)
+        sys.exit(1)

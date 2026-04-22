@@ -1,0 +1,100 @@
+name: Deploy Azure Applications
+
+on:
+  workflow_dispatch:
+    inputs:
+      resource_prefix:
+        description: "Resource naming prefix"
+        required: true
+        type: string
+      location:
+        description: "Azure region"
+        required: true
+        default: "eastus"
+        type: string
+      random_suffix:
+        description: "Random suffix for resource names (optional - will generate if not provided)"
+        required: false
+        type: string
+      training_image_tag:
+        description: "Training Docker image tag"
+        required: true
+        type: string
+      imageprep_image_tag:
+        description: "Image prep Docker image tag"
+        required: true
+        type: string
+      environment:
+        description: "Deployment environment (dev, staging, prod)"
+        required: true
+        default: "dev1"
+        type: string
+      app_tag:
+        description: "Application version tag"
+        required: true
+        type: string
+      static_app_domain:
+        description: "Static Web App custom domain (e.g. your-app.azurestaticapps.net)"
+        required: false
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+      - name: Install tools
+        run: |
+          curl https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg
+          sudo mv microsoft.gpg /etc/apt/trusted.gpg.d/microsoft.gpg
+          sudo sh -c 'echo "deb [arch=amd64] https://packages.microsoft.com/repos/microsoft-ubuntu-$(lsb_release -cs)-prod $(lsb_release -cs) main" > /etc/apt/sources.list.d/dotnetdev.list'
+          sudo apt-get update
+          sudo apt-get install git-lfs -y
+          git lfs env
+          sudo apt-get install azure-functions-core-tools-4 jq git-lfs -y
+          npm install -g @azure/static-web-apps-cli
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Generate random suffix
+        id: random
+        run: |
+          if [ -n "${{ github.event.inputs.random_suffix }}" ]; then
+            echo "suffix=${{ github.event.inputs.random_suffix }}" >> $GITHUB_OUTPUT
+          else
+            echo "suffix=$(openssl rand -hex 3)" >> $GITHUB_OUTPUT
+          fi
+      - name: Git LFS Pull
+        run: git lfs pull
+      - name: Deploy
+        run: |
+          chmod +x .github/scripts/deploy_apps.sh
+          .github/scripts/deploy_apps.sh \
+            "${{ secrets.AZURE_TENANT_ID }}" \
+            "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            "${{ github.event.inputs.resource_prefix }}" \
+            "${{ github.event.inputs.location }}" \
+            "${{ steps.random.outputs.suffix }}" \
+            "${{ secrets.ACR_NAME }}" \
+            "${{ github.event.inputs.training_image_tag }}" \
+            "${{ github.event.inputs.imageprep_image_tag }}" \
+            "${{ github.event.inputs.environment }}" \
+            "${{ github.event.inputs.app_tag }}"\
+            "${{ secrets.BATCH_ACCOUNT }}" \
+            "${{ secrets.SHARED_RESOURCE_GROUP }}" \
+            "${{ github.event.inputs.static_app_domain }}" \
+            "${{ secrets.EMAIL_CONNECTION_STRING }}"
