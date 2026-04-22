@@ -75,7 +75,7 @@ services:
       context: ..
       dockerfile: ./api/hastefuncapi/Dockerfile
     environment:
-      AzureWebJobsStorage: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret
+      AzureWebJobsStorage: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret # gitleaks:allow
       ASPNETCORE_URLS: "http://+:8080"
       DATA_PATH: "/app/data"
       DEVELOPMENT_MODE: "true"
@@ -88,7 +88,7 @@ services:
       AzureFunctionsJobHost__logging__logLevel__Host: "Information"
       AzureFunctionsJobHost__logging__logLevel__Function: "Information"
       AzureFunctionsJobHost__logging__logLevel__Worker: "Debug"
-      BLOB_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret
+      BLOB_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret # gitleaks:allow
       QUEUE_ACCOUNT_URL: "http://azurite:10001/devstoreaccount1"
       BLOB_ACCOUNT_URL: "http://azurite:10000/devstoreaccount1"
       IMAGE_QUEUE_NAME: "local-image-queue"
@@ -117,7 +117,7 @@ services:
       context: ..
       dockerfile: ./api/hastefuncqueues/Dockerfile
     environment:
-      AzureWebJobsStorage: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret
+      AzureWebJobsStorage: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret # gitleaks:allow
       ASPNETCORE_URLS: "http://+:8080"
       DATA_PATH: "/app/data"
       DEVELOPMENT_MODE: "true"
@@ -131,7 +131,7 @@ services:
       AzureFunctionsJobHost__logging__logLevel__Function: "Information"
       AzureFunctionsJobHost__logging__logLevel__Worker: "Information"
       AzureFunctionsJobHost__logging__logLevel__haste: "Information"
-      BLOB_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret
+      BLOB_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret # gitleaks:allow
       QUEUE_ACCOUNT_URL: "http://azurite:10001/devstoreaccount1"
       BLOB_ACCOUNT_URL: "http://azurite:10000/devstoreaccount1"
       IMAGE_QUEUE_NAME: "local-image-queue"
@@ -144,7 +144,7 @@ services:
       IMAGERY_STORAGE_TYPE: "blob"
       ARTIFACT_STORAGE_TYPE: "blob"
       RUNNER_TYPE: "local"
-      AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret
+      AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret # gitleaks:allow
       AZURE_STORAGE_USE_EMULATOR: "true"
       AZURE_STORAGE_EMULATOR_HOST: "azurite:10000"
       AZURE_BATCH_DOCKER_IMAGE: "haste-training:latest"

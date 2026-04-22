@@ -256,7 +256,7 @@ comparison with a swipe-bar. A valid key is **required** for the Visualizer to w
 2. Go to **Authentication** → copy the **Primary Key**.
 3. Add it to `docker/.env`:
    ```bash
-   VITE_AZURE_MAPS_KEY=AbCdEf123456...
+   VITE_AZURE_MAPS_KEY=AbCdEf123456...  # gitleaks:allow
    ```
 
 ### Memory & Performance Tuning
@@ -364,7 +364,7 @@ hastefuncapi + hastefuncqueues + titiler
 - **Connection String (well-known Azurite default):**
   ```
   DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;
-  AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;  # pragma: allowlist secret
+  AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;  # pragma: allowlist secret # gitleaks:allow
   BlobEndpoint=http://azurite:10000/devstoreaccount1;
   QueueEndpoint=http://azurite:10001/devstoreaccount1;
   ```
