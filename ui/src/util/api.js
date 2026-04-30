@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 const APIUrl = import.meta.env.VITE_API_URL;
-const APICodeParam = import.meta.env.VITE_APP_MASTER_KEY ? "code=" + import.meta.env.VITE_APP_MASTER_KEY : "";
 import { upsertUser } from "../AppHelper.js";
 
 function resolveVarConcatChar(text) {
@@ -52,7 +51,7 @@ export async function apiLogout(redirectPath = "/") {
 
 export async function apiGet(endpoint) {
   try {
-    const response = await fetch(APIUrl + endpoint + resolveVarConcatChar(endpoint) + APICodeParam);
+    const response = await fetch(APIUrl + endpoint + resolveVarConcatChar(endpoint));
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -66,7 +65,7 @@ export async function apiGet(endpoint) {
 
 export async function apiPut(endpoint, data) {
   try {
-    const response = await fetch(APIUrl + endpoint + resolveVarConcatChar(endpoint) + APICodeParam, {
+    const response = await fetch(APIUrl + endpoint + resolveVarConcatChar(endpoint), {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json'
@@ -97,7 +96,7 @@ export async function apiPost(endpoint, data, isFormData = false) {
       body: isFormData ? data : JSON.stringify(data)
     };
 
-    const response = await fetch(APIUrl + endpoint + resolveVarConcatChar(endpoint) + APICodeParam, options);
+    const response = await fetch(APIUrl + endpoint + resolveVarConcatChar(endpoint), options);
     if (!response.ok) {
       const message = await response.json();
       throw new Error(message.error || `HTTP error! status: ${response.status}`);
@@ -110,7 +109,7 @@ export async function apiPost(endpoint, data, isFormData = false) {
 
 export async function apiDelete(endpoint) {
   try {
-    const response = await fetch(APIUrl + endpoint + resolveVarConcatChar(endpoint) + APICodeParam, {
+    const response = await fetch(APIUrl + endpoint + resolveVarConcatChar(endpoint), {
       method: 'DELETE'
     });
     if (response.status !== 200) {
