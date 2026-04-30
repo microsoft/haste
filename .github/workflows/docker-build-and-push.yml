@@ -1,4 +1,4 @@
-﻿name: Build and Push Docker Images
+name: Build and Push Docker Images
 
 on:
   pull_request:
@@ -20,17 +20,46 @@ on:
         required: true
         default: 'test-manual'
         type: string
+
 jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      training: ${{ steps.filter.outputs.training }}
+      imageryprep: ${{ steps.filter.outputs.imageryprep }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        # On manual dispatch always build the requested image(s)
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            training:
+              - 'docker/training/**'
+              - 'hastelib/**'
+            imageryprep:
+              - 'docker/imageryprep/**'
+              - 'hastelib/**'
+
   build-and-push:
+    needs: detect-changes
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
       pull-requests: read
-    # Only run on PR events or manual triggers
+    strategy:
+      matrix:
+        include:
+          - image_dir: training
+            changed: ${{ needs.detect-changes.outputs.training }}
+          - image_dir: imageryprep
+            changed: ${{ needs.detect-changes.outputs.imageryprep }}
+    # On PR: only run if this image's paths changed. On manual dispatch: use the requested image.
     if: |
-      github.event_name == 'pull_request' || 
-      github.event_name == 'workflow_dispatch'
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && matrix.changed == 'true')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -42,13 +71,39 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Resolve image selection for manual dispatch
+        id: resolve
+        run: |
+          INPUT="${{ github.event.inputs.image_dir || 'all' }}"
+          MATRIX_IMAGE="${{ matrix.image_dir }}"
+          if [[ "$INPUT" == "all" || "$INPUT" == "$MATRIX_IMAGE" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and Push Docker Image
+        if: steps.resolve.outputs.run == 'true'
         shell: bash
         env:
           ACR_NAME: ${{ secrets.ACR_NAME }}
-          IMAGE_DIR: ${{ github.event.inputs.image_dir || 'all' }}
+          IMAGE_DIR: ${{ matrix.image_dir }}
           IMAGE_TAG: ${{ github.event.inputs.image_tag || format('{0}-rc{1}', vars.TAG_PREFIX, github.event.number) }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           echo "Building with IMAGE_DIR=$IMAGE_DIR and IMAGE_TAG=$IMAGE_TAG"
           bash .github/scripts/build_and_push_images.sh -i "$IMAGE_DIR" -t "$IMAGE_TAG" -a "$ACR_NAME"
+
+  # Always-green gate so branch protection passes even when no images needed rebuilding
+  docker-build-gate:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check build results
+        run: |
+          if [[ "${{ needs.build-and-push.result }}" == "failure" ]]; then
+            echo "One or more image builds failed"
+            exit 1
+          fi
+          echo "All required image builds passed or were skipped"
