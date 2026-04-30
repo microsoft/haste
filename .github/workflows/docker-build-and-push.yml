@@ -21,6 +21,8 @@ on:
         default: 'test-manual'
         type: string
 
+permissions: {}
+
 jobs:
   detect-changes:
     runs-on: ubuntu-latest
