@@ -136,6 +136,7 @@ deploy_function() {
             "BLOB_CONTAINER=data" \
             "BLOB_CONNECTION_STRING=$(az storage account show-connection-string --name "$STORAGE_ACCOUNT" --resource-group "$RESOURCE_GROUP" --query connectionString -o tsv)" \
             "AZURE_BATCH_ACCOUNT_NAME=$BATCH_ACCOUNT" \
+            "AZURE_BATCH_URL=https://${BATCH_ACCOUNT}.${LOCATION}.batch.azure.com" \
             "AZURE_BATCH_ACCOUNT_KEY=$(az batch account keys list --name "$BATCH_ACCOUNT" --resource-group "$SHARED_RESOURCE_GROUP" --query "primary" -o tsv)" \
             "AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE=${ACR_NAME}.azurecr.io/${IMAGEPREP_DOCKER_IMAGE}" \
             "AZURE_BATCH_DOCKER_IMAGE=${ACR_NAME}.azurecr.io/${TRAINING_DOCKER_IMAGE}" \
