@@ -18,6 +18,7 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 
 ### Fixed
 - Minor UI API utility cleanup
+- **Dependency security updates** — Resolved 12 of 19 Dependabot alerts across root and UI packages: upgraded `vite` (5→8), `postcss`, `tough-cookie`, `xml2js`, `uuid` (UI), `brace-expansion`, `picomatch`, `cookie`, `tmp`, and `@azure/identity` (UI). Remaining 7 alerts are blocked by `azurite → @azure/ms-rest-js` (deprecated Azure SDK) and require an upstream azurite fix.
 
 ---
 
