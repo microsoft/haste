@@ -26,6 +26,9 @@ permissions: {}
 jobs:
   detect-changes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       training: ${{ steps.filter.outputs.training }}
       imageryprep: ${{ steps.filter.outputs.imageryprep }}
