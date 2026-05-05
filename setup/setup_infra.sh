@@ -1274,9 +1274,9 @@ fi
 deploy_static_web_app() {
     echo "Deploying Static Web App..."
     AZ_RESOURCE_TAGS='project=haste env=prod deployed_version=v1.2.0 created_by=deploy_apps'
-    ## Get the primary key for the Azure Maps account
-    MAPS_ACCOUNT_KEY=$(az maps account keys list --name "$MAPS_ACCOUNT" --resource-group "$RESOURCE_GROUP" --query primaryKey -o tsv)
-    echo "Azure Maps account $MAPS_ACCOUNT created successfully with key $MAPS_ACCOUNT_KEY."
+    ## Get the client ID for the Azure Maps account (managed identity auth)
+    MAPS_CLIENT_ID=$(az maps account show --name "$MAPS_ACCOUNT" --resource-group "$RESOURCE_GROUP" --query "properties.uniqueId" -o tsv)
+    echo "Azure Maps account $MAPS_ACCOUNT client ID: $MAPS_CLIENT_ID."
 
 
     # Navigate to the UI directory
@@ -1285,7 +1285,7 @@ deploy_static_web_app() {
     # Create the .env file with the required content
     cat <<EOF > .env
 VITE_APP_MASTER_KEY=$FUNCTION_API_MASTER_KEY
-VITE_AZURE_MAPS_KEY=$MAPS_ACCOUNT_KEY
+VITE_AZURE_MAPS_CLIENT_ID=$MAPS_CLIENT_ID
 VITE_API_URL=/api/haste/
 VITE_STORAGE_APIM_URL=/api/haste/storage/get-artifacts
 VITE_PROJECT_STORAGE_APIM_URL=/api/haste/storage/get-project-artifacts

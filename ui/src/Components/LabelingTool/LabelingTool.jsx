@@ -9,8 +9,8 @@ import {
   createShape,
   loadStudyArea,
   centrateMap,
-  AZURE_MAPS_KEY,
 } from "./LabelingToolHelper.js";
+import { getAzureMapsAuthOptions } from "../../util/azureMapsAuth";
 import { useParams } from "react-router-dom";
 import LabelingToolLeftPanel from "./LabelingToolLeftPanel.jsx";
 import LabelingToolRightPanel from "./LabelingToolRightPanel.jsx";
@@ -189,10 +189,7 @@ const LabelingTool = ({ setModalComponent }) => {
       pitch: 0,
       style: "grayscale_light",
       language: "en-US",
-      authOptions: {
-        authType: "subscriptionKey",
-        subscriptionKey: AZURE_MAPS_KEY,
-      },
+      authOptions: getAzureMapsAuthOptions(),
     });
 
     map.events.add("ready", async function () {

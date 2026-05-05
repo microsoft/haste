@@ -198,7 +198,7 @@ deploy_function() {
 }
 
 deploy_static_web_app() {
-    MAPS_ACCOUNT_KEY=$(az maps account keys list --name "$MAPS_ACCOUNT" --resource-group "$RESOURCE_GROUP" --query primaryKey -o tsv)
+    MAPS_CLIENT_ID=$(az maps account show --name "$MAPS_ACCOUNT" --resource-group "$RESOURCE_GROUP" --query "properties.uniqueId" -o tsv)
     FUNCTION_API_MASTER_KEY=$(az functionapp keys list --name "$FUNCTION_API" --resource-group "$RESOURCE_GROUP" --query "masterKey" -o tsv)
     STATIC_WEB_APP_URL=$(az staticwebapp show --name "$STATIC_WEB_APP" --resource-group "$RESOURCE_GROUP" --query "defaultHostname" -o tsv | sed 's/^/https:\/\//')
 
@@ -206,7 +206,7 @@ deploy_static_web_app() {
 
     cat <<EOF > .env
 VITE_APP_MASTER_KEY=$FUNCTION_API_MASTER_KEY
-VITE_AZURE_MAPS_KEY=$MAPS_ACCOUNT_KEY
+VITE_AZURE_MAPS_CLIENT_ID=$MAPS_CLIENT_ID
 VITE_API_URL=/api/haste/
 VITE_STORAGE_APIM_URL=/api/haste/storage/get-artifacts
 VITE_PROJECT_STORAGE_APIM_URL=/api/haste/storage/get-project-artifacts

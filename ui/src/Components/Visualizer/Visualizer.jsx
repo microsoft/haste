@@ -10,9 +10,7 @@ import PropType from "prop-types";
 import { convertDateToString } from "../../util/conversion";
 import VisualizerImageryControls from "./VisualizerImageryControls"
 import "../../assets/css/visualizer.css";
-
-// Azure Maps Import
-const AZURE_MAPS_KEY = import.meta.env.VITE_AZURE_MAPS_KEY;
+import { getAzureMapsAuthOptions } from "../../util/azureMapsAuth";
 
 
 const Visualizer = ({ setModalComponent }) => {
@@ -136,10 +134,7 @@ const Visualizer = ({ setModalComponent }) => {
           visualizerTitle: convertToVisualizerTitle(visualizerResults),
         });
 
-        var authOptions = {
-          authType: "subscriptionKey",
-          subscriptionKey: AZURE_MAPS_KEY,
-        };
+        var authOptions = getAzureMapsAuthOptions();
 
         // PRE EVENT MAP SETUP
         const primaryMap = new window.atlas.Map(primaryMapRef.current, {
@@ -309,7 +304,7 @@ const Visualizer = ({ setModalComponent }) => {
       map.layers.add(layer);
     } else {
 
-      const tempTileUrlPath = `https://atlas.microsoft.com/map/tile?api-version=2.1&tilesetId=microsoft.imagery&zoom={z}&x={x}&y={y}&subscription-key=${AZURE_MAPS_KEY}`;
+      const tempTileUrlPath = `https://atlas.microsoft.com/map/tile?api-version=2.1&tilesetId=microsoft.imagery&zoom={z}&x={x}&y={y}`;
 
       var imagery = new window.atlas.layer.TileLayer({
         tileUrl: tempTileUrlPath,

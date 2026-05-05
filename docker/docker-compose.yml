@@ -189,7 +189,7 @@ services:
       VITE_STORAGE_APIM_URL: "http://${HOST_IP:-localhost}:10000"
       VITE_PROJECT_STORAGE_APIM_URL: "http://${HOST_IP:-localhost}:10000"
       VITE_TITILER_URL: "http://${HOST_IP:-localhost}:7071/api/titiler/"
-      VITE_AZURE_MAPS_KEY: "${VITE_AZURE_MAPS_KEY:-placeholder}"
+      VITE_AZURE_MAPS_CLIENT_ID: "${VITE_AZURE_MAPS_CLIENT_ID:-placeholder}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

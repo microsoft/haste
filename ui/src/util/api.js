@@ -2,11 +2,21 @@
 // Licensed under the MIT License.
 
 const APIUrl = import.meta.env.VITE_API_URL;
+const APIMSubscriptionKey = import.meta.env.VITE_APIM_SUBSCRIPTION_KEY;
 import { upsertUser } from "../AppHelper.js";
 
 function resolveVarConcatChar(text) {
   if (text === "") return "";
   return text.includes("?") ? "&" : "?";
+}
+
+function buildUrl(endpoint) {
+  const base = APIUrl + endpoint;
+  if (APIMSubscriptionKey) {
+    const sep = base.includes("?") ? "&" : "?";
+    return base + sep + "subscription-key=" + APIMSubscriptionKey;
+  }
+  return base;
 }
 
 export async function apiValidateUser(setAppParams) {
@@ -51,7 +61,7 @@ export async function apiLogout(redirectPath = "/") {
 
 export async function apiGet(endpoint) {
   try {
-    const response = await fetch(APIUrl + endpoint + resolveVarConcatChar(endpoint));
+    const response = await fetch(buildUrl(endpoint));
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -65,7 +75,7 @@ export async function apiGet(endpoint) {
 
 export async function apiPut(endpoint, data) {
   try {
-    const response = await fetch(APIUrl + endpoint + resolveVarConcatChar(endpoint), {
+    const response = await fetch(buildUrl(endpoint), {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json'
@@ -96,7 +106,7 @@ export async function apiPost(endpoint, data, isFormData = false) {
       body: isFormData ? data : JSON.stringify(data)
     };
 
-    const response = await fetch(APIUrl + endpoint + resolveVarConcatChar(endpoint), options);
+    const response = await fetch(buildUrl(endpoint), options);
     if (!response.ok) {
       const message = await response.json();
       throw new Error(message.error || `HTTP error! status: ${response.status}`);
@@ -109,7 +119,7 @@ export async function apiPost(endpoint, data, isFormData = false) {
 
 export async function apiDelete(endpoint) {
   try {
-    const response = await fetch(APIUrl + endpoint + resolveVarConcatChar(endpoint), {
+    const response = await fetch(buildUrl(endpoint), {
       method: 'DELETE'
     });
     if (response.status !== 200) {

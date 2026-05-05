@@ -2739,3 +2739,31 @@ async def DeleteModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             "Error deleting model from catalog.", status_code=500
         )
+
+
+@app.route(
+    route="GetAzureMapsToken",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetAzureMapsToken(req: func.HttpRequest) -> func.HttpResponse:
+    """Return an Azure AD token for Azure Maps using managed identity."""
+    try:
+        from azure.identity import DefaultAzureCredential
+
+        credential = DefaultAzureCredential()
+        token = credential.get_token("https://atlas.microsoft.com/.default")
+
+        return func.HttpResponse(
+            json.dumps({"access_token": token.token}),
+            status_code=200,
+            mimetype="application/json",
+        )
+    except Exception as e:
+        logger.error(
+            f"Error fetching Azure Maps token: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error fetching Azure Maps token.", status_code=500
+        )

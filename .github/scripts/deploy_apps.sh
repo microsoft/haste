@@ -134,10 +134,10 @@ deploy_function() {
 }
 
 deploy_static_web_app() {
-    # Get maps account key with error handling
-    echo "Retrieving maps account key..."
-    MAPS_ACCOUNT_KEY=$(az maps account keys list --name "$MAPS_ACCOUNT" --resource-group "$RESOURCE_GROUP" --query primaryKey -o tsv) || {
-        echo "ERROR: Failed to retrieve maps account key. Ensure service principal has appropriate permissions on maps account '$MAPS_ACCOUNT'." >&2
+    # Get maps account client ID for managed identity auth
+    echo "Retrieving maps account client ID..."
+    MAPS_CLIENT_ID=$(az maps account show --name "$MAPS_ACCOUNT" --resource-group "$RESOURCE_GROUP" --query "properties.uniqueId" -o tsv) || {
+        echo "ERROR: Failed to retrieve maps account client ID. Ensure service principal has appropriate permissions on maps account '$MAPS_ACCOUNT'." >&2
         exit 1
     }
 
@@ -159,7 +159,7 @@ deploy_static_web_app() {
 
     cat <<EOF > .env
 VITE_APP_MASTER_KEY=$FUNCTION_API_MASTER_KEY
-VITE_AZURE_MAPS_KEY=$MAPS_ACCOUNT_KEY
+VITE_AZURE_MAPS_CLIENT_ID=$MAPS_CLIENT_ID
 VITE_API_URL=/api/haste/
 VITE_STORAGE_APIM_URL=/api/haste/storage/get-artifacts
 VITE_PROJECT_STORAGE_APIM_URL=/api/haste/storage/get-project-artifacts

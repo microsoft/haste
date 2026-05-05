@@ -2,8 +2,7 @@
 // Licensed under the MIT License.
 import { apiPut } from "../../util/api";
 import settings from "../../assets/json/settings.json";
-
-export const AZURE_MAPS_KEY = import.meta.env.VITE_AZURE_MAPS_KEY;
+import { getAzureMapsAuthOptions } from "../../util/azureMapsAuth";
 
 
 export function createShape(drawingManager, selectedPrimaryClass, setDrawingCount) {
@@ -86,7 +85,7 @@ export function loadImagery(tileUrl, map, imageryRef, customId, isVisible) {
 
   var tempTileUrlPath = tileUrl;
   if (tempTileUrlPath === "") {
-    tempTileUrlPath = `https://atlas.microsoft.com/map/tile?api-version=2.1&tilesetId=microsoft.imagery&zoom={z}&x={x}&y={y}&subscription-key=${AZURE_MAPS_KEY}`;
+    tempTileUrlPath = `https://atlas.microsoft.com/map/tile?api-version=2.1&tilesetId=microsoft.imagery&zoom={z}&x={x}&y={y}`;
   }
 
 
