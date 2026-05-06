@@ -2,6 +2,22 @@
 
 This guide covers development practices and workflows for the HASTE project.
 
+## Local Storage Emulator (Azurite)
+
+HASTE uses [Azurite](https://github.com/Azure/Azurite) to emulate Azure Blob, Queue, and Table Storage for local development. It is **not** a project dependency — install it globally before use:
+
+```bash
+npm install -g azurite
+```
+
+**Azurite must never be used outside of local development.** It is not hardened for network exposure. The safe mitigation is use-restriction:
+
+- Run azurite only on `localhost` (the default). Never bind it to `0.0.0.0` or expose it through any port-forwarding, tunnel, or container network.
+- Do not use azurite in CI pipelines that run with production secrets in scope.
+- Switch to a real Azure Storage account (via connection string or managed identity) for any non-local environment.
+
+---
+
 ## Code Quality Standards
 
 ### Pre-commit Hooks

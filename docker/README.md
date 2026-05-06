@@ -21,7 +21,7 @@
    - [Git & Repository Clone](#4-git--repository-clone)
 4. [Environment Configuration](#environment-configuration)
    - [Required: `docker/.env`](#required-dockerenv)
-   - [Azure Maps Key](#azure-maps-key)
+   - [Azure Maps Authentication](#azure-maps-authentication)
    - [Memory & Performance Tuning](#memory--performance-tuning)
 5. [Building & Starting the Stack](#building--starting-the-stack)
    - [First-Time Build](#first-time-build)
@@ -239,25 +239,30 @@ HOST_IP=<YOUR_VM_PUBLIC_IP>
 #  REQUIRED — Azure Maps (for Visualizer map tiles)
 # ============================================================
 
-# Get a key from: Azure Portal → Azure Maps Account → Authentication
-VITE_AZURE_MAPS_KEY=<YOUR_AZURE_MAPS_KEY>
+# The Azure Maps Account client ID (NOT a subscription key).
+# Find it in: Azure Portal → Azure Maps Account → Authentication → Client ID
+# For local dev, run `az login` first and ensure your account has the
+# "Azure Maps Data Reader" role on the Maps account.
+VITE_AZURE_MAPS_CLIENT_ID=<YOUR_AZURE_MAPS_CLIENT_ID>
 ```
 
 > **Important:** `HOST_IP` is interpolated into every `VITE_*` URL that the UI
 > uses. If it is wrong (or missing), the browser won't be able to reach the API
 > or load map tiles.
 
-### Azure Maps Key
+### Azure Maps Authentication
 
 The **Visualizer** component uses Azure Maps for before/after satellite imagery
-comparison with a swipe-bar. A valid key is **required** for the Visualizer to work.
+comparison with a swipe-bar. Maps authentication now uses Azure AD tokens via
+managed identity — no subscription key is needed or used.
 
-1. In the Azure Portal, create an **Azure Maps Account** (S0 tier is free).
-2. Go to **Authentication** → copy the **Primary Key**.
-3. Add it to `docker/.env`:
+1. In the Azure Portal, open your **Azure Maps Account** → **Authentication** → copy the **Client ID** (a UUID, not a key).
+2. Add it to `docker/.env`:
    ```bash
-   VITE_AZURE_MAPS_KEY=AbCdEf123456...  # gitleaks:allow
+   VITE_AZURE_MAPS_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
    ```
+3. For **local development**, run `az login` and ensure your account has the **Azure Maps Data Reader** role on the Maps account. The backend (`GetAzureMapsToken`) will use your CLI credentials to fetch a short-lived token.
+4. In **production**, the Function App's managed identity must have the **Azure Maps Data Reader** role — no additional config required.
 
 ### Memory & Performance Tuning
 
@@ -444,7 +449,7 @@ hastefuncapi + hastefuncqueues + titiler
   - `VITE_API_URL` → `http://<HOST_IP>:7071/api/` (all API calls)
   - `VITE_STORAGE_APIM_URL` → `http://<HOST_IP>:10000` (direct Azurite blob reads)
   - `VITE_TITILER_URL` → `http://<HOST_IP>:7071/api/titiler/` (tile requests)
-  - `VITE_AZURE_MAPS_KEY` → Azure Maps API key (for Visualizer)
+  - `VITE_AZURE_MAPS_CLIENT_ID` → Azure Maps Account client ID (for Visualizer; auth via managed identity/Azure AD)
 
 ### Build-Only Images (used by LocalRunner)
 
@@ -616,7 +621,7 @@ http://<HOST_IP>:4280
 ### Viewing Results in the Visualizer
 
 1. Navigate to the **Visualizer** for your completed inference.
-2. If `VITE_AZURE_MAPS_KEY` is set, you'll get an interactive **before/after swipe map**.
+2. If `VITE_AZURE_MAPS_CLIENT_ID` is set and Azure Maps auth is configured, you'll get an interactive **before/after swipe map**.
 3. The overlay shows damage classifications color-coded by severity.
 4. Download the GeoPackage for GIS analysis in QGIS, ArcGIS, etc.
 
@@ -878,7 +883,7 @@ When transitioning from local Docker to a production deployment:
 |------|---------|
 | `docker/docker-compose.yml` | Main orchestration file — all service definitions |
 | `docker/nginx.conf` | NGINX reverse proxy config (CORS, API routing, TiTiler proxy) |
-| `docker/.env` | Environment overrides (HOST_IP, memory settings, Azure Maps key) |
+| `docker/.env` | Environment overrides (HOST_IP, memory settings, Azure Maps client ID) |
 | `docker/emulators/Dockerfile` | Azurite storage emulator image |
 | `docker/data-init/Dockerfile` | Init container that seeds Azurite with config and queues |
 | `docker/data-init/upload_data.py` | Python script for the init container |
