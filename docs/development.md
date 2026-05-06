@@ -4,25 +4,17 @@ This guide covers development practices and workflows for the HASTE project.
 
 ## Local Storage Emulator (Azurite)
 
-HASTE uses [Azurite](https://github.com/Azure/Azurite) to emulate Azure Blob, Queue, and Table Storage for local development. It is listed under `dependencies` in `package.json` so it can be run via `npx azurite`.
+HASTE uses [Azurite](https://github.com/Azure/Azurite) to emulate Azure Blob, Queue, and Table Storage for local development. It is **not** a project dependency — install it globally before use:
 
-**Azurite must never be used outside of local development.** It is not hardened for network exposure and has known transitive vulnerabilities (see below) that are acceptable only because the emulator is localhost-only and never handles production data or credentials.
+```bash
+npm install -g azurite
+```
 
-### Known security limitations
-
-Azurite's dependency tree includes `@azure/ms-rest-js@1.x` (deprecated upstream, no new releases) and `axios@0.x`/`uuid@3.x`, which carry open CVEs. These cannot be resolved with npm `overrides` because:
-
-- `@azure/ms-rest-js` uses the removed `require('uuid/v4')` subpath — forcing uuid ≥7 would break azurite at runtime.
-- `@azure/ms-rest-js` uses `axios.CancelToken` — removed in axios 1.x, so forcing an upgrade would break azurite at runtime.
-
-The safe mitigation is use-restriction, not patching:
+**Azurite must never be used outside of local development.** It is not hardened for network exposure. The safe mitigation is use-restriction:
 
 - Run azurite only on `localhost` (the default). Never bind it to `0.0.0.0` or expose it through any port-forwarding, tunnel, or container network.
 - Do not use azurite in CI pipelines that run with production secrets in scope.
-- Do not deploy the `azurite` package to any production or staging environment.
 - Switch to a real Azure Storage account (via connection string or managed identity) for any non-local environment.
-
-These alerts are tracked and reviewed periodically. Resolution is blocked on azurite shipping a major dependency upgrade; see the security reports in [`docs/security-reports/`](security-reports/) for the latest status.
 
 ---
 

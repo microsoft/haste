@@ -4,7 +4,6 @@
   "description": "High-speed Assessment and Satellite Tracking for Emergencies",
   "private": true,
   "dependencies": {
-    "azurite": "^3.34.0",
     "vite": "^8.0.10"
   },
   "overrides": {

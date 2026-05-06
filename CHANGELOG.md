@@ -7,6 +7,13 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **Azurite global install** — Removed `azurite` from `package.json`; developers now install it globally (`npm install -g azurite`). This resolves Dependabot alerts #3, #4, #6, #7, #9, #10, #11, which were blocked by `azurite → @azure/ms-rest-js` transitive vulnerabilities.
+
+---
+
 ## [v1.4.2] — Security and pipeline hardening
 
 ### Added

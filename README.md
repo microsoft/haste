@@ -247,7 +247,7 @@ azurite --silent --location ./data --debug ./data/debug.log
 
 See the [Azure Storage Emulator docs](https://docs.microsoft.com/en-us/azure/storage/common/storage-use-azurite?tabs=npm%2Cqueue-storage) for more options, including [RabbitMQ](https://www.rabbitmq.com/download.html) as an alternative queue backend.
 
-> **Note on `npm audit` findings:** `azurite` is listed as a dev dependency and is used only for local development. Reported vulnerabilities in `azurite` and its transitive dependencies (axios, @azure/ms-rest-js) have no impact on production deployments and are not exploitable in a local development context.
+> **Note:** `azurite` is not a project dependency — install it globally with `npm install -g azurite`. It is used only for local development and is never deployed.
 
 ---
 
