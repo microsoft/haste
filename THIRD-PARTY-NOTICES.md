@@ -56,6 +56,40 @@ This software includes third-party packages and libraries. The complete list of 
 - **Source**: https://rasterio.readthedocs.io/
 - **Usage**: Geospatial raster data I/O
 
+## Build / Development Tooling (Not Redistributed)
+
+The following weak-copyleft (LGPL / MPL-2.0) packages appear in the maintainer-side build/development conda environments (`env.yml`, `env_build.yml`) as transitive dependencies of build tools (`hatch`, `azure-cli`, `fabric`, `black`). They are **not redistributed as part of the published HASTE package** — consumers of HASTE do not receive these packages from this project. They are listed here for transparency only.
+
+| Package | License | Pulled in by |
+|---|---|---|
+| `paramiko` | LGPL-2.1 | `hatch` → `azure-cli` |
+| `chardet` | LGPL-2.1-or-later | `azure-cli` |
+| `PyGithub` | LGPL | `hatch` / `azure-cli` |
+| `scp` | LGPL-2.1-or-later | `azure-cli` → `fabric` |
+| `pathspec` | MPL-2.0 | `black` / `hatch` |
+
+These packages are imported and used unmodified at build/development time. No source modification, vendoring, or static linking is performed.
+
+## Proprietary Components (Non-OSS, Redistribution Permitted)
+
+The following Microsoft components are **not open-source licensed** but are redistributed in HASTE under the terms of their respective licenses. Consumers integrating HASTE should review these license terms separately from the project's MIT license.
+
+### Azure Maps Web SDK
+- **Package**: `azure-maps-control` (transitive, via `azure-maps-drawing-tools`)
+- **License**: Microsoft Azure Maps Web SDK End User License Agreement (proprietary)
+- **License Terms**: https://azuremapscdn.azureedge.net/sdk-licenses/atlas.min.LICENSE.txt
+- **Source**: https://learn.microsoft.com/en-us/azure/azure-maps/how-to-use-map-control
+- **Usage**: Interactive map rendering and geospatial visualization in the UI
+
+### Azure Maps Drawing Tools
+- **Package**: `azure-maps-drawing-tools` (direct dependency)
+- **License**: Microsoft Software License Terms (proprietary)
+- **License Terms**: https://azuremapscdn.azureedge.net/sdk-licenses/drawing/LICENSE.txt
+- **Source**: https://learn.microsoft.com/en-us/azure/azure-maps/set-drawing-options
+- **Usage**: Map drawing and shape-editing controls in the UI
+
+Use of these components requires an Azure Maps account and is subject to Azure service terms.
+
 ## Additional Notices
 
 This software may include additional third-party software components. For a complete and up-to-date list of all dependencies and their licenses, please refer to the package manifest files listed above.

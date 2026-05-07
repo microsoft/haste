@@ -4,6 +4,8 @@ This document tracks Dependabot alerts that are deferred because they cannot be 
 
 Update this file when upstream packages ship fixes or when the deployment model changes.
 
+For the triage workflow, ownership, and SLAs that govern when entries land here, see [triage-process.md](triage-process.md).
+
 ---
 
 ## ~~Root Cause A — azurite → @azure/ms-rest-js (deprecated)~~ — RESOLVED
