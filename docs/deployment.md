@@ -110,10 +110,7 @@ For manual local setup:
 
 ### Security
 
-- **Use Azure Key Vault** for secrets management
-- **Enable Azure AD authentication** for API endpoints
-- **Configure CORS** appropriately for UI domain
-- **Use HTTPS** for all endpoints
+For production deployments, follow the [Secure Configuration Guidance](security-configuration.md) — it covers identity and authentication setup, secrets management with managed identity and Key Vault, CORS and HTTP security headers, container hardening, logging and monitoring, and known limitations with operational mitigations. The guide also includes a pre-production checklist.
 
 ### Monitoring
 

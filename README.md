@@ -74,6 +74,7 @@ Full documentation is published at **[https://microsoft.github.io/haste](https:/
 - [Architecture](https://microsoft.github.io/haste/architecture.html)
 - [API Reference](https://microsoft.github.io/haste/api/modules.html)
 - [Deployment Guide](https://microsoft.github.io/haste/deployment.html)
+- [Secure Configuration Guidance](https://microsoft.github.io/haste/security-configuration.html)
 
 Source for the docs lives in [`docs/`](docs/) and is built with [Jupyter Book](https://jupyterbook.org/).
 
