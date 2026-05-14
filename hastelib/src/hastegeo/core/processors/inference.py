@@ -435,19 +435,21 @@ class InferencePostprocessor(BaseInferenceProcessor):
         return logs
 
     def _get_task_stderr(self, job_id: str, task_id: str) -> str:
-        """Retrieve stderr content from a failed batch task.
+        """Log stderr from a failed batch task server-side for admin diagnostics.
 
-        Returns:
-            A string with the stderr content (truncated), or empty string if unavailable.
+        Raw stderr can contain stack traces, file paths, and other internal details
+        that must not reach end users. This method always returns an empty string;
+        the content is recorded only via the server-side logger.
         """
         try:
             stderr_content = self.runner.get_filecontent_from_task(
                 job_id, task_id, "stderr.txt"
             )
             if stderr_content and stderr_content.strip():
-                # Truncate to last 2000 chars to avoid excessively long messages
-                truncated = stderr_content.strip()[-2000:]
-                return f"stderr: {truncated}"
+                self.logger.error(
+                    f"Inference task {task_id} stderr (server-side only): "
+                    f"{stderr_content.strip()[-2000:]}"
+                )
         except Exception as e:
             self.logger.warning(
                 f"Could not read stderr.txt for task {task_id}: {e}"

@@ -236,20 +236,14 @@ if __name__ == "__main__":
     except subprocess.CalledProcessError as e:
         print(e)
         traceback.print_exc()
-        error_details = []
-        if e.stderr:
-            error_details.append(f"stderr: {e.stderr[-2000:]}")
-        if e.stdout:
-            error_details.append(f"stdout: {e.stdout[-2000:]}")
-        error_summary = "\n".join(error_details) if error_details else str(e)
         log_progress(
-            f"Error running command '{' '.join(str(a) for a in e.cmd)}' (exit code {e.returncode}): {error_summary}"
+            f"Error running command (exit code {e.returncode}). See task stderr for details."
         )
         log_progress("Please contact your HASTE website administrator")
         sys.exit(1)
     except Exception as e:
         print(e)
         traceback.print_exc()
-        log_progress(f"Unexpected error: {type(e).__name__}: {e}")
+        log_progress(f"Unexpected error: {type(e).__name__}. See task stderr for details.")
         log_progress("Please contact your HASTE website administrator")
         sys.exit(1)

@@ -43,7 +43,6 @@ class ImageryDownloader:
             dst_directory = kwargs.get("dst_directory", "./downloads")
             azure_urls = []
             aws_urls = []
-            http_urls = []
 
             for url in urls:
                 try:
@@ -52,10 +51,8 @@ class ImageryDownloader:
                         azure_urls.append(url)
                     elif url_type == "awss3":
                         aws_urls.append(url)
-                    else:
-                        http_urls.append(url)
                 except Exception as e:
-                    self.logger.error(f"Skipping invalid URL {url}: {e}")
+                    self.logger.warning(f"Skipping URL not in allowlist: {e}")
 
             file_paths = []
             if azure_urls:
@@ -65,10 +62,6 @@ class ImageryDownloader:
             if aws_urls:
                 file_paths.extend(
                     self.download_aws_s3_files(aws_urls, dst_directory)
-                )
-            if http_urls:
-                file_paths.extend(
-                    self.download_imagery_from_urls(http_urls, dst_directory)
                 )
             return file_paths
 
@@ -88,6 +81,13 @@ class ImageryDownloader:
             existing_names = set()
 
             for url in urls:
+                # Defense-in-depth: never fetch a URL whose host is not on the
+                # allowlist, even if a caller bypassed download_imagery().
+                try:
+                    self._validate_url(url)
+                except ValueError as e:
+                    self.logger.warning(f"Skipping URL not in allowlist: {e}")
+                    continue
                 response = requests.get(url)
                 if response.status_code != 200:
                     self.logger.error(f"Failed to fetch data from URL: {url}")
@@ -118,22 +118,25 @@ class ImageryDownloader:
             raise e
 
     def _validate_url(self, url: str) -> str:
-        parsed = urlparse(url)
-        # Use hostname so that userinfo/port are excluded from host checks
-        host = parsed.hostname
-        if not parsed.scheme or not host:
-            raise ValueError("Invalid URL provided")
+        """Validate a remote imagery URL against the allowlist of permitted hosts.
 
-        # Check for Azure Blob Storage URL pattern
-        # Accept exactly 'blob.core.windows.net' or any subdomain of it
+        Returns a string identifying the source type. Raises ValueError if the
+        URL is malformed or the host is not on the allowlist — callers must
+        treat this as a hard rejection (no fallback to arbitrary HTTP fetch).
+        """
+        parsed = urlparse(url)
+        if parsed.scheme not in ("https", "http"):
+            raise ValueError(f"Unsupported URL scheme: {parsed.scheme!r}")
+
+        host = parsed.hostname
+        if not host:
+            raise ValueError("URL is missing host component")
+
         if host == "blob.core.windows.net" or host.endswith(
             ".blob.core.windows.net"
         ):
             return "azureblobstorage"
 
-        # Check for AWS S3 URL pattern
-        # Accept exactly 's3.amazonaws.com' or any subdomain of it,
-        # and other AWS endpoints strictly under '.amazonaws.com'
         if (
             host == "s3.amazonaws.com"
             or host.endswith(".s3.amazonaws.com")
@@ -141,7 +144,9 @@ class ImageryDownloader:
         ):
             return "awss3"
 
-        return "httpurl"
+        raise ValueError(
+            f"URL host {host!r} is not on the allowlist of permitted imagery sources"
+        )
 
     @retry(
         stop=stop_after_attempt(3),

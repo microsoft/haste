@@ -450,31 +450,28 @@ class TrainPostprocessor(BaseTrainProcessor):
         return start_time, events_json
 
     def _get_task_error_details(self, job_id: str, task_id: str) -> str:
-        """Retrieve error details from a failed batch task.
+        """Retrieve user-safe error details from a failed batch task.
 
-        Reads the workflow progress log and stderr from the batch task
-        to construct a meaningful error message.
+        Returns generic error lines from workflow_progress.log (which run_workflow.py
+        sanitizes before writing). Raw stderr.txt is logged server-side only — never
+        returned to callers, since it can contain stack traces, file paths, and other
+        internal details that must not reach end users.
 
         Returns:
-            A string with the error details, or empty string if none found.
+            A string with sanitized error details, or empty string if none found.
         """
         error_parts = []
 
-        # Try to read workflow_progress.log for structured error messages
         try:
             progress_content = self.runner.get_filecontent_from_task(
                 job_id, task_id, "workflow_progress.log"
             )
             if progress_content:
-                # Extract error lines from the progress log
                 for line in progress_content.strip().splitlines():
                     if not line:
                         continue
                     parts = line.split("|", 1)
-                    if len(parts) == 2:
-                        message = parts[1]
-                    else:
-                        message = line
+                    message = parts[1] if len(parts) == 2 else line
                     if any(
                         keyword in message.lower()
                         for keyword in ["error", "failed", "unexpected"]
@@ -485,15 +482,17 @@ class TrainPostprocessor(BaseTrainProcessor):
                 f"Could not read workflow_progress.log for task {task_id}: {e}"
             )
 
-        # Try to read stderr from the batch task
+        # Read stderr.txt to log server-side for admin diagnostics, but do NOT
+        # include it in the returned (user-visible) string.
         try:
             stderr_content = self.runner.get_filecontent_from_task(
                 job_id, task_id, "stderr.txt"
             )
             if stderr_content and stderr_content.strip():
-                # Truncate to last 2000 chars to avoid excessively long messages
-                truncated = stderr_content.strip()[-2000:]
-                error_parts.append(f"stderr: {truncated}")
+                self.logger.error(
+                    f"Training task {task_id} stderr (server-side only): "
+                    f"{stderr_content.strip()[-2000:]}"
+                )
         except Exception as e:
             self.logger.warning(
                 f"Could not read stderr.txt for task {task_id}: {e}"

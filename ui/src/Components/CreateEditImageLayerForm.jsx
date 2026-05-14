@@ -178,7 +178,8 @@ const CreateEditImageLayerModal = () => {
         setDialog("Success", "Imagelayer successfully created.", buttons);
       }
     } catch (error) {
-      setDialog("Error", error.message, []);
+      console.error(error);
+      setDialog("Error", "An error occurred while saving the image layer.", []);
     }
     setIsLoading(false);
   }
