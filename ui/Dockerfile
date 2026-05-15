@@ -1,24 +1,24 @@
-FROM mcr.microsoft.com/azurelinux/base/nodejs:20.14
+FROM node:22-slim
 
 # Install global CLI as root first
 RUN npm install -g @azure/static-web-apps-cli
 
-# Set up workdir and ownership *before* switching users
+# Set up workdir; the upstream image has a "node" non-root user
 WORKDIR /app
-RUN chown nonroot:nonroot /app
+RUN chown node:node /app
 
 # Switch to non-root before installing dependencies so they're owned correctly instantly
-USER nonroot
+USER node
 
 # Copy and install (no massive recursive chown later)
-COPY --chown=nonroot:nonroot package*.json ./
+COPY --chown=node:node package*.json ./
 RUN npm install
 
 # Copy application files
-COPY --chown=nonroot:nonroot . .
+COPY --chown=node:node . .
 
 # Copy the Docker-specific environment file
-COPY --chown=nonroot:nonroot .env.docker .env
+COPY --chown=node:node .env.docker .env
 
 EXPOSE 4280
 
