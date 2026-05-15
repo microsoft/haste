@@ -93,9 +93,7 @@ def _require_email_param(req: func.HttpRequest, name: str) -> str:
 
 def _bad_request(name_or_message: str) -> func.HttpResponse:
     logger.warning(f"Rejected request: {name_or_message}")
-    return func.HttpResponse(
-        "Invalid request parameters.", status_code=400
-    )
+    return func.HttpResponse("Invalid request parameters.", status_code=400)
 
 
 def _decode_client_principal(req: func.HttpRequest) -> dict | None:
@@ -110,7 +108,9 @@ def _decode_client_principal(req: func.HttpRequest) -> dict | None:
         principal = json.loads(decoded)
         return principal if isinstance(principal, dict) else None
     except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as e:
-        logger.warning(f"Failed to decode x-ms-client-principal header: {type(e).__name__}")
+        logger.warning(
+            f"Failed to decode x-ms-client-principal header: {type(e).__name__}"
+        )
         return None
 
 

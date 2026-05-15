@@ -31,29 +31,21 @@
       "name": "Launch React",
       "type": "msedge",
       "request": "launch",
-      "url": "http://localhost:5173",
+      "url": "http://localhost:4280",
       "webRoot": "${workspaceFolder}/ui",
       "preLaunchTask": "swa: start"
     },
     {
       "name": "Launch Functions API",
-      "type": "debugpy",
-      "request": "attach",
-      "connect": {
-        "host": "localhost",
-        "port": 7071
-      },
-      "preLaunchTask": "conda func: host start api"
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "pwsh -NoLogo -File ${workspaceFolder}/.vscode/launch-funcapp.ps1 -Folder ${workspaceFolder}/api/hastefuncapi"
     },
     {
       "name": "Launch Functions QueueTriggers",
-      "type": "debugpy",
-      "request": "attach",
-      "connect": {
-        "host": "localhost",
-        "port": 7071
-      },
-      "preLaunchTask": "conda func: host start triggers"
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "pwsh -NoLogo -File ${workspaceFolder}/.vscode/launch-funcapp.ps1 -Folder ${workspaceFolder}/api/hastefuncqueues"
     },
     {
       "type": "node",

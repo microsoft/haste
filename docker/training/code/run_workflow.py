@@ -244,6 +244,8 @@ if __name__ == "__main__":
     except Exception as e:
         print(e)
         traceback.print_exc()
-        log_progress(f"Unexpected error: {type(e).__name__}. See task stderr for details.")
+        log_progress(
+            f"Unexpected error: {type(e).__name__}. See task stderr for details."
+        )
         log_progress("Please contact your HASTE website administrator")
         sys.exit(1)

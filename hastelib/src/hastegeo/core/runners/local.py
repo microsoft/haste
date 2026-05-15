@@ -234,9 +234,7 @@ class LocalRunner(BaseRunner):
                 try:
                     _p.chmod(0o777)
                 except Exception as chmod_err:
-                    self.logger.debug(
-                        f"chmod failed for {_p}: {chmod_err}"
-                    )
+                    self.logger.debug(f"chmod failed for {_p}: {chmod_err}")
 
             # Force filesystem sync and verify files exist before starting container
             os.sync()
