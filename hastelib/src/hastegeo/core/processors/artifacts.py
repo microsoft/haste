@@ -228,7 +228,7 @@ class ArtifactProcessor:
                 f"Adding task for artifact zipping {self.model_artifacts.modelId}"
             )
             zip_input_files = self.prepare_zip_job()
-            command = '"python -m haste.workflows.zip_artifacts"'
+            command = '"python -m hastegeo.workflows.zip_artifacts"'
             job_id = self.config.get_azure_batch_config()[
                 "artifact_batch_job_id"
             ]
