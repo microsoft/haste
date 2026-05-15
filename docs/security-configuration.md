@@ -1,13 +1,10 @@
-# HASTE — Secure Configuration Guidance (DRAFT)
+# HASTE — Secure Configuration Guidance
 
 | Field | Value |
 |-------|-------|
 | **Repository** | microsoft/haste |
 | **Audience** | Customers / consumers / operators deploying HASTE |
-| **Status** | DRAFT for tech review |
-| **Last updated** | 2026-05-13 |
-
-> **Note to reviewers (remove before publishing):** This draft is intended to live in the public HASTE docs site at `https://microsoft.github.io/haste/security-configuration.html` and to be cross-linked from `README.md`, `SECURITY.md`, and `docs/deployment.md`. Tech-review checklist at the end of the document.
+| **Last updated** | 2026-05-14 |
 
 ---
 
@@ -324,20 +321,3 @@ Before exposing HASTE to anyone other than its developers, verify:
 - **HASTE Security Policy** — https://github.com/microsoft/haste/blob/main/SECURITY.md
 - **HASTE CHANGELOG** — https://github.com/microsoft/haste/blob/main/CHANGELOG.md
 - **HASTE Known Vulnerabilities (rolling)** — https://github.com/microsoft/haste/blob/main/docs/known-vulnerabilities.md
-
----
-
-## Tech-review checklist (delete before publication)
-
-- [ ] **Tech review on content** — content team confirms accuracy of every Azure CLI snippet, header recommendation, and remediation reference
-- [ ] **Tech review on UI surfaces that point to this doc** — confirm the in-product Help link (e.g., Admin → Security or footer) resolves to the published URL once live
-- [ ] **High-priority security issues resolved or disclosed** — verify each item in §8 is either fixed or accurately described as a current limitation with an operational mitigation
-- [ ] **Backward-compatibility items documented** — §8.7 covers the current set; extend at each release where customer-visible auth/secrets/network behavior changes
-- [ ] **Final security review before release** — schedule with the security team
-- [ ] **Development team final approval** — sign-off recorded in this doc's commit history
-- [ ] **Internet-accessible publication** — confirm the doc renders at `https://microsoft.github.io/haste/security-configuration.html` and is indexed by search
-- [ ] **In-product link** — confirm the HASTE UI's footer or Help menu links to the published URL
-
----
-
-*Draft prepared 2026-05-13. Send tech-review feedback to the HASTE engineering channel.*
