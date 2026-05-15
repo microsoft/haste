@@ -28,12 +28,12 @@ COPY --chown=appuser:appgroup docker/imageryprep/requirements.txt /app/
 RUN pip install -r /app/requirements.txt
 
 # Provide CLI entrypoints expected by the workflows without requiring a separate package install
-RUN printf '#!/bin/bash\nexec python -m haste.workflows.prepare_imagery "$@"\n' > /usr/local/bin/prepare-imagery \
-    && printf '#!/bin/bash\nexec python -m haste.workflows.zip_artifacts "$@"\n' > /usr/local/bin/zip-artifacts \
+RUN printf '#!/bin/bash\nexec python -m hastegeo.workflows.prepare_imagery "$@"\n' > /usr/local/bin/prepare-imagery \
+    && printf '#!/bin/bash\nexec python -m hastegeo.workflows.zip_artifacts "$@"\n' > /usr/local/bin/zip-artifacts \
     && chmod +x /usr/local/bin/prepare-imagery \
     && chmod +x /usr/local/bin/zip-artifacts
 
-# Set PYTHONPATH so haste modules can be found at runtime
+# Set PYTHONPATH so hastegeo modules can be found at runtime
 ENV PYTHONPATH=/app
 
 # Convert line endings and make entrypoint script executable
