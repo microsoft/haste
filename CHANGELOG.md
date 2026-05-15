@@ -7,10 +7,25 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 
 ---
 
-## [Unreleased]
+## [v1.4.3] — Secure configuration and SDL hardening
+
+### Added
+- **Secure configuration guide** — New `docs/security-configuration.md` for customers deploying HASTE in their own subscription: authentication and authorization, secrets and key management, network and transport configuration (CORS, CSP, TLS), container hardening, logging and incident response, known limitations with operational mitigations, and a pre-production checklist
+- **Venv-based local-dev launcher** — `.vscode/launch-funcapp.ps1` runs the Functions host inside each folder's `.venv` and reinstalls dependencies only when `requirements.txt` has changed (SHA256 marker); new `venv func: host start` tasks in `tasks.json`
 
 ### Changed
 - **Azurite global install** — Removed `azurite` from `package.json`; developers now install it globally (`npm install -g azurite`). This resolves Dependabot alerts #3, #4, #6, #7, #9, #10, #11, which were blocked by `azurite → @azure/ms-rest-js` transitive vulnerabilities.
+- **`hastegeo` bumped to 1.0.2** — Library version propagated across all `requirements.txt` files and `__about__.py`
+- **GDAL platform-scoped** — Linux-only GDAL wheel now pinned with `sys_platform == 'linux'` marker so Windows venvs install cleanly
+- **IPv4 for local dev** — SWA emulator (`swa: start` task) and the UI's `tileServerSettings` now use `127.0.0.1` instead of `localhost` to avoid IPv6 resolution hangs on Windows
+- **Removed `@turf/turf`** — Dropped UI dependency for license compatibility
+
+### Security
+- **Imagery URL allowlist (SSRF mitigation)** — `PutLayer` rejects imagery URLs whose host is not under `*.blob.core.windows.net` or `*.amazonaws.com`; the UI mirrors this client-side for inline feedback when adding a URL; the imagery downloader applies the same allowlist as defense-in-depth at fetch time. Closes the application-layer SSRF gap previously documented as a known limitation
+- **Strict parameter validation on API endpoints** — `GetProjectDetails`, `DeleteProject`, `DeleteLayer`, `DeleteUser`, and `GetVisualizerResults` now validate GUID and email request parameters against allowlist regexes and return generic HTTP 400 for malformed input
+- **Path-traversal guard for blob URLs** — `LocalRunner` rejects blob URLs containing `..` segments or null bytes before composing a blob name
+- **Error message sanitization** — Raw exception messages, pydantic validation details, and batch task `stderr.txt` content no longer surface to API clients or the UI; full content is still logged server-side for admin diagnostics
+- **Narrowed exception handling** — `except Exception: pass` clauses in `function_app.py` (base64 principal decode), `docker_utils.py` (container cleanup), and `local.py` (blob client construction, chmod, partial-download cleanup) replaced with specific exception types and debug logging
 
 ---
 
