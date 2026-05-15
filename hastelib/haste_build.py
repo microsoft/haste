@@ -84,6 +84,12 @@ class CustomBuildHook(BuildHookInterface):
         if version == "editable":
             print("Editable build detected. Skipping wheel file updates.")
             return
+        if os.getenv("HASTE_SKIP_VERSION_BUMP"):
+            print(
+                "HASTE_SKIP_VERSION_BUMP set, skipping wheel publish and "
+                "requirements rewrite."
+            )
+            return
         version_file_path = os.path.join(
             self.root, "src", "hastegeo", "__about__.py"
         )
