@@ -110,6 +110,48 @@ export function validateURL(url) {
   }
 }
 
+// Keep in sync with hastelib/src/hastegeo/core/utils/url_allowlist.py.
+const IMAGERY_URL_ALLOWED_HOST_DESCRIPTION =
+  "Azure Blob Storage (*.blob.core.windows.net) or AWS S3 (*.amazonaws.com)";
+
+export function validateImageryUrlHost(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (e) {
+    return [false, "Invalid URL format"];
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return [false, `Unsupported URL scheme: ${parsed.protocol}`];
+  }
+
+  const host = parsed.hostname;
+  if (!host) {
+    return [false, "URL is missing host component"];
+  }
+
+  if (
+    host === "blob.core.windows.net" ||
+    host.endsWith(".blob.core.windows.net")
+  ) {
+    return [true, ""];
+  }
+
+  if (
+    host === "s3.amazonaws.com" ||
+    host.endsWith(".s3.amazonaws.com") ||
+    host.endsWith(".amazonaws.com")
+  ) {
+    return [true, ""];
+  }
+
+  return [
+    false,
+    `URL host "${host}" is not on the allowlist. Allowed: ${IMAGERY_URL_ALLOWED_HOST_DESCRIPTION}.`,
+  ];
+}
+
 
 export function validateFileType(file, acceptedFileTypes) {
   const fileExtension = file.split(".").pop().toLowerCase();

@@ -270,9 +270,19 @@ If you fork HASTE and reuse the included `azure-pipelines.yml` with a self-hoste
 
 The chunked file-upload endpoint accepts a `file_id` parameter and does not yet enforce a strict character allow-list against path-traversal sequences. The endpoint requires authentication and the parameter is constrained by the UI, but operators should not expose the chunked-upload route to untrusted authenticated clients. A character-class allow-list and `realpath` prefix check are recommended additions if you extend the API.
 
-### 8.5 SSRF — outbound imagery download has no host allow-list
+### 8.5 Imagery URL allowlist and outbound egress controls
 
-The imagery-download workflow fetches user-supplied URLs without an enforced host allow-list. **Customers running HASTE in their own subscription should add network egress controls** (NSG, Azure Firewall, or Function App outbound restrictions) limiting outbound traffic to the imagery providers you actually use (e.g., Planet Labs, NASA, Maxar).
+HASTE enforces an application-layer allowlist on user-supplied imagery URLs. The `PutLayer` API rejects (HTTP 400) any submission whose `preEventImageryUrls` or `postEventImageryUrls` contains a host outside `*.blob.core.windows.net` (Azure Blob Storage) or `*.amazonaws.com` (AWS S3, including `s3.amazonaws.com` and regional subdomains). The UI mirrors this check client-side so users get inline feedback when adding a URL rather than after submitting a layer. The imagery downloader (`ImageryDownloader._validate_url`) applies the same allowlist as defense-in-depth at fetch time.
+
+This closes the application-layer SSRF risk that previously existed in the imagery-download path: the Function App and Batch workers cannot be coerced into fetching arbitrary user-controlled URLs (which could otherwise reach the Instance Metadata Service at `169.254.169.254`, internal VNet addresses, `localhost`-bound services on the host, or attacker-controlled HTTP endpoints from the server's network position).
+
+**Defense-in-depth recommendation**: even with the application-layer allowlist, restrict outbound egress from the Function App and Batch node pool (NSG, Azure Firewall, or Function App outbound IP restrictions) to the specific imagery providers you actually use. This protects against:
+
+- Future code paths that bypass the allowlist
+- Compromise of an allowlisted hostname (e.g., a hostile Azure Blob container in another tenant)
+- DNS rebinding — the application-layer check validates the hostname *string*, but the actual TCP connection performs a separate DNS resolution at fetch time. Pinning egress at the network layer to known imagery-provider IP ranges removes that window.
+
+If your imagery sources are a small static set (customer-owned storage accounts, specific public S3 buckets), use that exact set for the egress allowlist as well rather than the broad `*.blob.core.windows.net` / `*.amazonaws.com` patterns.
 
 ### 8.6 Open redirect on logout
 
@@ -283,6 +293,7 @@ The UI's logout flow accepts a `redirectPath` query parameter that is not strict
 - **User-management endpoint scope (post-v1.4.1)**: The `PutUser` endpoint was originally gated entirely on the `administrators` role. A subsequent release narrowed the gate to allow self-service updates **only** when the caller's email matches the target's email, and rejects role-change attempts from non-admins. Customers upgrading from v1.4.0 or earlier should re-test any external integrations that call `PutUser` on behalf of non-admin users.
 - **`VITE_AZURE_MAPS_KEY` removed (post-v1.4.1)**: The UI no longer reads `VITE_AZURE_MAPS_KEY`. Set `VITE_AZURE_MAPS_CLIENT_ID` to your Function App's managed-identity client ID. **If you ever set `VITE_AZURE_MAPS_KEY`, rotate the corresponding Azure Maps subscription key**, because it was previously baked into the client bundle and may have been distributed.
 - **`azurite` removed from `package.json`**: Developers must now install Azurite globally (`npm install -g azurite`). No production impact.
+- **Imagery URL allowlist enforced (post-v1.4.1)**: `PutLayer` now rejects requests whose `preEventImageryUrls` or `postEventImageryUrls` contain a host outside `*.blob.core.windows.net` or `*.amazonaws.com`. The pre-existing batch-download code silently skipped such URLs, so this change makes the rejection visible at submission time rather than producing failed jobs with empty outputs. Customers with API integrations that submit imagery from other sources must move that imagery into an allowlisted source before upgrading, or the affected layer-creation calls will fail.
 
 Each HASTE release documents security-relevant changes in [`CHANGELOG.md`](https://github.com/microsoft/haste/blob/main/CHANGELOG.md). The rolling list of acknowledged dependency vulnerabilities — fixed, dismissed with rationale, or pending — is maintained at [`docs/known-vulnerabilities.md`](https://github.com/microsoft/haste/blob/main/docs/known-vulnerabilities.md).
 

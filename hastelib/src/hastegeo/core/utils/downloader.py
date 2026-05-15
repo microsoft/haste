@@ -18,6 +18,7 @@ from tenacity import (
 )
 
 from .logs import Logger
+from .url_allowlist import validate_imagery_url
 
 
 class ImageryDownloader:
@@ -118,35 +119,7 @@ class ImageryDownloader:
             raise e
 
     def _validate_url(self, url: str) -> str:
-        """Validate a remote imagery URL against the allowlist of permitted hosts.
-
-        Returns a string identifying the source type. Raises ValueError if the
-        URL is malformed or the host is not on the allowlist — callers must
-        treat this as a hard rejection (no fallback to arbitrary HTTP fetch).
-        """
-        parsed = urlparse(url)
-        if parsed.scheme not in ("https", "http"):
-            raise ValueError(f"Unsupported URL scheme: {parsed.scheme!r}")
-
-        host = parsed.hostname
-        if not host:
-            raise ValueError("URL is missing host component")
-
-        if host == "blob.core.windows.net" or host.endswith(
-            ".blob.core.windows.net"
-        ):
-            return "azureblobstorage"
-
-        if (
-            host == "s3.amazonaws.com"
-            or host.endswith(".s3.amazonaws.com")
-            or host.endswith(".amazonaws.com")
-        ):
-            return "awss3"
-
-        raise ValueError(
-            f"URL host {host!r} is not on the allowlist of permitted imagery sources"
-        )
+        return validate_imagery_url(url)
 
     @retry(
         stop=stop_after_attempt(3),

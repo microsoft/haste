@@ -26,4 +26,4 @@ pyyaml==6.0.2
 boto3==1.36.20
 tensorboard==2.19.0
 tenacity==9.1.2
-hastegeo @ https://researchlabwuopendata.blob.core.windows.net/haste-binaries/hastegeo-1.0.1-py3-none-any.whl
+hastegeo @ https://researchlabwuopendata.blob.core.windows.net/haste-binaries/hastegeo-1.0.2-py3-none-any.whl
