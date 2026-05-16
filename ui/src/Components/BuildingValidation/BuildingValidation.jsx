@@ -134,19 +134,18 @@ const BuildingValidation = () => {
       if (featuresArr.length > 0) {
         datasource.add(footprintsGeoJSON);
 
-        // Polygon fill layer
-        map.layers.add(
-          new window.atlas.layer.PolygonLayer(datasource, "buildingFill", {
-            fillColor: [
-              "case",
-              ["==", ["get", "_label"], "Damaged"], LABEL_COLORS.Damaged,
-              ["==", ["get", "_label"], "NotDamaged"], LABEL_COLORS.NotDamaged,
-              ["==", ["get", "_label"], "Unknown"], LABEL_COLORS.Unknown,
-              LABEL_COLORS.unlabeled,
-            ],
-            fillOpacity: 0.5,
-          })
-        );
+        // Polygon fill layer — keep reference for event binding
+        const fillLayer = new window.atlas.layer.PolygonLayer(datasource, "buildingFill", {
+          fillColor: [
+            "case",
+            ["==", ["get", "_label"], "Damaged"], LABEL_COLORS.Damaged,
+            ["==", ["get", "_label"], "NotDamaged"], LABEL_COLORS.NotDamaged,
+            ["==", ["get", "_label"], "Unknown"], LABEL_COLORS.Unknown,
+            LABEL_COLORS.unlabeled,
+          ],
+          fillOpacity: 0.5,
+        });
+        map.layers.add(fillLayer);
 
         // Polygon outline layer
         map.layers.add(
@@ -164,8 +163,8 @@ const BuildingValidation = () => {
           })
         );
 
-        // Click handler: select building by clicking on map
-        map.events.add("click", "buildingFill", (e) => {
+        // Click handler: pass layer object (not string ID) — Atlas v3 requirement
+        map.events.add("click", fillLayer, (e) => {
           if (e.shapes && e.shapes.length > 0) {
             const clickedId = e.shapes[0].getProperties().id;
             const idx = featuresArr.findIndex((f) => f.properties?.id === clickedId);
