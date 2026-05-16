@@ -44,8 +44,15 @@ class ArtifactProcessor:
         )
         self.model_artifacts = model_artifacts
         if self.model_data is not None:
+            safe_name = self.model_data.name.replace(" ", "-")
             self.zip_name = self.config.get_artifact_types().MODEL_ARTIFACTS_ZIP.value.substitute(
-                modelName=self.model_data.name
+                modelName=safe_name
+            )
+            self.training_zip_name = self.config.get_artifact_types().TRAINING_ARTIFACTS_ZIP.value.substitute(
+                modelName=safe_name
+            )
+            self.inference_zip_name = self.config.get_artifact_types().INFERENCE_ARTIFACTS_ZIP.value.substitute(
+                modelName=safe_name
             )
 
     def get_download_url(
@@ -119,11 +126,48 @@ class ArtifactProcessor:
                 self.model_artifacts.zipJobs[
                     idx
                 ].completedDate = MetadataUtils.get_timestamp()
-                # Add Zip URL only for successful zip jobs
-                self.model_artifacts.zipUrl = self.storage.get_download_url(
-                    identifier=self.zip_name + ".zip",
-                    extra_partition_keys=f"{self.model_artifacts.zipJobs[idx].taskId}",
+
+                # Read the zip manifest to get individual zip URLs and sizes
+                zip_task_id = self.model_artifacts.zipJobs[idx].taskId
+                zip_prefix = self.model_artifacts.zipJobs[idx].dstZipPath
+                try:
+                    manifest_data = self._read_zip_manifest(zip_prefix)
+                except Exception as e:
+                    self.logger.warning(
+                        f"Could not read zip manifest: {e}; "
+                        "falling back to combined zip URL"
+                    )
+                    manifest_data = {}
+
+                if "training_zip" in manifest_data:
+                    self.model_artifacts.trainingZipUrl = (
+                        self.storage.get_download_url(
+                            identifier=manifest_data["training_zip"]["filename"],
+                            extra_partition_keys=zip_task_id,
+                        )
+                    )
+                    self.model_artifacts.trainingZipSize = manifest_data[
+                        "training_zip"
+                    ]["size_bytes"]
+
+                if "inference_zip" in manifest_data:
+                    self.model_artifacts.inferenceZipUrl = (
+                        self.storage.get_download_url(
+                            identifier=manifest_data["inference_zip"]["filename"],
+                            extra_partition_keys=zip_task_id,
+                        )
+                    )
+                    self.model_artifacts.inferenceZipSize = manifest_data[
+                        "inference_zip"
+                    ]["size_bytes"]
+
+                # Keep legacy zipUrl pointing at the training zip for
+                # backwards compatibility with older UI versions.
+                self.model_artifacts.zipUrl = (
+                    self.model_artifacts.trainingZipUrl
+                    or self.model_artifacts.inferenceZipUrl
                 )
+
                 self._update_zip_progress(
                     "Zipping artifacts completed successfully"
                 )
@@ -249,7 +293,8 @@ class ArtifactProcessor:
                 ],
                 env_vars={
                     "INPUT_DIR": f"inputs/{MetadataUtils.hash_string(self.model_artifacts.projectId)}",
-                    "OUTPUT_ZIP_NAME": f"{self.zip_name}",
+                    "OUTPUT_TRAINING_ZIP_NAME": f"{self.training_zip_name}",
+                    "OUTPUT_INFERENCE_ZIP_NAME": f"{self.inference_zip_name}",
                 },
             )
             self.logger.info(
@@ -296,6 +341,15 @@ class ArtifactProcessor:
             )
 
         return self.model_artifacts
+
+    def _read_zip_manifest(self, zip_prefix: str) -> dict:
+        """Read the zip_manifest.json produced by zip_artifacts.py."""
+        blob_path = f"{zip_prefix}/zip_manifest.json"
+        blob_client = self.storage.artifact_storage.container_client.get_blob_client(
+            blob_path
+        )
+        data = blob_client.download_blob().readall()
+        return json.loads(data)
 
     def _update_zip_progress(self, message: str, timestamp: str = None):
         self.model_artifacts.zipStatusMessage = (

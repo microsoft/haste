@@ -1,44 +1,95 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
+import json
 import os
 from zipfile import ZipFile
 
 
-def main():
-    """
-    Main function to zip artifacts.
-    """
-    # Setup directories
-    output_dir = "outputs"
-    temp_dir = "temp"
-
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(temp_dir, exist_ok=True)
-
-    INPUT_DIR = os.getenv("INPUT_DIR", "inputs")
-    OUTPUT_ZIP_NAME = os.getenv("OUTPUT_ZIP_NAME", "model_outputs")
-
-    # Create a ZIP file of each input directory
-    for dir_to_zip in os.listdir(INPUT_DIR):
-        input_dir_path = os.path.join(INPUT_DIR, dir_to_zip)
-        temp_zip_path = os.path.join(temp_dir, dir_to_zip + ".zip")
-        with ZipFile(temp_zip_path, "w") as zipf:
-            for root, dirs, files in os.walk(input_dir_path):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    zipf.write(
-                        file_path, os.path.relpath(file_path, input_dir_path)
-                    )
-
-    # Make a final zip of all zips in the temp directory
-    if not OUTPUT_ZIP_NAME.endswith(".zip"):
-        OUTPUT_ZIP_NAME += ".zip"
-    output_zip_path = os.path.join(output_dir, OUTPUT_ZIP_NAME)
-    with ZipFile(output_zip_path, "w") as zipf:
-        for root, dirs, files in os.walk(temp_dir):
+def _zip_directory(src_dir, zip_path):
+    """Zip all files under *src_dir* into *zip_path*."""
+    with ZipFile(zip_path, "w") as zipf:
+        for root, _dirs, files in os.walk(src_dir):
             for file in files:
                 file_path = os.path.join(root, file)
-                zipf.write(file_path, os.path.relpath(file_path, temp_dir))
+                zipf.write(
+                    file_path, os.path.relpath(file_path, src_dir)
+                )
+
+
+def main():
+    """Create separate training and inference zip archives.
+
+    Reads subdirectories from INPUT_DIR, classifies them by ``trn-`` /
+    ``inf-`` prefix, and produces one zip per category.  A
+    ``manifest.json`` is written alongside the zips so the orchestrator
+    can read back file sizes without extra blob API calls.
+    """
+    output_dir = "outputs"
+    os.makedirs(output_dir, exist_ok=True)
+
+    input_dir = os.getenv("INPUT_DIR", "inputs")
+    training_zip_name = os.getenv(
+        "OUTPUT_TRAINING_ZIP_NAME", "training_artifacts"
+    )
+    inference_zip_name = os.getenv(
+        "OUTPUT_INFERENCE_ZIP_NAME", "inference_artifacts"
+    )
+
+    if not training_zip_name.endswith(".zip"):
+        training_zip_name += ".zip"
+    if not inference_zip_name.endswith(".zip"):
+        inference_zip_name += ".zip"
+
+    training_dirs = []
+    inference_dirs = []
+
+    for entry in sorted(os.listdir(input_dir)):
+        full_path = os.path.join(input_dir, entry)
+        if not os.path.isdir(full_path):
+            continue
+        if entry.startswith("trn-"):
+            training_dirs.append(full_path)
+        elif entry.startswith("inf-"):
+            inference_dirs.append(full_path)
+
+    manifest = {}
+
+    if training_dirs:
+        training_zip_path = os.path.join(output_dir, training_zip_name)
+        # Merge all training dirs into one zip (typically just one)
+        with ZipFile(training_zip_path, "w") as zipf:
+            for src_dir in training_dirs:
+                for root, _dirs, files in os.walk(src_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        zipf.write(
+                            file_path,
+                            os.path.relpath(file_path, src_dir),
+                        )
+        manifest["training_zip"] = {
+            "filename": training_zip_name,
+            "size_bytes": os.path.getsize(training_zip_path),
+        }
+
+    if inference_dirs:
+        inference_zip_path = os.path.join(output_dir, inference_zip_name)
+        with ZipFile(inference_zip_path, "w") as zipf:
+            for src_dir in inference_dirs:
+                for root, _dirs, files in os.walk(src_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        zipf.write(
+                            file_path,
+                            os.path.relpath(file_path, src_dir),
+                        )
+        manifest["inference_zip"] = {
+            "filename": inference_zip_name,
+            "size_bytes": os.path.getsize(inference_zip_path),
+        }
+
+    manifest_path = os.path.join(output_dir, "zip_manifest.json")
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
 
 
 if __name__ == "__main__":

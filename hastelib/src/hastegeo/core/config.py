@@ -85,6 +85,8 @@ class ArtifactTypes(Enum):
         POST_EVENT_MOSAIC.template + Template("_visualizer").template
     )
     MODEL_ARTIFACTS_ZIP = Template("artifacts_${modelName}")
+    TRAINING_ARTIFACTS_ZIP = Template("training_artifacts_${modelName}")
+    INFERENCE_ARTIFACTS_ZIP = Template("inference_artifacts_${modelName}")
 
 
 class InviteConfig(NamedTuple):

@@ -10,6 +10,15 @@ import { AppContext } from "../../AppContext";
 import ModelResultsStatusIndicator from "../OtherComponents/ModelResultsStatusIndicator";
 
 
+function formatFileSize(bytes) {
+  if (bytes == null) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
 
 const ModelResultsButton = ({ model, projectId, imageLayerId, index }) => {
   ModelResultsButton.propTypes = {
@@ -36,6 +45,32 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index }) => {
     return true;
   }
 
+  function handleDownload(url) {
+    try {
+      if (import.meta.env.VITE_STORAGE_APIM_URL) {
+        url = url.replace(
+          /^https?:\/\/[^/]+/,
+          import.meta.env.VITE_STORAGE_APIM_URL
+        );
+      }
+      fileDownload(url, setDialog);
+    } catch (error) {
+      setDialog({
+        title: "Download Error",
+        message: "An error occurred while downloading. Please try again later.",
+        isOpen: true,
+      });
+    }
+  }
+
+  const trainingZipLabel = model.artifacts?.trainingZipSize
+    ? `Download Training Artifacts (${formatFileSize(model.artifacts.trainingZipSize)})`
+    : "Download Training Artifacts";
+
+  const inferenceZipLabel = model.artifacts?.inferenceZipSize
+    ? `Download Inference Artifacts (${formatFileSize(model.artifacts.inferenceZipSize)})`
+    : "Download Inference Artifacts";
+
   const resultsMenuOptions = (model) => ({
     items: [
       {
@@ -59,58 +94,31 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index }) => {
         text: "Download Geopackage (.gpkg)",
         iconProps: { iconName: "download" },
         onClick: () => {
-          handleGeopackageDownload(model);
+          handleDownload(model.gpkgUrl);
         },
         disabled: model.gpkgUrl === null || model.gpkgUrl === undefined || model.gpkgUrl === "",
       },
       {
-        key: "downloadAllArtifacts",
-        text: "Download All Artifacts",
+        key: "downloadTrainingArtifacts",
+        text: trainingZipLabel,
         iconProps: { iconName: "download" },
         onClick: () => {
-          handleArtifactsDownload(model);
+          handleDownload(model.artifacts.trainingZipUrl);
         },
-        disabled: !(model.artifacts && model.artifacts.zipUrl),
+        disabled: !(model.artifacts?.trainingZipUrl),
+      },
+      {
+        key: "downloadInferenceArtifacts",
+        text: inferenceZipLabel,
+        iconProps: { iconName: "download" },
+        onClick: () => {
+          handleDownload(model.artifacts.inferenceZipUrl);
+        },
+        disabled: !(model.artifacts?.inferenceZipUrl),
       },
     ],
   });
 
-
-  function handleGeopackageDownload(model) {
-    try {
-      if (import.meta.env.VITE_STORAGE_APIM_URL) {
-        model.gpkgUrl = model.gpkgUrl.replace(
-          /^https?:\/\/[^/]+/,
-          import.meta.env.VITE_STORAGE_APIM_URL
-        );
-      }
-      fileDownload(model.gpkgUrl, setDialog);
-    } catch (error) {
-      setDialog({
-        title: "Download Error",
-        message: "An error occurred while downloading the GeoPackage.",
-        isOpen: true,
-      });
-    }
-  }
-
-    function handleArtifactsDownload(model) {
-      try {
-        if (import.meta.env.VITE_STORAGE_APIM_URL) {
-          model.artifacts.zipUrl = model.artifacts.zipUrl.replace(
-            /^https?:\/\/[^/]+/,
-            import.meta.env.VITE_STORAGE_APIM_URL
-          );
-        }
-        fileDownload(model.artifacts.zipUrl, setDialog);
-      } catch (error) {
-        setDialog({
-          title: "Download Error",
-          message: "An error occurred while downloading artifacts.",
-          isOpen: true,
-        });
-      }
-    }
 
     return (
       <React.Fragment key={"models_" + projectId + "_" + imageLayerId}>
