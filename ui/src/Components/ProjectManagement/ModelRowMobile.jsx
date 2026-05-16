@@ -14,13 +14,14 @@ import CreateEditModelCheckpoint from "../CreateEditModelCheckpoint";
 import { apiDelete } from "../../util/api";
 import { fileDownload } from "../../util/file";
 
-const ModelRowMobile = ({ models, projectId, imageLayerId, fetchProjectDetails, setModalComponent  }) => {
+const ModelRowMobile = ({ models, projectId, imageLayerId, fetchProjectDetails, setModalComponent, validationLabelCount }) => {
   ModelRowMobile.propTypes = {
     projectId: PropTypes.string.isRequired,
     imageLayerId: PropTypes.string.isRequired,
     models: PropTypes.array.isRequired,
     fetchProjectDetails: PropTypes.func.isRequired,
     setModalComponent: PropTypes.func.isRequired,
+    validationLabelCount: PropTypes.number,
   };
 
   const { setDialog, setIsLoading } = useContext(AppContext);
@@ -202,6 +203,7 @@ const ModelRowMobile = ({ models, projectId, imageLayerId, fetchProjectDetails, 
                   projectId={projectId}
                   imageLayerId={imageLayerId}
                   index={index}
+                  validationLabelCount={validationLabelCount}
                 />
               </td>
             </tr>

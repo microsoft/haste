@@ -294,6 +294,7 @@ const LayerRow = ({
                     projectId={projectId}
                     fetchProjectDetails={fetchProjectDetails}
                     setModalComponent={setModalComponent}
+                    validationLabelCount={item.validationLabelCount || 0}
                   />
                 ) : (
                   <>
@@ -312,6 +313,7 @@ const LayerRow = ({
                       fetchProjectDetails={fetchProjectDetails}
                       setComponentState={setComponentState}
                       setModalComponent={setModalComponent}
+                      validationLabelCount={item.validationLabelCount || 0}
                     />
                   </>
                 )}

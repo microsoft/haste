@@ -636,6 +636,18 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
                 if not image_layer.get("labelsUrl"):
                     # Older image layers will not have the generated geoJSON
                     image_layer["labelsUrl"] = None
+            try:
+                validation_data = await asyncio.to_thread(
+                    MetadataProcessor(
+                        data_type=config.get_metadata_types().VALIDATION.value,
+                        partition_key=project_id,
+                    ).load,
+                    image_layer_id,
+                )
+                labels = validation_data.get("labels") or {}
+                image_layer["validationLabelCount"] = len(labels)
+            except FileNotFoundError:
+                image_layer["validationLabelCount"] = 0
         project["imageLayer"] = image_layers
         project["imageLayerCount"] = len(image_layers)
         project["imageLayer"].sort(
@@ -3143,4 +3155,266 @@ async def PutBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
         )
         return func.HttpResponse(
             "Error saving building validation.", status_code=500
+        )
+
+
+@app.route(
+    route="GetValidationReport",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
+    """Compute a validation accuracy report by crossing inference results with
+    user-supplied building validation labels.
+
+    Joins the inference GeoPackage (integer sequential IDs, ``damaged`` 0/1)
+    with the building-footprints GeoPackage (Overture string IDs in the same
+    row order) to produce a per-building prediction lookup, then compares
+    against the human labels stored in BuildingValidation.
+
+    ``Unknown`` labels are excluded from all metric calculations.
+
+    Query params:
+        projectId (str): Parent project identifier.
+        imageLayerId (str): Image layer identifier.
+        modelId (str): Model identifier whose inference results to use.
+
+    Returns JSON:
+        {
+          "matched": int,            // buildings with both a prediction and a label
+          "totalValidationLabels": int,
+          "labelCounts": {"Damaged": int, "NotDamaged": int, "Unknown": int},
+          "accuracy": float,
+          "confusionMatrix": {
+            "labels": ["Damaged", "NotDamaged"],
+            "matrix": [[TP, FP], [FN, TN]]   // rows=actual, cols=predicted
+          },
+          "perClass": {
+            "Damaged":    {"precision": float, "recall": float, "f1": float},
+            "NotDamaged": {"precision": float, "recall": float, "f1": float}
+          },
+          "macroF1": float
+        }
+    """
+    logger.info("GetValidationReport HTTP trigger function processed a request.")
+    try:
+        import tempfile
+        import os as _os
+
+        from urllib.parse import urlparse
+        from azure.storage.blob import BlobServiceClient
+        from hastegeo.core.data_layer.azure_blob_storage_data_layer import (
+            AzureBlobStorageDataLayer,
+        )
+
+        project_id = req.params.get("projectId")
+        image_layer_id = req.params.get("imageLayerId")
+        model_id = req.params.get("modelId")
+
+        if not project_id or not image_layer_id or not model_id:
+            return func.HttpResponse(
+                "projectId, imageLayerId and modelId are required.", status_code=400
+            )
+
+        # ── 1. Load validation labels ──────────────────────────────────────────
+        try:
+            validation_data = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().VALIDATION.value,
+                    partition_key=project_id,
+                ).load,
+                image_layer_id,
+            )
+        except FileNotFoundError:
+            return func.HttpResponse(
+                json.dumps({"error": "No validation labels found for this image layer."}),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        labels_dict = validation_data.get("labels") or {}
+        if not labels_dict:
+            return func.HttpResponse(
+                json.dumps({"error": "No validation labels found for this image layer."}),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        # ── 2. Load model to get gpkgUrl ───────────────────────────────────────
+        model_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).load,
+            model_id,
+        )
+
+        gpkg_url = model_data.get("gpkgUrl")
+        if not gpkg_url:
+            return func.HttpResponse(
+                json.dumps({"error": "No inference results available for this model."}),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        # ── 3. Load image layer to get buildingFootprintsUrl ──────────────────
+        image_layer_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=project_id,
+            ).load,
+            image_layer_id,
+        )
+
+        footprints_url = image_layer_data.get("buildingFootprintsUrl")
+        if not footprints_url:
+            return func.HttpResponse(
+                json.dumps({"error": "No building footprints available for this image layer."}),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        # ── 4. Helper: download a blob by its public/SAS URL ──────────────────
+        conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
+        data_layer = AzureBlobStorageDataLayer(
+            account_url="", container="data", connection_string=conn_str
+        )
+        bsc = BlobServiceClient.from_connection_string(conn_str)
+
+        def _blob_path_from_url(url: str) -> str:
+            parsed = urlparse(url)
+            return parsed.path.replace("/devstoreaccount1/data/", "", 1)
+
+        async def _download_gpkg(url: str) -> str:
+            blob_path = _blob_path_from_url(url)
+            blob_bytes = await asyncio.to_thread(
+                lambda: bsc.get_container_client("data")
+                .get_blob_client(blob_path)
+                .download_blob()
+                .readall()
+            )
+            with tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False) as tmp:
+                tmp.write(blob_bytes)
+                return tmp.name
+
+        # ── 5. Read both GeoPackages ───────────────────────────────────────────
+        import fiona
+
+        footprints_path = await _download_gpkg(footprints_url)
+        gpkg_path = await _download_gpkg(gpkg_url)
+
+        try:
+            # Build index → overture_id from the building footprints file
+            with fiona.open(footprints_path) as src_fp:
+                idx_to_overture = {
+                    i: feat["properties"]["id"]
+                    for i, feat in enumerate(src_fp)
+                }
+
+            # Build int_id → damaged from the inference results
+            with fiona.open(gpkg_path) as src_inf:
+                int_id_to_damaged = {
+                    feat["properties"]["id"]: feat["properties"]["damaged"]
+                    for feat in src_inf
+                }
+        finally:
+            _os.unlink(footprints_path)
+            _os.unlink(gpkg_path)
+
+        # Build overture_id → predicted_damaged
+        overture_to_pred = {
+            overture_id: int_id_to_damaged[int_id]
+            for int_id, overture_id in idx_to_overture.items()
+            if int_id in int_id_to_damaged
+        }
+
+        # ── 6. Compute metrics ─────────────────────────────────────────────────
+        label_counts = {"Damaged": 0, "NotDamaged": 0, "Unknown": 0}
+        for lbl_obj in labels_dict.values():
+            lbl = lbl_obj.get("label", "Unknown")
+            label_counts[lbl] = label_counts.get(lbl, 0) + 1
+
+        # Matched pairs (exclude Unknown)
+        pairs = []
+        for overture_id, lbl_obj in labels_dict.items():
+            actual_label = lbl_obj.get("label")
+            if actual_label == "Unknown":
+                continue
+            pred = overture_to_pred.get(overture_id)
+            if pred is None:
+                continue
+            pred_label = "Damaged" if pred == 1 else "NotDamaged"
+            pairs.append((actual_label, pred_label))
+
+        matched = len(pairs)
+
+        if matched == 0:
+            return func.HttpResponse(
+                json.dumps({
+                    "matched": 0,
+                    "totalValidationLabels": len(labels_dict),
+                    "labelCounts": label_counts,
+                    "error": "No validation labels could be matched to inference results.",
+                }),
+                status_code=200,
+                mimetype="application/json",
+            )
+
+        # Confusion matrix: rows=actual, cols=predicted, for [Damaged, NotDamaged]
+        classes = ["Damaged", "NotDamaged"]
+        cm = {a: {p: 0 for p in classes} for a in classes}
+        for actual, predicted in pairs:
+            cm[actual][predicted] += 1
+
+        matrix = [[cm[a][p] for p in classes] for a in classes]
+        correct = sum(cm[c][c] for c in classes)
+        accuracy = correct / matched
+
+        def _safe_div(num, den):
+            return num / den if den > 0 else 0.0
+
+        per_class = {}
+        f1_scores = []
+        for cls in classes:
+            tp = cm[cls][cls]
+            fp = sum(cm[other][cls] for other in classes if other != cls)
+            fn = sum(cm[cls][other] for other in classes if other != cls)
+            precision = _safe_div(tp, tp + fp)
+            recall = _safe_div(tp, tp + fn)
+            f1 = _safe_div(2 * precision * recall, precision + recall)
+            per_class[cls] = {
+                "precision": round(precision, 4),
+                "recall": round(recall, 4),
+                "f1": round(f1, 4),
+            }
+            f1_scores.append(f1)
+
+        macro_f1 = sum(f1_scores) / len(f1_scores)
+
+        report = {
+            "matched": matched,
+            "totalValidationLabels": len(labels_dict),
+            "labelCounts": label_counts,
+            "accuracy": round(accuracy, 4),
+            "confusionMatrix": {
+                "labels": classes,
+                "matrix": matrix,
+            },
+            "perClass": per_class,
+            "macroF1": round(macro_f1, 4),
+        }
+
+        return func.HttpResponse(
+            json.dumps(report),
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except Exception as e:
+        logger.error(
+            f"Error in GetValidationReport: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error generating validation report.", status_code=500
         )

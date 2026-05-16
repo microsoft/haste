@@ -234,15 +234,39 @@ const BuildingValidation = () => {
     const feature = features[selectedIndex];
     if (!feature) return;
     const buildingId = feature.properties?.id;
-    setLabels((prev) => ({
-      ...prev,
-      [buildingId]: {
-        id: buildingId,
-        label: labelValue,
-        updatedAt: new Date().toISOString(),
-      },
-    }));
+    setLabels((prev) => {
+      const next = {
+        ...prev,
+        [buildingId]: {
+          id: buildingId,
+          label: labelValue,
+          updatedAt: new Date().toISOString(),
+        },
+      };
+      // Advance to the next unlabeled building
+      const nextIdx = features.findIndex(
+        (f, i) => i > selectedIndex && !next[f.properties?.id]?.label
+      );
+      if (nextIdx >= 0) {
+        setSelectedIndex(nextIdx);
+      }
+      return next;
+    });
   }
+
+  // Keyboard shortcuts: 1 = Damaged, 2 = Not Damaged, 3 = Unknown
+  useEffect(() => {
+    const keyMap = { "1": "Damaged", "2": "NotDamaged", "3": "Unknown" };
+    function onKeyDown(e) {
+      // Ignore when focus is in an input/textarea
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+      const labelValue = keyMap[e.key];
+      if (labelValue) handleLabel(labelValue);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [features, selectedIndex]);
 
   async function handleSave() {
     setIsSaving(true);

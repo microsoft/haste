@@ -2,12 +2,13 @@
 // Licensed under the MIT License.
 // Components
 import { PrimaryButton } from "@fluentui/react";
-import React, { useContext } from "react";
+import React, { useContext, useState } from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
 import { fileDownload } from "../../util/file";
 import { AppContext } from "../../AppContext";
 import ModelResultsStatusIndicator from "../OtherComponents/ModelResultsStatusIndicator";
+import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 
 
 function formatFileSize(bytes) {
@@ -20,16 +21,18 @@ function formatFileSize(bytes) {
 }
 
 
-const ModelResultsButton = ({ model, projectId, imageLayerId, index }) => {
+const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationLabelCount }) => {
   ModelResultsButton.propTypes = {
     model: PropTypes.object.isRequired,
     projectId: PropTypes.string.isRequired,
     imageLayerId: PropTypes.string.isRequired,
     index: PropTypes.number.isRequired,
+    validationLabelCount: PropTypes.number,
   };
 
   const { setDialog } = useContext(AppContext);
   const navigate = useNavigate();
+  const [showValidationReport, setShowValidationReport] = useState(false);
 
   function evaluateViewResultsButtonState(model) {
     // Results button must be enabled if inference jobs exist and status is processed
@@ -116,6 +119,13 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index }) => {
         },
         disabled: !(model.artifacts?.inferenceZipUrl),
       },
+      {
+        key: "validationReport",
+        text: "Validation Report",
+        iconProps: { iconName: "ReportDocument" },
+        disabled: model.inferenceStatus !== "Processed" || !(validationLabelCount > 0),
+        onClick: () => setShowValidationReport(true),
+      },
     ],
   });
 
@@ -137,6 +147,15 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index }) => {
             />
           )}
         </div>
+        {showValidationReport && (
+          <ValidationReportModal
+            projectId={projectId}
+            imageLayerId={imageLayerId}
+            modelId={model.modelId}
+            modelName={model.name}
+            onDismiss={() => setShowValidationReport(false)}
+          />
+        )}
       </React.Fragment>
     );
   };
