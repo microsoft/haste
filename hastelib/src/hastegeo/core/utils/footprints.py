@@ -249,3 +249,52 @@ def download_building_footprints(
         output_path,
     )
     return int(footprints.shape[0])
+
+
+def _main():
+    """Argparse entry point so the workflow can call this in a subprocess.
+
+    See ``ImageryWorkflow.download_building_footprints`` in
+    ``hastegeo.workflows.prepare_imagery`` — it spawns
+    ``python -m hastegeo.core.utils.footprints`` so a crash in pyarrow's
+    native code (or a stuck Overture query) is contained to a subprocess and
+    doesn't bring down the parent imageryprep workflow.
+    """
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--bbox",
+        required=True,
+        help="AOI bounding box in EPSG:4326 as 'xmin,ymin,xmax,ymax'",
+    )
+    parser.add_argument(
+        "--output-path",
+        required=True,
+        help="Destination .gpkg filename",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace the output file if it already exists",
+    )
+    args = parser.parse_args()
+
+    try:
+        xmin, ymin, xmax, ymax = (float(v) for v in args.bbox.split(","))
+    except ValueError as e:
+        parser.error(f"--bbox must be 'xmin,ymin,xmax,ymax': {e}")
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    count = download_building_footprints(
+        bbox=(xmin, ymin, xmax, ymax),
+        output_path=args.output_path,
+        overwrite=args.overwrite,
+    )
+    sys.stdout.write(f"{count}\n")
+    sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    _main()

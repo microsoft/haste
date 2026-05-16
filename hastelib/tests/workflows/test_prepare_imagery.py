@@ -5,17 +5,23 @@
 
 The full workflow exercises GDAL/rasterio against real GeoTIFFs, so these
 tests focus on the new ``ImageryWorkflow.download_building_footprints()``
-step in isolation by mocking out the AOI extractor and Overture downloader.
-The goal is to verify (a) the prefix/filename uses the BUILDING_FOOTPRINTS
-ArtifactType template substituted with the layer's IDs, and (b) Overture
-failures are non-fatal (``building_footprints_path`` left empty so the
-manifest entry is empty).
+step in isolation by mocking out the AOI extractor and the subprocess that
+runs the actual Overture download. The goals:
+
+- (a) the prefix/filename uses the BUILDING_FOOTPRINTS ArtifactType template
+  substituted with the layer's IDs;
+- (b) the subprocess invocation passes the right CLI args;
+- (c) any subprocess failure (non-zero exit, timeout, SIGSEGV) is non-fatal
+  — ``building_footprints_path`` is left empty so the manifest entry is
+  empty and inference will fail fast on the layer;
+- (d) the step short-circuits cleanly when no post-event mosaic is present.
 """
 
 import os
+import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from hastegeo.workflows.prepare_imagery import ImageryWorkflow
 
@@ -38,42 +44,95 @@ class TestDownloadBuildingFootprintsStep(unittest.TestCase):
         wf.mosaic_post_event_tif_filepath = mosaic
         return wf
 
-    @patch("hastegeo.core.utils.footprints.download_building_footprints")
+    @patch("subprocess.run")
     @patch("hastegeo.core.utils.aoi.aoi_bbox_from_cog")
     def test_writes_gpkg_with_layer_keyed_filename(
-        self, mock_bbox, mock_download
+        self, mock_bbox, mock_run
     ):
         mock_bbox.return_value = (-156.7, 20.87, -156.66, 20.89)
-        mock_download.return_value = 42
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp)
+            expected_path = os.path.join(
+                tmp, "building_footprints_proj-1_layer-9.gpkg"
+            )
+
+            # Have the "subprocess" actually create the output file so the
+            # path-existence check inside download_building_footprints passes.
+            def fake_run(cmd, **_):
+                with open(expected_path, "wb") as f:
+                    f.write(b"GPKG-stub")
+                return MagicMock(returncode=0, stdout="42\n", stderr="")
+
+            mock_run.side_effect = fake_run
+
+            wf.download_building_footprints()
+
+            self.assertEqual(wf.building_footprints_path, expected_path)
+            mock_bbox.assert_called_once_with(
+                wf.mosaic_post_event_tif_filepath
+            )
+            # Subprocess called with the expected CLI shape
+            self.assertTrue(mock_run.called)
+            cmd = mock_run.call_args.args[0]
+            self.assertIn("hastegeo.core.utils.footprints", cmd)
+            self.assertIn("--bbox", cmd)
+            self.assertIn(
+                "-156.7,20.87,-156.66,20.89", cmd
+            )
+            self.assertIn("--output-path", cmd)
+            self.assertIn(expected_path, cmd)
+            self.assertIn("--overwrite", cmd)
+
+    @patch("subprocess.run")
+    @patch("hastegeo.core.utils.aoi.aoi_bbox_from_cog")
+    def test_subprocess_nonzero_exit_is_non_fatal(self, mock_bbox, mock_run):
+        mock_bbox.return_value = (0.0, 0.0, 1.0, 1.0)
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="boom",
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             wf = self._make_workflow(tmp)
             wf.download_building_footprints()
+            self.assertEqual(wf.building_footprints_path, "")
 
-            expected_path = os.path.join(
-                tmp, "building_footprints_proj-1_layer-9.gpkg"
-            )
-            self.assertEqual(wf.building_footprints_path, expected_path)
-
-            mock_bbox.assert_called_once_with(
-                wf.mosaic_post_event_tif_filepath
-            )
-            mock_download.assert_called_once_with(
-                bbox=(-156.7, 20.87, -156.66, 20.89),
-                output_path=expected_path,
-                overwrite=True,
-            )
-
-    @patch("hastegeo.core.utils.footprints.download_building_footprints")
+    @patch("subprocess.run")
     @patch("hastegeo.core.utils.aoi.aoi_bbox_from_cog")
-    def test_overture_failure_is_non_fatal(self, mock_bbox, mock_download):
+    def test_subprocess_segfault_is_non_fatal(self, mock_bbox, mock_run):
         mock_bbox.return_value = (0.0, 0.0, 1.0, 1.0)
-        mock_download.side_effect = RuntimeError("Overture went down")
+        # SIGSEGV manifests as returncode -11 from subprocess.run
+        mock_run.return_value = MagicMock(
+            returncode=-11,
+            stdout="",
+            stderr="qemu: uncaught target signal 11",
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             wf = self._make_workflow(tmp)
-            # Should not raise — the imageryprep workflow's primary product
-            # is the imagery COGs.
+            wf.download_building_footprints()
+            self.assertEqual(wf.building_footprints_path, "")
+
+    @patch("subprocess.run")
+    @patch("hastegeo.core.utils.aoi.aoi_bbox_from_cog")
+    def test_subprocess_timeout_is_non_fatal(self, mock_bbox, mock_run):
+        mock_bbox.return_value = (0.0, 0.0, 1.0, 1.0)
+        mock_run.side_effect = subprocess.TimeoutExpired(
+            cmd=["python"], timeout=1
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp)
+            wf.download_building_footprints()
+            self.assertEqual(wf.building_footprints_path, "")
+
+    @patch("hastegeo.core.utils.aoi.aoi_bbox_from_cog")
+    def test_aoi_failure_is_non_fatal(self, mock_bbox):
+        mock_bbox.side_effect = RuntimeError("rasterio could not open")
+        with tempfile.TemporaryDirectory() as tmp:
+            wf = self._make_workflow(tmp)
             wf.download_building_footprints()
             self.assertEqual(wf.building_footprints_path, "")
 

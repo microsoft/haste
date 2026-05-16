@@ -264,10 +264,17 @@ class ImageryWorkflow:
 
         Derives the AOI from the post-event mosaic COG produced by
         :meth:`process_post_event` and writes a per-layer GeoPackage into
-        ``self.dst_directory``. Failure is non-fatal — imageryprep's primary
-        product is the imagery COGs, and an Overture outage shouldn't block
-        users from labeling. The downstream inference workflow validates that
-        the URL is present before running.
+        ``self.dst_directory``.
+
+        The download itself is delegated to a subprocess
+        (``python -m hastegeo.core.utils.footprints``) so a crash in pyarrow's
+        native code (e.g. when running under QEMU x86_64 emulation on arm64
+        hosts), an Overture query timeout, or any other Overture-side fault
+        is contained to a child process and does not take down the parent
+        imageryprep workflow. Failure is non-fatal — imageryprep's primary
+        product is the imagery COGs and the labeling tool only needs those.
+        The downstream inference workflow validates that the URL is present
+        before running.
 
         Sets ``self.building_footprints_path`` on success.
         """
@@ -285,19 +292,56 @@ class ImageryWorkflow:
 
         try:
             from hastegeo.core.utils.aoi import aoi_bbox_from_cog
-            from hastegeo.core.utils.footprints import (
-                download_building_footprints,
-            )
 
             bbox = aoi_bbox_from_cog(self.mosaic_post_event_tif_filepath)
-            count = download_building_footprints(
-                bbox=bbox,
-                output_path=output_path,
-                overwrite=True,
+        except Exception:
+            logger.error(
+                "Failed extracting AOI for image layer %s; skipping "
+                "building-footprint download.",
+                self.image_layer_id,
+                exc_info=True,
             )
+            self.building_footprints_path = ""
+            return
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "hastegeo.core.utils.footprints",
+            "--bbox",
+            f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
+            "--output-path",
+            output_path,
+            "--overwrite",
+        ]
+        timeout_seconds = int(
+            os.getenv("HASTE_FOOTPRINTS_TIMEOUT_SECONDS", "1800")
+        )
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+            if result.returncode != 0 or not os.path.exists(output_path):
+                logger.error(
+                    "Building-footprint subprocess failed for image layer "
+                    "%s (returncode=%s). stderr:\n%s",
+                    self.image_layer_id,
+                    result.returncode,
+                    (result.stderr or "")[-2000:],
+                )
+                self.building_footprints_path = ""
+                return
+            count = (result.stdout or "").strip().splitlines()
+            count_msg = count[-1] if count else "?"
             logger.info(
-                "Downloaded %d building footprints for image layer %s",
-                count,
+                "Downloaded %s building footprints for image layer %s",
+                count_msg,
                 self.image_layer_id,
             )
             self.building_footprints_path = output_path
