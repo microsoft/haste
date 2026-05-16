@@ -78,6 +78,26 @@ const LayerRow = ({
         },
       },
       {
+        key: "DownloadBuildingFootprints",
+        text: "Download Building Footprints",
+        iconProps: { iconName: "Download" },
+        disabled: !item.buildingFootprintsUrl,
+        onClick: () => {
+          if (item.buildingFootprintsUrl) {
+            let url = item.buildingFootprintsUrl;
+            if (import.meta.env.VITE_STORAGE_APIM_URL) {
+              url = url.replace(
+                /^https?:\/\/[^/]+/,
+                import.meta.env.VITE_STORAGE_APIM_URL
+              );
+            }
+            fileDownload(url, setDialog);
+          } else {
+            setDialog("Error", "No building footprints available for this image layer.");
+          }
+        },
+      },
+      {
         key: "edit",
         text: "Edit",
         iconProps: { iconName: "Edit" },
