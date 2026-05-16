@@ -20,6 +20,7 @@ const BuildingValidation = () => {
   const navigate = useNavigate();
   const { setIsLoading, setDialog, setAppHeaderRightButtons } = useContext(AppContext);
 
+  const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const datasourceRef = useRef(null);
   const preImageryRef = useRef(null);
@@ -47,6 +48,10 @@ const BuildingValidation = () => {
 
     return () => {
       setAppHeaderRightButtons([]);
+      if (mapRef.current) {
+        mapRef.current.dispose();
+        mapRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -79,7 +84,7 @@ const BuildingValidation = () => {
     setFeatures(featuresArr);
 
     // Build Azure Maps
-    const map = new window.atlas.Map(mapRef.current, {
+    const map = new window.atlas.Map(mapContainerRef.current, {
       center: [0, 0],
       zoom: 3,
       maxPitch: 0,
@@ -308,7 +313,7 @@ const BuildingValidation = () => {
       </button>
 
       {/* Map container */}
-      <div ref={mapRef} id="validationMap" style={{ flexGrow: 1 }} />
+      <div ref={mapContainerRef} id="validationMap" style={{ flexGrow: 1 }} />
 
       {/* Right panel */}
       {isMapReady && features.length > 0 && (
