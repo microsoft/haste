@@ -59,6 +59,9 @@ POST_EVENT_MOSAIC_PREFIX = (
 POST_EVENT_PROCESSED_COG_PREFIX = (
     hasteconfig.get_artifact_types().POST_EVENT_PROCESSED_COG.value
 )
+BUILDING_FOOTPRINTS_PREFIX = (
+    hasteconfig.get_artifact_types().BUILDING_FOOTPRINTS.value
+)
 
 
 class ImageryWorkflow:
@@ -107,6 +110,7 @@ class ImageryWorkflow:
 
         self.normalization_means = []
         self.normalization_stds = []
+        self.building_footprints_path = ""
 
     def generate_prefix(self, prefix: Template):
         """Generate a prefix for the output files based on the project ID and image layer ID."""
@@ -254,6 +258,58 @@ class ImageryWorkflow:
             self.mosaic_post_event_tif_filepath,
             source_type=self.source_type_post_event,
         )
+
+    def download_building_footprints(self):
+        """Download Overture Maps building footprints for this layer's AOI.
+
+        Derives the AOI from the post-event mosaic COG produced by
+        :meth:`process_post_event` and writes a per-layer GeoPackage into
+        ``self.dst_directory``. Failure is non-fatal — imageryprep's primary
+        product is the imagery COGs, and an Overture outage shouldn't block
+        users from labeling. The downstream inference workflow validates that
+        the URL is present before running.
+
+        Sets ``self.building_footprints_path`` on success.
+        """
+        if not self.mosaic_post_event_tif_filepath or not os.path.exists(
+            self.mosaic_post_event_tif_filepath
+        ):
+            logger.warning(
+                "Skipping building-footprint download: "
+                "no post-event mosaic available."
+            )
+            return
+
+        prefix = self.generate_prefix(BUILDING_FOOTPRINTS_PREFIX)
+        output_path = os.path.join(self.dst_directory, f"{prefix}.gpkg")
+
+        try:
+            from hastegeo.core.utils.aoi import aoi_bbox_from_cog
+            from hastegeo.core.utils.footprints import (
+                download_building_footprints,
+            )
+
+            bbox = aoi_bbox_from_cog(self.mosaic_post_event_tif_filepath)
+            count = download_building_footprints(
+                bbox=bbox,
+                output_path=output_path,
+                overwrite=True,
+            )
+            logger.info(
+                "Downloaded %d building footprints for image layer %s",
+                count,
+                self.image_layer_id,
+            )
+            self.building_footprints_path = output_path
+        except Exception:
+            logger.error(
+                "Failed downloading building footprints for image layer %s; "
+                "imageryprep will continue but inference on this layer will "
+                "fail until it is re-processed.",
+                self.image_layer_id,
+                exc_info=True,
+            )
+            self.building_footprints_path = ""
 
 
 def _download_imagery(urls, dst_directory):
@@ -472,6 +528,14 @@ def main():
         )
         config["normalization_means"] = imagery_workflow.normalization_means
         config["normalization_stds"] = imagery_workflow.normalization_stds
+
+        log_progress("Downloading building footprints")
+        imagery_workflow.download_building_footprints()
+        config["building_footprints_filename"] = (
+            os.path.basename(imagery_workflow.building_footprints_path)
+            if imagery_workflow.building_footprints_path
+            else ""
+        )
 
         log_progress("Finalizing outputs")
         with open(os.path.join(output_dir, "imagery_manifest.json"), "w") as f:

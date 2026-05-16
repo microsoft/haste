@@ -645,6 +645,10 @@ class ImageLayer(BaseModel):
         normalizationStds: Standard deviation values for each spectral band
         labelProject: Associated labeling project providing ground truth data
         labelsUrl: URL to labels file for the imagery layer
+        buildingFootprintsUrl: URL to the cached Overture Maps building
+            footprint GeoPackage scoped to this layer's AOI. Populated
+            by the imageryprep workflow; consumed by inference instead of
+            re-downloading on every model run.
         dependsOn: Dependency tuple specifying parent resource type and ID
 
     Example:
@@ -705,6 +709,7 @@ class ImageLayer(BaseModel):
     normalizationStds: Optional[List[int]] = Field(default_factory=list)
     labelProject: Optional[LabelProject] = Field(default=None)
     labelsUrl: Optional[str] = Field(default=None)
+    buildingFootprintsUrl: Optional[str] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("Project", "projectId")
     )

@@ -96,47 +96,28 @@ def main():
             config.get("experiment_dir"),
             config.get("inference", {}).get("output_subdir"),
         )
-        log_progress("Calculating building bounds")
-        input_fn = config.get("imagery").get("raw_fn")
-        extracted_mask_fn = os.path.join(
-            inference_dir,
-            os.path.basename(input_fn).replace(".tif", ".geojson"),
-        )
-        run_subprocess(
-            [
-                "python",
-                "extract_data_mask_from_geotiff.py",
-                "--input_fn",
-                input_fn,
-                "--output_fn",
-                extracted_mask_fn,
-                "--overwrite",
-            ],
-            "extract_data_mask_from_geotiff.py",
-        )
 
-        log_progress("Downloading building footprints")
-        # TODO: make --source configurable from UI?
-        # source = config.get("inference", {}).get("building_footprints_source")
-        # country_alpha2_iso_code = config.get("inference", {}).get(
-        #     "country_alpha2_iso_code"
-        # )
+        # Building footprints are downloaded once per image layer during the
+        # imageryprep workflow and shipped here as inputs/building_footprints.gpkg
+        # by the LocalRunner / Azure Batch runner. The previous in-workflow
+        # extract_data_mask_from_geotiff.py + download_building_footprints.py
+        # steps were removed when imageryprep started caching them.
+        log_progress("Using cached building footprints")
         downloaded_footprints_fn = os.path.join(
-            inference_dir, "AOI_buildings_footprints.gpkg"
+            os.environ.get("AZ_BATCH_TASK_WORKING_DIR", "."),
+            "inputs",
+            "building_footprints.gpkg",
         )
+        if not os.path.exists(downloaded_footprints_fn):
+            log_progress(
+                "Cached building footprints not found at "
+                f"{downloaded_footprints_fn}; the image layer must be "
+                "re-processed through imageryprep to produce them."
+            )
+            raise RuntimeError(
+                f"Cached building footprints missing at {downloaded_footprints_fn}"
+            )
 
-        run_subprocess(
-            [
-                "python",
-                "download_building_footprints.py",
-                "--input_fn",
-                extracted_mask_fn,
-                "--output_fn",
-                downloaded_footprints_fn,
-                "--overwrite",
-            ],
-            "download_building_footprints.py",
-        )
         # Merge with inferred damage layer
         # Assumes there's only one *_predictions.tif
 

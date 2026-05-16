@@ -329,6 +329,14 @@ class InferencePostprocessor(BaseInferenceProcessor):
                 f"Error processing model {self.model_data.modelId}: {e}",
                 stack_info=True,
             )
+            # Surface the error in the user-facing status message for the most
+            # common actionable failure (missing cached building-footprint URL
+            # — see _create_inference_config). For other exception types this
+            # still gives the user something more useful than a silent FAILED.
+            self._update_inference_progress(
+                f"Inference failed to start: {e}",
+                step=self.model_data.inferenceCurrentStep,
+            )
             self.model_data.inferenceStatus = (
                 self.config.get_status_types().FAILED.value
             )
@@ -336,6 +344,19 @@ class InferencePostprocessor(BaseInferenceProcessor):
         return self.model_data
 
     def _create_inference_config(self):
+        # Hard requirement: every layer that goes through inference must have
+        # a cached building-footprint URL produced by the imageryprep workflow.
+        # See PR <this one> — the inference workflow no longer downloads
+        # footprints itself. Layers created before this change must be
+        # re-processed.
+        if not self.image_layer.buildingFootprintsUrl:
+            raise ValueError(
+                f"Image layer {self.image_layer.imageLayerId} has no cached "
+                "building-footprint URL. This layer was processed before the "
+                "imageryprep workflow began caching footprints; please "
+                "re-process the image layer."
+            )
+
         inference_input_files = {}
         filename_pattern = (
             rf"{MetadataUtils.hash_string(self.model_data.projectId)}/(.*)\?+"
@@ -364,6 +385,18 @@ class InferencePostprocessor(BaseInferenceProcessor):
             ),
             "file_path": rgb_fn,
         }
+
+        # Cached Overture building footprints from the imageryprep workflow.
+        # Land at a stable, image-name-agnostic path so run_workflow.py can
+        # reference it directly without parsing image-layer-specific filenames.
+        inference_input_files["building_footprints"] = {
+            "http_url": extract_from_url(
+                self.image_layer.buildingFootprintsUrl,
+                plain_url_pattern,
+            ),
+            "file_path": "inputs/building_footprints.gpkg",
+        }
+
         checkpoint_version = "last.ckpt"  # TODO - accept the checkpoint version from UI when inference is invoked
         inference_input_files["checkpoint"] = {
             "http_url": f"{self.storage.get_base_url()}/{self.model_data.checkpointPath}/{checkpoint_version}",

@@ -468,6 +468,18 @@ class ImageryPostProcessor:
             "normalization_stds", []
         )
 
+        # Cached Overture building footprints — may be empty when the
+        # imageryprep workflow hit a non-fatal Overture failure. The inference
+        # workflow validates non-emptiness before running.
+        building_footprints_filename = processed_manifest.get(
+            "building_footprints_filename", ""
+        )
+        self.image_data.buildingFootprintsUrl = self._generate_imagery_url(
+            filename=building_footprints_filename,
+            imagery_type=self.config.get_artifact_types().BUILDING_FOOTPRINTS,
+            validate=False,
+        )
+
     def _generate_imagery_url(
         self, filename: str, imagery_type: ArtifactTypes, validate=True
     ):

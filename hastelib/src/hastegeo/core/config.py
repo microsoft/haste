@@ -44,6 +44,9 @@ class ArtifactTypes(Enum):
     Artifact Categories:
         - PRE_EVENT_*: Pre-disaster imagery and derivatives
         - POST_EVENT_*: Post-disaster imagery and derivatives
+        - BUILDING_FOOTPRINTS: Cached Overture Maps building footprints, scoped
+          to the image layer's AOI. Generated during imageryprep so the
+          inference workflow can reuse the same set across multiple model runs.
         - INFERENCE_*: Model inference outputs
         - MODEL_*: Model artifacts and checkpoints
         - VISUALIZER: Visualization-ready outputs
@@ -73,6 +76,9 @@ class ArtifactTypes(Enum):
     )
     POST_EVENT_PROCESSED_COG = Template(
         "processed_imagery_post_event_cog_${projectId}_${imageLayerId}"
+    )
+    BUILDING_FOOTPRINTS = Template(
+        "building_footprints_${projectId}_${imageLayerId}"
     )
     INFERENCE_GPKG = Template("predicted_damage_${modelName}")
     VISUALIZER = Template(
