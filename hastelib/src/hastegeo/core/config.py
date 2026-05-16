@@ -281,6 +281,7 @@ class Config:
             PROCESSED_IMAGERY = "processed_imagery_post_event_cog"
             RAW_IMAGERY = "raw_imagery"
             PREVIEW_RAW_IMAGERY = "preview_raw_imagery"
+            VALIDATION = "validation"
 
         return DataTypes
 

@@ -230,6 +230,16 @@ const LayerRow = ({
             ({item.models && item.models.length > 0 ? item.models.length : 0})
           </Text>
         </td>
+        <td className="custom-text-no-wrap d-none d-xl-table-cell">
+          <DefaultButton
+            id={"singleProjectBuildingValidation" + index}
+            className="dashboard-button"
+            onClick={() => navigate(`/validation/${projectId}/${item.imageLayerId}`)}
+            disabled={!item.buildingFootprintsUrl}
+          >
+            Launch
+          </DefaultButton>
+        </td>
         <td className=" custom-text-no-wrap d-none d-xxl-table-cell">
           <TooltipHost
             content={item.userId}
@@ -270,7 +280,7 @@ const LayerRow = ({
       {visibleModelId == item.imageLayerId && item.models && item.models.length > 0 && (
         <tr>
           <td
-            colSpan={8}
+            colSpan={9}
             className="dashboard-table-for-inner-table-td custom-text-no-wrap"
           >
             <table className="col-12 dashboard-inner-table p-3 pb-2 pt-2">

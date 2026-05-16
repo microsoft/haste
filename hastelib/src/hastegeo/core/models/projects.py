@@ -719,6 +719,43 @@ class ImageLayer(BaseModel):
     )
 
 
+class ValidationLabel(BaseModel):
+    """
+    Represents a single building validation label assigned by a user.
+
+    Args:
+        id: Overture Maps building ID
+        label: Damage assessment label — one of "Damaged", "NotDamaged", or "Unknown"
+        updatedAt: ISO timestamp when this label was last set
+    """
+
+    id: str
+    label: str
+    updatedAt: str
+
+
+class BuildingValidation(BaseModel):
+    """
+    Stores building-footprint validation results for an image layer.
+
+    Labels are shared across all users for a given image layer (last-write-wins).
+    The ``labels`` dict maps each Overture building ID to its ValidationLabel.
+
+    Args:
+        imageLayerId: Reference to the imagery layer being validated
+        projectId: Reference to the parent project
+        labels: Mapping of Overture building ID to ValidationLabel
+        dependsOn: Dependency tuple specifying parent resource type and ID
+    """
+
+    imageLayerId: Optional[str] = Field(default=None)
+    projectId: Optional[str] = Field(default=None)
+    labels: Optional[dict] = Field(default_factory=dict)
+    dependsOn: Optional[tuple[str, str]] = Field(
+        default=("ImageLayer", "imageLayerId")
+    )
+
+
 class Project(BaseModel):
     """
     Represents a top-level project in the HASTE system for damage assessment analysis.

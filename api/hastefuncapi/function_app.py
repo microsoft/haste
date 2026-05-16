@@ -15,11 +15,13 @@ import requests  # type: ignore
 from hastegeo.core.config import Config
 from hastegeo.core.models.admin import AdminConfig
 from hastegeo.core.models.projects import (
+    BuildingValidation,
     ImageLayer,
     LabelProject,
     Model,
     ModelArtifacts,
     Project,
+    ValidationLabel,
 )
 from hastegeo.core.models.stats import (
     ImageLayerStats,
@@ -2918,4 +2920,227 @@ async def GetAzureMapsToken(req: func.HttpRequest) -> func.HttpResponse:
         )
         return func.HttpResponse(
             "Error fetching Azure Maps token.", status_code=500
+        )
+
+
+@app.route(
+    route="GetBuildingFootprintsGeoJSON",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetBuildingFootprintsGeoJSON(req: func.HttpRequest) -> func.HttpResponse:
+    """Return a random sample of building footprints as a GeoJSON FeatureCollection.
+
+    Reads the cached .gpkg file from blob storage for the given image layer,
+    selects a random sample of up to ``sample`` buildings, and returns them as
+    a GeoJSON FeatureCollection.  Each feature carries the Overture building
+    ``id``, ``subtype``, and ``class`` properties.
+
+    Query params:
+        projectId (str): Parent project identifier.
+        imageLayerId (str): Image layer identifier.
+        sample (int, optional): Maximum number of buildings to return (default 200).
+    """
+    logger.info("GetBuildingFootprintsGeoJSON HTTP trigger function processed a request.")
+    try:
+        import tempfile
+
+        import geopandas as gpd
+
+        project_id = req.params.get("projectId")
+        image_layer_id = req.params.get("imageLayerId")
+        sample_size = int(req.params.get("sample", 200))
+
+        if not project_id or not image_layer_id:
+            return func.HttpResponse(
+                "projectId and imageLayerId are required.", status_code=400
+            )
+
+        # Load the image layer metadata to get the buildingFootprintsUrl.
+        image_layer_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=project_id,
+            ).load,
+            image_layer_id,
+        )
+
+        footprints_url = image_layer_data.get("buildingFootprintsUrl")
+        if not footprints_url:
+            return func.HttpResponse(
+                "No building footprints available for this image layer.",
+                status_code=404,
+            )
+
+        # Rewrite the blob URL for internal container access.
+        from hastegeo.core.data_layer.azure_blob_storage_data_layer import (
+            AzureBlobStorageDataLayer,
+        )
+
+        conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
+        data_layer = AzureBlobStorageDataLayer(
+            account_url="", container="data", connection_string=conn_str
+        )
+        base_url = data_layer.get_base_url()
+
+        # footprints_url is like http://<host>/devstoreaccount1/data/<path>?<sas>
+        # Strip the base URL prefix and any SAS query string to get the blob path.
+        from urllib.parse import urlparse
+
+        parsed = urlparse(footprints_url)
+        blob_path = parsed.path.replace("/devstoreaccount1/data/", "", 1)
+
+        from azure.storage.blob import BlobServiceClient
+
+        bsc = BlobServiceClient.from_connection_string(conn_str)
+        blob_bytes = await asyncio.to_thread(
+            lambda: bsc.get_container_client("data")
+            .get_blob_client(blob_path)
+            .download_blob()
+            .readall()
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False) as tmp:
+            tmp.write(blob_bytes)
+            tmp_path = tmp.name
+
+        gdf = await asyncio.to_thread(gpd.read_file, tmp_path)
+
+        # Random sample
+        if len(gdf) > sample_size:
+            gdf = gdf.sample(n=sample_size, random_state=42)
+
+        # Ensure only the columns we care about are returned.
+        keep_cols = [c for c in ["id", "subtype", "class", "geometry"] if c in gdf.columns]
+        gdf = gdf[keep_cols]
+
+        geojson_str = await asyncio.to_thread(lambda: gdf.to_json())
+
+        import os as _os
+        _os.unlink(tmp_path)
+
+        return func.HttpResponse(
+            geojson_str,
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except FileNotFoundError:
+        return func.HttpResponse(
+            "Image layer not found.", status_code=404
+        )
+    except Exception as e:
+        logger.error(
+            f"Error in GetBuildingFootprintsGeoJSON: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error fetching building footprints.", status_code=500
+        )
+
+
+@app.route(
+    route="GetBuildingValidation",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
+    """Return existing building validation labels for an image layer.
+
+    Query params:
+        projectId (str): Parent project identifier.
+        imageLayerId (str): Image layer identifier.
+
+    Returns a BuildingValidation JSON object, or an empty one if no labels exist yet.
+    """
+    logger.info("GetBuildingValidation HTTP trigger function processed a request.")
+    try:
+        project_id = req.params.get("projectId")
+        image_layer_id = req.params.get("imageLayerId")
+
+        if not project_id or not image_layer_id:
+            return func.HttpResponse(
+                "projectId and imageLayerId are required.", status_code=400
+            )
+
+        try:
+            validation_data = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().VALIDATION.value,
+                    partition_key=project_id,
+                ).load,
+                image_layer_id,
+            )
+        except FileNotFoundError:
+            validation_data = BuildingValidation(
+                imageLayerId=image_layer_id,
+                projectId=project_id,
+                labels={},
+            ).model_dump()
+
+        return func.HttpResponse(
+            json.dumps(validation_data),
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except Exception as e:
+        logger.error(
+            f"Error in GetBuildingValidation: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error fetching building validation.", status_code=500
+        )
+
+
+@app.route(
+    route="PutBuildingValidation",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
+    """Save (replace) building validation labels for an image layer.
+
+    Request body: BuildingValidation JSON
+        {
+            "projectId": "...",
+            "imageLayerId": "...",
+            "labels": {
+                "<overture-id>": {"id": "...", "label": "Damaged|NotDamaged|Unknown", "updatedAt": "..."}
+            }
+        }
+    """
+    logger.info("PutBuildingValidation HTTP trigger function processed a request.")
+    try:
+        req_body = req.get_json()
+        validation = BuildingValidation(**req_body)
+
+        if not validation.projectId or not validation.imageLayerId:
+            return func.HttpResponse(
+                "projectId and imageLayerId are required.", status_code=400
+            )
+
+        await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().VALIDATION.value,
+                partition_key=validation.projectId,
+            ).save,
+            validation.imageLayerId,
+            validation.model_dump(),
+        )
+
+        return func.HttpResponse(
+            json.dumps(validation.model_dump()),
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except Exception as e:
+        logger.error(
+            f"Error in PutBuildingValidation: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error saving building validation.", status_code=500
         )

@@ -22,6 +22,9 @@ const ProjectHeader = () => {
           <th className="pb-3 pe-4 custom-text-no-wrap d-none d-xl-table-cell">
             <Text className="fw-semibold">Model Training</Text>
           </th>
+          <th className="pb-3 pe-4 custom-text-no-wrap d-none d-xl-table-cell">
+            <Text className="fw-semibold">Building Validation</Text>
+          </th>
           <th className="pb-3 pe-4 custom-text-no-wrap d-none d-xxl-table-cell">
             <Text className="fw-semibold">Creator</Text>
           </th>
