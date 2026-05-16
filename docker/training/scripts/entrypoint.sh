@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# Ensure files written by training (checkpoints, logs, etc.) are readable
+# by the queue-worker process (different UID) that uploads them to blob storage.
+umask 0022
+
 # Helpful diagnostics to match imagery prep behavior
 echo "[TRAINING-ENTRYPOINT] Starting container execution"
 echo "[TRAINING-ENTRYPOINT] Working directory: $(pwd)"

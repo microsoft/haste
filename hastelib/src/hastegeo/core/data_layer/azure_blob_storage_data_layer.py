@@ -366,4 +366,6 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
         return True
 
     def get_base_url(self):
-        return f"https://{self.container_client.account_name}.blob.core.windows.net/{self.container_client.container_name}"
+        # Use the actual service URL so this works with both Azure Blob
+        # Storage and local emulators like Azurite.
+        return f"{self.blob_service_client.url.rstrip('/')}/{self.container_client.container_name}"
