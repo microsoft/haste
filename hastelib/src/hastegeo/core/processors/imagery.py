@@ -468,9 +468,11 @@ class ImageryPostProcessor:
             "normalization_stds", []
         )
 
-        # Cached Overture building footprints — may be empty when the
-        # imageryprep workflow hit a non-fatal Overture failure. The inference
-        # workflow validates non-emptiness before running.
+        # Cached Overture building footprints. The imageryprep subprocess
+        # records any download failure in ``building_footprints_error``
+        # rather than raising (so the imagery COGs still upload). Here we
+        # honor that and flip the image layer to FAILED with the captured
+        # message, since downstream inference can't run without the gpkg.
         building_footprints_filename = processed_manifest.get(
             "building_footprints_filename", ""
         )
@@ -478,6 +480,19 @@ class ImageryPostProcessor:
             filename=building_footprints_filename,
             imagery_type=self.config.get_artifact_types().BUILDING_FOOTPRINTS,
         )
+        building_footprints_error = processed_manifest.get(
+            "building_footprints_error", ""
+        )
+        if building_footprints_error:
+            self.image_data.status = (
+                self.config.get_status_types().FAILED.value
+            )
+            self.image_data.preprocessJob.status = self.image_data.status
+            self._update_imagery_progress(
+                f"Building footprints unavailable — {building_footprints_error}",
+                step=self.image_data.currentStep,
+            )
+            self.image_data.preprocessJob.logs = self.image_data.statusMessage
 
     def _generate_imagery_url(
         self, filename: str, imagery_type: ArtifactTypes, validate=True
