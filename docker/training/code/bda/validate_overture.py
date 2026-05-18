@@ -46,7 +46,10 @@ def main():
     # Step 3: Run get_latest_release() and verify it returns a valid version
     print("\n[3/4] Resolving latest release via get_latest_release()...")
     try:
-        from bda.footprints import FALLBACK_RELEASE, get_latest_release
+        from hastegeo.core.utils.footprints import (
+            FALLBACK_RELEASE,
+            get_latest_release,
+        )
 
         # Clear cache to force a fresh lookup
         get_latest_release.cache_clear()
@@ -70,7 +73,7 @@ def main():
     # Step 4: Verify the resolved path actually exists in blob storage
     print("\n[4/4] Verifying dataset path exists for 'building' type...")
     try:
-        from bda.footprints import _dataset_path
+        from hastegeo.core.utils.footprints import _dataset_path
 
         path = _dataset_path("building")
         print(f"       Path: {path}")

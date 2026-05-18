@@ -5,8 +5,7 @@
 
 Originally lived in docker/training/code/bda/test_footprints.py; relocated
 here when the Overture Maps client moved into hastegeo so the imageryprep
-workflow could share it. Patch paths now target the canonical module
-(hastegeo.core.utils.footprints) instead of the old bda.footprints shim.
+workflow could share it.
 """
 
 import unittest
@@ -164,9 +163,7 @@ class TestDownloadBuildingFootprints(unittest.TestCase):
     """Tests for download_building_footprints()."""
 
     def test_rejects_non_gpkg_output_path(self):
-        from hastegeo.core.utils.footprints import (
-            download_building_footprints,
-        )
+        from hastegeo.core.utils.footprints import download_building_footprints
 
         with self.assertRaises(ValueError):
             download_building_footprints(
@@ -199,9 +196,7 @@ class TestDownloadBuildingFootprints(unittest.TestCase):
         filtered.__getitem__.return_value = final
         mock_geodataframe.return_value = gdf
 
-        from hastegeo.core.utils.footprints import (
-            download_building_footprints,
-        )
+        from hastegeo.core.utils.footprints import download_building_footprints
 
         with tempfile.TemporaryDirectory() as tmp:
             output = os.path.join(tmp, "out.gpkg")
