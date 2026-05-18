@@ -238,7 +238,10 @@ const LayerRow = ({
             disabled={!item.buildingFootprintsUrl}
           >
             Launch
-          </DefaultButton>
+          </DefaultButton>{" "}
+          <Text className="pe-4" variant="small">
+            ({item.validationLabelCount || 0})
+          </Text>
         </td>
         <td className=" custom-text-no-wrap d-none d-xxl-table-cell">
           <TooltipHost
