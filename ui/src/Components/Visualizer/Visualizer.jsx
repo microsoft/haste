@@ -170,6 +170,11 @@ const Visualizer = ({ setModalComponent }) => {
             visualizerResults.predictedDamageLayer,
           );
 
+          loadPredictionsLayer(
+            primaryMap,
+            visualizerResults.predictionsLayer,
+          );
+
           await loadStudyArea(primaryMap, visualizerResults.studyArea);
 
         });
@@ -188,6 +193,11 @@ const Visualizer = ({ setModalComponent }) => {
           loadPredictedDamageLayer(
             secondaryMap,
             visualizerResults.predictedDamageLayer
+          );
+
+          loadPredictionsLayer(
+            secondaryMap,
+            visualizerResults.predictionsLayer
           );
 
           loadStudyArea(secondaryMap, visualizerResults.studyArea);
@@ -218,26 +228,40 @@ const Visualizer = ({ setModalComponent }) => {
   }, []);
 
   const handleKeyboardShortcuts = (event) => {
-    if (event.ctrlKey && event.altKey) {
-      switch (event.key.toLowerCase()) {
-        case "a":
-          swipeMapRef.current.setOptions({
-            sliderPosition: 1,
-          });
-          break;
-        case "s":
-          swipeMapRef.current.setOptions({
-            sliderPosition: window.innerWidth / 2,
-          });
-          break;
-        case "d":
-          swipeMapRef.current.setOptions({
-            sliderPosition: window.innerWidth - 1,
-          });
-          break;
-        default:
-          break;
-      }
+    // Ignore when typing in an input/textarea/contenteditable element.
+    const target = event.target;
+    const tag = target?.tagName;
+    if (
+      tag === "INPUT" ||
+      tag === "TEXTAREA" ||
+      target?.isContentEditable
+    ) {
+      return;
+    }
+    if (event.ctrlKey || event.altKey || event.metaKey) {
+      return;
+    }
+    if (!swipeMapRef.current) {
+      return;
+    }
+    switch (event.key.toLowerCase()) {
+      case "a":
+        swipeMapRef.current.setOptions({
+          sliderPosition: 1,
+        });
+        break;
+      case "s":
+        swipeMapRef.current.setOptions({
+          sliderPosition: window.innerWidth / 2,
+        });
+        break;
+      case "d":
+        swipeMapRef.current.setOptions({
+          sliderPosition: window.innerWidth - 1,
+        });
+        break;
+      default:
+        break;
     }
   };
 
@@ -331,6 +355,25 @@ const Visualizer = ({ setModalComponent }) => {
     });
 
     layer.customId = "predictedDamageLayer";
+    map.layers.add(layer);
+  }
+
+  // Adds a layer with the raw model predictions (rendered via TiTiler colormap).
+  // Hidden by default; toggle from the InfoPanel.
+  function loadPredictionsLayer(map, predictionsLayer) {
+    if (!predictionsLayer || !predictionsLayer.url) {
+      return;
+    }
+    const layer = new window.atlas.layer.TileLayer({
+      tileUrl: predictionsLayer.url,
+      minZoom: 1,
+      maxZoom: 22,
+      bounds: predictionsLayer.bounds,
+      attribution: predictionsLayer.attribution,
+      visible: false,
+    });
+
+    layer.customId = "predictionsLayer";
     map.layers.add(layer);
   }
 

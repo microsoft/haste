@@ -54,7 +54,7 @@ const InfoPanel = ({
               Select Imagery Layers
             </Text>
             <div
-              className="mt-3 info-panel-checkboxes-wrapper d-none d-xl-flex"
+              className="mt-3 info-panel-checkboxes-wrapper d-none d-xl-flex flex-column"
             >
               <Checkbox
                 defaultChecked={true}
@@ -62,6 +62,17 @@ const InfoPanel = ({
                 onChange={(e, checked) =>
                   togglePredictedDamageLayerVisibility(
                     "predictedDamageLayer",
+                    checked
+                  )
+                }
+              />
+              <Checkbox
+                className="mt-2"
+                defaultChecked={false}
+                label="Predictions layer (raw)"
+                onChange={(e, checked) =>
+                  togglePredictedDamageLayerVisibility(
+                    "predictionsLayer",
                     checked
                   )
                 }

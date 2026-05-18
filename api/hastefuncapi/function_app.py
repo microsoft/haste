@@ -1924,6 +1924,35 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
             if model_data.predictedDamageLayerUrl
             else ""
         )
+        # The inference workflow always produces a `_predictions.tif` next to
+        # `_visualizer.tif`, sharing the same container SAS. Derive its URL by
+        # swapping the suffix rather than persisting a separate model field.
+        predictions_url_raw = (
+            model_data.predictedDamageLayerUrl.replace(
+                "_visualizer.tif", "_predictions.tif"
+            )
+            if model_data.predictedDamageLayerUrl
+            else None
+        )
+        predictions_layer_URL = (
+            requests.utils.quote(predictions_url_raw, safe="")
+            if predictions_url_raw
+            else ""
+        )
+        # TiTiler colormap overrides the embedded TIFF palette (whose alpha=0 entry
+        # is silently dropped by TIFF). Maps pixel values 0/1 -> transparent,
+        # 2 -> green, 3 -> red, matching the inference.py palette.
+        predictions_colormap = requests.utils.quote(
+            json.dumps(
+                {
+                    "0": [0, 0, 0, 0],
+                    "1": [0, 0, 0, 0],
+                    "2": [0, 255, 0, 255],
+                    "3": [255, 0, 0, 255],
+                }
+            ),
+            safe="",
+        )
 
         visualizer = Visualizer(
             projectId=project_id,
@@ -1956,6 +1985,18 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
             ),
             predictedDamageLayer=Imagery(
                 url=f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={predicted_damage_layer_URL}",
+                bounds=(
+                    label_project.features[0].bbox
+                    if label_project.features
+                    else None
+                ),
+            ),
+            predictionsLayer=Imagery(
+                url=(
+                    f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={predictions_layer_URL}&colormap={predictions_colormap}"
+                    if predictions_layer_URL
+                    else ""
+                ),
                 bounds=(
                     label_project.features[0].bbox
                     if label_project.features
