@@ -36,6 +36,9 @@ RUN printf '#!/bin/bash\nexec python -m hastegeo.workflows.prepare_imagery "$@"\
 # Set PYTHONPATH so hastegeo modules can be found at runtime
 ENV PYTHONPATH=/app
 
+# Ensure /app itself is writable by appuser (for runtime-created dirs like ./logs)
+RUN chown appuser:appgroup /app
+
 # Convert line endings and make entrypoint script executable
 RUN sed -i 's/\r$//' /app/scripts/*.sh && chmod +x /app/scripts/entrypoint.sh
 
