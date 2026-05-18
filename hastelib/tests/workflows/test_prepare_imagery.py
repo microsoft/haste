@@ -78,8 +78,7 @@ class TestDownloadBuildingFootprintsStep(unittest.TestCase):
             self.assertTrue(mock_run.called)
             cmd = mock_run.call_args.args[0]
             self.assertIn("hastegeo.core.utils.footprints", cmd)
-            self.assertIn("--bbox", cmd)
-            self.assertIn("-156.7,20.87,-156.66,20.89", cmd)
+            self.assertIn("--bbox=-156.7,20.87,-156.66,20.89", cmd)
             self.assertIn("--output-path", cmd)
             self.assertIn(expected_path, cmd)
             self.assertIn("--overwrite", cmd)

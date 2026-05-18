@@ -332,8 +332,9 @@ class ImageryWorkflow:
             sys.executable,
             "-m",
             "hastegeo.core.utils.footprints",
-            "--bbox",
-            f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
+            # Use --bbox=VALUE so argparse doesn't treat a leading '-' in the
+            # first coordinate (e.g. -156.7,...) as another option flag.
+            f"--bbox={bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
             "--output-path",
             output_path,
             "--overwrite",
