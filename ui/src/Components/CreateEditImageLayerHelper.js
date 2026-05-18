@@ -1,7 +1,11 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import { apiGet } from "../util/api";
-import { validateURL, validateFileType } from "../util/validation";
+import {
+  validateURL,
+  validateImageryUrlHost,
+  validateFileType,
+} from "../util/validation";
 import { v4 as uuidv4 } from 'uuid';
 
 const imageryOriginOptions = [
@@ -127,29 +131,37 @@ export const addUrlToEventImageryArray = (setComponentState, componentState, URL
     const urlIsValid = validateURL(url);
     const id = uuidv4();
 
-
-    if (urlIsValid[0]) {
-        if (componentState[field].some(item => item.value === url)) {
-            setComponentState({
-                ...componentState,
-                [errorField]: "URL already exists in the list.",
-            });
-            return false;
-        } else {
-            setComponentState({
-                ...componentState,
-                [field]: [...componentState[field], { id: id, type: "url", value: url }],
-                [errorField]: "",
-            });
-            return true;
-        }
-    } else {
+    if (!urlIsValid[0]) {
         setComponentState({
             ...componentState,
             [errorField]: urlIsValid[1],
         });
         return false;
     }
+
+    const hostIsValid = validateImageryUrlHost(url);
+    if (!hostIsValid[0]) {
+        setComponentState({
+            ...componentState,
+            [errorField]: hostIsValid[1],
+        });
+        return false;
+    }
+
+    if (componentState[field].some(item => item.value === url)) {
+        setComponentState({
+            ...componentState,
+            [errorField]: "URL already exists in the list.",
+        });
+        return false;
+    }
+
+    setComponentState({
+        ...componentState,
+        [field]: [...componentState[field], { id: id, type: "url", value: url }],
+        [errorField]: "",
+    });
+    return true;
 };
 
 

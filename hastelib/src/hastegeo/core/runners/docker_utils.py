@@ -154,8 +154,10 @@ class DockerManager:
             # Clean up container
             try:
                 container.remove()
-            except Exception:
-                pass
+            except Exception as cleanup_err:
+                self.logger.debug(
+                    f"Container removal failed during cleanup: {cleanup_err}"
+                )
 
     def cleanup_stopped_containers(
         self, label_filter: Optional[Dict[str, str]] = None

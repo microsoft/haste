@@ -7,8 +7,21 @@
       "options": {
         "cwd": "${workspaceFolder}/ui"
       },
-      "command": "swa start --app-devserver-url http://localhost:5173 --config-name local --run 'npm run dev' ",
-      "problemMatcher": [],
+      "command": "swa start --app-devserver-url http://127.0.0.1:5173 --config-name local --run 'npm run dev' ",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "$^",
+          "file": 1,
+          "line": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^.*(Starting|Running|starting|running).*$",
+          "endsPattern": "^.*(Azure Static Web Apps emulator|listening on|localhost:4280).*$"
+        }
+      },
       "dependsOn": "npm install all UI packages"
     },
     {
@@ -156,10 +169,11 @@
       "detail": "Creates a virtual environment using conda to install python and all other OS dependencies",
       "type": "shell",
       "windows":{
-        "command": "powershell",
+        "command": "pwsh",
         "args": [
-          "-c",
-          "conda info --envs | Select-String -Pattern ^haste_env\b ? Write-Output 'found existing conda env: haste_env' : Write-Output 'no existing conda env found, creating it... ' && conda env create -f ${workspaceFolder}/env.yml"
+          "-NoLogo",
+          "-Command",
+          "if ((conda info --envs) -match '^haste_env\\b') { Write-Output 'found existing conda env: haste_env' } else { Write-Output 'no existing conda env found, creating it...'; conda env create -f ${workspaceFolder}/env.yml }"
         ]
       },
       "linux":{
@@ -180,10 +194,11 @@
       "detail": "Launches Azure functions app for APIs in the conda virtual environment",
       "type": "shell",
       "windows": {
-        "command": "cmd",
+        "command": "pwsh",
         "args": [
-          "/c",
-          ". $CONDA_PREFIX/etc/profile.d/conda.sh conda activate haste_env && func host start"
+          "-NoLogo",
+          "-Command",
+          "conda activate haste_env; func host start"
         ]
       },
       "osx": {
@@ -203,14 +218,65 @@
       "dependsOn": "Create conda env"
     },
     {
+      "label": "venv func: host start api",
+      "detail": "Launches Functions API in the .venv; reinstalls deps only when requirements.txt changed",
+      "type": "shell",
+      "windows": {
+        "command": "pwsh",
+        "args": [
+          "-NoLogo",
+          "-File",
+          "${workspaceFolder}/.vscode/launch-funcapp.ps1",
+          "-Folder",
+          "${workspaceFolder}/api/hastefuncapi"
+        ]
+      },
+      "linux": {
+        "command": "bash",
+        "args": ["-c", ". .venv/bin/activate && func host start"],
+        "options": { "cwd": "${workspaceFolder}/api/hastefuncapi" }
+      },
+      "osx": {
+        "command": ". .venv/bin/activate && func host start",
+        "options": { "cwd": "${workspaceFolder}/api/hastefuncapi" }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "venv func: host start triggers",
+      "detail": "Launches Functions queue triggers in the .venv; reinstalls deps only when requirements.txt changed",
+      "type": "shell",
+      "windows": {
+        "command": "pwsh",
+        "args": [
+          "-NoLogo",
+          "-File",
+          "${workspaceFolder}/.vscode/launch-funcapp.ps1",
+          "-Folder",
+          "${workspaceFolder}/api/hastefuncqueues"
+        ]
+      },
+      "linux": {
+        "command": "bash",
+        "args": ["-c", ". .venv/bin/activate && func host start"],
+        "options": { "cwd": "${workspaceFolder}/api/hastefuncqueues" }
+      },
+      "osx": {
+        "command": ". .venv/bin/activate && func host start",
+        "options": { "cwd": "${workspaceFolder}/api/hastefuncqueues" }
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "conda func: host start triggers",
       "detail": "Launches Azure functions app for queue triggers in the conda virtual environment",
       "type": "shell",
       "windows": {
-        "command": "cmd",
+        "command": "pwsh",
         "args": [
-          "/c",
-          ". $CONDA_PREFIX/etc/profile.d/conda.sh conda activate haste_env && func host start"
+          "-NoLogo",
+          "-Command",
+          "conda activate haste_env; func host start"
         ]
       },
       "osx": {

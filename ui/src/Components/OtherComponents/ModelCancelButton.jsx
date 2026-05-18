@@ -31,7 +31,8 @@ const ModelCancelButton = ({ model, projectId, imageLayerId, fetchProjectDetails
       await fetchProjectDetails();
       setIsLoading(false);
     } catch (error) {
-      setDialog("Error", error.message, []);
+      console.error(error);
+      setDialog("Error", "An error occurred while cancelling the model.", []);
       setIsLoading(false);
     }
   };

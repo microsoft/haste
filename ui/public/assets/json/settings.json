@@ -156,6 +156,6 @@
         "color": "#BBBBBB"
       }
     ],
-    "tileServerSettings": "http://localhost:7071/api/titiler/"
+    "tileServerSettings": "http://127.0.0.1:7071/api/titiler/"
   }
 }

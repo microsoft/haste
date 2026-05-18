@@ -233,8 +233,8 @@ class LocalRunner(BaseRunner):
             for _p in task_dir.rglob("*"):
                 try:
                     _p.chmod(0o777)
-                except Exception:
-                    pass
+                except Exception as chmod_err:
+                    self.logger.debug(f"chmod failed for {_p}: {chmod_err}")
 
             # Force filesystem sync and verify files exist before starting container
             os.sync()
@@ -995,11 +995,22 @@ class LocalRunner(BaseRunner):
                 )
             else:
                 candidates.append(BlobClient.from_blob_url(blob_url))
-        except Exception:
-            pass
+        except Exception as blob_url_err:
+            self.logger.debug(
+                f"BlobClient.from_blob_url failed; will try fallbacks: {blob_url_err}"
+            )
 
         parsed = urlparse(blob_url)
         path_parts = [part for part in parsed.path.split("/") if part]
+
+        # Reject path traversal and null bytes before joining segments into
+        # a blob name. The Azure SDK likely rejects these too, but we should
+        # not rely on undocumented downstream behavior.
+        if any(part == ".." or "\x00" in part for part in path_parts):
+            self.logger.warning(
+                f"Rejecting blob URL with unsafe path segments: {blob_url}"
+            )
+            return candidates
 
         account_name = getattr(self.blob_client, "account_name", None)
         if (
@@ -1020,8 +1031,10 @@ class LocalRunner(BaseRunner):
                             container_name, blob_name
                         )
                     )
-                except Exception:
-                    pass
+                except Exception as bc_err:
+                    self.logger.debug(
+                        f"get_blob_client failed for {container_name}/{blob_name}: {bc_err}"
+                    )
 
         return candidates
 
@@ -1068,8 +1081,10 @@ class LocalRunner(BaseRunner):
                             if local_file_path.exists():
                                 try:
                                     local_file_path.unlink()
-                                except Exception:
-                                    pass
+                                except Exception as unlink_err:
+                                    self.logger.debug(
+                                        f"Failed to clean up partial download {local_file_path}: {unlink_err}"
+                                    )
 
                     if download_succeeded:
                         self.logger.info(

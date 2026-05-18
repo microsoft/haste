@@ -10,7 +10,7 @@ import {
   loadStudyArea,
   centrateMap,
 } from "./LabelingToolHelper.js";
-import { getAzureMapsAuthOptions } from "../../util/azureMapsAuth";
+import { getAzureMapsAuthOptions, isAzureMapsPlaceholder } from "../../util/azureMapsAuth";
 import { useParams } from "react-router-dom";
 import LabelingToolLeftPanel from "./LabelingToolLeftPanel.jsx";
 import LabelingToolRightPanel from "./LabelingToolRightPanel.jsx";
@@ -187,7 +187,7 @@ const LabelingTool = ({ setModalComponent }) => {
       zoom: 3,
       maxPitch: 0,
       pitch: 0,
-      style: "grayscale_light",
+      style: isAzureMapsPlaceholder ? "blank" : "grayscale_light",
       language: "en-US",
       authOptions: getAzureMapsAuthOptions(),
     });

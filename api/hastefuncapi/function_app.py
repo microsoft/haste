@@ -3,9 +3,12 @@
 
 import asyncio
 import base64
+import binascii
 import json
 import os
+import re
 import traceback
+from urllib.parse import urlparse
 
 import azure.functions as func  # type: ignore
 import requests  # type: ignore
@@ -37,6 +40,10 @@ from hastegeo.core.processors.uploader import FileUploader
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
+from hastegeo.core.utils.url_allowlist import (
+    ALLOWED_HOST_DESCRIPTION,
+    validate_imagery_url,
+)
 from hastegeo.core.utils.user import InvitationManager, UserManager
 from pydantic import ValidationError  # type: ignore
 
@@ -59,6 +66,73 @@ AUTH_LEVEL = (
 )
 
 
+# Strict allowlist regexes for request parameters. Bound length and character
+# set to defend against injection, path traversal, and oversized inputs.
+_GUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_EMAIL_RE = re.compile(
+    r"^[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,253}\.[A-Za-z]{2,24}$"
+)
+
+
+def _require_guid_param(req: func.HttpRequest, name: str) -> str:
+    """Return a request parameter validated as a canonical GUID, or raise ValueError."""
+    value = req.params.get(name)
+    if not value:
+        raise ValueError(f"Missing required parameter: {name}")
+    if not _GUID_RE.match(value):
+        raise ValueError(f"Invalid format for parameter: {name}")
+    return value
+
+
+def _require_email_param(req: func.HttpRequest, name: str) -> str:
+    """Return a request parameter validated as an email address, or raise ValueError."""
+    value = req.params.get(name)
+    if not value:
+        raise ValueError(f"Missing required parameter: {name}")
+    if not _EMAIL_RE.match(value):
+        raise ValueError(f"Invalid format for parameter: {name}")
+    return value
+
+
+def _bad_request(name_or_message: str) -> func.HttpResponse:
+    logger.warning(f"Rejected request: {name_or_message}")
+    return func.HttpResponse("Invalid request parameters.", status_code=400)
+
+
+def _validate_imagery_urls(image_data: ImageLayer) -> str | None:
+    """Validate user-submitted imagery URLs against the host allowlist.
+
+    Returns a user-facing error message if any URL is not on the allowlist,
+    or None if all URLs validate. Full URLs are logged server-side; only
+    rejected hostnames are surfaced to the client.
+    """
+    rejected_hosts: list[str] = []
+    for field_name in ("preEventImageryUrls", "postEventImageryUrls"):
+        urls = getattr(image_data, field_name, None) or []
+        for idx, url in enumerate(urls):
+            if not url:
+                continue
+            try:
+                validate_imagery_url(url)
+            except ValueError:
+                host = urlparse(url).hostname or "<unparseable>"
+                logger.warning(
+                    f"PutLayer rejected URL not on allowlist: "
+                    f"field={field_name} index={idx} host={host}"
+                )
+                rejected_hosts.append(host)
+    if rejected_hosts:
+        unique_hosts = sorted(set(rejected_hosts))
+        return (
+            "One or more imagery URLs are not on the allowlist of permitted "
+            f"hosts ({ALLOWED_HOST_DESCRIPTION}). "
+            f"Rejected host(s): {', '.join(unique_hosts)}."
+        )
+    return None
+
+
 def _decode_client_principal(req: func.HttpRequest) -> dict | None:
     """Decode SWA client principal header when present."""
     principal_header = req.headers.get("x-ms-client-principal")
@@ -70,7 +144,10 @@ def _decode_client_principal(req: func.HttpRequest) -> dict | None:
         decoded = base64.b64decode(principal_header + padding).decode("utf-8")
         principal = json.loads(decoded)
         return principal if isinstance(principal, dict) else None
-    except Exception:
+    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as e:
+        logger.warning(
+            f"Failed to decode x-ms-client-principal header: {type(e).__name__}"
+        )
         return None
 
 
@@ -438,7 +515,10 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
     """
     logger.info("GetProjectDetails HTTP trigger function processed a request.")
     try:
-        project_id = req.params.get("projectId")
+        try:
+            project_id = _require_guid_param(req, "projectId")
+        except ValueError as ve:
+            return _bad_request(f"GetProjectDetails: {ve}")
         include_models = (
             req.params.get("includeModels", "false").lower() == "true"
         )
@@ -648,7 +728,7 @@ async def PutProject(req: func.HttpRequest) -> func.HttpResponse:
 
     except ValidationError as e:
         logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
-        return func.HttpResponse(f"Validation error: {e}", status_code=400)
+        return func.HttpResponse("Validation error.", status_code=400)
     except ValueError as e:
         logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
         return func.HttpResponse(
@@ -671,7 +751,10 @@ async def PutProject(req: func.HttpRequest) -> func.HttpResponse:
 async def DeleteProject(req: func.HttpRequest) -> func.HttpResponse:
     logger.info("DeleteProject HTTP trigger function processed a request.")
     try:
-        project_id = req.params.get("projectId")
+        try:
+            project_id = _require_guid_param(req, "projectId")
+        except ValueError as ve:
+            return _bad_request(f"DeleteProject: {ve}")
 
         await asyncio.to_thread(
             MetadataProcessor(
@@ -710,6 +793,10 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
     try:
         req_body = req.get_json()
         image_data = ImageLayer(**req_body)
+
+        url_error = _validate_imagery_urls(image_data)
+        if url_error:
+            return func.HttpResponse(url_error, status_code=400)
 
         if image_data.imageLayerId is None:
             image_data.imageLayerId = MetadataUtils.generate_id()
@@ -764,7 +851,7 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
 
     except ValidationError as e:
         logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
-        return func.HttpResponse(f"Validation error: {e}", status_code=400)
+        return func.HttpResponse("Validation error.", status_code=400)
     except ValueError as e:
         logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
         return func.HttpResponse(
@@ -783,8 +870,11 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
 async def DeleteLayer(req: func.HttpRequest) -> func.HttpResponse:
     logger.info("DeleteLayer HTTP trigger function processed a request.")
     try:
-        project_id = req.params.get("projectId")
-        image_layer_id = req.params.get("imageLayerId")
+        try:
+            project_id = _require_guid_param(req, "projectId")
+            image_layer_id = _require_guid_param(req, "imageLayerId")
+        except ValueError as ve:
+            return _bad_request(f"DeleteLayer: {ve}")
         try:
             await asyncio.to_thread(
                 MetadataProcessor(
@@ -1084,7 +1174,7 @@ async def PutLabelsFromLabelTool(req: func.HttpRequest) -> func.HttpResponse:
 
     except ValidationError as e:
         logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
-        return func.HttpResponse(f"Validation error: {e}", status_code=400)
+        return func.HttpResponse("Validation error.", status_code=400)
     except ValueError as e:
         logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
         return func.HttpResponse(
@@ -1210,7 +1300,7 @@ async def PutAdminSettings(req: func.HttpRequest) -> func.HttpResponse:
 
     except ValidationError as e:
         logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
-        return func.HttpResponse(f"Validation error: {e}", status_code=400)
+        return func.HttpResponse("Validation error.", status_code=400)
 
     except ValueError as e:
         logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
@@ -1511,7 +1601,7 @@ async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
 
     except ValidationError as e:
         logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
-        return func.HttpResponse(f"Validation error: {e}", status_code=400)
+        return func.HttpResponse("Validation error.", status_code=400)
 
     except ValueError as e:
         logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
@@ -1520,7 +1610,7 @@ async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
         )
     except RuntimeError as e:
         logger.error(f"Error putting user: {e}\n{traceback.format_exc()}")
-        return func.HttpResponse(f"Error putting user: {e}", status_code=400)
+        return func.HttpResponse("Error putting user.", status_code=400)
     except Exception as e:
         logger.error(
             f"Error parsing Users data: {e}\n{traceback.format_exc()}",
@@ -1536,7 +1626,10 @@ async def DeleteUser(req: func.HttpRequest) -> func.HttpResponse:
     if auth_error:
         return auth_error
     try:
-        user_id = req.params.get("userId")
+        try:
+            user_id = _require_email_param(req, "userId")
+        except ValueError as ve:
+            return _bad_request(f"DeleteUser: {ve}")
         users = await asyncio.to_thread(
             MetadataProcessor(
                 data_type=config.get_metadata_types().USERS.value
@@ -1727,9 +1820,12 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
         "GetVisualizerResults HTTP trigger function processed a request."
     )
     try:
-        project_id = req.params.get("projectId", "defaultProjectId")
-        image_layer_id = req.params.get("imageLayerId", "defaultImageLayerId")
-        model_id = req.params.get("modelId", "defaultModelId")
+        try:
+            project_id = _require_guid_param(req, "projectId")
+            image_layer_id = _require_guid_param(req, "imageLayerId")
+            model_id = _require_guid_param(req, "modelId")
+        except ValueError as ve:
+            return _bad_request(f"GetVisualizerResults: {ve}")
 
         model_data = Model(
             **await asyncio.to_thread(
@@ -1913,7 +2009,7 @@ async def PutRunModelQueueMessage(req: func.HttpRequest) -> func.HttpResponse:
 
     except ValidationError as e:
         logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
-        return func.HttpResponse(f"Validation error: {e}", status_code=400)
+        return func.HttpResponse("Validation error.", status_code=400)
     except ValueError as e:
         logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
         return func.HttpResponse(
@@ -1955,7 +2051,7 @@ async def PutRunInferenceQueueMessage(
 
     except ValidationError as e:
         logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
-        return func.HttpResponse(f"Validation error: {e}", status_code=400)
+        return func.HttpResponse("Validation error.", status_code=400)
     except ValueError as e:
         logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
         return func.HttpResponse(
@@ -2118,7 +2214,7 @@ async def PutArtifactsZipQueueMessage(
 
     except ValidationError as e:
         logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
-        return func.HttpResponse(f"Validation error: {e}", status_code=400)
+        return func.HttpResponse("Validation error.", status_code=400)
     except ValueError as e:
         logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
         return func.HttpResponse(
@@ -2235,7 +2331,7 @@ async def PutCancelModelQueueMessage(
 
     except ValidationError as e:
         logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
-        return func.HttpResponse(f"Validation error: {e}", status_code=400)
+        return func.HttpResponse("Validation error.", status_code=400)
     except ValueError as e:
         logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
         return func.HttpResponse(
@@ -2631,7 +2727,7 @@ async def PutModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
 
     except ValidationError as e:
         logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
-        return func.HttpResponse(f"Validation error: {e}", status_code=400)
+        return func.HttpResponse("Validation error.", status_code=400)
     except ValueError as e:
         logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
         return func.HttpResponse(
