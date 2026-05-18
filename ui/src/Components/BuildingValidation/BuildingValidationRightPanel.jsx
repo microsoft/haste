@@ -1,25 +1,38 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import PropTypes from "prop-types";
+import { DefaultButton, PrimaryButton } from "@fluentui/react";
 
 const LABEL_OPTIONS = [
-  { value: "Damaged", label: "Damaged (1)", color: "#e74c3c", icon: "⚠" },
-  { value: "NotDamaged", label: "Not Damaged (2)", color: "#27ae60", icon: "✓" },
-  { value: "Unknown", label: "Unknown (3)", color: "#7f8c8d", icon: "?" },
+  { value: "Damaged", label: "Damaged (1)", color: "#e74c3c" },
+  { value: "NotDamaged", label: "Not Damaged (2)", color: "#27ae60" },
+  { value: "Unknown", label: "Unknown (3)", color: "#7f8c8d" },
 ];
 
-const btnBase = {
-  border: "none",
-  borderRadius: 4,
-  padding: "8px 0",
-  cursor: "pointer",
-  fontWeight: 600,
-  fontSize: 14,
-  width: "100%",
-  marginBottom: 6,
-  color: "#fff",
-  transition: "opacity 0.15s",
-};
+const coloredButtonStyles = (color, selected) => ({
+  root: {
+    backgroundColor: color,
+    borderColor: color,
+    color: "#fff",
+    width: "100%",
+    opacity: selected ? 1 : 0.85,
+    outline: selected ? `2px solid ${color}` : "none",
+    outlineOffset: 2,
+  },
+  rootHovered: {
+    backgroundColor: color,
+    borderColor: color,
+    color: "#fff",
+    opacity: 1,
+  },
+  rootPressed: {
+    backgroundColor: color,
+    borderColor: color,
+    color: "#fff",
+    opacity: 0.9,
+  },
+  label: { fontWeight: 600 },
+});
 
 const BuildingValidationRightPanel = ({
   features,
@@ -109,61 +122,34 @@ const BuildingValidationRightPanel = ({
       </div>
 
       {/* Label buttons */}
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 4 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "#555" }}>
           Label this building:
         </div>
         {LABEL_OPTIONS.map((opt) => (
-          <button
+          <PrimaryButton
             key={opt.value}
+            text={opt.label}
             onClick={() => onLabel(opt.value)}
-            style={{
-              ...btnBase,
-              background: opt.color,
-              opacity: currentLabel === opt.value ? 1 : 0.75,
-              outline: currentLabel === opt.value ? `3px solid ${opt.color}` : "none",
-              outlineOffset: 2,
-            }}
-          >
-            {opt.icon} {opt.label}
-          </button>
+            styles={coloredButtonStyles(opt.color, currentLabel === opt.value)}
+          />
         ))}
       </div>
 
       {/* Navigation */}
       <div style={{ display: "flex", gap: 6 }}>
-        <button
+        <DefaultButton
+          text="Prev"
           onClick={() => setSelectedIndex((i) => Math.max(0, i - 1))}
           disabled={selectedIndex === 0}
-          style={{
-            flex: 1,
-            padding: "6px 0",
-            borderRadius: 4,
-            border: "1px solid #ccc",
-            background: "#fff",
-            cursor: selectedIndex === 0 ? "not-allowed" : "pointer",
-            opacity: selectedIndex === 0 ? 0.4 : 1,
-            fontWeight: 500,
-          }}
-        >
-          ← Prev
-        </button>
-        <button
+          styles={{ root: { flex: 1 } }}
+        />
+        <DefaultButton
+          text="Next"
           onClick={() => setSelectedIndex((i) => Math.min(total - 1, i + 1))}
           disabled={selectedIndex === total - 1}
-          style={{
-            flex: 1,
-            padding: "6px 0",
-            borderRadius: 4,
-            border: "1px solid #ccc",
-            background: "#fff",
-            cursor: selectedIndex === total - 1 ? "not-allowed" : "pointer",
-            opacity: selectedIndex === total - 1 ? 0.4 : 1,
-            fontWeight: 500,
-          }}
-        >
-          Next →
-        </button>
+          styles={{ root: { flex: 1 } }}
+        />
       </div>
 
       {/* Legend */}
@@ -176,30 +162,18 @@ const BuildingValidationRightPanel = ({
       </div>
 
       {/* Actions */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 5, borderTop: "1px solid #eee", paddingTop: 8 }}>
-        <button
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: "1px solid #eee", paddingTop: 8 }}>
+        <PrimaryButton
+          text={isSaving ? "Saving…" : "Save Labels"}
           onClick={onSave}
           disabled={isSaving}
-          style={{
-            ...btnBase,
-            background: "#2c3e50",
-            marginBottom: 0,
-            opacity: isSaving ? 0.6 : 1,
-            cursor: isSaving ? "not-allowed" : "pointer",
-          }}
-        >
-          {isSaving ? "Saving…" : "💾 Save Labels"}
-        </button>
-        <button
+          styles={{ root: { width: "100%" } }}
+        />
+        <DefaultButton
+          text="Download GeoJSON"
           onClick={onDownload}
-          style={{
-            ...btnBase,
-            background: "#8e44ad",
-            marginBottom: 0,
-          }}
-        >
-          ⬇ Download GeoJSON
-        </button>
+          styles={{ root: { width: "100%" } }}
+        />
       </div>
     </div>
   );
