@@ -477,7 +477,6 @@ class ImageryPostProcessor:
         self.image_data.buildingFootprintsUrl = self._generate_imagery_url(
             filename=building_footprints_filename,
             imagery_type=self.config.get_artifact_types().BUILDING_FOOTPRINTS,
-            validate=False,
         )
 
     def _generate_imagery_url(

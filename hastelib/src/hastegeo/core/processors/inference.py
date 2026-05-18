@@ -346,7 +346,7 @@ class InferencePostprocessor(BaseInferenceProcessor):
     def _create_inference_config(self):
         # Hard requirement: every layer that goes through inference must have
         # a cached building-footprint URL produced by the imageryprep workflow.
-        # See PR <this one> — the inference workflow no longer downloads
+        # See PR 24 — the inference workflow no longer downloads
         # footprints itself. Layers created before this change must be
         # re-processed.
         if not self.image_layer.buildingFootprintsUrl:
