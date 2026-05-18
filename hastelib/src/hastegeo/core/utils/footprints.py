@@ -1,10 +1,7 @@
-# Copyright (c) Microsoft Corporation. All rights reserved.
+# Copyright (c) 2024 Overture Maps
 # Licensed under the MIT License.
-#
-# Portions derived from the Overture Maps overturemaps-py package
-# (https://github.com/OvertureMaps/overturemaps-py, MIT licensed),
-# specifically core.py @ 0fad53bceb955b14ac069ef321cbc2486996d5c7.
-# Modified to read from Azure Blob Storage instead of S3.
+# Code from: https://github.com/OvertureMaps/overturemaps-py/blob/0fad53bceb955b14ac069ef321cbc2486996d5c7/overturemaps/core.py
+# Modified to read from Azure Blob Storage instead of S3
 
 """Overture Maps client + a high-level building-footprint downloader.
 
