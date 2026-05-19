@@ -420,7 +420,7 @@ hastefuncapi + hastefuncqueues + titiler
   so the dashboard shows existing projects after a container restart.
 - **Bind mount:** `../data:/app/data` for local data access.
 - **Docker socket mount:** `/var/run/docker.sock` (read-only, for future extensibility).
-- Copies `hastelib/src/haste_geo` directly into the image (avoids wheel installation in Docker).
+- Copies `hastelib/src/hastegeo` directly into the image (avoids wheel installation in Docker).
 
 #### hastefuncqueues (Queue Worker)
 
@@ -436,7 +436,7 @@ hastefuncapi + hastefuncqueues + titiler
   - `../data:/app/data`
   - `azurite-data:/shared/azurite` — **shared Named Volume** with Azurite for direct file-system reads
   - `/var/run/docker.sock:/var/run/docker.sock` — **required** to spawn training/imageryprep containers
-- Copies `hastelib/src/haste_geo` directly into the image.
+- Copies `hastelib/src/hastegeo` directly into the image.
 
 ### UI Service
 
@@ -629,7 +629,7 @@ http://<HOST_IP>:4280
 
 ## Rebuilding the Haste Wheel
 
-The `hastelib/` directory contains the shared Python library (`haste` package) used by
+The `hastelib/` directory contains the shared Python library (`hastegeo` package) used by
 the API services, imageryprep, and training containers. In the Docker deployment, the
 source is **copied directly** into images (no wheel install needed).
 
@@ -647,14 +647,13 @@ python -m build --wheel
 ```
 
 The custom `haste_build.py` script:
-1. Increments the version in `src/haste/__about__.py`
-2. Builds a `.whl` file
-3. Uploads it to `researchlabwuopendata.blob.core.windows.net/haste-binaries/`
-4. Copies the `.whl` to `api/hastefuncapi/` and `api/hastefuncqueues/`
-5. Updates the `requirements.txt` files with the new wheel URL
+1. Increments the version in `src/hastegeo/__about__.py`
+2. Builds a `.whl` file under `hastelib/dist/`
+3. Uploads it to `researchlabwuopendata.blob.core.windows.net/haste-binaries/` (requires `az login`) and removes the local copy from `hastelib/dist/`
+4. Rewrites the `hastegeo @ <url>` line in `api/hastefuncapi/requirements.txt`, `api/hastefuncqueues/requirements.txt`, and `docker/imageryprep/requirements.txt` so they pin the new wheel URL
 
 > **For local Docker**, you do NOT need to rebuild the wheel — the Dockerfiles
-> copy the source directly with `COPY hastelib/src/haste_geo /home/site/wwwroot/haste`.
+> copy the source directly with `COPY hastelib/src/hastegeo /home/site/wwwroot/hastegeo`.
 
 ---
 

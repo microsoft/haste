@@ -222,9 +222,9 @@ hatch build -t wheel
 ```
 
 The `hatch build` command automatically:
-- Increments the version in `hastelib/src/haste_geo/__about__.py`
-- Builds a wheel and copies it to the function app folders
-- Updates the package version in all `requirements.txt` and `env.yml` files
+- Increments the version in `hastelib/src/hastegeo/__about__.py`
+- Builds a wheel, uploads it to the `haste-binaries` blob container, and removes the local copy from `hastelib/dist/`
+- Rewrites the pinned wheel URL on the `hastegeo @ <url>` line of `api/hastefuncapi/requirements.txt`, `api/hastefuncqueues/requirements.txt`, and `docker/imageryprep/requirements.txt`
 
 Then deploy the function apps:
 
@@ -267,10 +267,10 @@ func azure functionapp publish <YOUR_TITILER_FUNCTION_NAME> --python
 
 ### Testing batch jobs locally
 
-Mount the `haste` package in hot-reload mode by adding this volume to your `docker run` command:
+Mount the `hastegeo` package in hot-reload mode by adding this volume to your `docker run` command:
 
 ```bash
--v "`pwd`/hastelib/src/haste_geo":/usr/local/lib/python3.11/site-packages/haste
+-v "`pwd`/hastelib/src/hastegeo":/usr/local/lib/python3.11/site-packages/hastegeo
 ```
 
 #### Imagery prep
@@ -298,7 +298,7 @@ post_event_imagery_urls:
 ```bash
 docker run -it \
   -v "`pwd`/localtmp/prepare_imagery":/wd \
-  -v "`pwd`/hastelib/src/haste_geo":/usr/local/lib/python3.11/site-packages/haste \
+  -v "`pwd`/hastelib/src/hastegeo":/usr/local/lib/python3.11/site-packages/hastegeo \
   -e WORKDIR=/wd \
   --entrypoint bash \
   ${CONTAINER_REGISTRY}.azurecr.io/hasteimageryprep:${tag}
@@ -310,7 +310,7 @@ docker run -it \
 prepare-imagery --config /wd/imageryprep_config.json
 ```
 
-Outputs are written to `localtmp/prepare_imagery/outputs/`. Changes to `hastelib/src/haste_geo/workflows/prepare_imagery.py` are reflected immediately via the volume mount.
+Outputs are written to `localtmp/prepare_imagery/outputs/`. Changes to `hastelib/src/hastegeo/workflows/prepare_imagery.py` are reflected immediately via the volume mount.
 
 #### Training
 
@@ -323,7 +323,7 @@ Outputs are written to `localtmp/prepare_imagery/outputs/`. Changes to `hastelib
 ```bash
 docker run --gpus all -it --shm-size=32g \
   -v "`pwd`/localtmp/training":/wd \
-  -v "`pwd`/hastelib/src/haste_geo":/usr/local/lib/python3.11/site-packages/haste \
+  -v "`pwd`/hastelib/src/hastegeo":/usr/local/lib/python3.11/site-packages/hastegeo \
   -v "`pwd`/docker/training:/app" \
   -e WORKDIR=/wd \
   --entrypoint bash \
