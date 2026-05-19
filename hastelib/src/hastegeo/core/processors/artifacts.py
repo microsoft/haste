@@ -142,7 +142,9 @@ class ArtifactProcessor:
                 if "training_zip" in manifest_data:
                     self.model_artifacts.trainingZipUrl = (
                         self.storage.get_download_url(
-                            identifier=manifest_data["training_zip"]["filename"],
+                            identifier=manifest_data["training_zip"][
+                                "filename"
+                            ],
                             extra_partition_keys=zip_task_id,
                         )
                     )
@@ -153,7 +155,9 @@ class ArtifactProcessor:
                 if "inference_zip" in manifest_data:
                     self.model_artifacts.inferenceZipUrl = (
                         self.storage.get_download_url(
-                            identifier=manifest_data["inference_zip"]["filename"],
+                            identifier=manifest_data["inference_zip"][
+                                "filename"
+                            ],
                             extra_partition_keys=zip_task_id,
                         )
                     )
@@ -345,8 +349,10 @@ class ArtifactProcessor:
     def _read_zip_manifest(self, zip_prefix: str) -> dict:
         """Read the zip_manifest.json produced by zip_artifacts.py."""
         blob_path = f"{zip_prefix}/zip_manifest.json"
-        blob_client = self.storage.artifact_storage.container_client.get_blob_client(
-            blob_path
+        blob_client = (
+            self.storage.artifact_storage.container_client.get_blob_client(
+                blob_path
+            )
         )
         data = blob_client.download_blob().readall()
         return json.loads(data)

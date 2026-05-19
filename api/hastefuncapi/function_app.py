@@ -21,7 +21,6 @@ from hastegeo.core.models.projects import (
     Model,
     ModelArtifacts,
     Project,
-    ValidationLabel,
 )
 from hastegeo.core.models.stats import (
     ImageLayerStats,
@@ -2981,7 +2980,9 @@ async def GetAzureMapsToken(req: func.HttpRequest) -> func.HttpResponse:
     auth_level=AUTH_LEVEL,
     methods=["GET"],
 )
-async def GetBuildingFootprintsGeoJSON(req: func.HttpRequest) -> func.HttpResponse:
+async def GetBuildingFootprintsGeoJSON(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
     """Return a random sample of building footprints as a GeoJSON FeatureCollection.
 
     Reads the cached .gpkg file from blob storage for the given image layer,
@@ -2994,7 +2995,9 @@ async def GetBuildingFootprintsGeoJSON(req: func.HttpRequest) -> func.HttpRespon
         imageLayerId (str): Image layer identifier.
         sample (int, optional): Maximum number of buildings to return (default 200).
     """
-    logger.info("GetBuildingFootprintsGeoJSON HTTP trigger function processed a request.")
+    logger.info(
+        "GetBuildingFootprintsGeoJSON HTTP trigger function processed a request."
+    )
     try:
         import tempfile
 
@@ -3026,15 +3029,7 @@ async def GetBuildingFootprintsGeoJSON(req: func.HttpRequest) -> func.HttpRespon
             )
 
         # Rewrite the blob URL for internal container access.
-        from hastegeo.core.data_layer.azure_blob_storage_data_layer import (
-            AzureBlobStorageDataLayer,
-        )
-
         conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
-        data_layer = AzureBlobStorageDataLayer(
-            account_url="", container="data", connection_string=conn_str
-        )
-        base_url = data_layer.get_base_url()
 
         # footprints_url is like http://<host>/devstoreaccount1/data/<path>?<sas>
         # Strip the base URL prefix and any SAS query string to get the blob path.
@@ -3064,12 +3059,17 @@ async def GetBuildingFootprintsGeoJSON(req: func.HttpRequest) -> func.HttpRespon
             gdf = gdf.sample(n=sample_size, random_state=42)
 
         # Ensure only the columns we care about are returned.
-        keep_cols = [c for c in ["id", "subtype", "class", "geometry"] if c in gdf.columns]
+        keep_cols = [
+            c
+            for c in ["id", "subtype", "class", "geometry"]
+            if c in gdf.columns
+        ]
         gdf = gdf[keep_cols]
 
         geojson_str = await asyncio.to_thread(lambda: gdf.to_json())
 
         import os as _os
+
         _os.unlink(tmp_path)
 
         return func.HttpResponse(
@@ -3079,9 +3079,7 @@ async def GetBuildingFootprintsGeoJSON(req: func.HttpRequest) -> func.HttpRespon
         )
 
     except FileNotFoundError:
-        return func.HttpResponse(
-            "Image layer not found.", status_code=404
-        )
+        return func.HttpResponse("Image layer not found.", status_code=404)
     except Exception as e:
         logger.error(
             f"Error in GetBuildingFootprintsGeoJSON: {e}\n{traceback.format_exc()}",
@@ -3106,7 +3104,9 @@ async def GetBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
 
     Returns a BuildingValidation JSON object, or an empty one if no labels exist yet.
     """
-    logger.info("GetBuildingValidation HTTP trigger function processed a request.")
+    logger.info(
+        "GetBuildingValidation HTTP trigger function processed a request."
+    )
     try:
         project_id = req.params.get("projectId")
         image_layer_id = req.params.get("imageLayerId")
@@ -3164,7 +3164,9 @@ async def PutBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
             }
         }
     """
-    logger.info("PutBuildingValidation HTTP trigger function processed a request.")
+    logger.info(
+        "PutBuildingValidation HTTP trigger function processed a request."
+    )
     try:
         req_body = req.get_json()
         validation = BuildingValidation(**req_body)
@@ -3237,16 +3239,15 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
           "macroF1": float
         }
     """
-    logger.info("GetValidationReport HTTP trigger function processed a request.")
+    logger.info(
+        "GetValidationReport HTTP trigger function processed a request."
+    )
     try:
-        import tempfile
         import os as _os
-
+        import tempfile
         from urllib.parse import urlparse
+
         from azure.storage.blob import BlobServiceClient
-        from hastegeo.core.data_layer.azure_blob_storage_data_layer import (
-            AzureBlobStorageDataLayer,
-        )
 
         project_id = req.params.get("projectId")
         image_layer_id = req.params.get("imageLayerId")
@@ -3254,7 +3255,8 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
 
         if not project_id or not image_layer_id or not model_id:
             return func.HttpResponse(
-                "projectId, imageLayerId and modelId are required.", status_code=400
+                "projectId, imageLayerId and modelId are required.",
+                status_code=400,
             )
 
         # ── 1. Load validation labels ──────────────────────────────────────────
@@ -3268,7 +3270,11 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
             )
         except FileNotFoundError:
             return func.HttpResponse(
-                json.dumps({"error": "No validation labels found for this image layer."}),
+                json.dumps(
+                    {
+                        "error": "No validation labels found for this image layer."
+                    }
+                ),
                 status_code=404,
                 mimetype="application/json",
             )
@@ -3276,7 +3282,11 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         labels_dict = validation_data.get("labels") or {}
         if not labels_dict:
             return func.HttpResponse(
-                json.dumps({"error": "No validation labels found for this image layer."}),
+                json.dumps(
+                    {
+                        "error": "No validation labels found for this image layer."
+                    }
+                ),
                 status_code=404,
                 mimetype="application/json",
             )
@@ -3293,7 +3303,9 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         gpkg_url = model_data.get("gpkgUrl")
         if not gpkg_url:
             return func.HttpResponse(
-                json.dumps({"error": "No inference results available for this model."}),
+                json.dumps(
+                    {"error": "No inference results available for this model."}
+                ),
                 status_code=404,
                 mimetype="application/json",
             )
@@ -3310,16 +3322,17 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         footprints_url = image_layer_data.get("buildingFootprintsUrl")
         if not footprints_url:
             return func.HttpResponse(
-                json.dumps({"error": "No building footprints available for this image layer."}),
+                json.dumps(
+                    {
+                        "error": "No building footprints available for this image layer."
+                    }
+                ),
                 status_code=404,
                 mimetype="application/json",
             )
 
         # ── 4. Helper: download a blob by its public/SAS URL ──────────────────
         conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
-        data_layer = AzureBlobStorageDataLayer(
-            account_url="", container="data", connection_string=conn_str
-        )
         bsc = BlobServiceClient.from_connection_string(conn_str)
 
         def _blob_path_from_url(url: str) -> str:
@@ -3334,7 +3347,9 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
                 .download_blob()
                 .readall()
             )
-            with tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(
+                suffix=".gpkg", delete=False
+            ) as tmp:
                 tmp.write(blob_bytes)
                 return tmp.name
 
@@ -3391,12 +3406,14 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
 
         if matched == 0:
             return func.HttpResponse(
-                json.dumps({
-                    "matched": 0,
-                    "totalValidationLabels": len(labels_dict),
-                    "labelCounts": label_counts,
-                    "error": "No validation labels could be matched to inference results.",
-                }),
+                json.dumps(
+                    {
+                        "matched": 0,
+                        "totalValidationLabels": len(labels_dict),
+                        "labelCounts": label_counts,
+                        "error": "No validation labels could be matched to inference results.",
+                    }
+                ),
                 status_code=200,
                 mimetype="application/json",
             )

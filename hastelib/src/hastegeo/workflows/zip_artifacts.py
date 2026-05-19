@@ -11,9 +11,7 @@ def _zip_directory(src_dir, zip_path):
         for root, _dirs, files in os.walk(src_dir):
             for file in files:
                 file_path = os.path.join(root, file)
-                zipf.write(
-                    file_path, os.path.relpath(file_path, src_dir)
-                )
+                zipf.write(file_path, os.path.relpath(file_path, src_dir))
 
 
 def main():
