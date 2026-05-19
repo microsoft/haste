@@ -7,6 +7,27 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 
 ---
 
+## [v1.4.4] — Cached building footprints and local Docker dev fixes
+
+### Added
+- Cache building footprints per image layer in the imageryprep workflow instead of re-downloading on every inference run; image layers created before this change must be re-processed ([#24](https://github.com/microsoft/haste/pull/24))
+- "Download Building Footprints" menu item in the image-layer UI dropdown ([#24](https://github.com/microsoft/haste/pull/24))
+- `HASTE_SKIP_VERSION_BUMP` now honored in the hastelib Hatchling `finalize()` hook so pip-driven builds (Dockerfiles, CI) can opt out of the version bump and wheel upload ([#19](https://github.com/microsoft/haste/pull/19))
+
+### Changed
+- Bump `hastegeo` to 1.0.4
+- Bump UI base image to `azurelinux/base/nodejs:24` for Vite 8 compatibility ([#19](https://github.com/microsoft/haste/pull/19))
+- Isolate the Overture Maps footprint download in a subprocess with a configurable timeout so `pyarrow` SIGSEGVs and upstream hangs no longer take down completed mosaics/COGs ([#24](https://github.com/microsoft/haste/pull/24))
+- Surface footprint-download failures to the UI via `FAILED` image-layer status with a captured cause ([#24](https://github.com/microsoft/haste/pull/24))
+
+### Fixed
+- Unblock local `docker compose` dev build — Dockerfile paths, CLI shim modules, and GPU env-var override after the `hasteutils`→`hastelib` / `haste`→`hastegeo` rename ([#19](https://github.com/microsoft/haste/pull/19), closes [#21](https://github.com/microsoft/haste/issues/21))
+- Labeling tool works without an Azure Maps subscription in local dev ([#23](https://github.com/microsoft/haste/pull/23))
+- Use `--bbox=VALUE` form so argparse parses negative-longitude AOIs ([#24](https://github.com/microsoft/haste/pull/24))
+- Fix stale `haste`/`haste_geo` references in repo-root and `docker/README.md` ([#26](https://github.com/microsoft/haste/pull/26))
+
+---
+
 ## [v1.4.3] — Secure configuration and SDL hardening
 
 ### Added
