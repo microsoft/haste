@@ -3,18 +3,9 @@ name: Deploy Azure Applications
 on:
   workflow_dispatch:
     inputs:
-      resource_prefix:
-        description: "Resource naming prefix"
+      environment:
+        description: "Deployment environment (must match a configured GitHub Environment)"
         required: true
-        type: string
-      location:
-        description: "Azure region"
-        required: true
-        default: "eastus"
-        type: string
-      random_suffix:
-        description: "Random suffix for resource names (optional - will generate if not provided)"
-        required: false
         type: string
       training_image_tag:
         description: "Training Docker image tag"
@@ -24,23 +15,15 @@ on:
         description: "Image prep Docker image tag"
         required: true
         type: string
-      environment:
-        description: "Deployment environment (dev, staging, prod)"
-        required: true
-        default: "dev1"
-        type: string
       app_tag:
         description: "Application version tag"
         required: true
-        type: string
-      static_app_domain:
-        description: "Static Web App custom domain (e.g. your-app.azurestaticapps.net)"
-        required: false
         type: string
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     permissions:
       id-token: write
       contents: read
@@ -70,14 +53,6 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Generate random suffix
-        id: random
-        run: |
-          if [ -n "${{ github.event.inputs.random_suffix }}" ]; then
-            echo "suffix=${{ github.event.inputs.random_suffix }}" >> $GITHUB_OUTPUT
-          else
-            echo "suffix=$(openssl rand -hex 3)" >> $GITHUB_OUTPUT
-          fi
       - name: Git LFS Pull
         run: git lfs pull
       - name: Deploy
@@ -86,15 +61,15 @@ jobs:
           .github/scripts/deploy_apps.sh \
             "${{ secrets.AZURE_TENANT_ID }}" \
             "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            "${{ github.event.inputs.resource_prefix }}" \
-            "${{ github.event.inputs.location }}" \
-            "${{ steps.random.outputs.suffix }}" \
+            "${{ secrets.RESOURCE_PREFIX }}" \
+            "${{ secrets.LOCATION }}" \
+            "${{ secrets.RESOURCE_SUFFIX }}" \
             "${{ secrets.ACR_NAME }}" \
-            "${{ github.event.inputs.training_image_tag }}" \
-            "${{ github.event.inputs.imageprep_image_tag }}" \
-            "${{ github.event.inputs.environment }}" \
-            "${{ github.event.inputs.app_tag }}"\
+            "${{ inputs.training_image_tag }}" \
+            "${{ inputs.imageprep_image_tag }}" \
+            "${{ inputs.environment }}" \
+            "${{ inputs.app_tag }}" \
             "${{ secrets.BATCH_ACCOUNT }}" \
             "${{ secrets.SHARED_RESOURCE_GROUP }}" \
-            "${{ github.event.inputs.static_app_domain }}" \
+            "${{ secrets.STATIC_APP_DOMAIN }}" \
             "${{ secrets.EMAIL_CONNECTION_STRING }}"

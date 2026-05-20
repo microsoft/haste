@@ -254,7 +254,7 @@ Create a PR against the `development` branch.
 
 ### Workflow Overview
 
-The `deploy-apps.yml` workflow deploys the HASTE application suite to Azure, including Function Apps, Static Web Apps, and configures the necessary cloud infrastructure.
+The `deploy-apps.yml` workflow deploys the HASTE application suite to Azure, including Function Apps, Static Web Apps, and configures the necessary cloud infrastructure. All per-target configuration (region, resource naming, custom domain, etc.) is sourced from **GitHub Environments** so the same workflow can deploy to any number of targets without code changes.
 
 ### Trigger
 
@@ -262,22 +262,51 @@ Manual trigger only using `workflow_dispatch` from the GitHub Actions interface.
 
 ### Input Parameters
 
-| Parameter | Description | Required | Default | Type |
-|-----------|-------------|----------|---------|------|
-| `resource_prefix` | Resource naming prefix for all Azure resources | Yes | - | string |
-| `location` | Azure region for deployment | Yes | `eastus` | string |
+| Parameter | Description | Required | Type |
+|-----------|-------------|----------|------|
+| `environment` | Deployment target — must match a configured GitHub Environment | Yes | string |
+| `training_image_tag` | Training Docker image tag to deploy | Yes | string |
+| `imageprep_image_tag` | Image prep Docker image tag to deploy | Yes | string |
+| `app_tag` | Application version tag | Yes | string |
 
-**Note**: The random suffix is automatically generated using `openssl rand -hex 3` to ensure resource name uniqueness.
+If the typed `environment` value does not match a configured GitHub Environment, the job fails immediately with a clear error from GitHub.
 
-### Authentication
+### Required Secrets
 
-Uses the same Azure OIDC authentication as the Docker workflow:
+The recommended posture is **full isolation**: each deployment target is backed by its own Azure subscription, service principal, container registry, batch account, and resource groups, with secrets defined at GitHub Environment scope. This contains blast radius — a compromised workflow run for one environment cannot reach any other environment's credentials or resources.
+
+**Repository secret** (only one secret is truly shared across all environments — Settings → Secrets and variables → Actions → Repository secrets):
 
 | Secret | Description |
 |--------|-------------|
-| `AZURE_CLIENT_ID` | Service principal client ID |
-| `AZURE_TENANT_ID` | Azure Active Directory tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | Target Azure subscription ID |
+| `AZURE_TENANT_ID` | Azure Active Directory tenant ID (same across all environments in this fork) |
+
+**Environment secrets** (one set per target — Settings → Environments → `<env>` → Environment secrets):
+
+| Secret | Description |
+|--------|-------------|
+| `AZURE_CLIENT_ID` | OIDC service principal client ID dedicated to this environment |
+| `AZURE_SUBSCRIPTION_ID` | Subscription hosting this environment's resources |
+| `ACR_NAME` | Azure Container Registry hosting the training and imageprep images for this environment |
+| `BATCH_ACCOUNT` | Azure Batch account for this environment |
+| `SHARED_RESOURCE_GROUP` | Resource group hosting cross-service shared resources for this environment |
+| `RESOURCE_PREFIX` | Naming prefix for Azure resources in this environment |
+| `RESOURCE_SUFFIX` | Stable random suffix for resource names — generate once with `openssl rand -hex 3` when bootstrapping the environment and keep constant across redeploys |
+| `LOCATION` | Azure region for this environment (e.g. `eastus`) |
+| `STATIC_APP_DOMAIN` | Custom domain for the Static Web App in this environment |
+| `EMAIL_CONNECTION_STRING` | Azure Communication Services connection string for email |
+
+> **On sharing infrastructure across environments:** Some operators choose to share a single Azure Container Registry, Batch account, or shared resource group across multiple environments to reduce cost or operational overhead. The workflow supports that — move just those secrets to repository scope and they apply to every environment (GitHub looks up secrets at environment scope first and falls back to repository scope, so the YAML works either way). Be deliberate about which resources you share: a single compromised pipeline run gains access to whatever the shared resource holds, expanding blast radius across all environments that use it. The template defaults to isolation; sharing is an operator's informed tradeoff.
+
+### Setting Up a New Environment
+
+1. **Provision dedicated Azure resources** for this environment, following the fully-isolated blueprint: an Azure subscription (or at minimum a dedicated set of resource groups), a dedicated App Registration with federated credentials matching the GitHub Environment (`repo:<org>/<repo>:environment:<env-name>`), Azure RBAC scoped only to this environment's resources, and dedicated ACR / Batch / shared resource group instances. Skip the resources you intentionally share with other environments.
+2. **Create the GitHub Environment**: Settings → Environments → New environment → name it (e.g. `staging`).
+3. **Add the environment secrets** listed above. For `RESOURCE_SUFFIX`, run `openssl rand -hex 3` locally, paste the result, and don't change it afterwards — resource names depend on it staying stable. Skip any secrets you've intentionally placed at repository scope for shared infrastructure.
+4. **(Optional) Configure protection rules** on the GitHub Environment: required reviewers, deployment branch restrictions, wait timers.
+5. **Run the workflow**: Actions → Deploy Azure Applications → "Run workflow", enter the environment name, fill in the image/app tags, and dispatch.
+
+No YAML changes are required to add a new environment.
 
 ### Resources Deployed
 
@@ -288,4 +317,4 @@ Uses the same Azure OIDC authentication as the Docker workflow:
 
 ### Deployment Process
 
-Executes the `deploy_apps.sh` script with the provided parameters to deploy all Azure resources and configure application settings.
+Executes the `deploy_apps.sh` script with parameters resolved from inputs and repository/environment secrets to deploy all Azure resources and configure application settings.
