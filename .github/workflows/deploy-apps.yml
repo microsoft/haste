@@ -67,7 +67,7 @@ jobs:
             "${{ secrets.ACR_NAME }}" \
             "${{ inputs.training_image_tag }}" \
             "${{ inputs.imageprep_image_tag }}" \
-            "${{ inputs.environment }}" \
+            "${{ secrets.ENVIRONMENT_TYPE }}" \
             "${{ inputs.app_tag }}" \
             "${{ secrets.BATCH_ACCOUNT }}" \
             "${{ secrets.SHARED_RESOURCE_GROUP }}" \

@@ -295,6 +295,7 @@ The recommended posture is **full isolation**: each deployment target is backed 
 | `LOCATION` | Azure region for this environment (e.g. `eastus`) |
 | `STATIC_APP_DOMAIN` | Custom domain for the Static Web App in this environment |
 | `EMAIL_CONNECTION_STRING` | Azure Communication Services connection string for email |
+| `ENVIRONMENT_TYPE` | Application environment type (e.g. `dev`, `staging`, `prod`). Surfaces as the `env=` tag on Azure resources and as an app setting on the Function App, where it controls runtime behavior (batch node type, etc.). Distinct from the GitHub Environment name — multiple GitHub Environments can share the same `ENVIRONMENT_TYPE` if they're meant to behave identically at runtime |
 
 > **On sharing infrastructure across environments:** Some operators choose to share a single Azure Container Registry, Batch account, or shared resource group across multiple environments to reduce cost or operational overhead. The workflow supports that — move just those secrets to repository scope and they apply to every environment (GitHub looks up secrets at environment scope first and falls back to repository scope, so the YAML works either way). Be deliberate about which resources you share: a single compromised pipeline run gains access to whatever the shared resource holds, expanding blast radius across all environments that use it. The template defaults to isolation; sharing is an operator's informed tradeoff.
 
