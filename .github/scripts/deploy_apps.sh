@@ -151,7 +151,7 @@ deploy_static_web_app() {
 
     # Get static web app URL with error handling
     echo "Retrieving static web app URL..."
-    STATIC_WEB_APP_URL=$(az staticwebapp show --name "$STATIC_WEB_APP" --resource-group "$RESOURCE_GROUP" --query "defaultHostname" -o tsv | sed 's/^/https:\/\///') || {
+    STATIC_WEB_APP_URL=$(az staticwebapp show --name "$STATIC_WEB_APP" --resource-group "$RESOURCE_GROUP" --query "defaultHostname" -o tsv | sed 's|^|https://|') || {
         echo "ERROR: Failed to retrieve static web app URL. Ensure service principal has read permissions on static web app '$STATIC_WEB_APP'." >&2
         exit 1
     }
