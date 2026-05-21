@@ -2,8 +2,9 @@
 set -e
 set -o pipefail
 
-if [ "$#" -lt 4 ] || [ "$#" -gt 14 ]; then
-    echo "Usage: $0 <tenant_id> <subscription_id> <resource_prefix> <location> [random_suffix] [acr_name] [training_image_tag] [imageprep_image_tag] [environment] [app_tag] [batch_account] [shared_resource_group] [static_app_domain] [email_connection_string]"
+if [ "$#" -lt 4 ] || [ "$#" -gt 15 ]; then
+    echo "Usage: $0 <tenant_id> <subscription_id> <resource_prefix> <location> [random_suffix] [acr_name] [training_image_tag] [imageprep_image_tag] [environment] [app_tag] [batch_account] [shared_resource_group] [static_app_domain] [email_connection_string] [component]"
+    echo "  component: all (default) | funcapi | funcqueue | titiler | swa"
     exit 1
 fi
 
@@ -21,10 +22,7 @@ BATCH_ACCOUNT=${11}
 SHARED_RESOURCE_GROUP=${12}
 STATIC_APP_DOMAIN=${13:-FIXME}
 EMAIL_CONNECTION_STRING=${14}
-
-
-DeployFunctionApp=true
-DeployStaticWebApp=true
+COMPONENT=${15:-all}
 
 az config set core.login_experience_v2=off
 az config set extension.use_dynamic_install=yes_without_prompt
@@ -176,6 +174,7 @@ EOF
         --app-name "$STATIC_WEB_APP" \
         --tenant-id "$TENANT_ID" \
         --subscription-id "$SUBSCRIPTION_ID" \
+        --verbose silly \
         --env Production \
         --deployment-token "$(az staticwebapp secrets list --name "$STATIC_WEB_APP" --resource-group "$RESOURCE_GROUP" --query "properties.apiKey" -o tsv)"
 
@@ -184,20 +183,32 @@ EOF
 
 }
 
-echo "Deploying Azure Functions..."
-if [ "$DeployFunctionApp" = true ]; then
-    deploy_function "$FUNCTION_API" "$(dirname "$0")/../../api/hastefuncapi" true
-    deploy_function "$FUNCTION_TITILER_API" "$(dirname "$0")/../../api/titilerfuncapi" false
-    deploy_function "$FUNCTION_QUEUE_API" "$(dirname "$0")/../../api/hastefuncqueues" true
-fi
+echo "Deploying component: $COMPONENT"
 
-echo "+--------------------------------------------------+"
-echo "Deploying Static Web App..."
-echo "+--------------------------------------------------+"
-
-if [ "$DeployStaticWebApp" = true ]; then
-    deploy_static_web_app
-fi
+case "$COMPONENT" in
+    all)
+        deploy_function "$FUNCTION_API" "$(dirname "$0")/../../api/hastefuncapi" true
+        deploy_function "$FUNCTION_TITILER_API" "$(dirname "$0")/../../api/titilerfuncapi" false
+        deploy_function "$FUNCTION_QUEUE_API" "$(dirname "$0")/../../api/hastefuncqueues" true
+        deploy_static_web_app
+        ;;
+    funcapi)
+        deploy_function "$FUNCTION_API" "$(dirname "$0")/../../api/hastefuncapi" true
+        ;;
+    funcqueue)
+        deploy_function "$FUNCTION_QUEUE_API" "$(dirname "$0")/../../api/hastefuncqueues" true
+        ;;
+    titiler)
+        deploy_function "$FUNCTION_TITILER_API" "$(dirname "$0")/../../api/titilerfuncapi" false
+        ;;
+    swa)
+        deploy_static_web_app
+        ;;
+    *)
+        echo "ERROR: Unknown component '$COMPONENT'. Must be one of: all, funcapi, funcqueue, titiler, swa." >&2
+        exit 1
+        ;;
+esac
 
 echo "+--------------------------------------------------+"
 echo "Deployment completed successfully."

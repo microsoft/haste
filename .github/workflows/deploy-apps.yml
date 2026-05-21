@@ -7,6 +7,17 @@ on:
         description: "Deployment environment (must match a configured GitHub Environment)"
         required: true
         type: string
+      component:
+        description: "Which component to deploy"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - funcapi
+          - funcqueue
+          - titiler
+          - swa
       training_image_tag:
         description: "Training Docker image tag"
         required: true
@@ -72,4 +83,5 @@ jobs:
             "${{ secrets.BATCH_ACCOUNT }}" \
             "${{ secrets.SHARED_RESOURCE_GROUP }}" \
             "${{ secrets.STATIC_APP_DOMAIN }}" \
-            "${{ secrets.EMAIL_CONNECTION_STRING }}"
+            "${{ secrets.EMAIL_CONNECTION_STRING }}" \
+            "${{ inputs.component }}"
