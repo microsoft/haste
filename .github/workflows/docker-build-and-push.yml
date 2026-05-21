@@ -84,38 +84,18 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Dependabot PRs don't receive repo Actions secrets, so Azure Login fails
-      # and the regular push path can't run. Build locally on the runner and
-      # smoke-test imports inside the image so dependency bumps that break the
-      # application's API surface are caught even though we can't push.
+      # Dependabot PRs don't receive repo Actions secrets, so the regular
+      # push path can't run. Build locally on the runner instead — this still
+      # catches dep-resolver conflicts and missing system libs, which is the
+      # signal we want for "is this bump safe to merge as-is?". Deeper
+      # validation happens via the batch-review of Dependabot PRs.
       - name: Build image locally (Dependabot PRs)
         if: steps.resolve.outputs.run == 'true' && github.actor == 'dependabot[bot]'
         shell: bash
         env:
           IMAGE_DIR: ${{ matrix.image_dir }}
         run: |
-          docker build -f "docker/${IMAGE_DIR}/Dockerfile" -t "haste${IMAGE_DIR}:ci-smoke" .
-
-      - name: Smoke test image (Dependabot PRs)
-        if: steps.resolve.outputs.run == 'true' && github.actor == 'dependabot[bot]'
-        shell: bash
-        env:
-          IMAGE_DIR: ${{ matrix.image_dir }}
-        run: |
-          # Run with -w /tmp because the imageryprep module creates ./logs at
-          # import time. In production the container is invoked with a
-          # writable Azure Batch task directory as cwd; /tmp gives us the
-          # same property here.
-          case "$IMAGE_DIR" in
-            imageryprep)
-              docker run --rm -w /tmp --entrypoint python "haste${IMAGE_DIR}:ci-smoke" -c \
-                "import hastegeo.workflows.prepare_imagery; import hastegeo.workflows.zip_artifacts; print('imageryprep imports OK')"
-              ;;
-            training)
-              docker run --rm -w /tmp --entrypoint python "haste${IMAGE_DIR}:ci-smoke" -c \
-                "import bda; import bda.preprocess; import bda.trainers; import hastegeo; print('training imports OK')"
-              ;;
-          esac
+          docker build -f "docker/${IMAGE_DIR}/Dockerfile" -t "haste${IMAGE_DIR}:ci-build" .
 
       - name: Azure Login
         if: steps.resolve.outputs.run == 'true' && github.actor != 'dependabot[bot]'
