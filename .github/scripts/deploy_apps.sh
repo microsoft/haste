@@ -174,7 +174,6 @@ EOF
         --app-name "$STATIC_WEB_APP" \
         --tenant-id "$TENANT_ID" \
         --subscription-id "$SUBSCRIPTION_ID" \
-        --verbose silly \
         --env Production \
         --deployment-token "$(az staticwebapp secrets list --name "$STATIC_WEB_APP" --resource-group "$RESOURCE_GROUP" --query "properties.apiKey" -o tsv)"
 
