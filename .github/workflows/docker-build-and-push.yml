@@ -102,13 +102,17 @@ jobs:
         env:
           IMAGE_DIR: ${{ matrix.image_dir }}
         run: |
+          # Run with -w /tmp because the imageryprep module creates ./logs at
+          # import time. In production the container is invoked with a
+          # writable Azure Batch task directory as cwd; /tmp gives us the
+          # same property here.
           case "$IMAGE_DIR" in
             imageryprep)
-              docker run --rm --entrypoint python "haste${IMAGE_DIR}:ci-smoke" -c \
+              docker run --rm -w /tmp --entrypoint python "haste${IMAGE_DIR}:ci-smoke" -c \
                 "import hastegeo.workflows.prepare_imagery; import hastegeo.workflows.zip_artifacts; print('imageryprep imports OK')"
               ;;
             training)
-              docker run --rm --entrypoint python "haste${IMAGE_DIR}:ci-smoke" -c \
+              docker run --rm -w /tmp --entrypoint python "haste${IMAGE_DIR}:ci-smoke" -c \
                 "import bda; import bda.preprocess; import bda.trainers; import hastegeo; print('training imports OK')"
               ;;
           esac
