@@ -84,8 +84,37 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Dependabot PRs don't receive repo Actions secrets, so Azure Login fails
+      # and the regular push path can't run. Build locally on the runner and
+      # smoke-test imports inside the image so dependency bumps that break the
+      # application's API surface are caught even though we can't push.
+      - name: Build image locally (Dependabot PRs)
+        if: steps.resolve.outputs.run == 'true' && github.actor == 'dependabot[bot]'
+        shell: bash
+        env:
+          IMAGE_DIR: ${{ matrix.image_dir }}
+        run: |
+          docker build -f "docker/${IMAGE_DIR}/Dockerfile" -t "haste${IMAGE_DIR}:ci-smoke" .
+
+      - name: Smoke test image (Dependabot PRs)
+        if: steps.resolve.outputs.run == 'true' && github.actor == 'dependabot[bot]'
+        shell: bash
+        env:
+          IMAGE_DIR: ${{ matrix.image_dir }}
+        run: |
+          case "$IMAGE_DIR" in
+            imageryprep)
+              docker run --rm --entrypoint python "haste${IMAGE_DIR}:ci-smoke" -c \
+                "import hastegeo.workflows.prepare_imagery; import hastegeo.workflows.zip_artifacts; print('imageryprep imports OK')"
+              ;;
+            training)
+              docker run --rm --entrypoint python "haste${IMAGE_DIR}:ci-smoke" -c \
+                "import bda; import bda.preprocess; import bda.trainers; import hastegeo; print('training imports OK')"
+              ;;
+          esac
+
       - name: Azure Login
-        if: steps.resolve.outputs.run == 'true'
+        if: steps.resolve.outputs.run == 'true' && github.actor != 'dependabot[bot]'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -93,7 +122,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Build and Push Docker Image
-        if: steps.resolve.outputs.run == 'true'
+        if: steps.resolve.outputs.run == 'true' && github.actor != 'dependabot[bot]'
         shell: bash
         env:
           ACR_NAME: ${{ secrets.ACR_NAME }}
