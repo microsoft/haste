@@ -1,4 +1,4 @@
- testing # HASTE — High-speed Assessment and Satellite Tracking for Emergencies
+ # HASTE — High-speed Assessment and Satellite Tracking for Emergencies
 
 **HASTE is an open-source, human-in-the-loop research workflow** developed by Microsoft's AI for Good Lab to support **rapid building-level damage assessment from post-disaster satellite and aerial imagery**. HASTE enables a trained operator to manually label small samples of post-event imagery, locally train an event-specific computer vision model, generate per-pixel damage predictions, and aggregate those predictions with external building-footprint datasets (e.g., OpenStreetMap, Overture Building Footprints) to produce building-level damage estimates. This documentation is intended to help stakeholders understand the purpose of the HASTE workflow and how it operates at a high level. This documentation applies to the open-source HASTE workflow as released through the `microsoft/haste` repository and to outputs distributed by Microsoft AI for Good Lab.
 
