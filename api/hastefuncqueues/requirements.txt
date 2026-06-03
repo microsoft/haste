@@ -29,5 +29,5 @@ tenacity==9.1.2
 typing-extensions==4.14.1
 docker==7.1.0
 # Use wheel for remote, comment out for local Docker (source is copied directly)
-hastegeo @ https://researchlabwuopendata.blob.core.windows.net/haste-binaries/hastegeo-1.0.4-py3-none-any.whl
+hastegeo @ https://researchlabwuopendata.blob.core.windows.net/haste-binaries/hastegeo-1.0.5-py3-none-any.whl
 # -e ../../hastelib # for local development only

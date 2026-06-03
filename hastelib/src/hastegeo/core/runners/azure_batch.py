@@ -340,7 +340,12 @@ class AzureBatchJob:
     ):
         task_container_settings = TaskContainerSettings(
             image_name=image_name,
-            container_run_options="--rm --shm-size=32g",
+            # Run the container as root (0:0) so it can write to the
+            # Batch task working directory, which is created on the node by the
+            # admin auto-user (see user_identity below). The image otherwise
+            # runs as non-root `appuser`, which cannot write under the
+            # root-owned /mnt/batch/tasks tree.
+            container_run_options="--rm --shm-size=32g --user 0:0",
         )
         if output_prefix is None:
             output_prefix = "output"
