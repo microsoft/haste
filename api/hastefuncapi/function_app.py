@@ -3038,22 +3038,21 @@ async def GetBuildingFootprintsGeoJSON(
                 status_code=404,
             )
 
-        # Rewrite the blob URL for internal container access.
+        # Resolve the blob from the externally-shaped URL (which can be
+        # either Azurite-style `/devstoreaccount1/<container>/<blob>` or
+        # real Azure `/<container>/<blob>`), then download via the
+        # function-app-internal connection string so the request stays on
+        # the docker network in dev. BlobClient.from_blob_url handles
+        # both URL shapes uniformly.
+        from azure.storage.blob import BlobClient, BlobServiceClient
+
         conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
-
-        # footprints_url is like http://<host>/devstoreaccount1/data/<path>?<sas>
-        # Strip the base URL prefix and any SAS query string to get the blob path.
-        from urllib.parse import urlparse
-
-        parsed = urlparse(footprints_url)
-        blob_path = parsed.path.replace("/devstoreaccount1/data/", "", 1)
-
-        from azure.storage.blob import BlobServiceClient
+        parsed_blob = BlobClient.from_blob_url(footprints_url)
 
         bsc = BlobServiceClient.from_connection_string(conn_str)
         blob_bytes = await asyncio.to_thread(
-            lambda: bsc.get_container_client("data")
-            .get_blob_client(blob_path)
+            lambda: bsc.get_container_client(parsed_blob.container_name)
+            .get_blob_client(parsed_blob.blob_name)
             .download_blob()
             .readall()
         )
@@ -3260,9 +3259,8 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
     try:
         import os as _os
         import tempfile
-        from urllib.parse import urlparse
 
-        from azure.storage.blob import BlobServiceClient
+        from azure.storage.blob import BlobClient, BlobServiceClient
 
         project_id = req.params.get("projectId")
         image_layer_id = req.params.get("imageLayerId")
@@ -3347,18 +3345,20 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         # ── 4. Helper: download a blob by its public/SAS URL ──────────────────
+        # Use BlobClient.from_blob_url to extract the container/blob from
+        # the externally-shaped URL (works for both Azurite's
+        # /devstoreaccount1/<container>/<blob> path and real Azure's
+        # /<container>/<blob>), then download via the internal
+        # connection string so the request stays on the docker network
+        # in dev.
         conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
         bsc = BlobServiceClient.from_connection_string(conn_str)
 
-        def _blob_path_from_url(url: str) -> str:
-            parsed = urlparse(url)
-            return parsed.path.replace("/devstoreaccount1/data/", "", 1)
-
         async def _download_gpkg(url: str) -> str:
-            blob_path = _blob_path_from_url(url)
+            parsed_blob = BlobClient.from_blob_url(url)
             blob_bytes = await asyncio.to_thread(
-                lambda: bsc.get_container_client("data")
-                .get_blob_client(blob_path)
+                lambda: bsc.get_container_client(parsed_blob.container_name)
+                .get_blob_client(parsed_blob.blob_name)
                 .download_blob()
                 .readall()
             )
