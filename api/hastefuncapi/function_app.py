@@ -3230,7 +3230,7 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
           "accuracy": float,
           "confusionMatrix": {
             "labels": ["Damaged", "NotDamaged"],
-            "matrix": [[TP, FP], [FN, TN]]   // rows=actual, cols=predicted
+            "matrix": [[TP, FN], [FP, TN]]   // rows=actual, cols=predicted; positive=Damaged
           },
           "perClass": {
             "Damaged":    {"precision": float, "recall": float, "f1": float},
