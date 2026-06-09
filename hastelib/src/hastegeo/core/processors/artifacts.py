@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import json
+import re
 
 from hastegeo.core.artifact_storage.unified_artifact_storage import (
     UnifiedArtifactStorage,
@@ -14,6 +15,22 @@ from hastegeo.core.utils.queues import AzureQueueHandler
 
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 ZIP_PREFIX = "zip"
+
+_SLUG_INVALID = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _slugify_model_name(name: str) -> str:
+    """Convert a free-form Model.name into a value safe for blob paths.
+
+    Collapses any run of characters outside [A-Za-z0-9._-] into a single
+    '-', strips leading/trailing '-._' so paths don't start with a dot
+    or hyphen, and falls back to 'model' when the result is empty.
+    """
+    if not name:
+        return "model"
+    slug = _SLUG_INVALID.sub("-", name)
+    slug = slug.strip("-._")
+    return slug or "model"
 
 
 class ArtifactProcessor:
@@ -44,7 +61,7 @@ class ArtifactProcessor:
         )
         self.model_artifacts = model_artifacts
         if self.model_data is not None:
-            safe_name = self.model_data.name.replace(" ", "-")
+            safe_name = _slugify_model_name(self.model_data.name)
             self.zip_name = self.config.get_artifact_types().MODEL_ARTIFACTS_ZIP.value.substitute(
                 modelName=safe_name
             )
