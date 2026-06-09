@@ -122,6 +122,41 @@ def _bad_request(name_or_message: str) -> func.HttpResponse:
     return func.HttpResponse("Invalid request parameters.", status_code=400)
 
 
+def _split_blob_url(url: str) -> tuple[str, str]:
+    """Extract (container_name, blob_name) from a blob URL.
+
+    Handles both real-Azure URLs (https://<account>.blob.core.windows.net
+    /<container>/<blob>?<sas>) and Azurite path-style URLs
+    (http://<host>:<port>/<account>/<container>/<blob>?<sas>), including
+    the docker-internal `http://azurite:10000/...` form. We can't just
+    use azure.storage.blob.BlobClient.from_blob_url here because that
+    helper only recognizes hosts matching `*.blob.core.windows.net`,
+    `localhost`, or `127.0.0.1`; with the docker-network hostname
+    `azurite` it silently falls into a wrong-shape parse that treats
+    the second-to-last path segment as the container name (which then
+    produces ContainerNotFound at download time).
+
+    Detection: any host outside `*.blob.core.windows.net` is treated as
+    Azurite-style and the first path segment is consumed as the account
+    name. This matches the URLs `MetadataProcessor` produces in both
+    dev (azurite:10000 / devstoreaccount1) and prod (Azure Blob).
+    """
+    parsed = urlparse(url)
+    parts = [p for p in parsed.path.split("/") if p]
+    host = (parsed.hostname or "").lower()
+    if host.endswith(".blob.core.windows.net"):
+        # Real Azure: /<container>/<blob...>
+        if len(parts) < 2:
+            raise ValueError(f"Blob URL missing container/blob: {url}")
+        return parts[0], "/".join(parts[1:])
+    # Azurite path-style: /<account>/<container>/<blob...>
+    if len(parts) < 3:
+        raise ValueError(
+            f"Azurite-style blob URL missing account/container/blob: {url}"
+        )
+    return parts[1], "/".join(parts[2:])
+
+
 def _validate_imagery_urls(image_data: ImageLayer) -> str | None:
     """Validate user-submitted imagery URLs against the host allowlist.
 
@@ -3038,21 +3073,20 @@ async def GetBuildingFootprintsGeoJSON(
                 status_code=404,
             )
 
-        # Resolve the blob from the externally-shaped URL (which can be
-        # either Azurite-style `/devstoreaccount1/<container>/<blob>` or
-        # real Azure `/<container>/<blob>`), then download via the
-        # function-app-internal connection string so the request stays on
-        # the docker network in dev. BlobClient.from_blob_url handles
-        # both URL shapes uniformly.
-        from azure.storage.blob import BlobClient, BlobServiceClient
+        # Resolve container+blob from the externally-shaped URL with a
+        # parser that handles both real-Azure (account-in-host) and
+        # Azurite (account-in-path), including the docker-internal
+        # `http://azurite:10000/...` form. We can't use the Azure SDK's
+        # BlobClient.from_blob_url for this — see _split_blob_url docstring.
+        from azure.storage.blob import BlobServiceClient
 
         conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
-        parsed_blob = BlobClient.from_blob_url(footprints_url)
+        container_name, blob_name = _split_blob_url(footprints_url)
 
         bsc = BlobServiceClient.from_connection_string(conn_str)
         blob_bytes = await asyncio.to_thread(
-            lambda: bsc.get_container_client(parsed_blob.container_name)
-            .get_blob_client(parsed_blob.blob_name)
+            lambda: bsc.get_container_client(container_name)
+            .get_blob_client(blob_name)
             .download_blob()
             .readall()
         )
@@ -3260,7 +3294,7 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         import os as _os
         import tempfile
 
-        from azure.storage.blob import BlobClient, BlobServiceClient
+        from azure.storage.blob import BlobServiceClient
 
         project_id = req.params.get("projectId")
         image_layer_id = req.params.get("imageLayerId")
@@ -3345,20 +3379,17 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         # ── 4. Helper: download a blob by its public/SAS URL ──────────────────
-        # Use BlobClient.from_blob_url to extract the container/blob from
-        # the externally-shaped URL (works for both Azurite's
-        # /devstoreaccount1/<container>/<blob> path and real Azure's
-        # /<container>/<blob>), then download via the internal
-        # connection string so the request stays on the docker network
-        # in dev.
+        # Container+blob extraction uses _split_blob_url because the Azure
+        # SDK's BlobClient.from_blob_url misparses Azurite URLs whose host
+        # is the docker-internal `azurite:10000`. See helper docstring.
         conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
         bsc = BlobServiceClient.from_connection_string(conn_str)
 
         async def _download_gpkg(url: str) -> str:
-            parsed_blob = BlobClient.from_blob_url(url)
+            container_name, blob_name = _split_blob_url(url)
             blob_bytes = await asyncio.to_thread(
-                lambda: bsc.get_container_client(parsed_blob.container_name)
-                .get_blob_client(parsed_blob.blob_name)
+                lambda: bsc.get_container_client(container_name)
+                .get_blob_client(blob_name)
                 .download_blob()
                 .readall()
             )
