@@ -9,6 +9,7 @@ import { fileDownload } from "../../util/file";
 import { AppContext } from "../../AppContext";
 import ModelResultsStatusIndicator from "../OtherComponents/ModelResultsStatusIndicator";
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
+import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
 
 
 function formatFileSize(bytes) {
@@ -33,6 +34,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
   const { setDialog } = useContext(AppContext);
   const navigate = useNavigate();
   const [showValidationReport, setShowValidationReport] = useState(false);
+  const [showAssessmentReport, setShowAssessmentReport] = useState(false);
 
   function evaluateViewResultsButtonState(model) {
     // Results button must be enabled if inference jobs exist and status is processed
@@ -126,6 +128,16 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
         disabled: model.inferenceStatus !== "Processed" || !(validationLabelCount > 0),
         onClick: () => setShowValidationReport(true),
       },
+      {
+        key: "assessmentReport",
+        text: "Assessment Report",
+        iconProps: { iconName: "AnalyticsReport" },
+        // Predictions alone (+ cached footprints) are enough for the
+        // damage-count estimate; labels are optional and just unlock the
+        // precision/recall section inside the modal.
+        disabled: model.inferenceStatus !== "Processed",
+        onClick: () => setShowAssessmentReport(true),
+      },
     ],
   });
 
@@ -154,6 +166,15 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
             modelId={model.modelId}
             modelName={model.name}
             onDismiss={() => setShowValidationReport(false)}
+          />
+        )}
+        {showAssessmentReport && (
+          <AssessmentReportModal
+            projectId={projectId}
+            imageLayerId={imageLayerId}
+            modelId={model.modelId}
+            modelName={model.name}
+            onDismiss={() => setShowAssessmentReport(false)}
           />
         )}
       </React.Fragment>

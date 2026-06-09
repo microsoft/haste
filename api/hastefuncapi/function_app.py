@@ -3522,3 +3522,199 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             "Error generating validation report.", status_code=500
         )
+
+
+@app.route(
+    route="GetAssessmentReport",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
+    """Run the damage-assessment evaluation against the model's inference.
+
+    Reproduces the "Analyze results" computation from the
+    ``notebooks/Evaluate-Gezanine_1.ipynb`` notebook and from the
+    ``validation/evaluate.py`` CLI: precision/recall/AP against any
+    available human labels, the predicted damaged-building count for the
+    layer, and a finite-population estimate (with 95% CI) for the total
+    damaged count across all footprints above a minimum area threshold.
+
+    The math lives in :func:`hastegeo.core.utils.assessment.compute_assessment_report`.
+    This endpoint is the I/O wrapper that pulls the model's merged
+    predictions GeoPackage and the layer's cached building footprints
+    GeoPackage, joins them on row order (the convention used by
+    ``merge_with_building_footprints.py``), and folds in whatever
+    validation labels exist.
+
+    Query params:
+        projectId (str): Parent project identifier.
+        imageLayerId (str): Image layer identifier.
+        modelId (str): Model whose inference results to assess.
+        threshold (float, optional): Damage fraction above which a
+            building is called damaged (default 0.1, same as the CLI).
+        minAreaM2 (float, optional): Minimum footprint area in m² for
+            the population extrapolation (default 50).
+    """
+    logger.info(
+        "GetAssessmentReport HTTP trigger function processed a request."
+    )
+    try:
+        import os as _os
+        import tempfile
+
+        from azure.storage.blob import BlobServiceClient
+        from hastegeo.core.utils.assessment import (
+            build_assessment_inputs_from_gpkgs,
+            compute_assessment_report,
+        )
+
+        project_id = req.params.get("projectId")
+        image_layer_id = req.params.get("imageLayerId")
+        model_id = req.params.get("modelId")
+
+        if not project_id or not image_layer_id or not model_id:
+            return func.HttpResponse(
+                "projectId, imageLayerId and modelId are required.",
+                status_code=400,
+            )
+
+        # Parse optional knobs with bounded fallbacks; surfacing 400s on
+        # garbage so the modal doesn't try to render an opaque 500.
+        try:
+            threshold = float(req.params.get("threshold", "0.1"))
+        except ValueError:
+            return func.HttpResponse(
+                "threshold must be a number between 0 and 1.",
+                status_code=400,
+            )
+        if not 0.0 <= threshold <= 1.0:
+            return func.HttpResponse(
+                "threshold must be between 0 and 1.", status_code=400
+            )
+        try:
+            min_area_m2 = float(req.params.get("minAreaM2", "50"))
+        except ValueError:
+            return func.HttpResponse(
+                "minAreaM2 must be a number >= 0.", status_code=400
+            )
+        if min_area_m2 < 0:
+            return func.HttpResponse(
+                "minAreaM2 must be >= 0.", status_code=400
+            )
+
+        # Load model + image layer to get the two blob URLs we need.
+        model_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).load,
+            model_id,
+        )
+        gpkg_url = model_data.get("gpkgUrl")
+        if not gpkg_url:
+            return func.HttpResponse(
+                json.dumps(
+                    {"error": "No inference results available for this model."}
+                ),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        image_layer_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=project_id,
+            ).load,
+            image_layer_id,
+        )
+        footprints_url = image_layer_data.get("buildingFootprintsUrl")
+        if not footprints_url:
+            return func.HttpResponse(
+                json.dumps(
+                    {
+                        "error": "No building footprints available for this image layer."
+                    }
+                ),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        # Validation labels are optional for the assessment report — the
+        # CLI script can produce the damage-count estimate without labels,
+        # and the modal renders that section regardless. The metrics
+        # section is what needs labels.
+        try:
+            validation_data = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().VALIDATION.value,
+                    partition_key=project_id,
+                ).load,
+                image_layer_id,
+            )
+            labels_dict = validation_data.get("labels") or {}
+        except FileNotFoundError:
+            labels_dict = {}
+
+        labels_pairs = [
+            (bid, obj.get("label"))
+            for bid, obj in labels_dict.items()
+            if obj.get("label")
+        ]
+
+        # Download both GeoPackages through the function-app-internal
+        # BlobServiceClient. Uses _split_blob_url for the same azurite-host
+        # reason GetValidationReport does.
+        conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
+        bsc = BlobServiceClient.from_connection_string(conn_str)
+
+        async def _download_gpkg(url: str) -> str:
+            container_name, blob_name = _split_blob_url(url)
+            blob_bytes = await asyncio.to_thread(
+                lambda: bsc.get_container_client(container_name)
+                .get_blob_client(blob_name)
+                .download_blob()
+                .readall()
+            )
+            with tempfile.NamedTemporaryFile(
+                suffix=".gpkg", delete=False
+            ) as tmp:
+                tmp.write(blob_bytes)
+                return tmp.name
+
+        footprints_path = await _download_gpkg(footprints_url)
+        gpkg_path = await _download_gpkg(gpkg_url)
+        try:
+            inputs = await asyncio.to_thread(
+                build_assessment_inputs_from_gpkgs,
+                footprints_path,
+                gpkg_path,
+                labels=labels_pairs,
+            )
+        finally:
+            for path in (footprints_path, gpkg_path):
+                try:
+                    _os.unlink(path)
+                except OSError:
+                    pass
+
+        report = await asyncio.to_thread(
+            compute_assessment_report,
+            inputs,
+            threshold=threshold,
+            min_area_m2=min_area_m2,
+        )
+
+        return func.HttpResponse(
+            json.dumps(report, allow_nan=False),
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except Exception as e:
+        logger.error(
+            f"Error in GetAssessmentReport: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error generating assessment report.", status_code=500
+        )
