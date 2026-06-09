@@ -2993,19 +2993,29 @@ async def GetBuildingFootprintsGeoJSON(
     Query params:
         projectId (str): Parent project identifier.
         imageLayerId (str): Image layer identifier.
-        sample (int, optional): Maximum number of buildings to return (default 200).
+        sample (int, optional): Maximum number of buildings to return
+            (default 200). Clamped to the inclusive range [1, 2000] to bound
+            response size and server-side memory.
     """
     logger.info(
         "GetBuildingFootprintsGeoJSON HTTP trigger function processed a request."
     )
+    tmp_path = None
     try:
+        import os as _os
         import tempfile
 
         import geopandas as gpd
 
         project_id = req.params.get("projectId")
         image_layer_id = req.params.get("imageLayerId")
-        sample_size = int(req.params.get("sample", 200))
+        try:
+            requested_sample = int(req.params.get("sample", 200))
+        except (TypeError, ValueError):
+            requested_sample = 200
+        # Clamp to a sane range so callers can't accidentally pull the
+        # entire dataset (which can be millions of features) into memory.
+        sample_size = max(1, min(requested_sample, 2000))
 
         if not project_id or not image_layer_id:
             return func.HttpResponse(
@@ -3068,10 +3078,6 @@ async def GetBuildingFootprintsGeoJSON(
 
         geojson_str = await asyncio.to_thread(lambda: gdf.to_json())
 
-        import os as _os
-
-        _os.unlink(tmp_path)
-
         return func.HttpResponse(
             geojson_str,
             status_code=200,
@@ -3088,6 +3094,15 @@ async def GetBuildingFootprintsGeoJSON(
         return func.HttpResponse(
             "Error fetching building footprints.", status_code=500
         )
+    finally:
+        # Clean up the temporary .gpkg even when the read/sample/to_json
+        # path raises, so we don't leak files into the Functions worker's
+        # /tmp on every failed request.
+        if tmp_path is not None:
+            try:
+                _os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 @app.route(
