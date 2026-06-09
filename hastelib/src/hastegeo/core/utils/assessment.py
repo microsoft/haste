@@ -107,44 +107,34 @@ def _precision_recall_curve(
 ) -> tuple[list[float], list[float], list[float]]:
     """Same output shape as ``sklearn.metrics.precision_recall_curve``.
 
-    Returns three parallel lists ``(precision, recall, thresholds)`` of
-    length ``n_thresholds + 1`` for precision/recall and ``n_thresholds``
-    for thresholds. Curves end with ``(precision=1.0, recall=0.0)``.
+    Walks the descending-score ranking in two passes: the first
+    accumulates cumulative (tp, fp) at every distinct threshold; the
+    second turns each (tp, fp) pair into a (precision, recall) point.
+    Ends with the sklearn sentinel ``(precision=1.0, recall=0.0)``.
     """
     n_pos = sum(y_true)
     if n_pos == 0 or len(y_true) == 0:
         return [1.0], [0.0], []
+
+    # Pass 1: accumulate (tp, fp) at each distinct threshold.
     pairs = sorted(zip(y_score, y_true), key=lambda x: x[0], reverse=True)
-    precisions: list[float] = []
-    recalls: list[float] = []
-    thresholds: list[float] = []
-    tp = 0
-    fp = 0
-    # Snapshot of (tp, fp) at the previous score block — used when we
-    # flush a curve point at a new score. Initialized so the first
-    # iteration has no point to flush (last_score is None then anyway).
-    tp_prev = 0
-    fp_prev = 0
-    last_score: Optional[float] = None
+    tp = fp = 0
+    counts: list[tuple[float, int, int]] = []
     for score, label in pairs:
         if label == 1:
             tp += 1
         else:
             fp += 1
-        # Only record a curve point when the score changes — matches
-        # sklearn's behavior of producing one point per distinct threshold.
-        if last_score is None or score != last_score:
-            if last_score is not None:
-                precisions.append(tp_prev / (tp_prev + fp_prev))
-                recalls.append(tp_prev / n_pos)
-                thresholds.append(last_score)
-            last_score = score
-        tp_prev, fp_prev = tp, fp
-    # Flush the final threshold.
-    precisions.append(tp_prev / (tp_prev + fp_prev))
-    recalls.append(tp_prev / n_pos)
-    thresholds.append(last_score)
-    # sklearn appends a sentinel (1, 0) point that closes the curve.
+        if counts and counts[-1][0] == score:
+            # Same score as the previous row — overwrite, don't append.
+            counts[-1] = (score, tp, fp)
+        else:
+            counts.append((score, tp, fp))
+
+    # Pass 2: convert to precision/recall + sklearn's closing sentinel.
+    precisions = [t / (t + f) for _, t, f in counts]
+    recalls = [t / n_pos for _, t, _f in counts]
+    thresholds = [s for s, _t, _f in counts]
     precisions.append(1.0)
     recalls.append(0.0)
     return precisions, recalls, thresholds
@@ -183,31 +173,28 @@ def compute_assessment_report(
     total = len(damage_fractions)
 
     # Buildings the model considers "known" (i.e., not entirely cloud-covered).
-    known_ids: list[str] = [
-        bid for bid in damage_fractions if unknown_fractions.get(bid, 0.0) <= 0
-    ]
-    total_known = len(known_ids)
+    total_known = sum(
+        1 for bid in damage_fractions if unknown_fractions.get(bid, 0.0) <= 0
+    )
     total_unknown = total - total_known
-
     damaged_pred = sum(
-        1 for bid in known_ids if damage_fractions[bid] > threshold
+        1
+        for bid, dmg in damage_fractions.items()
+        if dmg > threshold and unknown_fractions.get(bid, 0.0) <= 0
     )
 
     # Population N for the extrapolation: buildings whose area is large
     # enough that a human labeler could realistically have called them.
-    pop_ids: list[str] = []
-    for bid in damage_fractions:
-        area = areas_m2.get(bid)
-        if area is not None and area > min_area_m2:
-            pop_ids.append(bid)
-    N = len(pop_ids)
+    N = sum(
+        1
+        for area in areas_m2.values()
+        if area is not None and area > min_area_m2
+    )
 
     # Label histogram (Damaged / NotDamaged / Unknown / other).
     label_counts: dict[str, int] = {DAMAGED: 0, NOT_DAMAGED: 0, UNKNOWN: 0}
     for lbl in labels.values():
         label_counts[lbl] = label_counts.get(lbl, 0) + 1
-    sure_labels = label_counts[DAMAGED] + label_counts[NOT_DAMAGED]
-    unsure_labels = label_counts[UNKNOWN]
 
     # Build y_true / y_score from sure-labeled buildings that are also
     # in the prediction set. Drops Unknown labels and labels for buildings
@@ -228,83 +215,88 @@ def compute_assessment_report(
     x = sum(y_true)
     y_pred = [1 if s > threshold else 0 for s in y_score]
 
-    if n == 0:
-        return {
-            "matched": 0,
-            "totalLabels": len(labels),
-            "labelCounts": label_counts,
-            "sureLabels": sure_labels,
-            "unsureLabels": unsure_labels,
-            "labeledMissingFromPredictions": missing,
-            "predictions": {
-                "total": total,
-                "knownNonCloudy": total_known,
-                "cloudy": total_unknown,
-                "predictedDamaged": damaged_pred,
-                "predictedDamagedPctOfKnown": _round(
-                    _safe_div(damaged_pred, total_known) * 100, 2
-                ),
-            },
-            "populationEstimate": {
-                "N": N,
-                "minAreaM2": min_area_m2,
-                "n": 0,
-                "x": 0,
-                "pHat": None,
-                "samplingFraction": None,
-                "sePHat": None,
-                "z": _Z_95,
-                "estimatedDamaged": None,
-                "ciLower": None,
-                "ciUpper": None,
-            },
-            "threshold": threshold,
-            "error": "No sure-labeled buildings matched the predictions.",
+    # Pre-compute every field the response carries. Fields that don't
+    # apply (no labels matched, no labels at all) just stay None — the
+    # single return statement at the bottom assembles them all.
+    if n > 0:
+        tp = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 1 and yp == 1)
+        fp = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 0 and yp == 1)
+        fn = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 1 and yp == 0)
+        tn = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 0 and yp == 0)
+
+        accuracy = (tp + tn) / n
+        recall = _safe_div(tp, tp + fn)
+        precision = _safe_div(tp, tp + fp)
+        ap = _average_precision(y_true, y_score) if x > 0 else None
+
+        pr_p, pr_r, pr_t = _precision_recall_curve(y_true, y_score)
+        # Downsample for transport. Thresholds are one shorter than the
+        # precision/recall arrays — use the same step for both.
+        if len(pr_p) > pr_curve_max_points:
+            step = max(1, len(pr_p) // pr_curve_max_points)
+            pr_p = pr_p[::step] + [pr_p[-1]]
+            pr_r = pr_r[::step] + [pr_r[-1]]
+            pr_t = pr_t[::step]
+
+        # Finite-population CI on the damage rate, scaled up to a count of
+        # buildings. Matches the CLI script exactly.
+        p_hat = x / n
+        f = n / N if N > 0 else 0.0
+        var_p = (1 - f) * p_hat * (1 - p_hat) / (n - 1) if n > 1 else 0.0
+        se_p = math.sqrt(max(var_p, 0.0))
+        evaluation_sample: Optional[dict] = {
+            "n": n,
+            "trueDamaged": x,
+            "trueNotDamaged": n - x,
+            "predictedPositive": int(sum(y_pred)),
+            "hasBothClasses": 0 < x < n,
         }
-
-    # Pointwise confusion matrix and per-class metrics at the threshold.
-    tp = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 1 and yp == 1)
-    fp = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 0 and yp == 1)
-    fn = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 1 and yp == 0)
-    tn = sum(1 for yt, yp in zip(y_true, y_pred) if yt == 0 and yp == 0)
-
-    accuracy = (tp + tn) / n
-    recall = _safe_div(tp, tp + fn)
-    precision = _safe_div(tp, tp + fp)
-
-    has_both_classes = 0 < x < n
-    ap = _average_precision(y_true, y_score) if x > 0 else None
-
-    pr_p, pr_r, pr_t = _precision_recall_curve(y_true, y_score)
-    # Downsample for transport.
-    if len(pr_p) > pr_curve_max_points:
-        step = max(1, len(pr_p) // pr_curve_max_points)
-        pr_p = pr_p[::step] + [pr_p[-1]]
-        pr_r = pr_r[::step] + [pr_r[-1]]
-    # Thresholds are one shorter than the precision/recall arrays.
-    if len(pr_t) > pr_curve_max_points:
-        step = max(1, len(pr_t) // pr_curve_max_points)
-        pr_t = pr_t[::step]
-
-    # Finite-population CI on the damage rate, scaled up to a count of
-    # buildings. Matches the CLI script exactly.
-    p_hat = x / n
-    f = n / N if N > 0 else 0.0
-    if n > 1:
-        var_p = (1 - f) * p_hat * (1 - p_hat) / (n - 1)
+        metrics: Optional[dict] = {
+            "accuracy": _round(accuracy),
+            "recall": _round(recall),
+            "precision": _round(precision),
+            "averagePrecision": _round(ap) if ap is not None else None,
+        }
+        confusion_matrix: Optional[dict] = {
+            "labels": [DAMAGED, NOT_DAMAGED],
+            # rows = actual, cols = predicted
+            "matrix": [[tp, fn], [fp, tn]],
+        }
+        pr_curve: Optional[dict] = {
+            "precision": [_round(v, 6) for v in pr_p],
+            "recall": [_round(v, 6) for v in pr_r],
+            "thresholds": [_round(v, 6) for v in pr_t],
+        }
+        population_extra: dict = {
+            "pHat": _round(p_hat),
+            "samplingFraction": _round(f, 6),
+            "sePHat": _round(se_p, 6),
+            "estimatedDamaged": _round(N * p_hat, 1),
+            "ciLower": _round(N * (p_hat - _Z_95 * se_p), 1),
+            "ciUpper": _round(N * (p_hat + _Z_95 * se_p), 1),
+        }
+        error: Optional[str] = None
     else:
-        var_p = 0.0
-    se_p = math.sqrt(max(var_p, 0.0))
-    Y_hat = N * p_hat
-    ci_lower = N * (p_hat - _Z_95 * se_p)
-    ci_upper = N * (p_hat + _Z_95 * se_p)
+        evaluation_sample = None
+        metrics = None
+        confusion_matrix = None
+        pr_curve = None
+        population_extra = {
+            "pHat": None,
+            "samplingFraction": None,
+            "sePHat": None,
+            "estimatedDamaged": None,
+            "ciLower": None,
+            "ciUpper": None,
+        }
+        error = "No sure-labeled buildings matched the predictions."
 
-    return {
+    response = {
         "matched": n,
         "totalLabels": len(labels),
         "labelCounts": label_counts,
-        "sureLabels": sure_labels,
-        "unsureLabels": unsure_labels,
+        "sureLabels": label_counts[DAMAGED] + label_counts[NOT_DAMAGED],
+        "unsureLabels": label_counts[UNKNOWN],
         "labeledMissingFromPredictions": missing,
         "predictions": {
             "total": total,
@@ -315,44 +307,23 @@ def compute_assessment_report(
                 _safe_div(damaged_pred, total_known) * 100, 2
             ),
         },
-        "evaluationSample": {
-            "n": n,
-            "trueDamaged": x,
-            "trueNotDamaged": n - x,
-            "predictedPositive": int(sum(y_pred)),
-            "hasBothClasses": has_both_classes,
-        },
-        "metrics": {
-            "accuracy": _round(accuracy),
-            "recall": _round(recall),
-            "precision": _round(precision),
-            "averagePrecision": _round(ap) if ap is not None else None,
-        },
-        "confusionMatrix": {
-            "labels": [DAMAGED, NOT_DAMAGED],
-            # rows = actual, cols = predicted
-            "matrix": [[tp, fn], [fp, tn]],
-        },
-        "precisionRecallCurve": {
-            "precision": [_round(v, 6) for v in pr_p],
-            "recall": [_round(v, 6) for v in pr_r],
-            "thresholds": [_round(v, 6) for v in pr_t],
-        },
+        "evaluationSample": evaluation_sample,
+        "metrics": metrics,
+        "confusionMatrix": confusion_matrix,
+        "precisionRecallCurve": pr_curve,
         "populationEstimate": {
             "N": N,
             "minAreaM2": min_area_m2,
             "n": n,
             "x": x,
-            "pHat": _round(p_hat),
-            "samplingFraction": _round(f, 6),
-            "sePHat": _round(se_p, 6),
             "z": _Z_95,
-            "estimatedDamaged": _round(Y_hat, 1),
-            "ciLower": _round(ci_lower, 1),
-            "ciUpper": _round(ci_upper, 1),
+            **population_extra,
         },
         "threshold": threshold,
     }
+    if error is not None:
+        response["error"] = error
+    return response
 
 
 def _building_areas_m2(footprints_path: str) -> dict[str, float]:

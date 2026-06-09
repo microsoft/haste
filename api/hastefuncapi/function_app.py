@@ -157,6 +157,32 @@ def _split_blob_url(url: str) -> tuple[str, str]:
     return parts[1], "/".join(parts[2:])
 
 
+async def _download_blob_to_tempfile(url: str, suffix: str = "") -> str:
+    """Download the blob at ``url`` to a NamedTemporaryFile and return the path.
+
+    Routes the download through the function-app-internal BLOB_CONNECTION_STRING
+    (so requests stay on the docker network in dev) regardless of the
+    container/blob URL the caller hands in. The caller is responsible for
+    unlinking the returned path when done (use try/finally).
+    """
+    from azure.storage.blob import BlobServiceClient
+
+    conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
+    container_name, blob_name = _split_blob_url(url)
+    bsc = BlobServiceClient.from_connection_string(conn_str)
+    blob_bytes = await asyncio.to_thread(
+        lambda: bsc.get_container_client(container_name)
+        .get_blob_client(blob_name)
+        .download_blob()
+        .readall()
+    )
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(blob_bytes)
+        return tmp.name
+
+
 def _validate_imagery_urls(image_data: ImageLayer) -> str | None:
     """Validate user-submitted imagery URLs against the host allowlist.
 
@@ -3038,7 +3064,6 @@ async def GetBuildingFootprintsGeoJSON(
     tmp_path = None
     try:
         import os as _os
-        import tempfile
 
         import geopandas as gpd
 
@@ -3073,31 +3098,16 @@ async def GetBuildingFootprintsGeoJSON(
                 status_code=404,
             )
 
-        # Resolve container+blob from the externally-shaped URL with a
-        # parser that handles both real-Azure (account-in-host) and
-        # Azurite (account-in-path), including the docker-internal
-        # `http://azurite:10000/...` form. We can't use the Azure SDK's
-        # BlobClient.from_blob_url for this — see _split_blob_url docstring.
-        from azure.storage.blob import BlobServiceClient
-
-        conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
-        container_name, blob_name = _split_blob_url(footprints_url)
-
-        bsc = BlobServiceClient.from_connection_string(conn_str)
-        blob_bytes = await asyncio.to_thread(
-            lambda: bsc.get_container_client(container_name)
-            .get_blob_client(blob_name)
-            .download_blob()
-            .readall()
+        # Download via the helper that handles both Azurite and real-Azure
+        # URL shapes and routes through BLOB_CONNECTION_STRING.
+        tmp_path = await _download_blob_to_tempfile(
+            footprints_url, suffix=".gpkg"
         )
-
-        with tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False) as tmp:
-            tmp.write(blob_bytes)
-            tmp_path = tmp.name
 
         gdf = await asyncio.to_thread(gpd.read_file, tmp_path)
 
-        # Random sample
+        # Random sample (fixed random_state so repeated calls return the
+        # same subset; the visualizer page shouldn't reshuffle on refresh).
         if len(gdf) > sample_size:
             gdf = gdf.sample(n=sample_size, random_state=42)
 
@@ -3292,9 +3302,6 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
     )
     try:
         import os as _os
-        import tempfile
-
-        from azure.storage.blob import BlobServiceClient
 
         project_id = req.params.get("projectId")
         image_layer_id = req.params.get("imageLayerId")
@@ -3378,32 +3385,13 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json",
             )
 
-        # ── 4. Helper: download a blob by its public/SAS URL ──────────────────
-        # Container+blob extraction uses _split_blob_url because the Azure
-        # SDK's BlobClient.from_blob_url misparses Azurite URLs whose host
-        # is the docker-internal `azurite:10000`. See helper docstring.
-        conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
-        bsc = BlobServiceClient.from_connection_string(conn_str)
-
-        async def _download_gpkg(url: str) -> str:
-            container_name, blob_name = _split_blob_url(url)
-            blob_bytes = await asyncio.to_thread(
-                lambda: bsc.get_container_client(container_name)
-                .get_blob_client(blob_name)
-                .download_blob()
-                .readall()
-            )
-            with tempfile.NamedTemporaryFile(
-                suffix=".gpkg", delete=False
-            ) as tmp:
-                tmp.write(blob_bytes)
-                return tmp.name
-
-        # ── 5. Read both GeoPackages ───────────────────────────────────────────
+        # ── 4. Download both GeoPackages and join row-order → overture id ─────
         import fiona
 
-        footprints_path = await _download_gpkg(footprints_url)
-        gpkg_path = await _download_gpkg(gpkg_url)
+        footprints_path = await _download_blob_to_tempfile(
+            footprints_url, suffix=".gpkg"
+        )
+        gpkg_path = await _download_blob_to_tempfile(gpkg_url, suffix=".gpkg")
 
         try:
             # Build index → overture_id from the building footprints file
@@ -3560,9 +3548,7 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
     )
     try:
         import os as _os
-        import tempfile
 
-        from azure.storage.blob import BlobServiceClient
         from hastegeo.core.utils.assessment import (
             build_assessment_inputs_from_gpkgs,
             compute_assessment_report,
@@ -3661,28 +3647,10 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
             if obj.get("label")
         ]
 
-        # Download both GeoPackages through the function-app-internal
-        # BlobServiceClient. Uses _split_blob_url for the same azurite-host
-        # reason GetValidationReport does.
-        conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
-        bsc = BlobServiceClient.from_connection_string(conn_str)
-
-        async def _download_gpkg(url: str) -> str:
-            container_name, blob_name = _split_blob_url(url)
-            blob_bytes = await asyncio.to_thread(
-                lambda: bsc.get_container_client(container_name)
-                .get_blob_client(blob_name)
-                .download_blob()
-                .readall()
-            )
-            with tempfile.NamedTemporaryFile(
-                suffix=".gpkg", delete=False
-            ) as tmp:
-                tmp.write(blob_bytes)
-                return tmp.name
-
-        footprints_path = await _download_gpkg(footprints_url)
-        gpkg_path = await _download_gpkg(gpkg_url)
+        footprints_path = await _download_blob_to_tempfile(
+            footprints_url, suffix=".gpkg"
+        )
+        gpkg_path = await _download_blob_to_tempfile(gpkg_url, suffix=".gpkg")
         try:
             inputs = await asyncio.to_thread(
                 build_assessment_inputs_from_gpkgs,
