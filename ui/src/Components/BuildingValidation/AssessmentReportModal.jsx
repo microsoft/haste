@@ -171,25 +171,37 @@ const AssessmentReportModal = ({
   const hasLabels = (report?.matched ?? 0) > 0;
 
   // One-paragraph summary, modeled on the CLI script.
-  const summarySentence =
-    report && preds
-      ? `Out of a total of ${int(preds.total)} building footprints in the study area, ` +
-        `${int(preds.cloudy)} were obscured by clouds; of the remaining ` +
-        `${int(preds.knownNonCloudy)} non-cloudy footprints, the model ` +
-        `predicted that ${int(preds.predictedDamaged)} ` +
-        `(${preds.predictedDamagedPctOfKnown ?? 0}%) were damaged to some extent.` +
-        (hasLabels
-          ? ` We independently labeled ${int(report.totalLabels)} footprints; ` +
-            `${int(report.sureLabels)} were sure-labeled. Estimated recall ` +
-            `${pct(metrics?.recall)} and precision ${pct(metrics?.precision)}. ` +
-            (pop && pop.N > 0
-              ? `Extrapolating to all ${int(pop.N)} buildings with area > ` +
-                `${pop.minAreaM2.toFixed(0)} m², we estimate ` +
-                `${int(pop.estimatedDamaged)} damaged buildings ` +
-                `(${pct(pop.pHat)}) with a 95% CI of ` +
-                `[${int(pop.ciLower)}, ${int(pop.ciUpper)}].`
-              : "")
-          : " No human validation labels are available for this image layer yet — labeling some via the Building Validation tool will populate the metrics and population estimate.");
+  function buildSummarySentence() {
+    if (!report || !preds) return "";
+    let s =
+      `Out of a total of ${int(preds.total)} building footprints in the study area, ` +
+      `${int(preds.cloudy)} were obscured by clouds; of the remaining ` +
+      `${int(preds.knownNonCloudy)} non-cloudy footprints, the model ` +
+      `predicted that ${int(preds.predictedDamaged)} ` +
+      `(${preds.predictedDamagedPctOfKnown ?? 0}%) were damaged to some extent.`;
+    if (!hasLabels) {
+      return (
+        s +
+        " No human validation labels are available for this image layer yet — " +
+        "labeling some via the Building Validation tool will populate the " +
+        "metrics and population estimate."
+      );
+    }
+    s +=
+      ` We independently labeled ${int(report.totalLabels)} footprints; ` +
+      `${int(report.sureLabels)} were sure-labeled. Estimated recall ` +
+      `${pct(metrics?.recall)} and precision ${pct(metrics?.precision)}.`;
+    if (pop && pop.N > 0) {
+      s +=
+        ` Extrapolating to all ${int(pop.N)} buildings with area > ` +
+        `${pop.minAreaM2.toFixed(0)} m², we estimate ` +
+        `${int(pop.estimatedDamaged)} damaged buildings ` +
+        `(${pct(pop.pHat)}) with a 95% CI of ` +
+        `[${int(pop.ciLower)}, ${int(pop.ciUpper)}].`;
+    }
+    return s;
+  }
+  const summarySentence = buildSummarySentence();
 
   return (
     <Dialog
