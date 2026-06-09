@@ -5,13 +5,20 @@ import os
 from zipfile import ZipFile
 
 
-def _zip_directory(src_dir, zip_path):
-    """Zip all files under *src_dir* into *zip_path*."""
+def _aggregate_dirs_into_zip(src_dirs, zip_path):
+    """Zip the union of files under each src_dir into zip_path.
+
+    Archive names are prefixed with os.path.basename(src_dir) so that
+    same-relative-path files in different src_dirs do not collide.
+    """
     with ZipFile(zip_path, "w") as zipf:
-        for root, _dirs, files in os.walk(src_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                zipf.write(file_path, os.path.relpath(file_path, src_dir))
+        for src_dir in src_dirs:
+            prefix = os.path.basename(os.path.normpath(src_dir))
+            for root, _dirs, files in os.walk(src_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    rel = os.path.relpath(file_path, src_dir)
+                    zipf.write(file_path, os.path.join(prefix, rel))
 
 
 def main():
@@ -54,16 +61,7 @@ def main():
 
     if training_dirs:
         training_zip_path = os.path.join(output_dir, training_zip_name)
-        # Merge all training dirs into one zip (typically just one)
-        with ZipFile(training_zip_path, "w") as zipf:
-            for src_dir in training_dirs:
-                for root, _dirs, files in os.walk(src_dir):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        zipf.write(
-                            file_path,
-                            os.path.relpath(file_path, src_dir),
-                        )
+        _aggregate_dirs_into_zip(training_dirs, training_zip_path)
         manifest["training_zip"] = {
             "filename": training_zip_name,
             "size_bytes": os.path.getsize(training_zip_path),
@@ -71,15 +69,7 @@ def main():
 
     if inference_dirs:
         inference_zip_path = os.path.join(output_dir, inference_zip_name)
-        with ZipFile(inference_zip_path, "w") as zipf:
-            for src_dir in inference_dirs:
-                for root, _dirs, files in os.walk(src_dir):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        zipf.write(
-                            file_path,
-                            os.path.relpath(file_path, src_dir),
-                        )
+        _aggregate_dirs_into_zip(inference_dirs, inference_zip_path)
         manifest["inference_zip"] = {
             "filename": inference_zip_name,
             "size_bytes": os.path.getsize(inference_zip_path),
