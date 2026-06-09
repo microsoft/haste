@@ -11,7 +11,7 @@ import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
 const LABEL_COLORS = {
   Damaged: "#e74c3c",
   NotDamaged: "#27ae60",
-  Unknown: "#7f8c8d",
+  Unknown: "#5a6268",
   unlabeled: "#3498db",
 };
 

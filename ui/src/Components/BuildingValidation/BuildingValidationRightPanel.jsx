@@ -6,7 +6,7 @@ import { DefaultButton, PrimaryButton } from "@fluentui/react";
 const LABEL_OPTIONS = [
   { value: "Damaged", label: "Damaged (1)", color: "#e74c3c" },
   { value: "NotDamaged", label: "Not Damaged (2)", color: "#27ae60" },
-  { value: "Unknown", label: "Unknown (3)", color: "#7f8c8d" },
+  { value: "Unknown", label: "Unknown (3)", color: "#5a6268" },
 ];
 
 const coloredButtonStyles = (color, selected) => ({
@@ -158,7 +158,7 @@ const BuildingValidationRightPanel = ({
         <div><span style={{ color: "#3498db" }}>■</span> Unlabeled</div>
         <div><span style={{ color: "#e74c3c" }}>■</span> Damaged</div>
         <div><span style={{ color: "#27ae60" }}>■</span> Not Damaged</div>
-        <div><span style={{ color: "#7f8c8d" }}>■</span> Unknown</div>
+        <div><span style={{ color: "#5a6268" }}>■</span> Unknown</div>
       </div>
 
       {/* Actions */}
