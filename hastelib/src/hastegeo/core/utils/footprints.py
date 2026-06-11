@@ -317,12 +317,7 @@ def _main():
             aoi_gdf = gpd.read_file(args.aoi_geojson)
             if aoi_gdf.crs is not None and aoi_gdf.crs.to_epsg() != 4326:
                 aoi_gdf = aoi_gdf.to_crs(epsg=4326)
-            # union_all() replaced the deprecated unary_union in shapely 2.x;
-            # collapse however many features into a single geometry.
-            if hasattr(aoi_gdf, "union_all"):
-                aoi_polygon = aoi_gdf.union_all()
-            else:
-                aoi_polygon = aoi_gdf.unary_union
+            aoi_polygon = aoi_gdf.union_all()
             if aoi_polygon.is_empty:
                 logger.warning(
                     "AOI geojson %s produced an empty geometry; "

@@ -3003,8 +3003,6 @@ async def GetBuildingFootprintsGeoJSON(
     )
     tmp_path = None
     try:
-        import os as _os
-
         import geopandas as gpd
 
         project_id = req.params.get("projectId")
@@ -3083,7 +3081,7 @@ async def GetBuildingFootprintsGeoJSON(
         # /tmp on every failed request.
         if tmp_path is not None:
             try:
-                _os.unlink(tmp_path)
+                os.unlink(tmp_path)
             except OSError:
                 pass
 
@@ -3241,8 +3239,6 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         "GetValidationReport HTTP trigger function processed a request."
     )
     try:
-        import os as _os
-
         project_id = req.params.get("projectId")
         image_layer_id = req.params.get("imageLayerId")
         model_id = req.params.get("modelId")
@@ -3348,8 +3344,8 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
                     for feat in src_inf
                 }
         finally:
-            _os.unlink(footprints_path)
-            _os.unlink(gpkg_path)
+            os.unlink(footprints_path)
+            os.unlink(gpkg_path)
 
         # Build overture_id → predicted_damaged
         overture_to_pred = {
@@ -3487,8 +3483,6 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
         "GetAssessmentReport HTTP trigger function processed a request."
     )
     try:
-        import os as _os
-
         from hastegeo.core.utils.assessment import (
             build_assessment_inputs_from_gpkgs,
             compute_assessment_report,
@@ -3601,7 +3595,7 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
         finally:
             for path in (footprints_path, gpkg_path):
                 try:
-                    _os.unlink(path)
+                    os.unlink(path)
                 except OSError:
                     pass
 
