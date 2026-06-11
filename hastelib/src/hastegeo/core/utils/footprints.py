@@ -20,10 +20,12 @@ from functools import lru_cache
 from typing import List, Optional, Tuple
 
 import fsspec
+import geopandas as gpd
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.dataset as ds
 import pyarrow.fs as fs
+from geopandas import GeoDataFrame
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +33,6 @@ OVERTURE_ACCOUNT_NAME = "overturemapswestus2"
 FALLBACK_RELEASE = "2026-02-18.0"
 # Matches Overture release names like "2026-02-18.0"
 _RELEASE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}\.\d+$")
-
-# Allows for optional import of additional dependencies
-try:
-    import geopandas as gpd
-    from geopandas import GeoDataFrame
-
-    HAS_GEOPANDAS = True
-except ImportError:
-    HAS_GEOPANDAS = False
-    GeoDataFrame = None
 
 
 type_theme_map = {
@@ -115,7 +107,7 @@ def record_batch_reader(
 
 def geodataframe(
     overture_type: str, bbox: Tuple[float, float, float, float] = None
-) -> "GeoDataFrame":
+) -> GeoDataFrame:
     """Loads geoparquet for specified type into a geopandas dataframe.
 
     Args:
@@ -125,9 +117,6 @@ def geodataframe(
     Returns:
         GeoDataFrame with the optionally filtered theme data.
     """
-    if not HAS_GEOPANDAS:
-        raise ImportError("geopandas is required to use this function")
-
     reader = record_batch_reader(overture_type, bbox)
     return gpd.GeoDataFrame.from_arrow(reader)
 
@@ -325,8 +314,6 @@ def _main():
     aoi_polygon = None
     if args.aoi_geojson:
         try:
-            if not HAS_GEOPANDAS:
-                raise ImportError("geopandas is required for AOI filtering")
             aoi_gdf = gpd.read_file(args.aoi_geojson)
             if aoi_gdf.crs is not None and aoi_gdf.crs.to_epsg() != 4326:
                 aoi_gdf = aoi_gdf.to_crs(epsg=4326)
