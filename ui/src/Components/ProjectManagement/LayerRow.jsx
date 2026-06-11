@@ -98,6 +98,26 @@ const LayerRow = ({
         },
       },
       {
+        key: "DownloadValidAreaMask",
+        text: "Download Valid Area Mask",
+        iconProps: { iconName: "Download" },
+        disabled: !item.validAreaMaskUrl,
+        onClick: () => {
+          if (item.validAreaMaskUrl) {
+            let url = item.validAreaMaskUrl;
+            if (import.meta.env.VITE_STORAGE_APIM_URL) {
+              url = url.replace(
+                /^https?:\/\/[^/]+/,
+                import.meta.env.VITE_STORAGE_APIM_URL
+              );
+            }
+            fileDownload(url, setDialog);
+          } else {
+            setDialog("Error", "No valid area mask available for this image layer.");
+          }
+        },
+      },
+      {
         key: "edit",
         text: "Edit",
         iconProps: { iconName: "Edit" },

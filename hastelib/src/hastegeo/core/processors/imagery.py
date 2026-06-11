@@ -494,6 +494,18 @@ class ImageryPostProcessor:
             )
             self.image_data.preprocessJob.logs = self.image_data.statusMessage
 
+        # Valid-area mask GeoJSON. Surfaced as a downloadable artifact;
+        # a missing mask is not by itself a layer failure (the matching
+        # AOI failure is already reported via building_footprints_error
+        # above when the two share root cause).
+        valid_area_mask_filename = processed_manifest.get(
+            "valid_area_mask_filename", ""
+        )
+        self.image_data.validAreaMaskUrl = self._generate_imagery_url(
+            filename=valid_area_mask_filename,
+            imagery_type=self.config.get_artifact_types().VALID_AREA_MASK,
+        )
+
     def _generate_imagery_url(
         self, filename: str, imagery_type: ArtifactTypes, validate=True
     ):

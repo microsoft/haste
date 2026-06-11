@@ -47,6 +47,10 @@ class ArtifactTypes(Enum):
         - BUILDING_FOOTPRINTS: Cached Overture Maps building footprints, scoped
           to the image layer's AOI. Generated during imageryprep so the
           inference workflow can reuse the same set across multiple model runs.
+        - VALID_AREA_MASK: GeoJSON FeatureCollection of the valid-data polygon
+          derived from the post-event mosaic — i.e. the imagery's actual
+          AOI excluding nodata. Same polygon used to bbox-filter Overture;
+          surfaced as a downloadable artifact for users.
         - INFERENCE_*: Model inference outputs
         - MODEL_*: Model artifacts and checkpoints
         - VISUALIZER: Visualization-ready outputs
@@ -80,6 +84,7 @@ class ArtifactTypes(Enum):
     BUILDING_FOOTPRINTS = Template(
         "building_footprints_${projectId}_${imageLayerId}"
     )
+    VALID_AREA_MASK = Template("valid_area_mask_${projectId}_${imageLayerId}")
     INFERENCE_GPKG = Template("predicted_damage_${modelName}")
     VISUALIZER = Template(
         POST_EVENT_MOSAIC.template + Template("_visualizer").template

@@ -62,6 +62,7 @@ POST_EVENT_PROCESSED_COG_PREFIX = (
 BUILDING_FOOTPRINTS_PREFIX = (
     hasteconfig.get_artifact_types().BUILDING_FOOTPRINTS.value
 )
+VALID_AREA_MASK_PREFIX = hasteconfig.get_artifact_types().VALID_AREA_MASK.value
 
 
 class ImageryWorkflow:
@@ -118,6 +119,13 @@ class ImageryWorkflow:
         # through the manifest so ImageryPostProcessor can mark the image
         # layer FAILED and surface the cause in the UI's statusMessage.
         self.building_footprints_error = ""
+        # Path to the valid-area-mask GeoJSON file (the post-event AOI
+        # polygon, EPSG:4326) and any error captured while extracting it.
+        # The mask shares its extraction step with the building-footprints
+        # bbox computation, so the same AOI failure will be surfaced here
+        # (and on building_footprints_error).
+        self.valid_area_mask_path = ""
+        self.valid_area_mask_error = ""
 
     def generate_prefix(self, prefix: Template):
         """Generate a prefix for the output files based on the project ID and image layer ID."""
@@ -295,6 +303,10 @@ class ImageryWorkflow:
 
         Sets ``self.building_footprints_path`` on success, or
         ``self.building_footprints_error`` (UI-displayable) on any failure.
+        Also sets ``self.valid_area_mask_path`` to the AOI polygon GeoJSON
+        on success (or ``self.valid_area_mask_error`` if the mask itself
+        could not be extracted/saved). The two artifacts share an AOI
+        extraction so they typically succeed or fail together.
         """
         if not self.mosaic_post_event_tif_filepath or not os.path.exists(
             self.mosaic_post_event_tif_filepath
@@ -306,15 +318,32 @@ class ImageryWorkflow:
             logger.error(msg)
             self.building_footprints_path = ""
             self.building_footprints_error = msg
+            self.valid_area_mask_path = ""
+            self.valid_area_mask_error = (
+                "Cannot extract valid-area mask: post-event mosaic is "
+                "not available."
+            )
             return
 
         prefix = self.generate_prefix(BUILDING_FOOTPRINTS_PREFIX)
         output_path = os.path.join(self.dst_directory, f"{prefix}.gpkg")
+        mask_prefix = self.generate_prefix(VALID_AREA_MASK_PREFIX)
+        mask_output_path = os.path.join(
+            self.dst_directory, f"{mask_prefix}.geojson"
+        )
 
         try:
-            from hastegeo.core.utils.aoi import aoi_bbox_from_cog
+            from hastegeo.core.utils.aoi import (
+                extract_aoi_polygon,
+                save_polygon_as_geojson,
+            )
 
-            bbox = aoi_bbox_from_cog(self.mosaic_post_event_tif_filepath)
+            # One AOI extraction serves both outputs: bbox-filter Overture
+            # and persist the polygon as the downloadable valid-area mask.
+            aoi_polygon = extract_aoi_polygon(
+                self.mosaic_post_event_tif_filepath
+            )
+            bbox = aoi_polygon.bounds
         except Exception as exc:
             logger.error(
                 "Failed extracting AOI for image layer %s",
@@ -326,7 +355,32 @@ class ImageryWorkflow:
                 "Failed to extract area-of-interest from the post-event "
                 f"mosaic before downloading building footprints: {exc}"
             )
+            self.valid_area_mask_path = ""
+            self.valid_area_mask_error = (
+                "Failed to extract area-of-interest polygon from the "
+                f"post-event mosaic: {exc}"
+            )
             return
+
+        # Persist the AOI polygon before kicking off the Overture
+        # subprocess so the mask is captured even if the footprint
+        # download later fails. Saving the geojson is a tiny local I/O
+        # operation; failures here are also soft (recorded on
+        # valid_area_mask_error) so they don't abort the footprint step.
+        try:
+            save_polygon_as_geojson(aoi_polygon, mask_output_path)
+            self.valid_area_mask_path = mask_output_path
+            self.valid_area_mask_error = ""
+        except Exception as exc:
+            logger.error(
+                "Failed writing valid-area mask GeoJSON for image layer %s",
+                self.image_layer_id,
+                exc_info=True,
+            )
+            self.valid_area_mask_path = ""
+            self.valid_area_mask_error = (
+                "Failed to save valid-area-mask GeoJSON: " f"{exc}"
+            )
 
         cmd = [
             sys.executable,
@@ -638,6 +692,19 @@ def main():
         config[
             "building_footprints_error"
         ] = imagery_workflow.building_footprints_error
+        # Valid-area mask is generated as a side-effect of the same AOI
+        # extraction. It's surfaced as a downloadable artifact in the UI;
+        # a missing mask is logged but not treated as a layer-failure on
+        # its own — the building-footprints error already covers any
+        # shared AOI failure.
+        config["valid_area_mask_filename"] = (
+            os.path.basename(imagery_workflow.valid_area_mask_path)
+            if imagery_workflow.valid_area_mask_path
+            else ""
+        )
+        config[
+            "valid_area_mask_error"
+        ] = imagery_workflow.valid_area_mask_error
 
         log_progress("Finalizing outputs")
         with open(os.path.join(output_dir, "imagery_manifest.json"), "w") as f:

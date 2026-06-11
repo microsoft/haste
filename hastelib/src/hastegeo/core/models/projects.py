@@ -653,6 +653,11 @@ class ImageLayer(BaseModel):
             footprint GeoPackage scoped to this layer's AOI. Populated
             by the imageryprep workflow; consumed by inference instead of
             re-downloading on every model run.
+        validAreaMaskUrl: URL to a single-feature GeoJSON FeatureCollection
+            containing the valid-data polygon (EPSG:4326) derived from the
+            post-event mosaic, i.e. the imagery's actual AOI excluding
+            nodata. Populated by the imageryprep workflow; surfaced as a
+            downloadable artifact in the UI.
         dependsOn: Dependency tuple specifying parent resource type and ID
 
     Example:
@@ -714,6 +719,7 @@ class ImageLayer(BaseModel):
     labelProject: Optional[LabelProject] = Field(default=None)
     labelsUrl: Optional[str] = Field(default=None)
     buildingFootprintsUrl: Optional[str] = Field(default=None)
+    validAreaMaskUrl: Optional[str] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("Project", "projectId")
     )
