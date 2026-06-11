@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { useEffect, useRef, useState, useContext } from "react";
+import { useEffect, useMemo, useRef, useState, useContext } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { apiGet, apiPut } from "../../util/api";
 import { getAzureMapsAuthOptions, isAzureMapsPlaceholder } from "../../util/azureMapsAuth";
@@ -14,6 +14,18 @@ const LABEL_COLORS = {
   Unknown: "#5a6268",
   unlabeled: "#3498db",
 };
+
+// Filter values used by the right-panel dropdown and the map dim logic.
+// 'all' means no filter; 'unlabeled' means buildings with no label set yet;
+// the three class names match the values stored on labels[id].label.
+export const FILTER_VALUES = ["all", "unlabeled", "Damaged", "NotDamaged", "Unknown"];
+
+function buildingMatchesFilter(feature, labels, filter) {
+  if (filter === "all") return true;
+  const lbl = labels[feature.properties?.id]?.label;
+  if (filter === "unlabeled") return !lbl;
+  return lbl === filter;
+}
 
 const BuildingValidation = () => {
   const { projectId, imageLayerId } = useParams();
@@ -31,6 +43,51 @@ const BuildingValidation = () => {
   const [labels, setLabels] = useState({});
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
+  const [filter, setFilter] = useState("all");
+
+  // Indices into `features` that pass the current filter. Prev / Next /
+  // Skip-to-next-unlabeled all walk this subset, NOT the raw features
+  // list, so the filter genuinely restricts navigation.
+  const filteredIndices = useMemo(
+    () =>
+      features
+        .map((f, i) => [f, i])
+        .filter(([f]) => buildingMatchesFilter(f, labels, filter))
+        .map(([, i]) => i),
+    [features, labels, filter]
+  );
+
+  // Find the next index from a starting point, wrapping around the end.
+  // Used by Prev/Next/SkipNext so navigation continues cyclically inside
+  // the filtered subset. Returns null when the candidate list is empty.
+  function nextIndexInList(list, fromIndex, direction = 1) {
+    if (list.length === 0) return null;
+    // Find where the current selection is in the filtered list (or the
+    // insertion point if it isn't in the list at all).
+    let pos = list.indexOf(fromIndex);
+    if (pos === -1) {
+      // Selection isn't in the filtered set — jump to the closest
+      // following candidate, or wrap to the first one.
+      const after = list.find((i) => i > fromIndex);
+      return after !== undefined ? after : list[0];
+    }
+    pos = (pos + direction + list.length) % list.length;
+    return list[pos];
+  }
+
+  function skipToNextUnlabeled() {
+    const unlabeledIndices = features
+      .map((f, i) => [f, i])
+      .filter(([f]) => !labels[f.properties?.id]?.label)
+      .map(([, i]) => i);
+    const next = nextIndexInList(unlabeledIndices, selectedIndex, 1);
+    if (next !== null) setSelectedIndex(next);
+  }
+
+  function navigateInFilter(direction) {
+    const next = nextIndexInList(filteredIndices, selectedIndex, direction);
+    if (next !== null) setSelectedIndex(next);
+  }
 
   useEffect(() => {
     const init = async () => {
@@ -134,7 +191,9 @@ const BuildingValidation = () => {
       if (featuresArr.length > 0) {
         datasource.add(footprintsGeoJSON);
 
-        // Polygon fill layer — keep reference for event binding
+        // Polygon fill layer — keep reference for event binding.
+        // Out-of-filter buildings render at low opacity so they stay
+        // as context without dominating the visible field.
         const fillLayer = new window.atlas.layer.PolygonLayer(datasource, "buildingFill", {
           fillColor: [
             "case",
@@ -143,7 +202,11 @@ const BuildingValidation = () => {
             ["==", ["get", "_label"], "Unknown"], LABEL_COLORS.Unknown,
             LABEL_COLORS.unlabeled,
           ],
-          fillOpacity: 0.5,
+          fillOpacity: [
+            "case",
+            ["==", ["get", "_passesFilter"], false], 0.1,
+            0.5,
+          ],
         });
         map.layers.add(fillLayer);
 
@@ -175,16 +238,23 @@ const BuildingValidation = () => {
         });
         map.getCanvasContainer().style.cursor = "pointer";
 
-        // Fit map to footprints bounding box
-        const bounds = window.atlas.data.BoundingBox.fromData(footprintsGeoJSON);
-        map.setCamera({ bounds, padding: 40, duration: 1500 });
+        // Start zoomed in on the first building to be labeled rather
+        // than the full study-area extent — the user asked for an
+        // immediately-actionable view. The [labels, selectedIndex,
+        // features] effect below also pans to selectedIndex, but only
+        // after the React state settles; setting the camera here gets
+        // the initial frame right without waiting for a re-render.
+        const firstCenter = extractCentroid(featuresArr[0]);
+        if (firstCenter) {
+          map.setCamera({ center: firstCenter, zoom: 18, duration: 0 });
+        }
       }
     });
 
     mapRef.current = map;
   }
 
-  // Update polygon properties when labels or selectedIndex change
+  // Update polygon properties when labels, selectedIndex, or filter change
   useEffect(() => {
     if (!datasourceRef.current || features.length === 0) return;
 
@@ -194,6 +264,7 @@ const BuildingValidation = () => {
         ...f.properties,
         _label: labels[f.properties?.id]?.label || null,
         _selected: idx === selectedIndex,
+        _passesFilter: buildingMatchesFilter(f, labels, filter),
       },
     }));
 
@@ -209,7 +280,18 @@ const BuildingValidation = () => {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [labels, selectedIndex, features]);
+  }, [labels, selectedIndex, features, filter]);
+
+  // When the filter changes such that the current selection no longer
+  // matches, jump to the first building that does — so the user isn't
+  // looking at a building that's hidden under the dim layer.
+  useEffect(() => {
+    if (filteredIndices.length === 0) return;
+    if (!filteredIndices.includes(selectedIndex)) {
+      setSelectedIndex(filteredIndices[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]);
 
   function extractCentroid(feature) {
     try {
@@ -350,6 +432,13 @@ const BuildingValidation = () => {
           onDownload={handleDownload}
           isSaving={isSaving}
           labeledCount={labeledCount}
+          filter={filter}
+          setFilter={setFilter}
+          filterValues={FILTER_VALUES}
+          filteredIndices={filteredIndices}
+          onPrev={() => navigateInFilter(-1)}
+          onNext={() => navigateInFilter(1)}
+          onSkipToNextUnlabeled={skipToNextUnlabeled}
         />
       )}
 

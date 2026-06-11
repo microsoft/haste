@@ -1,13 +1,21 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import PropTypes from "prop-types";
-import { DefaultButton, PrimaryButton } from "@fluentui/react";
+import { DefaultButton, Dropdown, PrimaryButton } from "@fluentui/react";
 
 const LABEL_OPTIONS = [
   { value: "Damaged", label: "Damaged (1)", color: "#e74c3c" },
   { value: "NotDamaged", label: "Not Damaged (2)", color: "#27ae60" },
   { value: "Unknown", label: "Unknown (3)", color: "#5a6268" },
 ];
+
+const FILTER_LABELS = {
+  all: "All buildings",
+  unlabeled: "Unlabeled only",
+  Damaged: "Damaged only",
+  NotDamaged: "Not Damaged only",
+  Unknown: "Unknown only",
+};
 
 const coloredButtonStyles = (color, selected) => ({
   root: {
@@ -44,6 +52,13 @@ const BuildingValidationRightPanel = ({
   onDownload,
   isSaving,
   labeledCount,
+  filter,
+  setFilter,
+  filterValues,
+  filteredIndices,
+  onPrev,
+  onNext,
+  onSkipToNextUnlabeled,
 }) => {
   BuildingValidationRightPanel.propTypes = {
     features: PropTypes.array.isRequired,
@@ -55,6 +70,13 @@ const BuildingValidationRightPanel = ({
     onDownload: PropTypes.func.isRequired,
     isSaving: PropTypes.bool.isRequired,
     labeledCount: PropTypes.number.isRequired,
+    filter: PropTypes.string.isRequired,
+    setFilter: PropTypes.func.isRequired,
+    filterValues: PropTypes.arrayOf(PropTypes.string).isRequired,
+    filteredIndices: PropTypes.arrayOf(PropTypes.number).isRequired,
+    onPrev: PropTypes.func.isRequired,
+    onNext: PropTypes.func.isRequired,
+    onSkipToNextUnlabeled: PropTypes.func.isRequired,
   };
 
   const total = features.length;
@@ -62,6 +84,23 @@ const BuildingValidationRightPanel = ({
   const currentId = currentFeature?.properties?.id;
   const currentLabel = currentId ? labels[currentId]?.label : null;
   const progressPct = total > 0 ? Math.round((labeledCount / total) * 100) : 0;
+
+  // When a filter is active, show position-in-filter; otherwise show the
+  // global position. Use indexOf because the selection may briefly fall
+  // outside the filtered subset until the filter-change effect catches it.
+  const filterPos = filteredIndices.indexOf(selectedIndex);
+  const positionLabel =
+    filter === "all"
+      ? `Building ${selectedIndex + 1} of ${total}`
+      : filterPos >= 0
+      ? `Building ${filterPos + 1} of ${filteredIndices.length} (filtered)`
+      : `(no buildings match filter)`;
+
+  const remainingUnlabeled = total - labeledCount;
+  const filterOptions = filterValues.map((v) => ({
+    key: v,
+    text: FILTER_LABELS[v] || v,
+  }));
 
   return (
     <div
@@ -104,11 +143,23 @@ const BuildingValidationRightPanel = ({
         </div>
       </div>
 
+      {/* Filter */}
+      <Dropdown
+        label="Show / review"
+        selectedKey={filter}
+        options={filterOptions}
+        onChange={(_e, opt) => opt && setFilter(opt.key)}
+        styles={{
+          root: { marginTop: 4 },
+          label: { fontSize: 11, fontWeight: 600, color: "#555", padding: 0 },
+          dropdown: { fontSize: 12 },
+          title: { height: 28, lineHeight: "26px", fontSize: 12 },
+        }}
+      />
+
       {/* Building info */}
       <div style={{ background: "#f8f9fa", borderRadius: 4, padding: "6px 8px", fontSize: 11 }}>
-        <div style={{ fontWeight: 600, marginBottom: 2 }}>
-          Building {selectedIndex + 1} of {total}
-        </div>
+        <div style={{ fontWeight: 600, marginBottom: 2 }}>{positionLabel}</div>
         {currentId && (
           <div style={{ color: "#666", wordBreak: "break-all" }}>
             ID: {currentId.length > 20 ? `...${currentId.slice(-20)}` : currentId}
@@ -140,17 +191,27 @@ const BuildingValidationRightPanel = ({
       <div style={{ display: "flex", gap: 6 }}>
         <DefaultButton
           text="Prev"
-          onClick={() => setSelectedIndex((i) => Math.max(0, i - 1))}
-          disabled={selectedIndex === 0}
+          onClick={onPrev}
+          disabled={filteredIndices.length <= 1}
           styles={{ root: { flex: 1 } }}
         />
         <DefaultButton
           text="Next"
-          onClick={() => setSelectedIndex((i) => Math.min(total - 1, i + 1))}
-          disabled={selectedIndex === total - 1}
+          onClick={onNext}
+          disabled={filteredIndices.length <= 1}
           styles={{ root: { flex: 1 } }}
         />
       </div>
+      <DefaultButton
+        text={
+          remainingUnlabeled > 0
+            ? `Skip to next unlabeled (${remainingUnlabeled} left)`
+            : "All buildings labeled"
+        }
+        onClick={onSkipToNextUnlabeled}
+        disabled={remainingUnlabeled === 0}
+        styles={{ root: { width: "100%" } }}
+      />
 
       {/* Legend */}
       <div style={{ fontSize: 10, color: "#888", lineHeight: 1.7 }}>
