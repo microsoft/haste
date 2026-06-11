@@ -16,6 +16,7 @@ import GuidedTour from "./Components/GuidedTour";
 // Components
 import AppBody from "./Components/AppBody";
 import AppHeader from "./Components/AppHeader";
+import AppFooter from "./Components/AppFooter";
 import Loading from "./Components/OtherComponents/Loading";
 import { initializeIcons } from "@fluentui/react";
 
@@ -33,6 +34,7 @@ function App() {
     const validateUser = async () => {
       setIsLoading(true);
       await apiValidateUser(setAppParams);
+      setIsLoading(false);
     };
 
     validateUser();
@@ -142,6 +144,7 @@ function App() {
           <GuidedTour />
         }
         {modalComponent}
+        {appParams.userId !== null && <AppFooter />}
       </div>
     </>
   );
