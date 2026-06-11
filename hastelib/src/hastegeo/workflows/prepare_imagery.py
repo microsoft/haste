@@ -393,6 +393,12 @@ class ImageryWorkflow:
             output_path,
             "--overwrite",
         ]
+        # If the AOI polygon was saved successfully, hand its path to the
+        # subprocess so the downloader can drop bbox-cornered footprints
+        # that fall outside the actual valid-data region. Skipped silently
+        # when the mask is missing (the bbox-only result is still useful).
+        if self.valid_area_mask_path:
+            cmd.append(f"--aoi-geojson={self.valid_area_mask_path}")
         timeout_seconds = int(
             os.getenv("HASTE_FOOTPRINTS_TIMEOUT_SECONDS", "1800")
         )

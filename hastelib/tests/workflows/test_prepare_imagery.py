@@ -101,6 +101,13 @@ class TestDownloadBuildingFootprintsStep(unittest.TestCase):
             self.assertIn("--output-path", cmd)
             self.assertIn(expected_path, cmd)
             self.assertIn("--overwrite", cmd)
+            # The AOI geojson was saved before the subprocess ran, so
+            # its path should be forwarded to the downloader for
+            # corner-cropping the bbox-only Overture result.
+            mask_path = os.path.join(
+                tmp, "valid_area_mask_proj-1_layer-9.geojson"
+            )
+            self.assertIn(f"--aoi-geojson={mask_path}", cmd)
 
     @patch("subprocess.run")
     @patch("hastegeo.core.utils.aoi.extract_aoi_polygon")

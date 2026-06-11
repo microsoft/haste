@@ -215,6 +215,98 @@ class TestDownloadBuildingFootprints(unittest.TestCase):
         final.set_crs.assert_called_once_with(epsg=4326, inplace=True)
         final.to_file.assert_called_once_with(output, driver="GPKG")
 
+    @patch("hastegeo.core.utils.footprints.geodataframe")
+    def test_aoi_polygon_filters_buildings_outside_mask(
+        self, mock_geodataframe
+    ):
+        """When aoi_polygon is provided, footprints not intersecting the
+        polygon are dropped. This is the core fix for the bbox-cornered
+        nodata problem: the Overture query is bbox-only, so without this
+        filter buildings in the unflown corners of a tilted image come
+        through unfiltered."""
+        import os
+        import tempfile
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import download_building_footprints
+
+        # Three buildings: two inside the AOI strip, one in the
+        # bbox-corner outside the AOI. The AOI is a narrow rectangle on
+        # the west side of the bbox.
+        bbox = (0.0, 0.0, 10.0, 10.0)
+        aoi = shapely.geometry.box(0.0, 0.0, 5.0, 10.0)
+        gdf = gpd.GeoDataFrame(
+            {
+                "id": ["in-1", "in-2", "out-1"],
+                "subtype": ["", "", ""],
+                "class": ["", "", ""],
+                "geometry": [
+                    shapely.geometry.box(1.0, 1.0, 1.5, 1.5),
+                    shapely.geometry.box(4.0, 4.0, 4.5, 4.5),
+                    shapely.geometry.box(7.0, 7.0, 7.5, 7.5),
+                ],
+            },
+            crs="EPSG:4326",
+        )
+        mock_geodataframe.return_value = gdf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = os.path.join(tmp, "out.gpkg")
+            count = download_building_footprints(
+                bbox=bbox,
+                output_path=output,
+                aoi_polygon=aoi,
+            )
+            self.assertEqual(count, 2)
+            # Read the gpkg back and verify only the inside buildings
+            # survived — the out-1 corner building must have been
+            # dropped by the polygon filter.
+            written = gpd.read_file(output)
+            self.assertEqual(set(written["id"]), {"in-1", "in-2"})
+
+    @patch("hastegeo.core.utils.footprints.geodataframe")
+    def test_aoi_polygon_keeps_partially_overlapping_buildings(
+        self, mock_geodataframe
+    ):
+        """A footprint straddling the AOI boundary is kept whole — we
+        intersect-test rather than geometrically clip, since a sliced
+        building is meaningless for downstream damage scoring."""
+        import os
+        import tempfile
+
+        import geopandas as gpd
+        import shapely.geometry
+        from hastegeo.core.utils.footprints import download_building_footprints
+
+        aoi = shapely.geometry.box(0.0, 0.0, 5.0, 10.0)
+        # Building spans 4 → 6: half inside, half outside.
+        gdf = gpd.GeoDataFrame(
+            {
+                "id": ["straddler"],
+                "subtype": [""],
+                "class": [""],
+                "geometry": [shapely.geometry.box(4.0, 4.0, 6.0, 6.0)],
+            },
+            crs="EPSG:4326",
+        )
+        mock_geodataframe.return_value = gdf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = os.path.join(tmp, "out.gpkg")
+            count = download_building_footprints(
+                bbox=(0.0, 0.0, 10.0, 10.0),
+                output_path=output,
+                aoi_polygon=aoi,
+            )
+            self.assertEqual(count, 1)
+            written = gpd.read_file(output)
+            # Geometry was preserved (not clipped to AOI).
+            self.assertEqual(
+                list(written.geometry.iloc[0].bounds),
+                [4.0, 4.0, 6.0, 6.0],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
