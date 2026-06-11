@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import PropTypes from "prop-types";
-import { DefaultButton, Dropdown, PrimaryButton } from "@fluentui/react";
+import { DefaultButton, Dropdown, PrimaryButton, Toggle } from "@fluentui/react";
 
 const LABEL_OPTIONS = [
   { value: "Damaged", label: "Damaged (1)", color: "#e74c3c" },
@@ -59,6 +59,11 @@ const BuildingValidationRightPanel = ({
   onPrev,
   onNext,
   onSkipToNextUnlabeled,
+  showFill,
+  setShowFill,
+  showPostImagery,
+  setShowPostImagery,
+  hasPostImagery,
 }) => {
   BuildingValidationRightPanel.propTypes = {
     features: PropTypes.array.isRequired,
@@ -77,6 +82,11 @@ const BuildingValidationRightPanel = ({
     onPrev: PropTypes.func.isRequired,
     onNext: PropTypes.func.isRequired,
     onSkipToNextUnlabeled: PropTypes.func.isRequired,
+    showFill: PropTypes.bool.isRequired,
+    setShowFill: PropTypes.func.isRequired,
+    showPostImagery: PropTypes.bool.isRequired,
+    setShowPostImagery: PropTypes.func.isRequired,
+    hasPostImagery: PropTypes.bool,
   };
 
   const total = features.length;
@@ -141,6 +151,44 @@ const BuildingValidationRightPanel = ({
             }}
           />
         </div>
+      </div>
+
+      {/* View toggles */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+          borderTop: "1px solid #eee",
+          borderBottom: "1px solid #eee",
+          padding: "6px 0",
+        }}
+      >
+        <Toggle
+          label="Show building fill"
+          checked={showFill}
+          onChange={(_e, checked) => setShowFill(!!checked)}
+          onText="On"
+          offText="Off"
+          styles={{
+            root: { marginBottom: 0 },
+            label: { fontSize: 11, fontWeight: 600, color: "#555" },
+            text: { fontSize: 11 },
+          }}
+        />
+        <Toggle
+          label="Show post-event imagery"
+          checked={showPostImagery}
+          onChange={(_e, checked) => setShowPostImagery(!!checked)}
+          onText="On"
+          offText="Off"
+          disabled={!hasPostImagery}
+          styles={{
+            root: { marginBottom: 0 },
+            label: { fontSize: 11, fontWeight: 600, color: "#555" },
+            text: { fontSize: 11 },
+          }}
+        />
       </div>
 
       {/* Filter */}

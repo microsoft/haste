@@ -37,6 +37,7 @@ const BuildingValidation = () => {
   const datasourceRef = useRef(null);
   const preImageryRef = useRef(null);
   const postImageryRef = useRef(null);
+  const fillLayerRef = useRef(null);
 
   const [isMapReady, setIsMapReady] = useState(false);
   const [features, setFeatures] = useState([]);
@@ -44,6 +45,12 @@ const BuildingValidation = () => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [filter, setFilter] = useState("all");
+  // Both toggles default to on so the page starts in the labeling-ready
+  // state. Turning the fill off reveals the imagery under each polygon;
+  // turning the post-event layer off lets the user compare against the
+  // satellite basemap underneath.
+  const [showFill, setShowFill] = useState(true);
+  const [showPostImagery, setShowPostImagery] = useState(true);
 
   // Indices into `features` that pass the current filter. Prev / Next /
   // Skip-to-next-unlabeled all walk this subset, NOT the raw features
@@ -209,6 +216,7 @@ const BuildingValidation = () => {
           ],
         });
         map.layers.add(fillLayer);
+        fillLayerRef.current = fillLayer;
 
         // Polygon outline layer
         map.layers.add(
@@ -253,6 +261,23 @@ const BuildingValidation = () => {
 
     mapRef.current = map;
   }
+
+  // Toggle building polygon fill visibility (selection outline + click
+  // handler still apply when fill is off — only the colored fill goes
+  // away, so the imagery underneath is visible).
+  useEffect(() => {
+    if (fillLayerRef.current) {
+      fillLayerRef.current.setOptions({ visible: showFill });
+    }
+  }, [showFill, isMapReady]);
+
+  // Toggle post-event imagery layer so the user can compare the
+  // post-event view against the basemap satellite underneath.
+  useEffect(() => {
+    if (postImageryRef.current) {
+      postImageryRef.current.setOptions({ visible: showPostImagery });
+    }
+  }, [showPostImagery, isMapReady]);
 
   // Update polygon properties when labels, selectedIndex, or filter change
   useEffect(() => {
@@ -439,6 +464,11 @@ const BuildingValidation = () => {
           onPrev={() => navigateInFilter(-1)}
           onNext={() => navigateInFilter(1)}
           onSkipToNextUnlabeled={skipToNextUnlabeled}
+          showFill={showFill}
+          setShowFill={setShowFill}
+          showPostImagery={showPostImagery}
+          setShowPostImagery={setShowPostImagery}
+          hasPostImagery={!!postImageryRef.current}
         />
       )}
 
