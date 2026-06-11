@@ -263,7 +263,7 @@ const BuildingValidationRightPanel = ({
 
       {/* Legend */}
       <div style={{ fontSize: 10, color: "#888", lineHeight: 1.7 }}>
-        <div style={{ fontWeight: 600, marginBottom: 2, color: "#555" }}>Legend · Hotkeys: 1 / 2 / 3</div>
+        <div style={{ fontWeight: 600, marginBottom: 2, color: "#555" }}>Legend · Hotkeys: 1 / 2 / 3 · ← →</div>
         <div><span style={{ color: "#3498db" }}>■</span> Unlabeled</div>
         <div><span style={{ color: "#e74c3c" }}>■</span> Damaged</div>
         <div><span style={{ color: "#27ae60" }}>■</span> Not Damaged</div>

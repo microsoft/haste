@@ -38,6 +38,14 @@ const BuildingValidation = () => {
   const preImageryRef = useRef(null);
   const postImageryRef = useRef(null);
   const fillLayerRef = useRef(null);
+  // Tile URL templates (with {z}/{x}/{y} placeholders) saved alongside
+  // the layer instances so the prefetcher can build URLs without
+  // poking at Azure Maps internals.
+  const preTileUrlRef = useRef(null);
+  const postTileUrlRef = useRef(null);
+  // De-dupe set: URLs we've already requested. Prevents thrashing the
+  // tile server when the user walks back and forth across buildings.
+  const prefetchedTilesRef = useRef(new Set());
 
   const [isMapReady, setIsMapReady] = useState(false);
   const [features, setFeatures] = useState([]);
@@ -179,6 +187,7 @@ const BuildingValidation = () => {
           "preEventImageryLayer",
           false
         );
+        preTileUrlRef.current = layerData.imagery.preEventTileUrl;
       }
       if (layerData?.imagery?.postEventTileUrl) {
         loadImagery(
@@ -188,6 +197,7 @@ const BuildingValidation = () => {
           "postEventImageryLayer",
           true
         );
+        postTileUrlRef.current = layerData.imagery.postEventTileUrl;
       }
 
       // Create datasource for building polygons
@@ -337,6 +347,89 @@ const BuildingValidation = () => {
     }
   }
 
+  // Web-Mercator slippy-tile math. Returns {x, y, z} for the tile that
+  // contains the given lng/lat at zoom z. Matches the {z}/{x}/{y} URL
+  // template emitted by titiler so the prefetched URLs share a cache
+  // key with what Azure Maps TileLayer will eventually request.
+  function lnglatToTile(lng, lat, z) {
+    const n = 2 ** z;
+    const x = Math.floor(((lng + 180) / 360) * n);
+    const latRad = (lat * Math.PI) / 180;
+    const y = Math.floor(
+      ((1 -
+        Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) /
+        2) *
+        n
+    );
+    return { x, y, z };
+  }
+
+  // Warm the browser HTTP cache for the tiles around a building so that
+  // when the user navigates to it the basemap pops in immediately
+  // instead of streaming in from titiler. Fetches a 3×3 grid at zoom 18
+  // around the centroid for whichever tile-URL templates are available,
+  // skipping URLs we've already requested. fetch() with no-store off
+  // (the default) lets the browser cache the response under the same
+  // URL the TileLayer will use later.
+  function prefetchTilesAroundFeature(feature, zoom = 18) {
+    if (!feature) return;
+    const center = extractCentroid(feature);
+    if (!center) return;
+    const [lng, lat] = center;
+    const { x: cx, y: cy, z } = lnglatToTile(lng, lat, zoom);
+    const templates = [preTileUrlRef.current, postTileUrlRef.current].filter(
+      Boolean
+    );
+    if (templates.length === 0) return;
+    const seen = prefetchedTilesRef.current;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const tx = cx + dx;
+        const ty = cy + dy;
+        if (tx < 0 || ty < 0) continue;
+        for (const tpl of templates) {
+          const url = tpl
+            .replace("{z}", String(z))
+            .replace("{x}", String(tx))
+            .replace("{y}", String(ty));
+          if (seen.has(url)) continue;
+          seen.add(url);
+          // Fire-and-forget. mode: 'cors' matches what TileLayer uses
+          // internally (XHR with CORS) so the response lands in the
+          // same HTTP cache slot; errors are silently ignored — a
+          // missed prefetch isn't fatal, the layer will just request
+          // it on demand.
+          fetch(url, { mode: "cors", credentials: "omit" }).catch(() => {});
+        }
+      }
+    }
+  }
+
+  // After the selection settles, warm the cache for the immediate
+  // neighbors (±2 in the filtered list) so the next Prev/Next press
+  // shows the basemap instantly. Done in an effect so it doesn't block
+  // the camera pan.
+  useEffect(() => {
+    if (!isMapReady || features.length === 0) return;
+    if (!preTileUrlRef.current && !postTileUrlRef.current) return;
+    // Prefetch the current building too — covers the initial-zoom case
+    // and any tile that fell outside the previous frame.
+    const pos = filteredIndices.indexOf(selectedIndex);
+    const neighbors = [];
+    if (pos >= 0) {
+      for (const offset of [0, 1, -1, 2, -2]) {
+        const i = filteredIndices[pos + offset];
+        if (i !== undefined) neighbors.push(i);
+      }
+    } else {
+      neighbors.push(selectedIndex);
+    }
+    for (const i of neighbors) {
+      prefetchTilesAroundFeature(features[i]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIndex, filteredIndices, isMapReady]);
+
   function handleLabel(labelValue) {
     const feature = features[selectedIndex];
     if (!feature) return;
@@ -361,19 +454,32 @@ const BuildingValidation = () => {
     });
   }
 
-  // Keyboard shortcuts: 1 = Damaged, 2 = Not Damaged, 3 = Unknown
+  // Keyboard shortcuts:
+  //   1 / 2 / 3       — assign Damaged / NotDamaged / Unknown
+  //   ArrowLeft / ArrowRight — move through the filtered list
+  // The right-panel toggles and dropdown remain focusable; the
+  // INPUT/TEXTAREA/SELECT guard keeps shortcuts from hijacking typing.
   useEffect(() => {
     const keyMap = { "1": "Damaged", "2": "NotDamaged", "3": "Unknown" };
     function onKeyDown(e) {
-      // Ignore when focus is in an input/textarea
       if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
       const labelValue = keyMap[e.key];
-      if (labelValue) handleLabel(labelValue);
+      if (labelValue) {
+        handleLabel(labelValue);
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        navigateInFilter(-1);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        navigateInFilter(1);
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [features, selectedIndex]);
+  }, [features, selectedIndex, filteredIndices]);
 
   async function handleSave() {
     setIsSaving(true);
