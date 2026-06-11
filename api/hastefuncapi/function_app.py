@@ -38,6 +38,7 @@ from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.processors.stats import StatsPreProcessor
 from hastegeo.core.processors.train import TrainPreprocessor
 from hastegeo.core.processors.uploader import FileUploader
+from hastegeo.core.utils.blob import download_blob_to_tempfile
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
@@ -120,67 +121,6 @@ def _require_email_param(req: func.HttpRequest, name: str) -> str:
 def _bad_request(name_or_message: str) -> func.HttpResponse:
     logger.warning(f"Rejected request: {name_or_message}")
     return func.HttpResponse("Invalid request parameters.", status_code=400)
-
-
-def _split_blob_url(url: str) -> tuple[str, str]:
-    """Extract (container_name, blob_name) from a blob URL.
-
-    Handles both real-Azure URLs (https://<account>.blob.core.windows.net
-    /<container>/<blob>?<sas>) and Azurite path-style URLs
-    (http://<host>:<port>/<account>/<container>/<blob>?<sas>), including
-    the docker-internal `http://azurite:10000/...` form. We can't just
-    use azure.storage.blob.BlobClient.from_blob_url here because that
-    helper only recognizes hosts matching `*.blob.core.windows.net`,
-    `localhost`, or `127.0.0.1`; with the docker-network hostname
-    `azurite` it silently falls into a wrong-shape parse that treats
-    the second-to-last path segment as the container name (which then
-    produces ContainerNotFound at download time).
-
-    Detection: any host outside `*.blob.core.windows.net` is treated as
-    Azurite-style and the first path segment is consumed as the account
-    name. This matches the URLs `MetadataProcessor` produces in both
-    dev (azurite:10000 / devstoreaccount1) and prod (Azure Blob).
-    """
-    parsed = urlparse(url)
-    parts = [p for p in parsed.path.split("/") if p]
-    host = (parsed.hostname or "").lower()
-    if host.endswith(".blob.core.windows.net"):
-        # Real Azure: /<container>/<blob...>
-        if len(parts) < 2:
-            raise ValueError(f"Blob URL missing container/blob: {url}")
-        return parts[0], "/".join(parts[1:])
-    # Azurite path-style: /<account>/<container>/<blob...>
-    if len(parts) < 3:
-        raise ValueError(
-            f"Azurite-style blob URL missing account/container/blob: {url}"
-        )
-    return parts[1], "/".join(parts[2:])
-
-
-async def _download_blob_to_tempfile(url: str, suffix: str = "") -> str:
-    """Download the blob at ``url`` to a NamedTemporaryFile and return the path.
-
-    Routes the download through the function-app-internal BLOB_CONNECTION_STRING
-    (so requests stay on the docker network in dev) regardless of the
-    container/blob URL the caller hands in. The caller is responsible for
-    unlinking the returned path when done (use try/finally).
-    """
-    from azure.storage.blob import BlobServiceClient
-
-    conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
-    container_name, blob_name = _split_blob_url(url)
-    bsc = BlobServiceClient.from_connection_string(conn_str)
-    blob_bytes = await asyncio.to_thread(
-        lambda: bsc.get_container_client(container_name)
-        .get_blob_client(blob_name)
-        .download_blob()
-        .readall()
-    )
-    import tempfile
-
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(blob_bytes)
-        return tmp.name
 
 
 def _validate_imagery_urls(image_data: ImageLayer) -> str | None:
@@ -3100,7 +3040,7 @@ async def GetBuildingFootprintsGeoJSON(
 
         # Download via the helper that handles both Azurite and real-Azure
         # URL shapes and routes through BLOB_CONNECTION_STRING.
-        tmp_path = await _download_blob_to_tempfile(
+        tmp_path = await download_blob_to_tempfile(
             footprints_url, suffix=".gpkg"
         )
 
@@ -3388,10 +3328,10 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         # ── 4. Download both GeoPackages and join row-order → overture id ─────
         import fiona
 
-        footprints_path = await _download_blob_to_tempfile(
+        footprints_path = await download_blob_to_tempfile(
             footprints_url, suffix=".gpkg"
         )
-        gpkg_path = await _download_blob_to_tempfile(gpkg_url, suffix=".gpkg")
+        gpkg_path = await download_blob_to_tempfile(gpkg_url, suffix=".gpkg")
 
         try:
             # Build index → overture_id from the building footprints file
@@ -3647,10 +3587,10 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
             if obj.get("label")
         ]
 
-        footprints_path = await _download_blob_to_tempfile(
+        footprints_path = await download_blob_to_tempfile(
             footprints_url, suffix=".gpkg"
         )
-        gpkg_path = await _download_blob_to_tempfile(gpkg_url, suffix=".gpkg")
+        gpkg_path = await download_blob_to_tempfile(gpkg_url, suffix=".gpkg")
         try:
             inputs = await asyncio.to_thread(
                 build_assessment_inputs_from_gpkgs,
