@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 import json
 import re
+import unicodedata
 
 from hastegeo.core.artifact_storage.unified_artifact_storage import (
     UnifiedArtifactStorage,
@@ -22,12 +23,16 @@ _SLUG_INVALID = re.compile(r"[^A-Za-z0-9._-]+")
 def _slugify_model_name(name: str) -> str:
     """Convert a free-form Model.name into a value safe for blob paths.
 
-    Collapses any run of characters outside [A-Za-z0-9._-] into a single
+    Normalizes unicode (NFKD decomposition + ASCII-only encoding) so that
+    accented characters map to their ASCII base letters (e.g. é → e),
+    collapses any run of characters outside [A-Za-z0-9._-] into a single
     '-', strips leading/trailing '-._' so paths don't start with a dot
     or hyphen, and falls back to 'model' when the result is empty.
     """
     if not name:
         return "model"
+    name = unicodedata.normalize("NFKD", name)
+    name = name.encode("ascii", "ignore").decode("ascii")
     slug = _SLUG_INVALID.sub("-", name)
     slug = slug.strip("-._")
     return slug or "model"
