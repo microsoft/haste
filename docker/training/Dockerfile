@@ -5,10 +5,10 @@ USER root
 
 # Install micromamba and conda-pack (micromamba avoids Python version conflicts)
 RUN for i in 1 2 3 4 5; do \
-		apt-get update && apt-get install -y --no-install-recommends libgl1-mesa-glx curl && break || sleep 15; \
+		apt-get update && apt-get install -y --no-install-recommends libgl1-mesa-glx curl zstd && break || sleep 15; \
 	done \
 	&& rm -rf /var/lib/apt/lists/* \
-	&& curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C /usr/local bin/micromamba \
+	&& curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xv --zstd -C /usr/local bin/micromamba \
 	&& conda install -n base -c conda-forge conda-pack --yes \
 	&& conda clean -afy
 
