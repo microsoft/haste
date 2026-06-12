@@ -8,6 +8,7 @@ import { getAzureMapsAuthOptions, isAzureMapsPlaceholder } from "../../util/azur
 import { AppContext } from "../../AppContext.jsx";
 import BuildingValidationRightPanel from "./BuildingValidationRightPanel.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
+import "../../assets/css/labels.css";
 
 const LABEL_COLORS = {
   Damaged: "#C50F1F",
@@ -530,22 +531,12 @@ const BuildingValidation = () => {
 
   return (
     <div style={{ display: "flex", flexGrow: 1, position: "relative", overflow: "hidden" }}>
-      {/* Back button — same shell/style as LabelingToolLeftPanel so the
-          two map screens feel consistent. */}
-      <div
-        style={{
-          position: "absolute",
-          left: 10,
-          top: 10,
-          backgroundColor: "rgba(255, 255, 255, 1)",
-          padding: "5px 10px",
-          borderRadius: "5px",
-          zIndex: 1000,
-        }}
-      >
+      {/* Back button — matches Visualizer styling */}
+      <div className="absolute-labels pre-disaster d-flex flex-column labels-back-button">
         <ActionButton
           id="backButton"
           iconProps={{ iconName: "ChevronLeft" }}
+          className="w-100 p-0 m-0"
           onClick={() => navigate(`/project/${projectId}`)}
         >
           Back
