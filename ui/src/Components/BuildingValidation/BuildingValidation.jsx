@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+import { ActionButton } from "@fluentui/react";
 import { useEffect, useMemo, useRef, useState, useContext } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { apiGet, apiPut } from "../../util/api";
@@ -529,24 +530,27 @@ const BuildingValidation = () => {
 
   return (
     <div style={{ display: "flex", flexGrow: 1, position: "relative", overflow: "hidden" }}>
-      {/* Back button */}
-      <button
-        onClick={() => navigate(`/project/${projectId}`)}
+      {/* Back button — same shell/style as LabelingToolLeftPanel so the
+          two map screens feel consistent. */}
+      <div
         style={{
           position: "absolute",
-          top: 12,
-          left: 12,
+          left: 10,
+          top: 10,
+          backgroundColor: "rgba(255, 255, 255, 1)",
+          padding: "5px 10px",
+          borderRadius: "5px",
           zIndex: 1000,
-          background: "rgba(255,255,255,0.9)",
-          border: "1px solid #ccc",
-          borderRadius: 4,
-          padding: "6px 14px",
-          cursor: "pointer",
-          fontWeight: 500,
         }}
       >
-        ← Back to Project
-      </button>
+        <ActionButton
+          id="backButton"
+          iconProps={{ iconName: "ChevronLeft" }}
+          onClick={() => navigate(`/project/${projectId}`)}
+        >
+          Back
+        </ActionButton>
+      </div>
 
       {/* Map container */}
       <div ref={mapContainerRef} id="validationMap" style={{ flexGrow: 1 }} />
