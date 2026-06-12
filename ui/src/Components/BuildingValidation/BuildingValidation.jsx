@@ -11,10 +11,10 @@ import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
 import "../../assets/css/labels.css";
 
 const LABEL_COLORS = {
-  Damaged: "#e74c3c",
-  NotDamaged: "#27ae60",
-  Unknown: "#5a6268",
-  unlabeled: "#3498db",
+  Damaged: "#C50F1F",
+  NotDamaged: "#107C10",
+  Unknown: "#4D4D4D",
+  unlabeled: "#BDBDBD",
 };
 
 // Filter values used by the right-panel dropdown and the map dim logic.

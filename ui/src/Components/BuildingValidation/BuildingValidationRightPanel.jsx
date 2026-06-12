@@ -4,9 +4,9 @@ import PropTypes from "prop-types";
 import { DefaultButton, Dropdown, PrimaryButton, Toggle } from "@fluentui/react";
 
 const LABEL_OPTIONS = [
-  { value: "Damaged", label: "Damaged (1)", color: "#e74c3c" },
-  { value: "NotDamaged", label: "Not Damaged (2)", color: "#27ae60" },
-  { value: "Unknown", label: "Unknown (3)", color: "#5a6268" },
+  { value: "Damaged", label: "Damaged (1)", color: "#C50F1F" },
+  { value: "NotDamaged", label: "Not Damaged (2)", color: "#107C10" },
+  { value: "Unknown", label: "Unknown (3)", color: "#4D4D4D" },
 ];
 
 const FILTER_LABELS = {
@@ -143,7 +143,7 @@ const BuildingValidationRightPanel = ({
         <div style={{ background: "#e9ecef", borderRadius: 4, height: 6 }}>
           <div
             style={{
-              background: "#3498db",
+              background: "#BDBDBD",
               height: 6,
               borderRadius: 4,
               width: `${progressPct}%`,
@@ -264,10 +264,10 @@ const BuildingValidationRightPanel = ({
       {/* Legend */}
       <div style={{ fontSize: 10, color: "#888", lineHeight: 1.7 }}>
         <div style={{ fontWeight: 600, marginBottom: 2, color: "#555" }}>Legend · Hotkeys: 1 / 2 / 3 · ← →</div>
-        <div><span style={{ color: "#3498db" }}>■</span> Unlabeled</div>
-        <div><span style={{ color: "#e74c3c" }}>■</span> Damaged</div>
-        <div><span style={{ color: "#27ae60" }}>■</span> Not Damaged</div>
-        <div><span style={{ color: "#5a6268" }}>■</span> Unknown</div>
+        <div><span style={{ color: "#BDBDBD" }}>■</span> Unlabeled</div>
+        <div><span style={{ color: "#C50F1F" }}>■</span> Damaged</div>
+        <div><span style={{ color: "#107C10" }}>■</span> Not Damaged</div>
+        <div><span style={{ color: "#4D4D4D" }}>■</span> Unknown</div>
       </div>
 
       {/* Actions */}
