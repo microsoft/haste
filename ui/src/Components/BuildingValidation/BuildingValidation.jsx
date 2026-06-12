@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+import { ActionButton } from "@fluentui/react";
 import { useEffect, useMemo, useRef, useState, useContext } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { apiGet, apiPut } from "../../util/api";
@@ -7,6 +8,7 @@ import { getAzureMapsAuthOptions, isAzureMapsPlaceholder } from "../../util/azur
 import { AppContext } from "../../AppContext.jsx";
 import BuildingValidationRightPanel from "./BuildingValidationRightPanel.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
+import "../../assets/css/labels.css";
 
 const LABEL_COLORS = {
   Damaged: "#e74c3c",
@@ -529,24 +531,17 @@ const BuildingValidation = () => {
 
   return (
     <div style={{ display: "flex", flexGrow: 1, position: "relative", overflow: "hidden" }}>
-      {/* Back button */}
-      <button
-        onClick={() => navigate(`/project/${projectId}`)}
-        style={{
-          position: "absolute",
-          top: 12,
-          left: 12,
-          zIndex: 1000,
-          background: "rgba(255,255,255,0.9)",
-          border: "1px solid #ccc",
-          borderRadius: 4,
-          padding: "6px 14px",
-          cursor: "pointer",
-          fontWeight: 500,
-        }}
-      >
-        ← Back to Project
-      </button>
+      {/* Back button — matches Visualizer styling */}
+      <div className="absolute-labels pre-disaster d-flex flex-column labels-back-button">
+        <ActionButton
+          id="backButton"
+          iconProps={{ iconName: "ChevronLeft" }}
+          className="w-100 p-0 m-0"
+          onClick={() => navigate(`/project/${projectId}`)}
+        >
+          Back
+        </ActionButton>
+      </div>
 
       {/* Map container */}
       <div ref={mapContainerRef} id="validationMap" style={{ flexGrow: 1 }} />
