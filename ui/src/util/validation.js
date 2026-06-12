@@ -153,6 +153,69 @@ export function validateImageryUrlHost(url) {
 }
 
 
+// Schemes that can execute script or smuggle data — never allowed in an href
+// or redirect target. Anything not resolving to http(s) (or a same-origin
+// relative path, for safeHref) is treated as unsafe.
+const UNSAFE_URL_SCHEME = /^\s*(javascript|data|vbscript|file):/i;
+
+/**
+ * True when `url` is a safe absolute external link target (http or https).
+ * Rejects javascript:/data:/vbscript:/file: and protocol-relative ("//host")
+ * URLs, which could execute script or redirect off-origin.
+ */
+export function isSafeExternalUrl(url) {
+  if (typeof url !== "string" || url.trim() === "") return false;
+  if (UNSAFE_URL_SCHEME.test(url)) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Returns `url` when it is safe to render as an href, otherwise undefined so
+ * the caller can omit the attribute (Fluent's <Link> renders as plain text
+ * without one). Accepts same-origin relative paths and safe absolute http(s)
+ * URLs; rejects javascript:/data: schemes and protocol-relative ("//") URLs.
+ */
+export function safeHref(url) {
+  if (typeof url !== "string" || url.trim() === "") return undefined;
+  const trimmed = url.trim();
+  if (UNSAFE_URL_SCHEME.test(trimmed)) return undefined;
+  // Protocol-relative ("//evil.com") resolves off-origin — treat as unsafe.
+  if (trimmed.startsWith("//")) return undefined;
+  // Same-origin relative paths / fragments / queries are safe to keep as-is.
+  if (
+    trimmed.startsWith("/") ||
+    trimmed.startsWith("./") ||
+    trimmed.startsWith("../") ||
+    trimmed.startsWith("#") ||
+    trimmed.startsWith("?")
+  ) {
+    return url;
+  }
+  return isSafeExternalUrl(trimmed) ? url : undefined;
+}
+
+/**
+ * Collapses a post-logout redirect target to a same-origin relative path.
+ * Absolute URLs, protocol-relative URLs, and anything carrying a scheme become
+ * "/". Closes the open-redirect on logout (Security Review finding §8.6).
+ */
+export function sanitizeRedirectPath(path) {
+  if (typeof path !== "string" || path.trim() === "") return "/";
+  // Browsers treat backslashes as forward slashes, so "/\evil.com" would
+  // resolve like "//evil.com" — normalize before inspecting.
+  const normalized = path.trim().replace(/\\/g, "/");
+  if (normalized.startsWith("//")) return "/";
+  // Any leading scheme ("http:", "javascript:", etc.) is an absolute target.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(normalized)) return "/";
+  return normalized.startsWith("/") ? normalized : "/" + normalized;
+}
+
+
 export function validateFileType(file, acceptedFileTypes) {
   const fileExtension = file.split(".").pop().toLowerCase();
   const fileName = file.split("/").pop();

@@ -11,6 +11,7 @@ import {
 
 import { useNavigate } from "react-router-dom";
 import { limitTextLength } from "../../util/conversion";
+import { safeHref } from "../../util/validation";
 
 import proptypes from "prop-types";
 
@@ -66,7 +67,8 @@ const SectionHeader = ({ properties, searchText, setSearchText, setCurrentPage }
               ) : (
                 <Link
                   key={index}
-                  href={link.link}
+                  href={safeHref(link.link)}
+                  rel="noopener noreferrer"
                   className="me-3 pe-3 section-header-link"
                 >
                   {link.name}

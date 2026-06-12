@@ -25,7 +25,11 @@ const DisasterEvents = ({dashboardData,  width, height }) => {
     const svg = d3.select(svgRef.current).attr('width', width).attr('height', height);
 
 
-    d3.json('https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson').then((data) => {
+    // World boundaries are vendored under the app's public assets rather than
+    // fetched from a third-party/personal GitHub raw URL (supply-chain risk;
+    // Security Review UI finding). BASE_URL keeps the path correct under any
+    // deploy base path.
+    d3.json(`${import.meta.env.BASE_URL}assets/geo/world.geojson`).then((data) => {
 
       var filteredData = data.features.filter((d) => d.id !== 'ATA');
       filteredData = filteredData.map((d) => {

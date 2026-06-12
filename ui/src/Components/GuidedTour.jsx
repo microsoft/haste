@@ -97,6 +97,15 @@ const GuidedTour = () => {
                 />
               </div>
               <Text className="text-light">
+                {/*
+                  SECURITY: parse() renders HTML from tour-step `content`. This
+                  is safe ONLY because tour definitions are static,
+                  maintainer-authored config bundled with the app (see
+                  GuidedTourHelper / guidedTourProperties) — never user input or
+                  API-sourced data. If tour content ever becomes user-editable or
+                  fetched at runtime, this becomes an XSS sink: switch to a safe
+                  renderer (e.g. react-markdown) or sanitize before parsing.
+                */}
                 {parse(
                   filteedTourSteps[appParams.currentTourStep - 1]
                     .content
