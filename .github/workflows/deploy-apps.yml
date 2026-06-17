@@ -67,6 +67,10 @@ jobs:
       - name: Git LFS Pull
         run: git lfs pull
       - name: Deploy
+        env:
+          # Non-sensitive UI feature flag, baked into the Vite bundle at build time.
+          # Set as a GitHub Environment variable; defaults to false when unset.
+          VITE_SHOW_FOOTER: ${{ vars.VITE_SHOW_FOOTER }}
         run: |
           chmod +x .github/scripts/deploy_apps.sh
           .github/scripts/deploy_apps.sh \
