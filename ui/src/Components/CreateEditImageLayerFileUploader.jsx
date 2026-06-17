@@ -12,13 +12,15 @@ const CreateEditImageLayerFileUploader = ({
   setComponentState,
   componentState,
   file,
-  field
+  field,
+  dataFormat
 }) => {
   CreateEditImageLayerFileUploader.propTypes = {
     setComponentState: propTypes.func.isRequired,
     componentState: propTypes.object.isRequired,
     file: propTypes.object.isRequired,
-    field: propTypes.string.isRequired
+    field: propTypes.string.isRequired,
+    dataFormat: propTypes.string
   };
 
   const [progress, setProgress] = useState("");
@@ -59,6 +61,9 @@ const CreateEditImageLayerFileUploader = ({
       formData.append("total_chunks", totalChunks);
       formData.append("chunk", chunk);
       formData.append("action", "add | cancel");
+      if (dataFormat) {
+        formData.append("data_format", dataFormat);
+      }
 
       try {
         const response = await apiPost("UploadFileByChunk", formData, true);

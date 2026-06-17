@@ -25,9 +25,14 @@ const GuidedTour = () => {
 
   useEffect(() => {
     if (appParams.currentTour) {
-      if(!appParams.userSettings.disableGuidedTour || !validateIsGuidedTourDisabled(appParams.currentTour.cookieName)) {
-        setIsVisible(true);
-      }
+      const shouldShow =
+        !appParams.userSettings.disableGuidedTour &&
+        !validateIsGuidedTourDisabled(appParams.currentTour.cookieName);
+      // Explicitly reset rather than only flipping to true; otherwise a
+      // previously-shown tour leaves isVisible=true and a freshly-started
+      // tour that should be hidden ("Don't show again" already clicked)
+      // would briefly render before being dismissed.
+      setIsVisible(shouldShow);
 
       const filteredSteps = appParams.currentTour.steps.filter((step) => {
         if (step.type !== "teachingBubble") {
@@ -92,6 +97,15 @@ const GuidedTour = () => {
                 />
               </div>
               <Text className="text-light">
+                {/*
+                  SECURITY: parse() renders HTML from tour-step `content`. This
+                  is safe ONLY because tour definitions are static,
+                  maintainer-authored config bundled with the app (see
+                  GuidedTourHelper / guidedTourProperties) — never user input or
+                  API-sourced data. If tour content ever becomes user-editable or
+                  fetched at runtime, this becomes an XSS sink: switch to a safe
+                  renderer (e.g. react-markdown) or sanitize before parsing.
+                */}
                 {parse(
                   filteedTourSteps[appParams.currentTourStep - 1]
                     .content

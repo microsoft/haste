@@ -40,8 +40,17 @@ services:
       dockerfile: ./docker/data-init/Dockerfile
     volumes:
       - azurite-data:/shared/azurite
+      # The bind-mounted host `data` directory is shared with the
+      # hastefuncapi / hastefuncqueues containers as /app/data. Those
+      # containers run as the non-root `appuser` (UID 999) and need to
+      # be able to create per-project chunk-staging subdirectories
+      # there. The directory is owned by root on the host, so we widen
+      # its perms here (data-init runs as root) before the main
+      # services start; otherwise chunked uploads fail with
+      # `PermissionError: '/app/data/<project>'`.
+      - ../data:/shared/app-data
     command: >
-      sh -c 'chmod -R 777 /shared/azurite && python /upload_data.py'
+      sh -c 'chmod -R 777 /shared/azurite /shared/app-data && python /upload_data.py'
     depends_on:
       - azurite
     restart: "no"  # Run once and exit

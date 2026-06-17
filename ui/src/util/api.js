@@ -4,6 +4,7 @@
 const APIUrl = import.meta.env.VITE_API_URL;
 const APIMSubscriptionKey = import.meta.env.VITE_APIM_SUBSCRIPTION_KEY;
 import { upsertUser } from "../AppHelper.js";
+import { sanitizeRedirectPath } from "./validation.js";
 
 function resolveVarConcatChar(text) {
   if (text === "") return "";
@@ -53,7 +54,10 @@ export async function apiValidateUser(setAppParams) {
 
 export async function apiLogout(redirectPath = "/") {
   try {
-    window.location.href = `/.auth/logout?post_logout_redirect_uri=${encodeURIComponent(redirectPath)}`;
+    // Constrain to a same-origin relative path so a crafted logout link can't
+    // redirect users off-origin after sign-out (Security Review finding §8.6).
+    const safePath = sanitizeRedirectPath(redirectPath);
+    window.location.href = `/.auth/logout?post_logout_redirect_uri=${encodeURIComponent(safePath)}`;
   } catch (error) {
     console.error("Error logging out:", error);
   }

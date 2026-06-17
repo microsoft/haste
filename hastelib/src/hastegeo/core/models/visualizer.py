@@ -26,6 +26,7 @@ class Visualizer(BaseModel):
     preDisasterImagery: Imagery = Field(default_factory=Imagery)
     postDisasterImagery: Imagery = Field(default_factory=Imagery)
     predictedDamageLayer: Imagery = Field(default_factory=Imagery)
+    predictionsLayer: Imagery = Field(default_factory=Imagery)
     sourceTypePreEvent: Optional[str] = Field(default=None)
     sourceTypePostEvent: Optional[str] = Field(default=None)
     imageryCaptureDatePreEvent: Optional[str] = Field(default=None)

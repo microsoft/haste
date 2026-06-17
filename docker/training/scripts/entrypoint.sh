@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# Ensure files written by training (checkpoints, logs, etc.) are readable
+# by the queue-worker process (different UID) that uploads them to blob storage.
+umask 0022
+
 # Helpful diagnostics to match imagery prep behavior
 echo "[TRAINING-ENTRYPOINT] Starting container execution"
 echo "[TRAINING-ENTRYPOINT] Working directory: $(pwd)"
@@ -38,4 +42,15 @@ fi
 FULL_COMMAND="$*"
 echo "[TRAINING-ENTRYPOINT] Executing command via /bin/bash -c: $FULL_COMMAND"
 
-exec /bin/bash -c "$FULL_COMMAND"
+/bin/bash -c "$FULL_COMMAND"
+EXIT_CODE=$?
+
+# Ensure all output files (especially checkpoints) are world-readable so the
+# queue-worker process (different UID) can upload them to blob storage.
+# PyTorch Lightning may write checkpoint files with restrictive permissions
+# before chmod-ing them, creating a brief window where they're unreadable.
+if [ -n "${AZ_BATCH_TASK_WORKING_DIR:-}" ]; then
+    chmod -R o+rX "$AZ_BATCH_TASK_WORKING_DIR" 2>/dev/null || true
+fi
+
+exit $EXIT_CODE

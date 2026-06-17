@@ -285,6 +285,13 @@ class ImageryPostProcessor:
             "source_type_pre_event": self.source_type_pre_event,
             "source_type_post_event": self.source_type_post_event,
             "fine_tune": self.fine_tune,
+            # When the user supplied a custom building-footprint GPKG at
+            # layer-creation time, prepare-imagery skips the Overture
+            # download and instead clips/reprojects this file to EPSG:4326
+            # against the post-event AOI.
+            "user_building_footprints_url": (
+                self.image_data.userBuildingFootprintsUrl
+            ),
         }
         self.storage.save(
             identifier=self.image_data.imageLayerId,
@@ -468,11 +475,13 @@ class ImageryPostProcessor:
             "normalization_stds", []
         )
 
-        # Cached Overture building footprints. The imageryprep subprocess
-        # records any download failure in ``building_footprints_error``
-        # rather than raising (so the imagery COGs still upload). Here we
-        # honor that and flip the image layer to FAILED with the captured
-        # message, since downstream inference can't run without the gpkg.
+        # Cached building-footprints GPKG (either Overture-derived or
+        # user-supplied via ImageLayer.userBuildingFootprintsUrl, depending
+        # on which branch prepare-imagery took). The imageryprep subprocess
+        # records any failure in ``building_footprints_error`` rather than
+        # raising (so the imagery COGs still upload). Here we honor that
+        # and flip the image layer to FAILED with the captured message,
+        # since downstream inference can't run without the gpkg.
         building_footprints_filename = processed_manifest.get(
             "building_footprints_filename", ""
         )
@@ -493,6 +502,18 @@ class ImageryPostProcessor:
                 step=self.image_data.currentStep,
             )
             self.image_data.preprocessJob.logs = self.image_data.statusMessage
+
+        # Valid-area mask GeoJSON. Surfaced as a downloadable artifact;
+        # a missing mask is not by itself a layer failure (the matching
+        # AOI failure is already reported via building_footprints_error
+        # above when the two share root cause).
+        valid_area_mask_filename = processed_manifest.get(
+            "valid_area_mask_filename", ""
+        )
+        self.image_data.validAreaMaskUrl = self._generate_imagery_url(
+            filename=valid_area_mask_filename,
+            imagery_type=self.config.get_artifact_types().VALID_AREA_MASK,
+        )
 
     def _generate_imagery_url(
         self, filename: str, imagery_type: ArtifactTypes, validate=True

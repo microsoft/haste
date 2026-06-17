@@ -98,6 +98,26 @@ const LayerRow = ({
         },
       },
       {
+        key: "DownloadValidAreaMask",
+        text: "Download Valid Area Mask",
+        iconProps: { iconName: "Download" },
+        disabled: !item.validAreaMaskUrl,
+        onClick: () => {
+          if (item.validAreaMaskUrl) {
+            let url = item.validAreaMaskUrl;
+            if (import.meta.env.VITE_STORAGE_APIM_URL) {
+              url = url.replace(
+                /^https?:\/\/[^/]+/,
+                import.meta.env.VITE_STORAGE_APIM_URL
+              );
+            }
+            fileDownload(url, setDialog);
+          } else {
+            setDialog("Error", "No valid area mask available for this image layer.");
+          }
+        },
+      },
+      {
         key: "edit",
         text: "Edit",
         iconProps: { iconName: "Edit" },
@@ -230,6 +250,19 @@ const LayerRow = ({
             ({item.models && item.models.length > 0 ? item.models.length : 0})
           </Text>
         </td>
+        <td className="custom-text-no-wrap d-none d-xl-table-cell">
+          <DefaultButton
+            id={"singleProjectBuildingValidation" + index}
+            className="dashboard-button"
+            onClick={() => navigate(`/validation/${projectId}/${item.imageLayerId}`)}
+            disabled={!item.buildingFootprintsUrl}
+          >
+            Launch
+          </DefaultButton>{" "}
+          <Text className="pe-4" variant="small">
+            ({item.validationLabelCount || 0})
+          </Text>
+        </td>
         <td className=" custom-text-no-wrap d-none d-xxl-table-cell">
           <TooltipHost
             content={item.userId}
@@ -270,7 +303,7 @@ const LayerRow = ({
       {visibleModelId == item.imageLayerId && item.models && item.models.length > 0 && (
         <tr>
           <td
-            colSpan={8}
+            colSpan={9}
             className="dashboard-table-for-inner-table-td custom-text-no-wrap"
           >
             <table className="col-12 dashboard-inner-table p-3 pb-2 pt-2">
@@ -284,6 +317,7 @@ const LayerRow = ({
                     projectId={projectId}
                     fetchProjectDetails={fetchProjectDetails}
                     setModalComponent={setModalComponent}
+                    validationLabelCount={item.validationLabelCount || 0}
                   />
                 ) : (
                   <>
@@ -302,6 +336,7 @@ const LayerRow = ({
                       fetchProjectDetails={fetchProjectDetails}
                       setComponentState={setComponentState}
                       setModalComponent={setModalComponent}
+                      validationLabelCount={item.validationLabelCount || 0}
                     />
                   </>
                 )}

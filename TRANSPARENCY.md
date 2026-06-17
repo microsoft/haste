@@ -1,4 +1,4 @@
-# HASTE — High-speed Assessment and Satellite Tracking for Emergencies
+ # HASTE — High-speed Assessment and Satellite Tracking for Emergencies
 
 **HASTE is an open-source, human-in-the-loop research workflow** developed by Microsoft's AI for Good Lab to support **rapid building-level damage assessment from post-disaster satellite and aerial imagery**. HASTE enables a trained operator to manually label small samples of post-event imagery, locally train an event-specific computer vision model, generate per-pixel damage predictions, and aggregate those predictions with external building-footprint datasets (e.g., OpenStreetMap, Overture Building Footprints) to produce building-level damage estimates. This documentation is intended to help stakeholders understand the purpose of the HASTE workflow and how it operates at a high level. This documentation applies to the open-source HASTE workflow as released through the `microsoft/haste` repository and to outputs distributed by Microsoft AI for Good Lab.
 
@@ -10,19 +10,19 @@ HASTE is applied research. Microsoft does not offer HASTE as a commercial produc
 
 ## Research Background
 
-Microsoft AI for Good Lab developed HASTE to support gaps in rapid post-disaster building-damage assessment. Some existing assessment pipelines (e.g., emergency management service products, manual aircraft / helicopter surveys) often have meaningful latency, geographic coverage gaps, and limited ability to absorb a user's specific situational context within the first 72 hours of an event — which is precisely the window in which humanitarian responders need to triage where to send people, supplies, and attention.
+Microsoft AI for Good Lab developed HASTE as a research project to determine whether gaps in rapid post-disaster building-damage assessment could be improved. Some existing assessment pipelines (e.g., emergency management service products, manual aircraft / helicopter surveys) often have meaningful latency, geographic coverage gaps, and limited ability to absorb a user's specific situational context within the first 72 hours of an event — which is precisely the window in which humanitarian responders need to triage where to send people, supplies, and attention.
 
-HASTE was designed around two ideas that emerged from earlier in-browser damage-assessment work by Microsoft AI for Good Lab researchers:
+HASTE was designed around two ideas that emerged from earlier in-browser damage-assessment research by Microsoft AI for Good Lab researchers:
 
 - **Train per event, not for the world.** Instead of a single global damage model attempting to generalize across regions and disaster types, HASTE trains a small computer-vision model on a specific event from a small set of human-provided labels. The trade-off is intentional: rapid, event-specific performance over broad generalizability.
 - **Keep humans firmly in the loop.** A human operator selects the imagery, labels the samples, reviews the model's outputs, and decides whether and how to share them. The architecture of the workflow assumes — and depends on — informed human oversight at every step.
 
 ## Intended Use
 
-The HASTE workflow is intended for:
+The HASTE research is intended for:
 
-- **Rapid preliminary damage assessment** in the first hours and days after a disaster, to support situational awareness and inform — but not replace — expert humanitarian assessment.
-- **Informational signals** for downstream humanitarian decision-makers (NGOs, UN agencies, government users) about where damage is most likely concentrated within an affected area.
+- **Contributing information to Rapid preliminary damage assessment** in the first hours and days after a disaster, to support situational awareness and inform — but not replace — expert humanitarian assessment.
+- **Supplementing informational signals** for downstream humanitarian decision-makers (NGOs, UN agencies, government users) about where damage may be concentrated within affected areas.
 - **Exploratory geospatial analysis** by trained humanitarian / disaster-response practitioners working with post-event imagery.
 - **Methodology research** on rapid event-specific damage modeling, including evaluation of imagery sources, label workflows, and aggregation approaches.
 
@@ -36,7 +36,7 @@ HASTE and its outputs are **NOT** intended, designed, evaluated, or tested to be
 
 - As **authoritative damage assessments** or **ground truth** for or in any operational, governmental, insurance, or public-reporting context or purpose;
 - As the **sole or primary basis** for high-stakes decisions, including but not limited to, emergency response prioritization, resource allocation, search-and-rescue tasking, or public reporting of damage extent;
-- For **autonomous operational decision-making** or alerting system of any kind.
+- For **autonomous operational decision-making** or an alerting system of any kind.
 - As a **replacement** for established assessment tools, in-field surveys, sensor data, ground-truth reports, or expert judgment; or
 - For **decision-making without human review and corroboration** by a qualified humanitarian or geospatial expert and additional data.
 
@@ -47,8 +47,8 @@ Users should be aware of and adhere to applicable laws or regulations that are r
 At a high level, the HASTE workflow proceeds through six steps, each of which depends on a human operator's input or judgment:
 
 1.  **Imagery selection.** A trained operator selects post-disaster satellite or aerial imagery covering the affected area. HASTE supports a bring-your-own-imagery posture and has been used with Planet, Airbus Foundation, Maxar / Vantor, Sentinel-1/2, Copernicus, and NOAA imagery, among others. Imagery quality, spatial resolution, off-nadir angle, cloud cover, haze, and time-of-day all materially affect the model's behavior.
-2.  **Manual sample labeling.** The operator manually labels a small set of imagery samples (typically into categories such as `damaged`, `non-damaged`, and `background`). The number and quality of these labels — not a pre-trained global model — are what teach HASTE what damage looks like for this particular event in this particular place.
-3.  **Local, event-specific model training.** HASTE trains a computer-vision model locally against the human-labeled samples for that specific event. The model is **intentionally optimized for rapid event-specific performance, not generalizable accuracy**: it is fit to one disaster, in one region, with one operator's labels, and is not expected to perform well outside those conditions.
+2.  **Manual sample labeling.** The operator manually labels a small set of imagery samples (typically into categories such as `damaged`, `non-damaged`, and `background`). The number and quality of these labels — not a pre-trained global model — are what teach HASTE what damage looks like for a particular event in a particular place.
+3.  **Local, event-specific model training.** HASTE trains a computer-vision model locally against the human-labeled samples for that specific event. The model is **intentionally optimized for rapid event-specific performance, not generalizable accuracy**: it is fit to one disaster, in one region, with one operator's labels, and is not expected to perform outside those conditions.
 4.  **Per-pixel damage prediction.** The locally trained model is run against the broader imagery footprint to produce per-pixel predictions of likely damage indicators.
 5.  **Aggregation with external building footprints.** Per-pixel predictions are intersected with an external building-footprint dataset — typically OpenStreetMap, Microsoft Building Footprints, or user-provided footprints — to produce **building-level damage estimates**.
 6.  **Human review and distribution.** The operator reviews the building-level outputs, validates against any other available signals, and decides whether and how to package and share them (commonly as a GeoPackage). When outputs are distributed via external channels (e.g., the Humanitarian Data Exchange, ArcGIS feature services, other GIS systems), they carry usage notices reinforcing that they are research outputs requiring further validation.
@@ -97,7 +97,7 @@ The HASTE workflow has well-understood limitations. These are not edge cases —
 - **Imagery quality variability.** Cloud cover, haze, low light, off-nadir capture angles, and limited spatial resolution can all degrade model performance — sometimes severely. PlanetScope imagery, for example, sits below the ~30 cm resolution threshold typically preferred by building-detection models; HASTE compensates by leveraging external building footprints, which works in regions with good footprint coverage and works less well in regions where footprint coverage is sparse.
 - **Spatial misalignment.** Post-event imagery and the building-footprint dataset may not align perfectly, especially in dense urban areas, in regions with rapid recent development, or where ground deformation has occurred.
 - **Rapid labeling / retraining inaccuracies.** The speed at which HASTE retrains for a new event introduces the risk of label noise, ambiguous boundaries between damage classes, and model overfitting to a small label set.
-- **Event-specific by design — does not generalize.** A HASTE model trained for Hurricane Melissa in the Caribbean is not expected to produce useful outputs for, say, an earthquake in Türkiye. This is intentional, but it also means HASTE cannot be deployed as a persistent multi-event monitoring model.
+- **Event-specific by design — does not generalize.** A HASTE model trained for Hurricane Melissa in the Caribbean is not expected to produce useful outputs for, say, an earthquake in Türkiye. This is intentional, and it also means HASTE cannot be deployed as a persistent multi-event monitoring model.
 - **False positives.** Shadows, infrastructure changes unrelated to the disaster (construction, demolition), cloud and atmospheric artifacts, vegetation changes, and certain lighting conditions can be misclassified as damage indicators.
 - **False negatives.** Subtle structural damage (e.g., partial roof loss visible only in oblique imagery), damage obscured by cloud or shadow, and damage at scales below the imagery's effective resolution may be under-detected.
 - **Building-footprint dataset gaps.** OpenStreetMap and Microsoft Building Footprints have meaningfully variable coverage globally. Coverage tends to be weakest in the Global South, in informal settlements, in conflict-affected areas, and in areas of rapid recent construction — precisely the populations and regions most relevant to humanitarian response.

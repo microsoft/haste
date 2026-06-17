@@ -7,9 +7,11 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 from string import Template
 
+import requests
 from hastegeo.core.config import Config
 from hastegeo.core.utils.downloader import ImageryDownloader
 from hastegeo.core.utils.imagery import ImageryUtils
@@ -62,6 +64,7 @@ POST_EVENT_PROCESSED_COG_PREFIX = (
 BUILDING_FOOTPRINTS_PREFIX = (
     hasteconfig.get_artifact_types().BUILDING_FOOTPRINTS.value
 )
+VALID_AREA_MASK_PREFIX = hasteconfig.get_artifact_types().VALID_AREA_MASK.value
 
 
 class ImageryWorkflow:
@@ -77,6 +80,7 @@ class ImageryWorkflow:
         image_layer_id=None,
         fine_tune=False,
         dst_directory=None,
+        user_building_footprints_url=None,
     ):
         """Initialize the ImageryWorkflow class.
         Args:
@@ -88,6 +92,10 @@ class ImageryWorkflow:
             image_layer_id (str): Image layer ID.
             fine_tune (bool): Flag to indicate if fine-tuning is needed.
             dst_directory (str): Directory to save processed files.
+            user_building_footprints_url (str): Optional URL to a user-supplied
+                building-footprints GeoPackage. When set, the workflow skips
+                the Overture Maps download and instead downloads, reprojects
+                (to EPSG:4326), and clips this file to the AOI.
         """
         self.pre_event_urls = pre_event_urls
         self.post_event_urls = post_event_urls
@@ -97,6 +105,7 @@ class ImageryWorkflow:
         self.image_layer_id = image_layer_id
         self.fine_tune = fine_tune
         self.dst_directory = dst_directory or os.path.join(".", "outputs")
+        self.user_building_footprints_url = user_building_footprints_url
 
         self.pre_event_raw_paths = []
         self.pre_event_preview_paths = []
@@ -111,13 +120,22 @@ class ImageryWorkflow:
         self.normalization_means = []
         self.normalization_stds = []
         self.building_footprints_path = ""
-        # Human-readable error captured when the building-footprint download
-        # fails. The download is intentionally a soft-failure inside this
-        # container (so the imagery COGs that have already been produced still
-        # get uploaded with the manifest), but the message is propagated
-        # through the manifest so ImageryPostProcessor can mark the image
-        # layer FAILED and surface the cause in the UI's statusMessage.
+        # Human-readable error captured when the building-footprint step
+        # fails — applies equally to the Overture download path and the
+        # user-supplied path. The step is intentionally a soft-failure
+        # inside this container (so the imagery COGs that have already
+        # been produced still get uploaded with the manifest), but the
+        # message is propagated through the manifest so
+        # ImageryPostProcessor can mark the image layer FAILED and
+        # surface the cause in the UI's statusMessage.
         self.building_footprints_error = ""
+        # Path to the valid-area-mask GeoJSON file (the post-event AOI
+        # polygon, EPSG:4326) and any error captured while extracting it.
+        # The mask shares its extraction step with the building-footprints
+        # bbox computation, so the same AOI failure will be surfaced here
+        # (and on building_footprints_error).
+        self.valid_area_mask_path = ""
+        self.valid_area_mask_error = ""
 
     def generate_prefix(self, prefix: Template):
         """Generate a prefix for the output files based on the project ID and image layer ID."""
@@ -295,6 +313,10 @@ class ImageryWorkflow:
 
         Sets ``self.building_footprints_path`` on success, or
         ``self.building_footprints_error`` (UI-displayable) on any failure.
+        Also sets ``self.valid_area_mask_path`` to the AOI polygon GeoJSON
+        on success (or ``self.valid_area_mask_error`` if the mask itself
+        could not be extracted/saved). The two artifacts share an AOI
+        extraction so they typically succeed or fail together.
         """
         if not self.mosaic_post_event_tif_filepath or not os.path.exists(
             self.mosaic_post_event_tif_filepath
@@ -306,15 +328,32 @@ class ImageryWorkflow:
             logger.error(msg)
             self.building_footprints_path = ""
             self.building_footprints_error = msg
+            self.valid_area_mask_path = ""
+            self.valid_area_mask_error = (
+                "Cannot extract valid-area mask: post-event mosaic is "
+                "not available."
+            )
             return
 
         prefix = self.generate_prefix(BUILDING_FOOTPRINTS_PREFIX)
         output_path = os.path.join(self.dst_directory, f"{prefix}.gpkg")
+        mask_prefix = self.generate_prefix(VALID_AREA_MASK_PREFIX)
+        mask_output_path = os.path.join(
+            self.dst_directory, f"{mask_prefix}.geojson"
+        )
 
         try:
-            from hastegeo.core.utils.aoi import aoi_bbox_from_cog
+            from hastegeo.core.utils.aoi import (
+                extract_aoi_polygon,
+                save_polygon_as_geojson,
+            )
 
-            bbox = aoi_bbox_from_cog(self.mosaic_post_event_tif_filepath)
+            # One AOI extraction serves both outputs: bbox-filter Overture
+            # and persist the polygon as the downloadable valid-area mask.
+            aoi_polygon = extract_aoi_polygon(
+                self.mosaic_post_event_tif_filepath
+            )
+            bbox = aoi_polygon.bounds
         except Exception as exc:
             logger.error(
                 "Failed extracting AOI for image layer %s",
@@ -326,7 +365,32 @@ class ImageryWorkflow:
                 "Failed to extract area-of-interest from the post-event "
                 f"mosaic before downloading building footprints: {exc}"
             )
+            self.valid_area_mask_path = ""
+            self.valid_area_mask_error = (
+                "Failed to extract area-of-interest polygon from the "
+                f"post-event mosaic: {exc}"
+            )
             return
+
+        # Persist the AOI polygon before kicking off the Overture
+        # subprocess so the mask is captured even if the footprint
+        # download later fails. Saving the geojson is a tiny local I/O
+        # operation; failures here are also soft (recorded on
+        # valid_area_mask_error) so they don't abort the footprint step.
+        try:
+            save_polygon_as_geojson(aoi_polygon, mask_output_path)
+            self.valid_area_mask_path = mask_output_path
+            self.valid_area_mask_error = ""
+        except Exception as exc:
+            logger.error(
+                "Failed writing valid-area mask GeoJSON for image layer %s",
+                self.image_layer_id,
+                exc_info=True,
+            )
+            self.valid_area_mask_path = ""
+            self.valid_area_mask_error = (
+                "Failed to save valid-area-mask GeoJSON: " f"{exc}"
+            )
 
         cmd = [
             sys.executable,
@@ -339,6 +403,12 @@ class ImageryWorkflow:
             output_path,
             "--overwrite",
         ]
+        # If the AOI polygon was saved successfully, hand its path to the
+        # subprocess so the downloader can drop bbox-cornered footprints
+        # that fall outside the actual valid-data region. Skipped silently
+        # when the mask is missing (the bbox-only result is still useful).
+        if self.valid_area_mask_path:
+            cmd.append(f"--aoi-geojson={self.valid_area_mask_path}")
         timeout_seconds = int(
             os.getenv("HASTE_FOOTPRINTS_TIMEOUT_SECONDS", "1800")
         )
@@ -405,6 +475,235 @@ class ImageryWorkflow:
         )
         self.building_footprints_path = output_path
         self.building_footprints_error = ""
+
+    def process_user_building_footprints(self):
+        """Download, reproject, and clip a user-supplied building-footprint GPKG.
+
+        This is the user-supplied counterpart to
+        :meth:`download_building_footprints`. When the image layer was
+        created with ``userBuildingFootprintsUrl`` set, the workflow takes
+        this path *instead of* the Overture Maps download — the goal is
+        to produce a GPKG file with the same shape (name from the
+        BUILDING_FOOTPRINTS template, EPSG:4326, Polygon/MultiPolygon
+        only, ``id``/``geometry``/``subtype``/``class`` columns) so the
+        rest of the pipeline treats the two paths interchangeably.
+
+        Failure handling mirrors the Overture path: errors are captured
+        on ``self.building_footprints_error`` rather than raising, so the
+        manifest still uploads the imagery COGs that have already been
+        produced. ``ImageryPostProcessor`` reads the captured error and
+        marks the image layer FAILED with the same message.
+
+        Re-validates the URL via :func:`validate_footprint_url` before
+        download (defense-in-depth against config rewrites that bypass
+        the API allowlist check).
+
+        Also persists the AOI polygon as the valid-area mask GeoJSON
+        (``self.valid_area_mask_path``), mirroring
+        :meth:`download_building_footprints`. Without this, layers
+        processed via the user-supplied path would have no
+        ``validAreaMaskUrl`` and the UI's "Download Valid Area Mask"
+        menu would be greyed out.
+        """
+        if not self.mosaic_post_event_tif_filepath or not os.path.exists(
+            self.mosaic_post_event_tif_filepath
+        ):
+            msg = (
+                "Cannot process user-supplied building footprints: "
+                "post-event mosaic is not available."
+            )
+            logger.error(msg)
+            self.building_footprints_path = ""
+            self.building_footprints_error = msg
+            self.valid_area_mask_path = ""
+            self.valid_area_mask_error = (
+                "Cannot extract valid-area mask: post-event mosaic is "
+                "not available."
+            )
+            return
+
+        try:
+            from hastegeo.core.utils.url_allowlist import (
+                validate_footprint_url,
+            )
+
+            validate_footprint_url(self.user_building_footprints_url)
+        except Exception as exc:
+            logger.error(
+                "User-supplied building-footprints URL failed validation "
+                "for image layer %s",
+                self.image_layer_id,
+                exc_info=True,
+            )
+            self.building_footprints_path = ""
+            self.building_footprints_error = (
+                "User-supplied building-footprints URL is not allowed: "
+                f"{exc}"
+            )
+            return
+
+        try:
+            from hastegeo.core.utils.aoi import (
+                extract_aoi_polygon,
+                save_polygon_as_geojson,
+            )
+
+            aoi_polygon = extract_aoi_polygon(
+                self.mosaic_post_event_tif_filepath
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed extracting AOI for image layer %s",
+                self.image_layer_id,
+                exc_info=True,
+            )
+            self.building_footprints_path = ""
+            self.building_footprints_error = (
+                "Failed to extract area-of-interest from the post-event "
+                "mosaic before processing custom building footprints: "
+                f"{exc}"
+            )
+            self.valid_area_mask_path = ""
+            self.valid_area_mask_error = (
+                "Failed to extract area-of-interest polygon from the "
+                f"post-event mosaic: {exc}"
+            )
+            return
+
+        # Persist the AOI polygon as the downloadable valid-area mask
+        # before the user-footprint download/clip runs, so the mask is
+        # captured even if those later steps fail. Mirrors the same
+        # save-then-process ordering used by download_building_footprints
+        # (the Overture path). Failures here are soft — recorded on
+        # valid_area_mask_error rather than aborting the footprint step.
+        mask_prefix = self.generate_prefix(VALID_AREA_MASK_PREFIX)
+        mask_output_path = os.path.join(
+            self.dst_directory, f"{mask_prefix}.geojson"
+        )
+        try:
+            save_polygon_as_geojson(aoi_polygon, mask_output_path)
+            self.valid_area_mask_path = mask_output_path
+            self.valid_area_mask_error = ""
+        except Exception as exc:
+            logger.error(
+                "Failed writing valid-area mask GeoJSON for image layer %s",
+                self.image_layer_id,
+                exc_info=True,
+            )
+            self.valid_area_mask_path = ""
+            self.valid_area_mask_error = (
+                "Failed to save valid-area-mask GeoJSON: " f"{exc}"
+            )
+
+        prefix = self.generate_prefix(BUILDING_FOOTPRINTS_PREFIX)
+        output_path = os.path.join(self.dst_directory, f"{prefix}.gpkg")
+
+        # Stage the download in a scratch dir so the runner's
+        # outputs/*.* upload glob doesn't accidentally upload the raw
+        # user input alongside the clipped artifact.
+        max_bytes = int(
+            os.getenv(
+                "HASTE_USER_FOOTPRINTS_MAX_BYTES", str(500 * 1024 * 1024)
+            )
+        )
+        download_timeout = int(
+            os.getenv("HASTE_USER_FOOTPRINTS_TIMEOUT_SECONDS", "300")
+        )
+
+        with tempfile.TemporaryDirectory(prefix="user_footprints_") as scratch:
+            staged_path = os.path.join(scratch, "user_footprints.gpkg")
+            try:
+                self._download_user_footprints_to(
+                    self.user_building_footprints_url,
+                    staged_path,
+                    max_bytes=max_bytes,
+                    timeout_seconds=download_timeout,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed downloading user-supplied building footprints "
+                    "for image layer %s",
+                    self.image_layer_id,
+                    exc_info=True,
+                )
+                self.building_footprints_path = ""
+                self.building_footprints_error = (
+                    "Failed to download user-supplied building footprints: "
+                    f"{exc}"
+                )
+                return
+
+            try:
+                from hastegeo.core.utils.footprints import (
+                    clip_and_normalize_user_footprints,
+                )
+
+                count = clip_and_normalize_user_footprints(
+                    input_path=staged_path,
+                    aoi_polygon=aoi_polygon,
+                    output_path=output_path,
+                    overwrite=True,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed clipping user-supplied building footprints "
+                    "for image layer %s",
+                    self.image_layer_id,
+                    exc_info=True,
+                )
+                self.building_footprints_path = ""
+                self.building_footprints_error = (
+                    "Failed to process user-supplied building footprints: "
+                    f"{exc}"
+                )
+                return
+
+        logger.info(
+            "Wrote %d user-supplied building footprints (clipped to AOI) "
+            "for image layer %s",
+            count,
+            self.image_layer_id,
+        )
+        self.building_footprints_path = output_path
+        self.building_footprints_error = ""
+
+    def _download_user_footprints_to(
+        self,
+        url: str,
+        output_path: str,
+        *,
+        max_bytes: int,
+        timeout_seconds: int,
+    ):
+        """Download the user-supplied gpkg to ``output_path``.
+
+        One-shot fetch (no streaming) — the response body is read fully
+        into memory, size-checked against ``max_bytes``, and written
+        atomically. Refuses to follow cross-host redirects (so an
+        allowlisted source can't bounce us to an internal host) and
+        bounds the in-memory load at ``max_bytes`` (so a hostile or
+        accidental multi-GB upload can't OOM the imageryprep container).
+        """
+        # Single-shot fetch — no streaming. ``allow_redirects=False`` so
+        # an allowlisted source can't redirect to an internal host;
+        # ``raise_for_status`` to fail loudly on 4xx/5xx; size check
+        # against ``max_bytes`` to bound memory + disk; then atomic write.
+        resp = requests.get(
+            url, timeout=timeout_seconds, allow_redirects=False
+        )
+        if resp.status_code in (301, 302, 303, 307, 308):
+            raise RuntimeError(
+                "Redirects are not followed for user-supplied "
+                f"building-footprint URLs (got {resp.status_code})."
+            )
+        resp.raise_for_status()
+        if len(resp.content) > max_bytes:
+            raise RuntimeError(
+                f"User-supplied building footprints exceed the max size of "
+                f"{max_bytes} bytes (got {len(resp.content)} bytes)."
+            )
+        with open(output_path, "wb") as f:
+            f.write(resp.content)
 
 
 def _download_imagery(urls, dst_directory):
@@ -584,6 +883,9 @@ def main():
             source_type_post_event=config.get("source_type_post_event"),
             fine_tune=config.get("fine_tune", False),
             dst_directory=output_dir,
+            user_building_footprints_url=config.get(
+                "user_building_footprints_url"
+            ),
         )
 
         log_progress("Downloading imagery")
@@ -625,7 +927,12 @@ def main():
         config["normalization_stds"] = imagery_workflow.normalization_stds
 
         log_progress("Downloading building footprints")
-        imagery_workflow.download_building_footprints()
+        if imagery_workflow.user_building_footprints_url:
+            # User explicitly supplied a GPKG URL; skip the Overture
+            # download path entirely and clip/reproject the user file.
+            imagery_workflow.process_user_building_footprints()
+        else:
+            imagery_workflow.download_building_footprints()
         config["building_footprints_filename"] = (
             os.path.basename(imagery_workflow.building_footprints_path)
             if imagery_workflow.building_footprints_path
@@ -634,10 +941,24 @@ def main():
         # Propagate any captured failure message so ImageryPostProcessor
         # can mark the layer FAILED with a UI-displayable cause without
         # this subprocess having to raise (which would lose the imagery
-        # COGs we have already produced above).
+        # COGs we have already produced above). Applies equally to the
+        # Overture and user-supplied paths.
         config[
             "building_footprints_error"
         ] = imagery_workflow.building_footprints_error
+        # Valid-area mask is generated as a side-effect of the same AOI
+        # extraction. It's surfaced as a downloadable artifact in the UI;
+        # a missing mask is logged but not treated as a layer-failure on
+        # its own — the building-footprints error already covers any
+        # shared AOI failure.
+        config["valid_area_mask_filename"] = (
+            os.path.basename(imagery_workflow.valid_area_mask_path)
+            if imagery_workflow.valid_area_mask_path
+            else ""
+        )
+        config[
+            "valid_area_mask_error"
+        ] = imagery_workflow.valid_area_mask_error
 
         log_progress("Finalizing outputs")
         with open(os.path.join(output_dir, "imagery_manifest.json"), "w") as f:

@@ -113,6 +113,16 @@ const VisualizerInformationMobile = ({
                 )
               }
             />
+            <Checkbox
+              defaultChecked={false}
+              label="Predictions layer (raw)"
+              onChange={(e, checked) =>
+                togglePredictedDamageLayerVisibility(
+                  "predictionsLayer",
+                  checked
+                )
+              }
+            />
         </div>
 
       </div>

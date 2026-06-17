@@ -135,12 +135,12 @@ az functionapp cors add --resource-group <rg> --name <function-app> \
 
 ### 5.2 HTTP security headers
 
-Add a `staticwebapp.config.json` at the UI root with the following headers (minimum):
+HASTE ships a `staticwebapp.config.json` (under `ui/public/`) with the following headers. This is the policy the reference UI runs under — verified against the live Azure Maps and labeling pages with a clean console:
 
 ```json
 {
   "globalHeaders": {
-    "Content-Security-Policy": "default-src 'self'; img-src 'self' data: https://*.tile.openstreetmap.org https://*.azuremaps.com; connect-src 'self' https://*.azuremaps.com; style-src 'self' 'unsafe-inline'; script-src 'self'",
+    "Content-Security-Policy": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' https://atlas.microsoft.com; style-src 'self' 'unsafe-inline' https://atlas.microsoft.com; font-src 'self' data: https://atlas.microsoft.com https://c.s-microsoft.com https://*.cdn.office.net; img-src 'self' data: blob: https://atlas.microsoft.com https://*.atlas.microsoft.com https://*.tile.openstreetmap.org; connect-src 'self' https://atlas.microsoft.com https://*.atlas.microsoft.com https://*.tile.openstreetmap.org; worker-src 'self' blob:; child-src blob:",
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -149,7 +149,14 @@ Add a `staticwebapp.config.json` at the UI root with the following headers (mini
 }
 ```
 
-Tune `Content-Security-Policy` for the imagery providers and tile servers you actually use. The default above assumes Azure Maps and OpenStreetMap; widen only as needed.
+Notes on why each non-`'self'` source is present — tighten if your build removes the dependency:
+
+- **`atlas.microsoft.com` / `*.atlas.microsoft.com`** (script, style, font, img, connect) — the Azure Maps Web SDK is loaded from the CDN in `index.html` and fetches map styles, vector tiles, and glyph fonts at runtime. `'unsafe-inline'` in `style-src` is required by Fluent UI's runtime style injection.
+- **`c.s-microsoft.com` and `*.cdn.office.net`** (font) — Fluent UI loads Segoe UI and its icon/language fonts from these Microsoft CDNs at runtime. To drop them, self-host the Fluent fonts and register them locally.
+- **`blob:`** (img, worker, child) — the Azure Maps control renders tiles and spawns web workers from blob URLs.
+- **`*.tile.openstreetmap.org`** (img, connect) — only needed if you configure an OSM basemap; remove otherwise.
+
+**Per-deployment adjustment:** if your `VITE_API_URL` points at a separate origin (a direct `*.azurewebsites.net` Function App rather than the same-origin SWA `/api` linked-backend route), add that origin to `connect-src`. The default policy assumes the recommended same-origin linked-backend topology (§3.1).
 
 ### 5.3 TLS
 
@@ -286,7 +293,7 @@ If your imagery sources are a small static set (customer-owned storage accounts,
 
 ### 8.6 Open redirect on logout
 
-The UI's logout flow accepts a `redirectPath` query parameter that is not strictly validated against an allow-list. A maliciously crafted logout link could redirect users to an attacker-controlled domain after sign-out. Until validation is tightened to relative paths only, train users to verify the URL of any "you have been signed out" landing page.
+The UI's logout flow validates the `redirectPath` parameter via `sanitizeRedirectPath()` (`ui/src/util/validation.js`) before building the `post_logout_redirect_uri`: the value is collapsed to a same-origin relative path, so absolute URLs, protocol-relative (`//host`), backslash-normalized (`/\host`), and any scheme-bearing input fall back to `/`. This closes the previously-documented open-redirect; no operator action is required.
 
 ### 8.7 Backward-compatibility notes for upgrades
 

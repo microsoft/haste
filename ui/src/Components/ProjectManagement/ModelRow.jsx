@@ -13,7 +13,7 @@ import { limitTextLength } from "../../util/conversion";
 import { fileDownload } from "../../util/file";
 import CreateEditModelCheckpoint from "../CreateEditModelCheckpoint";
 
-const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, fetchProjectDetails, setModalComponent }) => {
+const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, fetchProjectDetails, setModalComponent, validationLabelCount }) => {
   ModelRow.propTypes = {
     projectId: PropTypes.string.isRequired,
     imageLayerId: PropTypes.string.isRequired,
@@ -21,6 +21,7 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
     models: PropTypes.array.isRequired,
     fetchProjectDetails: PropTypes.func.isRequired,
     setModalComponent: PropTypes.func.isRequired,
+    validationLabelCount: PropTypes.number,
   };
   
   const { setDialog, setIsLoading } = useContext(AppContext);
@@ -184,6 +185,7 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
                 projectId={projectId}
                 imageLayerId={imageLayerId}
                 index={index}
+                validationLabelCount={validationLabelCount}
               />
             </td>
             <td>

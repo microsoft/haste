@@ -24,3 +24,7 @@ docs/_build
 
 # Any local wheels
 *.whl
+
+# Local-only scratchpad; not part of the repo
+LESSONS_LEARNED.md
+HANDOFF.md

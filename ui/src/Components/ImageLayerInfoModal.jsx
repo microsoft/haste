@@ -12,6 +12,7 @@ import {
   Text,
   Label
 } from "@fluentui/react";
+import { safeHref } from "../util/validation";
 
 import { DefaultButton, IconButton } from "@fluentui/react/lib/Button";
 
@@ -81,7 +82,7 @@ const ImageLayerInfoModal = ({ onClose, imageLayer }) => {
             <Label className="m-0 p-0">Cloud optimized geotiff</Label>
             <div className="d-flex align-items-center">
               <Text>
-                <Link href={imageLayer.cloudOptimizedGeotiff} target="_blank">Link</Link>
+                <Link href={safeHref(imageLayer.cloudOptimizedGeotiff)} target="_blank" rel="noopener noreferrer">Link</Link>
               </Text>
               <CopyToClipboard
                 text={imageLayer.cloudOptimizedGeotiff}

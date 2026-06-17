@@ -4,6 +4,7 @@ import { apiGet } from "../util/api";
 import {
   validateURL,
   validateImageryUrlHost,
+  validateFootprintUrlHost,
   validateFileType,
 } from "../util/validation";
 import { v4 as uuidv4 } from 'uuid';
@@ -62,6 +63,15 @@ export async function createComponentDefaultState(imageLayerId, projectId) {
                 currentPostEventImageryUrlControlError: "",
                 imageryOriginOptions: imageryOriginOptions,
                 projectName: project.name,
+                // Custom building-footprint state — display only on edit
+                // (the field is create-only; we show what the layer was
+                // created with but don't allow changes).
+                userBuildingFootprintsEnabled: !!imageLayerToEdit.userBuildingFootprintsUrl,
+                userBuildingFootprintsUrls: imageLayerToEdit.userBuildingFootprintsUrl
+                    ? [{ id: uuidv4(), type: "url", value: imageLayerToEdit.userBuildingFootprintsUrl, name: "" }]
+                    : [],
+                currentUserBuildingFootprintsControl: imageryOriginOptions[0].key,
+                currentUserBuildingFootprintsControlError: "",
             }
             : {
                 imageLayerId: "",
@@ -91,7 +101,12 @@ export async function createComponentDefaultState(imageLayerId, projectId) {
                 currentPostEventImageryUrlControlError: "",
                 imageryOriginOptions: imageryOriginOptions,
                 projectName: project.name,
-
+                // Custom building-footprint state (optional panel below
+                // pre-event imagery on the Create Image Layer form).
+                userBuildingFootprintsEnabled: false,
+                userBuildingFootprintsUrls: [],
+                currentUserBuildingFootprintsControl: imageryOriginOptions[0].key,
+                currentUserBuildingFootprintsControlError: "",
             }
 
         return tempState;
@@ -164,6 +179,47 @@ export const addUrlToEventImageryArray = (setComponentState, componentState, URL
     return true;
 };
 
+// Building-footprint URLs use a slightly wider allowlist than imagery
+// (they may legitimately come from the local chunked-upload endpoint),
+// and only one entry is allowed at a time.
+export const addUrlToFootprintArray = (setComponentState, componentState, URL, field, errorField) => {
+    const url = URL.trim();
+    const urlIsValid = validateURL(url);
+    const id = uuidv4();
+
+    if (!urlIsValid[0]) {
+        setComponentState({
+            ...componentState,
+            [errorField]: urlIsValid[1],
+        });
+        return false;
+    }
+
+    const hostIsValid = validateFootprintUrlHost(url);
+    if (!hostIsValid[0]) {
+        setComponentState({
+            ...componentState,
+            [errorField]: hostIsValid[1],
+        });
+        return false;
+    }
+
+    if ((componentState[field] || []).length > 0) {
+        setComponentState({
+            ...componentState,
+            [errorField]: "Only one building-footprints GPKG can be added; remove the existing entry first.",
+        });
+        return false;
+    }
+
+    setComponentState({
+        ...componentState,
+        [field]: [{ id: id, type: "url", value: url }],
+        [errorField]: "",
+    });
+    return true;
+};
+
 
 export const addFileToEventImageryArray = (files, acceptedFileTypes, componentState, setComponentState, field, errorField) => {
 
@@ -221,20 +277,52 @@ export const removeUrlFromEventImageryArray = (id, setComponentState, componentS
     });
 };
 
+// Single-file variant for the building-footprints panel: enforces exactly
+// one entry and validates the .gpkg extension.
+export const addFootprintFileToArray = (files, componentState, setComponentState, field, errorField) => {
+    if (!files || files.length === 0) {
+        setComponentState({
+            ...componentState,
+            [errorField]: "Select a .gpkg file to upload.",
+        });
+        return false;
+    }
+    if ((componentState[field] || []).length > 0) {
+        setComponentState({
+            ...componentState,
+            [errorField]: "Only one building-footprints GPKG can be added; remove the existing entry first.",
+        });
+        return false;
+    }
+    // Single-file picker, but be defensive.
+    const file = files[0];
+    const isValid = validateFileType(file.name, ["gpkg"]);
+    if (!isValid[0]) {
+        setComponentState({
+            ...componentState,
+            [errorField]: isValid[1],
+        });
+        return false;
+    }
+    setComponentState({
+        ...componentState,
+        [field]: [{ id: uuidv4(), type: "file", value: file }],
+        [errorField]: "",
+    });
+    return true;
+};
+
 export const convertFileIntoUrl = (setComponentState, componentState, file, url, field) => {
     const tempFile = { id: file.id, value: url, type: "url", name: file.value.name };
 
-    const updatedImageryUrls = componentState[field].map((item) => {
-        if (item.id === file.id) {
-            return tempFile;
-        }
-        return item;
-    });
-    setComponentState({
-        ...componentState,
-        [field]: updatedImageryUrls,
-    });
-}
+    // Use the functional-update form so that any concurrent edits the
+    // user makes during a long upload aren't overwritten by stale state
+    // captured when the uploader first mounted.
+    setComponentState((prev) => ({
+        ...prev,
+        [field]: prev[field].map((item) => (item.id === file.id ? tempFile : item)),
+    }));
+};
 
 function convertImageryUrlsToFormFormat(imageryUrls) {
     var formFormat = [];

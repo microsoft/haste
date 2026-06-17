@@ -16,7 +16,7 @@ html {
   position: absolute;
   left: 0px;
   top: 40px;
-  height: calc(100% - 40px);
+  height: calc(100% - 40px - var(--footer-height, 0px));
   width: 100%;
 }
 

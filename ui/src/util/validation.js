@@ -49,7 +49,7 @@ export function validateAtLeastSomeNumber(key, value, number) {
   return "";
 }
 
-export function validateIsUploading(preEventImageryUrls, postEventImageryUrls) {
+export function validateIsUploading(preEventImageryUrls, postEventImageryUrls, userBuildingFootprintsUrls = []) {
   for (let i = 0; i < preEventImageryUrls.length; i++) {
     if (preEventImageryUrls[i].type === "file") {
       return true;
@@ -58,6 +58,12 @@ export function validateIsUploading(preEventImageryUrls, postEventImageryUrls) {
 
   for (let i = 0; i < postEventImageryUrls.length; i++) {
     if (postEventImageryUrls[i].type === "file") {
+      return true;
+    }
+  }
+
+  for (let i = 0; i < userBuildingFootprintsUrls.length; i++) {
+    if (userBuildingFootprintsUrls[i].type === "file") {
       return true;
     }
   }
@@ -114,6 +120,9 @@ export function validateURL(url) {
 const IMAGERY_URL_ALLOWED_HOST_DESCRIPTION =
   "Azure Blob Storage (*.blob.core.windows.net) or AWS S3 (*.amazonaws.com)";
 
+const FOOTPRINT_URL_ALLOWED_HOST_DESCRIPTION =
+  "Azure Blob Storage (*.blob.core.windows.net), AWS S3 (*.amazonaws.com), or the local upload host (in development)";
+
 export function validateImageryUrlHost(url) {
   let parsed;
   try {
@@ -150,6 +159,110 @@ export function validateImageryUrlHost(url) {
     false,
     `URL host "${host}" is not on the allowlist. Allowed: ${IMAGERY_URL_ALLOWED_HOST_DESCRIPTION}.`,
   ];
+}
+
+// Same allowlist as validateImageryUrlHost plus the local upload host
+// (so the URL returned by the chunked uploader works in local dev).
+// Mirrors validate_footprint_url in url_allowlist.py.
+export function validateFootprintUrlHost(url) {
+  // First try the imagery hosts — accept immediately if it matches.
+  const [imageryOk] = validateImageryUrlHost(url);
+  if (imageryOk) {
+    return [true, ""];
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (e) {
+    return [false, "Invalid URL format"];
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return [false, `Unsupported URL scheme: ${parsed.protocol}`];
+  }
+
+  const host = parsed.hostname;
+  if (!host) {
+    return [false, "URL is missing host component"];
+  }
+
+  // Local-dev fallback: allow azurite / localhost / 127.0.0.1 only when the UI
+  // itself is running locally (dev stack). This avoids pre-approving loopback
+  // URLs in deployed environments where the backend will reject them.
+  const devHosts = new Set(["azurite", "localhost", "127.0.0.1"]);
+  const runningLocally = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  if (runningLocally && devHosts.has(host)) {
+    return [true, ""];
+  }
+
+  return [
+    false,
+    `URL host "${host}" is not on the allowlist. Allowed: ${FOOTPRINT_URL_ALLOWED_HOST_DESCRIPTION}.`,
+  ];
+}
+
+
+// Schemes that can execute script or smuggle data — never allowed in an href
+// or redirect target. Anything not resolving to http(s) (or a same-origin
+// relative path, for safeHref) is treated as unsafe.
+const UNSAFE_URL_SCHEME = /^\s*(javascript|data|vbscript|file):/i;
+
+/**
+ * True when `url` is a safe absolute external link target (http or https).
+ * Rejects javascript:/data:/vbscript:/file: and protocol-relative ("//host")
+ * URLs, which could execute script or redirect off-origin.
+ */
+export function isSafeExternalUrl(url) {
+  if (typeof url !== "string" || url.trim() === "") return false;
+  if (UNSAFE_URL_SCHEME.test(url)) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Returns `url` when it is safe to render as an href, otherwise undefined so
+ * the caller can omit the attribute (Fluent's <Link> renders as plain text
+ * without one). Accepts same-origin relative paths and safe absolute http(s)
+ * URLs; rejects javascript:/data: schemes and protocol-relative ("//") URLs.
+ */
+export function safeHref(url) {
+  if (typeof url !== "string" || url.trim() === "") return undefined;
+  const trimmed = url.trim();
+  if (UNSAFE_URL_SCHEME.test(trimmed)) return undefined;
+  // Protocol-relative ("//evil.com") resolves off-origin — treat as unsafe.
+  if (trimmed.startsWith("//")) return undefined;
+  // Same-origin relative paths / fragments / queries are safe to keep as-is.
+  if (
+    trimmed.startsWith("/") ||
+    trimmed.startsWith("./") ||
+    trimmed.startsWith("../") ||
+    trimmed.startsWith("#") ||
+    trimmed.startsWith("?")
+  ) {
+    return url;
+  }
+  return isSafeExternalUrl(trimmed) ? url : undefined;
+}
+
+/**
+ * Collapses a post-logout redirect target to a same-origin relative path.
+ * Absolute URLs, protocol-relative URLs, and anything carrying a scheme become
+ * "/". Closes the open-redirect on logout (Security Review finding §8.6).
+ */
+export function sanitizeRedirectPath(path) {
+  if (typeof path !== "string" || path.trim() === "") return "/";
+  // Browsers treat backslashes as forward slashes, so "/\evil.com" would
+  // resolve like "//evil.com" — normalize before inspecting.
+  const normalized = path.trim().replace(/\\/g, "/");
+  if (normalized.startsWith("//")) return "/";
+  // Any leading scheme ("http:", "javascript:", etc.) is an absolute target.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(normalized)) return "/";
+  return normalized.startsWith("/") ? normalized : "/" + normalized;
 }
 
 

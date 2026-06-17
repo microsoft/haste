@@ -12,6 +12,7 @@ generate footprints once per image layer.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional, Tuple
 
@@ -110,3 +111,36 @@ def aoi_bbox_from_cog(
     """Return the EPSG:4326 bounding box of the AOI polygon as (xmin, ymin, xmax, ymax)."""
     polygon = extract_aoi_polygon(cog_path)
     return polygon.bounds
+
+
+def save_polygon_as_geojson(
+    polygon: shapely.geometry.base.BaseGeometry,
+    output_path: str,
+    *,
+    properties: Optional[dict] = None,
+) -> str:
+    """Write a shapely geometry to disk as a single-feature GeoJSON.
+
+    The output is a FeatureCollection with one Feature whose geometry is
+    ``polygon`` (assumed already in EPSG:4326) and whose properties are
+    ``properties`` (defaults to ``{}``). Used by the imageryprep workflow
+    to persist the AOI polygon so the UI can offer it as a downloadable
+    "valid area mask" artifact.
+
+    Args:
+        polygon: A shapely geometry in EPSG:4326.
+        output_path: Where to write the .geojson file.
+        properties: Optional dict of feature properties. Defaults to ``{}``.
+
+    Returns:
+        ``output_path`` for caller convenience.
+    """
+    feature = {
+        "type": "Feature",
+        "geometry": shapely.geometry.mapping(polygon),
+        "properties": properties or {},
+    }
+    fc = {"type": "FeatureCollection", "features": [feature]}
+    with open(output_path, "w") as f:
+        json.dump(fc, f)
+    return output_path

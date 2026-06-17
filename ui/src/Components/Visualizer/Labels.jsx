@@ -5,6 +5,7 @@ import { ActionButton, Text, Link, Toggle } from "@fluentui/react";
 import { useNavigate } from "react-router-dom";
 import { convertDateToString } from "../../util/conversion";
 import { sourceTypeOptions } from "../CreateEditImageLayerHelper";
+import { safeHref } from "../../util/validation";
 import "../../assets/css/labels.css";
 import PropType from "prop-types";
 import InfoPanel from "./InfoPanel";
@@ -51,7 +52,7 @@ const Labels = ({
       return "Source: " + sourceTypeTempObject.visualizerText;
     }else{
       return (
-        <Link href={sourceTypeTempObject.url} target="_blank">
+        <Link href={safeHref(sourceTypeTempObject.url)} target="_blank" rel="noopener noreferrer">
           Source: {sourceTypeTempObject.visualizerText}
         </Link>
       );

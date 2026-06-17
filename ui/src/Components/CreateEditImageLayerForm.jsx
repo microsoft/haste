@@ -12,6 +12,7 @@ import {
 import { useParams } from "react-router-dom";
 import SectionHeader from "./Section/SectionHeader";
 import CreateEditImageLayerFormImagerySources from "./CreateEditImageLayerFormImagerySources";
+import CreateEditImageLayerFormBuildingFootprints from "./CreateEditImageLayerFormBuildingFootprints";
 
 import {
   createComponentDefaultState,
@@ -62,7 +63,8 @@ const CreateEditImageLayerModal = () => {
       setIsUploading(
         validateIsUploading(
           componentState.preEventImageryUrls,
-          componentState.postEventImageryUrls
+          componentState.postEventImageryUrls,
+          componentState.userBuildingFootprintsUrls || []
         )
       );
     }
@@ -111,6 +113,23 @@ const CreateEditImageLayerModal = () => {
       imageryCaptureDatePostEvent
     );
 
+    // When the user enabled the custom-footprints panel, they must
+    // actually supply a URL/file. Otherwise the workflow would silently
+    // fall back to Overture even though the user explicitly chose not to,
+    // which is a correctness failure.
+    let userBuildingFootprintsControlError = "";
+    if (componentState.userBuildingFootprintsEnabled && !imageLayerId) {
+      const entries = componentState.userBuildingFootprintsUrls || [];
+      const firstReady =
+        entries.length > 0 &&
+        entries[0].type === "url" &&
+        !!entries[0].value;
+      if (!firstReady) {
+        userBuildingFootprintsControlError =
+          "Add a building-footprints URL or upload a .gpkg file, or disable the custom footprints panel.";
+      }
+    }
+
     if (
       nameError ||
       currentPostEventImageryUrlControlError ||
@@ -118,7 +137,8 @@ const CreateEditImageLayerModal = () => {
       sourceTypePreEventError ||
       sourceTypePostEventError ||
       normalizationFactorError ||
-      imageryCaptureDatePostEventError
+      imageryCaptureDatePostEventError ||
+      userBuildingFootprintsControlError
     ) {
       setComponentState({
         ...componentState,
@@ -130,6 +150,8 @@ const CreateEditImageLayerModal = () => {
         sourceTypePostEventError: sourceTypePostEventError,
         normalizationFactorError: normalizationFactorError,
         imageryCaptureDatePostEventError: imageryCaptureDatePostEventError,
+        currentUserBuildingFootprintsControlError:
+          userBuildingFootprintsControlError,
       });
       return;
     }
@@ -159,6 +181,19 @@ const CreateEditImageLayerModal = () => {
         await apiPut("PutLayer/", tempComponentState);
         setDialog("Success", "Imagelayer successfully updated.", buttons);
       } else {
+        // Resolve the user-supplied building-footprint URL (if enabled
+        // and any entry has been added). File entries are flipped to
+        // url-type once the chunked upload completes
+        // (validateIsUploading above already blocks submit otherwise).
+        const userFootprintEntries = componentState.userBuildingFootprintsUrls || [];
+        let userBuildingFootprintsUrl = null;
+        if (componentState.userBuildingFootprintsEnabled && userFootprintEntries.length > 0) {
+          const first = userFootprintEntries[0];
+          if (first && first.type === "url" && first.value) {
+            userBuildingFootprintsUrl = first.value;
+          }
+        }
+
         const apiBody = {
           projectId: componentState.projectId,
           name: name,
@@ -171,6 +206,7 @@ const CreateEditImageLayerModal = () => {
           normalizationFactor: normalizationFactor,
           imageryCaptureDatePreEvent: imageryCaptureDatePreEvent,
           imageryCaptureDatePostEvent: imageryCaptureDatePostEvent,
+          userBuildingFootprintsUrl: userBuildingFootprintsUrl,
           userId: appParams.userId,
         };
 
@@ -429,6 +465,12 @@ const CreateEditImageLayerModal = () => {
               />
             </div>
           </div>
+
+          <CreateEditImageLayerFormBuildingFootprints
+            componentState={componentState}
+            setComponentState={setComponentState}
+            imageLayerId={imageLayerId}
+          />
 
           <div className="row">
             <div className="col-12 d-flex justify-content-end">

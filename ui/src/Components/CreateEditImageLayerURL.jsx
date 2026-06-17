@@ -6,6 +6,7 @@ import propTypes from "prop-types";
 import { IconButton, Link } from "@fluentui/react";
 
 import { removeUrlFromEventImageryArray } from "./CreateEditImageLayerHelper";
+import { safeHref } from "../util/validation";
 
 const CreateEditImageLayerURL = ({
   setComponentState,
@@ -27,8 +28,9 @@ const CreateEditImageLayerURL = ({
       <div className="col-12 d-flex align-items-center">
         <div className="col flex-grow-1 me-2">
           <Link
-            href={url.value}
+            href={safeHref(url.value)}
             target="_blank"
+            rel="noopener noreferrer"
             className="custom-text-wrap pe-4"
             style={{ fontSize: "14px" }}
           >

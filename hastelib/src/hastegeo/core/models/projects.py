@@ -547,6 +547,10 @@ class ModelArtifacts(BaseModel):
     modelId: Optional[str] = Field(default=None)
     currentZipJobUid: Optional[str] = Field(default=None)
     zipUrl: Optional[str] = Field(default=None)
+    trainingZipUrl: Optional[str] = Field(default=None)
+    trainingZipSize: Optional[int] = Field(default=None)
+    inferenceZipUrl: Optional[str] = Field(default=None)
+    inferenceZipSize: Optional[int] = Field(default=None)
     zipStatus: Optional[str] = Field(default=None)
     zipStatusMessage: Optional[str] = Field(default="")
     zipJobs: Optional[List[ZipJob]] = Field(default_factory=list)
@@ -645,10 +649,24 @@ class ImageLayer(BaseModel):
         normalizationStds: Standard deviation values for each spectral band
         labelProject: Associated labeling project providing ground truth data
         labelsUrl: URL to labels file for the imagery layer
-        buildingFootprintsUrl: URL to the cached Overture Maps building
-            footprint GeoPackage scoped to this layer's AOI. Populated
-            by the imageryprep workflow; consumed by inference instead of
-            re-downloading on every model run.
+        buildingFootprintsUrl: URL to the cached building-footprint
+            GeoPackage scoped to this layer's AOI. Populated by the
+            imageryprep workflow from either Overture Maps (default) or
+            from the user-supplied ``userBuildingFootprintsUrl`` (when
+            set). Consumed by inference instead of re-downloading on
+            every model run.
+        userBuildingFootprintsUrl: Optional user-supplied URL pointing to
+            a GeoPackage of building footprints. When set, the imageryprep
+            workflow skips the Overture download and instead downloads
+            this file, reprojects it to EPSG:4326, clips it to the layer's
+            AOI, and writes the result to ``buildingFootprintsUrl``. The
+            URL must satisfy ``validate_footprint_url`` (same allowlist
+            as imagery URLs plus the configured local upload host).
+        validAreaMaskUrl: URL to a single-feature GeoJSON FeatureCollection
+            containing the valid-data polygon (EPSG:4326) derived from the
+            post-event mosaic, i.e. the imagery's actual AOI excluding
+            nodata. Populated by the imageryprep workflow; surfaced as a
+            downloadable artifact in the UI.
         dependsOn: Dependency tuple specifying parent resource type and ID
 
     Example:
@@ -710,8 +728,47 @@ class ImageLayer(BaseModel):
     labelProject: Optional[LabelProject] = Field(default=None)
     labelsUrl: Optional[str] = Field(default=None)
     buildingFootprintsUrl: Optional[str] = Field(default=None)
+    userBuildingFootprintsUrl: Optional[str] = Field(default=None)
+    validAreaMaskUrl: Optional[str] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("Project", "projectId")
+    )
+
+
+class ValidationLabel(BaseModel):
+    """
+    Represents a single building validation label assigned by a user.
+
+    Args:
+        id: Overture Maps building ID
+        label: Damage assessment label — one of "Damaged", "NotDamaged", or "Unknown"
+        updatedAt: ISO timestamp when this label was last set
+    """
+
+    id: str
+    label: str
+    updatedAt: str
+
+
+class BuildingValidation(BaseModel):
+    """
+    Stores building-footprint validation results for an image layer.
+
+    Labels are shared across all users for a given image layer (last-write-wins).
+    The ``labels`` dict maps each Overture building ID to its ValidationLabel.
+
+    Args:
+        imageLayerId: Reference to the imagery layer being validated
+        projectId: Reference to the parent project
+        labels: Mapping of Overture building ID to ValidationLabel
+        dependsOn: Dependency tuple specifying parent resource type and ID
+    """
+
+    imageLayerId: Optional[str] = Field(default=None)
+    projectId: Optional[str] = Field(default=None)
+    labels: Optional[dict] = Field(default_factory=dict)
+    dependsOn: Optional[tuple[str, str]] = Field(
+        default=("ImageLayer", "imageLayerId")
     )
 
 

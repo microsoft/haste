@@ -8,13 +8,13 @@ import json
 import os
 import re
 import traceback
-from urllib.parse import urlparse
 
 import azure.functions as func  # type: ignore
 import requests  # type: ignore
 from hastegeo.core.config import Config
 from hastegeo.core.models.admin import AdminConfig
 from hastegeo.core.models.projects import (
+    BuildingValidation,
     ImageLayer,
     LabelProject,
     Model,
@@ -37,12 +37,13 @@ from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.processors.stats import StatsPreProcessor
 from hastegeo.core.processors.train import TrainPreprocessor
 from hastegeo.core.processors.uploader import FileUploader
+from hastegeo.core.utils.blob import download_blob_to_tempfile
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
 from hastegeo.core.utils.url_allowlist import (
-    ALLOWED_HOST_DESCRIPTION,
-    validate_imagery_url,
+    validate_image_layer_imagery_urls,
+    validate_image_layer_user_footprints_url,
 )
 from hastegeo.core.utils.user import InvitationManager, UserManager
 from pydantic import ValidationError  # type: ignore
@@ -74,6 +75,11 @@ _GUID_RE = re.compile(
 _EMAIL_RE = re.compile(
     r"^[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,253}\.[A-Za-z]{2,24}$"
 )
+# Short numeric IDs produced by MetadataUtils.generate_short_int_id() — used
+# for modelId (currently 4 zero-padded digits, e.g. "5557"). Width is bounded
+# to leave room for the field to grow without ever admitting an unbounded
+# string into log lines or blob paths.
+_SHORT_INT_ID_RE = re.compile(r"^[0-9]{1,8}$")
 
 
 def _require_guid_param(req: func.HttpRequest, name: str) -> str:
@@ -82,6 +88,21 @@ def _require_guid_param(req: func.HttpRequest, name: str) -> str:
     if not value:
         raise ValueError(f"Missing required parameter: {name}")
     if not _GUID_RE.match(value):
+        raise ValueError(f"Invalid format for parameter: {name}")
+    return value
+
+
+def _require_short_int_id_param(req: func.HttpRequest, name: str) -> str:
+    """Return a request parameter validated as a short integer id, or raise ValueError.
+
+    Used for fields populated by MetadataUtils.generate_short_int_id()
+    (notably modelId), which produces 1-8 digit numeric strings rather
+    than canonical GUIDs.
+    """
+    value = req.params.get(name)
+    if not value:
+        raise ValueError(f"Missing required parameter: {name}")
+    if not _SHORT_INT_ID_RE.match(value):
         raise ValueError(f"Invalid format for parameter: {name}")
     return value
 
@@ -99,38 +120,6 @@ def _require_email_param(req: func.HttpRequest, name: str) -> str:
 def _bad_request(name_or_message: str) -> func.HttpResponse:
     logger.warning(f"Rejected request: {name_or_message}")
     return func.HttpResponse("Invalid request parameters.", status_code=400)
-
-
-def _validate_imagery_urls(image_data: ImageLayer) -> str | None:
-    """Validate user-submitted imagery URLs against the host allowlist.
-
-    Returns a user-facing error message if any URL is not on the allowlist,
-    or None if all URLs validate. Full URLs are logged server-side; only
-    rejected hostnames are surfaced to the client.
-    """
-    rejected_hosts: list[str] = []
-    for field_name in ("preEventImageryUrls", "postEventImageryUrls"):
-        urls = getattr(image_data, field_name, None) or []
-        for idx, url in enumerate(urls):
-            if not url:
-                continue
-            try:
-                validate_imagery_url(url)
-            except ValueError:
-                host = urlparse(url).hostname or "<unparseable>"
-                logger.warning(
-                    f"PutLayer rejected URL not on allowlist: "
-                    f"field={field_name} index={idx} host={host}"
-                )
-                rejected_hosts.append(host)
-    if rejected_hosts:
-        unique_hosts = sorted(set(rejected_hosts))
-        return (
-            "One or more imagery URLs are not on the allowlist of permitted "
-            f"hosts ({ALLOWED_HOST_DESCRIPTION}). "
-            f"Rejected host(s): {', '.join(unique_hosts)}."
-        )
-    return None
 
 
 def _decode_client_principal(req: func.HttpRequest) -> dict | None:
@@ -263,6 +252,7 @@ async def UploadFileByChunk(req: func.HttpRequest) -> func.HttpResponse:
         chunk_number = form_data.get("chunk_number")
         total_chunks = form_data.get("total_chunks")
         action = form_data.get("action")
+        data_format = form_data.get("data_format")
         file_chunk = req.files.get("chunk")
 
         def missing_param_response(param_name):
@@ -284,14 +274,21 @@ async def UploadFileByChunk(req: func.HttpRequest) -> func.HttpResponse:
         chunk_number = int(chunk_number)
         total_chunks = int(total_chunks)
         file_uploader = FileUploader(project_id=project_id, config=config)
-        output = await asyncio.to_thread(
-            file_uploader.save_chunk,
-            file_id=file_id,
-            chunk_number=chunk_number,
-            total_chunks=total_chunks,
-            chunk_data=file_chunk,
-            action=action,
-        )
+        try:
+            output = await asyncio.to_thread(
+                file_uploader.save_chunk,
+                file_id=file_id,
+                chunk_number=chunk_number,
+                total_chunks=total_chunks,
+                chunk_data=file_chunk,
+                action=action,
+                data_format=data_format,
+            )
+        except ValueError as e:
+            # Reject unsupported data_format up-front so a hostile client
+            # cannot smuggle an arbitrary extension into the blob path.
+            logger.warning(f"UploadFileByChunk rejected request: {e}")
+            return func.HttpResponse(str(e), status_code=400)
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
     except Exception as e:
@@ -614,6 +611,18 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
                 if not image_layer.get("labelsUrl"):
                     # Older image layers will not have the generated geoJSON
                     image_layer["labelsUrl"] = None
+            try:
+                validation_data = await asyncio.to_thread(
+                    MetadataProcessor(
+                        data_type=config.get_metadata_types().VALIDATION.value,
+                        partition_key=project_id,
+                    ).load,
+                    image_layer_id,
+                )
+                labels = validation_data.get("labels") or {}
+                image_layer["validationLabelCount"] = len(labels)
+            except FileNotFoundError:
+                image_layer["validationLabelCount"] = 0
         project["imageLayer"] = image_layers
         project["imageLayerCount"] = len(image_layers)
         project["imageLayer"].sort(
@@ -794,9 +803,15 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
         req_body = req.get_json()
         image_data = ImageLayer(**req_body)
 
-        url_error = _validate_imagery_urls(image_data)
+        url_error = validate_image_layer_imagery_urls(image_data)
         if url_error:
             return func.HttpResponse(url_error, status_code=400)
+
+        footprint_url_error = validate_image_layer_user_footprints_url(
+            image_data
+        )
+        if footprint_url_error:
+            return func.HttpResponse(footprint_url_error, status_code=400)
 
         if image_data.imageLayerId is None:
             image_data.imageLayerId = MetadataUtils.generate_id()
@@ -1823,7 +1838,10 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
         try:
             project_id = _require_guid_param(req, "projectId")
             image_layer_id = _require_guid_param(req, "imageLayerId")
-            model_id = _require_guid_param(req, "modelId")
+            # modelId is generated by MetadataUtils.generate_short_int_id()
+            # (currently "0000"-"9999"), not a UUID — so the GUID validator
+            # rejected every real value. See _require_short_int_id_param.
+            model_id = _require_short_int_id_param(req, "modelId")
         except ValueError as ve:
             return _bad_request(f"GetVisualizerResults: {ve}")
 
@@ -1887,6 +1905,35 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
             if model_data.predictedDamageLayerUrl
             else ""
         )
+        # The inference workflow always produces a `_predictions.tif` next to
+        # `_visualizer.tif`, sharing the same container SAS. Derive its URL by
+        # swapping the suffix rather than persisting a separate model field.
+        predictions_url_raw = (
+            model_data.predictedDamageLayerUrl.replace(
+                "_visualizer.tif", "_predictions.tif"
+            )
+            if model_data.predictedDamageLayerUrl
+            else None
+        )
+        predictions_layer_URL = (
+            requests.utils.quote(predictions_url_raw, safe="")
+            if predictions_url_raw
+            else ""
+        )
+        # TiTiler colormap overrides the embedded TIFF palette (whose alpha=0 entry
+        # is silently dropped by TIFF). Maps pixel values 0/1 -> transparent,
+        # 2 -> green, 3 -> red, matching the inference.py palette.
+        predictions_colormap = requests.utils.quote(
+            json.dumps(
+                {
+                    "0": [0, 0, 0, 0],
+                    "1": [0, 0, 0, 0],
+                    "2": [0, 255, 0, 255],
+                    "3": [255, 0, 0, 255],
+                }
+            ),
+            safe="",
+        )
 
         visualizer = Visualizer(
             projectId=project_id,
@@ -1919,6 +1966,18 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
             ),
             predictedDamageLayer=Imagery(
                 url=f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={predicted_damage_layer_URL}",
+                bounds=(
+                    label_project.features[0].bbox
+                    if label_project.features
+                    else None
+                ),
+            ),
+            predictionsLayer=Imagery(
+                url=(
+                    f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={predictions_layer_URL}&colormap={predictions_colormap}"
+                    if predictions_layer_URL
+                    else ""
+                ),
                 bounds=(
                     label_project.features[0].bbox
                     if label_project.features
@@ -2895,4 +2954,654 @@ async def GetAzureMapsToken(req: func.HttpRequest) -> func.HttpResponse:
         )
         return func.HttpResponse(
             "Error fetching Azure Maps token.", status_code=500
+        )
+
+
+@app.route(
+    route="GetBuildingFootprintsGeoJSON",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetBuildingFootprintsGeoJSON(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    """Return a random sample of building footprints as a GeoJSON FeatureCollection.
+
+    Reads the cached .gpkg file from blob storage for the given image layer,
+    selects a random sample of up to ``sample`` buildings, and returns them as
+    a GeoJSON FeatureCollection.  Each feature carries the Overture building
+    ``id``, ``subtype``, and ``class`` properties.
+
+    Query params:
+        projectId (str): Parent project identifier.
+        imageLayerId (str): Image layer identifier.
+        sample (int, optional): Maximum number of buildings to return
+            (default 200). Clamped to the inclusive range [1, 2000] to bound
+            response size and server-side memory.
+    """
+    logger.info(
+        "GetBuildingFootprintsGeoJSON HTTP trigger function processed a request."
+    )
+    tmp_path = None
+    try:
+        import geopandas as gpd
+
+        project_id = req.params.get("projectId")
+        image_layer_id = req.params.get("imageLayerId")
+        try:
+            requested_sample = int(req.params.get("sample", 200))
+        except (TypeError, ValueError):
+            requested_sample = 200
+        # Clamp to a sane range so callers can't accidentally pull the
+        # entire dataset (which can be millions of features) into memory.
+        sample_size = max(1, min(requested_sample, 2000))
+
+        if not project_id or not image_layer_id:
+            return func.HttpResponse(
+                "projectId and imageLayerId are required.", status_code=400
+            )
+
+        # Load the image layer metadata to get the buildingFootprintsUrl.
+        image_layer_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=project_id,
+            ).load,
+            image_layer_id,
+        )
+
+        footprints_url = image_layer_data.get("buildingFootprintsUrl")
+        if not footprints_url:
+            return func.HttpResponse(
+                "No building footprints available for this image layer.",
+                status_code=404,
+            )
+
+        # Download via the helper that handles both Azurite and real-Azure
+        # URL shapes and routes through BLOB_CONNECTION_STRING.
+        tmp_path = await download_blob_to_tempfile(
+            footprints_url, suffix=".gpkg"
+        )
+
+        gdf = await asyncio.to_thread(gpd.read_file, tmp_path)
+
+        # Random sample (fixed random_state so repeated calls return the
+        # same subset; the visualizer page shouldn't reshuffle on refresh).
+        if len(gdf) > sample_size:
+            gdf = gdf.sample(n=sample_size, random_state=42)
+
+        # Ensure only the columns we care about are returned.
+        keep_cols = [
+            c
+            for c in ["id", "subtype", "class", "geometry"]
+            if c in gdf.columns
+        ]
+        gdf = gdf[keep_cols]
+
+        geojson_str = await asyncio.to_thread(lambda: gdf.to_json())
+
+        return func.HttpResponse(
+            geojson_str,
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except FileNotFoundError:
+        return func.HttpResponse("Image layer not found.", status_code=404)
+    except Exception as e:
+        logger.error(
+            f"Error in GetBuildingFootprintsGeoJSON: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error fetching building footprints.", status_code=500
+        )
+    finally:
+        # Clean up the temporary .gpkg even when the read/sample/to_json
+        # path raises, so we don't leak files into the Functions worker's
+        # /tmp on every failed request.
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+@app.route(
+    route="GetBuildingValidation",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
+    """Return existing building validation labels for an image layer.
+
+    Query params:
+        projectId (str): Parent project identifier.
+        imageLayerId (str): Image layer identifier.
+
+    Returns a BuildingValidation JSON object, or an empty one if no labels exist yet.
+    """
+    logger.info(
+        "GetBuildingValidation HTTP trigger function processed a request."
+    )
+    try:
+        project_id = req.params.get("projectId")
+        image_layer_id = req.params.get("imageLayerId")
+
+        if not project_id or not image_layer_id:
+            return func.HttpResponse(
+                "projectId and imageLayerId are required.", status_code=400
+            )
+
+        try:
+            validation_data = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().VALIDATION.value,
+                    partition_key=project_id,
+                ).load,
+                image_layer_id,
+            )
+        except FileNotFoundError:
+            validation_data = BuildingValidation(
+                imageLayerId=image_layer_id,
+                projectId=project_id,
+                labels={},
+            ).model_dump()
+
+        return func.HttpResponse(
+            json.dumps(validation_data),
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except Exception as e:
+        logger.error(
+            f"Error in GetBuildingValidation: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error fetching building validation.", status_code=500
+        )
+
+
+@app.route(
+    route="PutBuildingValidation",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
+    """Save (replace) building validation labels for an image layer.
+
+    Request body: BuildingValidation JSON
+        {
+            "projectId": "...",
+            "imageLayerId": "...",
+            "labels": {
+                "<overture-id>": {"id": "...", "label": "Damaged|NotDamaged|Unknown", "updatedAt": "..."}
+            }
+        }
+    """
+    logger.info(
+        "PutBuildingValidation HTTP trigger function processed a request."
+    )
+    try:
+        req_body = req.get_json()
+        validation = BuildingValidation(**req_body)
+
+        if not validation.projectId or not validation.imageLayerId:
+            return func.HttpResponse(
+                "projectId and imageLayerId are required.", status_code=400
+            )
+
+        await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().VALIDATION.value,
+                partition_key=validation.projectId,
+            ).save,
+            validation.imageLayerId,
+            validation.model_dump(),
+        )
+
+        return func.HttpResponse(
+            json.dumps(validation.model_dump()),
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except Exception as e:
+        logger.error(
+            f"Error in PutBuildingValidation: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error saving building validation.", status_code=500
+        )
+
+
+@app.route(
+    route="GetValidationReport",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
+    """Compute a validation accuracy report by crossing inference results with
+    user-supplied building validation labels.
+
+    Joins the inference GeoPackage (integer sequential IDs, ``damaged`` 0/1)
+    with the building-footprints GeoPackage (Overture string IDs in the same
+    row order) to produce a per-building prediction lookup, then compares
+    against the human labels stored in BuildingValidation.
+
+    ``Unknown`` labels are excluded from all metric calculations.
+
+    Query params:
+        projectId (str): Parent project identifier.
+        imageLayerId (str): Image layer identifier.
+        modelId (str): Model identifier whose inference results to use.
+
+    Returns JSON:
+        {
+          "matched": int,            // buildings with both a prediction and a label
+          "totalValidationLabels": int,
+          "labelCounts": {"Damaged": int, "NotDamaged": int, "Unknown": int},
+          "accuracy": float,
+          "confusionMatrix": {
+            "labels": ["Damaged", "NotDamaged"],
+            "matrix": [[TP, FN], [FP, TN]]   // rows=actual, cols=predicted; positive=Damaged
+          },
+          "perClass": {
+            "Damaged":    {"precision": float, "recall": float, "f1": float},
+            "NotDamaged": {"precision": float, "recall": float, "f1": float}
+          },
+          "macroF1": float
+        }
+    """
+    logger.info(
+        "GetValidationReport HTTP trigger function processed a request."
+    )
+    try:
+        project_id = req.params.get("projectId")
+        image_layer_id = req.params.get("imageLayerId")
+        model_id = req.params.get("modelId")
+
+        if not project_id or not image_layer_id or not model_id:
+            return func.HttpResponse(
+                "projectId, imageLayerId and modelId are required.",
+                status_code=400,
+            )
+
+        # ── 1. Load validation labels ──────────────────────────────────────────
+        try:
+            validation_data = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().VALIDATION.value,
+                    partition_key=project_id,
+                ).load,
+                image_layer_id,
+            )
+        except FileNotFoundError:
+            return func.HttpResponse(
+                json.dumps(
+                    {
+                        "error": "No validation labels found for this image layer."
+                    }
+                ),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        labels_dict = validation_data.get("labels") or {}
+        if not labels_dict:
+            return func.HttpResponse(
+                json.dumps(
+                    {
+                        "error": "No validation labels found for this image layer."
+                    }
+                ),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        # ── 2. Load model to get gpkgUrl ───────────────────────────────────────
+        model_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).load,
+            model_id,
+        )
+
+        gpkg_url = model_data.get("gpkgUrl")
+        if not gpkg_url:
+            return func.HttpResponse(
+                json.dumps(
+                    {"error": "No inference results available for this model."}
+                ),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        # ── 3. Load image layer to get buildingFootprintsUrl ──────────────────
+        image_layer_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=project_id,
+            ).load,
+            image_layer_id,
+        )
+
+        footprints_url = image_layer_data.get("buildingFootprintsUrl")
+        if not footprints_url:
+            return func.HttpResponse(
+                json.dumps(
+                    {
+                        "error": "No building footprints available for this image layer."
+                    }
+                ),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        # ── 4. Download both GeoPackages and join row-order → overture id ─────
+        import fiona
+
+        footprints_path = await download_blob_to_tempfile(
+            footprints_url, suffix=".gpkg"
+        )
+        gpkg_path = await download_blob_to_tempfile(gpkg_url, suffix=".gpkg")
+
+        try:
+            # Build index → overture_id from the building footprints file.
+            # Cast to str so the eventual lookup against labels_dict (which
+            # always has string keys, since JSON object keys are strings)
+            # matches even if the footprints file's id column is integer
+            # typed (common for user-supplied GPKGs).
+            with fiona.open(footprints_path) as src_fp:
+                idx_to_overture = {
+                    i: str(feat["properties"]["id"])
+                    for i, feat in enumerate(src_fp)
+                }
+
+            # Build int_id → damaged from the inference results
+            with fiona.open(gpkg_path) as src_inf:
+                int_id_to_damaged = {
+                    feat["properties"]["id"]: feat["properties"]["damaged"]
+                    for feat in src_inf
+                }
+        finally:
+            os.unlink(footprints_path)
+            os.unlink(gpkg_path)
+
+        # Build overture_id → predicted_damaged
+        overture_to_pred = {
+            overture_id: int_id_to_damaged[int_id]
+            for int_id, overture_id in idx_to_overture.items()
+            if int_id in int_id_to_damaged
+        }
+
+        # ── 6. Compute metrics ─────────────────────────────────────────────────
+        label_counts = {"Damaged": 0, "NotDamaged": 0, "Unknown": 0}
+        for lbl_obj in labels_dict.values():
+            lbl = lbl_obj.get("label", "Unknown")
+            label_counts[lbl] = label_counts.get(lbl, 0) + 1
+
+        # Matched pairs (exclude Unknown)
+        pairs = []
+        for overture_id, lbl_obj in labels_dict.items():
+            actual_label = lbl_obj.get("label")
+            if actual_label == "Unknown":
+                continue
+            pred = overture_to_pred.get(overture_id)
+            if pred is None:
+                continue
+            pred_label = "Damaged" if pred == 1 else "NotDamaged"
+            pairs.append((actual_label, pred_label))
+
+        matched = len(pairs)
+
+        if matched == 0:
+            return func.HttpResponse(
+                json.dumps(
+                    {
+                        "matched": 0,
+                        "totalValidationLabels": len(labels_dict),
+                        "labelCounts": label_counts,
+                        "error": "No validation labels could be matched to inference results.",
+                    }
+                ),
+                status_code=200,
+                mimetype="application/json",
+            )
+
+        # Confusion matrix: rows=actual, cols=predicted, for [Damaged, NotDamaged]
+        classes = ["Damaged", "NotDamaged"]
+        cm = {a: {p: 0 for p in classes} for a in classes}
+        for actual, predicted in pairs:
+            cm[actual][predicted] += 1
+
+        matrix = [[cm[a][p] for p in classes] for a in classes]
+        correct = sum(cm[c][c] for c in classes)
+        accuracy = correct / matched
+
+        def _safe_div(num, den):
+            return num / den if den > 0 else 0.0
+
+        per_class = {}
+        f1_scores = []
+        for cls in classes:
+            tp = cm[cls][cls]
+            fp = sum(cm[other][cls] for other in classes if other != cls)
+            fn = sum(cm[cls][other] for other in classes if other != cls)
+            precision = _safe_div(tp, tp + fp)
+            recall = _safe_div(tp, tp + fn)
+            f1 = _safe_div(2 * precision * recall, precision + recall)
+            per_class[cls] = {
+                "precision": round(precision, 4),
+                "recall": round(recall, 4),
+                "f1": round(f1, 4),
+            }
+            f1_scores.append(f1)
+
+        macro_f1 = sum(f1_scores) / len(f1_scores)
+
+        report = {
+            "matched": matched,
+            "totalValidationLabels": len(labels_dict),
+            "labelCounts": label_counts,
+            "accuracy": round(accuracy, 4),
+            "confusionMatrix": {
+                "labels": classes,
+                "matrix": matrix,
+            },
+            "perClass": per_class,
+            "macroF1": round(macro_f1, 4),
+        }
+
+        return func.HttpResponse(
+            json.dumps(report),
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except Exception as e:
+        logger.error(
+            f"Error in GetValidationReport: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error generating validation report.", status_code=500
+        )
+
+
+@app.route(
+    route="GetAssessmentReport",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
+    """Run the damage-assessment evaluation against the model's inference.
+
+    Reproduces the "Analyze results" computation from the
+    ``notebooks/Evaluate-Gezanine_1.ipynb`` notebook and from the
+    ``validation/evaluate.py`` CLI: precision/recall/AP against any
+    available human labels, the predicted damaged-building count for the
+    layer, and a finite-population estimate (with 95% CI) for the total
+    damaged count across all footprints above a minimum area threshold.
+
+    The math lives in :func:`hastegeo.core.utils.assessment.compute_assessment_report`.
+    This endpoint is the I/O wrapper that pulls the model's merged
+    predictions GeoPackage and the layer's cached building footprints
+    GeoPackage, joins them on row order (the convention used by
+    ``merge_with_building_footprints.py``), and folds in whatever
+    validation labels exist.
+
+    Query params:
+        projectId (str): Parent project identifier.
+        imageLayerId (str): Image layer identifier.
+        modelId (str): Model whose inference results to assess.
+        threshold (float, optional): Damage fraction above which a
+            building is called damaged (default 0.1, same as the CLI).
+        minAreaM2 (float, optional): Minimum footprint area in m² for
+            the population extrapolation (default 50).
+    """
+    logger.info(
+        "GetAssessmentReport HTTP trigger function processed a request."
+    )
+    try:
+        from hastegeo.core.utils.assessment import (
+            build_assessment_inputs_from_gpkgs,
+            compute_assessment_report,
+        )
+
+        project_id = req.params.get("projectId")
+        image_layer_id = req.params.get("imageLayerId")
+        model_id = req.params.get("modelId")
+
+        if not project_id or not image_layer_id or not model_id:
+            return func.HttpResponse(
+                "projectId, imageLayerId and modelId are required.",
+                status_code=400,
+            )
+
+        # Parse optional knobs with bounded fallbacks; surfacing 400s on
+        # garbage so the modal doesn't try to render an opaque 500.
+        try:
+            threshold = float(req.params.get("threshold", "0.1"))
+        except ValueError:
+            return func.HttpResponse(
+                "threshold must be a number between 0 and 1.",
+                status_code=400,
+            )
+        if not 0.0 <= threshold <= 1.0:
+            return func.HttpResponse(
+                "threshold must be between 0 and 1.", status_code=400
+            )
+        try:
+            min_area_m2 = float(req.params.get("minAreaM2", "50"))
+        except ValueError:
+            return func.HttpResponse(
+                "minAreaM2 must be a number >= 0.", status_code=400
+            )
+        if min_area_m2 < 0:
+            return func.HttpResponse(
+                "minAreaM2 must be >= 0.", status_code=400
+            )
+
+        # Load model + image layer to get the two blob URLs we need.
+        model_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).load,
+            model_id,
+        )
+        gpkg_url = model_data.get("gpkgUrl")
+        if not gpkg_url:
+            return func.HttpResponse(
+                json.dumps(
+                    {"error": "No inference results available for this model."}
+                ),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        image_layer_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=project_id,
+            ).load,
+            image_layer_id,
+        )
+        footprints_url = image_layer_data.get("buildingFootprintsUrl")
+        if not footprints_url:
+            return func.HttpResponse(
+                json.dumps(
+                    {
+                        "error": "No building footprints available for this image layer."
+                    }
+                ),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        # Validation labels are optional for the assessment report — the
+        # CLI script can produce the damage-count estimate without labels,
+        # and the modal renders that section regardless. The metrics
+        # section is what needs labels.
+        try:
+            validation_data = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().VALIDATION.value,
+                    partition_key=project_id,
+                ).load,
+                image_layer_id,
+            )
+            labels_dict = validation_data.get("labels") or {}
+        except FileNotFoundError:
+            labels_dict = {}
+
+        labels_pairs = [
+            (bid, obj.get("label"))
+            for bid, obj in labels_dict.items()
+            if obj.get("label")
+        ]
+
+        footprints_path = await download_blob_to_tempfile(
+            footprints_url, suffix=".gpkg"
+        )
+        gpkg_path = await download_blob_to_tempfile(gpkg_url, suffix=".gpkg")
+        try:
+            inputs = await asyncio.to_thread(
+                build_assessment_inputs_from_gpkgs,
+                footprints_path,
+                gpkg_path,
+                labels=labels_pairs,
+            )
+        finally:
+            for path in (footprints_path, gpkg_path):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+        report = await asyncio.to_thread(
+            compute_assessment_report,
+            inputs,
+            threshold=threshold,
+            min_area_m2=min_area_m2,
+        )
+
+        return func.HttpResponse(
+            json.dumps(report, allow_nan=False),
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except Exception as e:
+        logger.error(
+            f"Error in GetAssessmentReport: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error generating assessment report.", status_code=500
         )
