@@ -242,7 +242,10 @@ sync_apim_operations() {
         case "$OPERATION_ROUTE" in
             *"{"*"}"*)
                 OPERATION_ROUTE=$(echo "$OPERATION_ROUTE" | sed 's/\*//g')
-                OPERATION_ROUTE_PARAM=$(echo "$OPERATION_ROUTE" | sed 's/{//g;s/}//g')
+                # Extract just the placeholder name from inside the braces so the
+                # declared parameter matches the {param} in the url-template
+                # (e.g. options/{*path} -> url-template options/{path}, param "path").
+                OPERATION_ROUTE_PARAM=$(echo "$OPERATION_ROUTE" | sed -n 's/.*{\([^}]*\)}.*/\1/p')
                 TEMPLATE_PARAMETERS="name=$OPERATION_ROUTE_PARAM required=true type=string"
                 echo "  template parameter detected -> $OPERATION_ROUTE_PARAM"
                 ;;
