@@ -43,6 +43,7 @@ TRAINING_DOCKER_IMAGE="hastetraining:${TRAINING_IMAGE_TAG}"
 IMAGEPREP_DOCKER_IMAGE="hasteimageryprep:${IMAGEPREP_IMAGE_TAG}"
 BATCH_POOL_ID="${RESOURCE_PREFIX}-haste-${RANDOM_SUFFIX}-pool"
 MAPS_ACCOUNT="${RESOURCE_PREFIX}haste${RANDOM_SUFFIX}maps"
+API_MANAGEMENT="${RESOURCE_PREFIX}-haste-${RANDOM_SUFFIX}-apim"
 FIXED_TAGS="project=haste created_by=deploy_apps"
 DYNAMIC_TAGS="env=${ENVIRONMENT} deployed_version=${APP_TAG}"
 EMAIL_SENDER="DoNotReply@notifications.${STATIC_APP_DOMAIN}"
@@ -183,17 +184,150 @@ EOF
 
 }
 
+# Detect the HTTP endpoints currently exposed by a deployed Function App and
+# create a matching APIM operation (plus a set-backend-service policy) for any
+# that don't already exist. Existing operations are left untouched, so this only
+# ever *adds* newly introduced endpoints - making it safe to run on every deploy.
+#
+# The APIM service and the base API (whose api-id matches the function app name)
+# are provisioned by setup/setup_infra.sh. If either is missing we warn and skip
+# rather than fail, so a code-only deploy to an environment without APIM still
+# succeeds.
+sync_apim_operations() {
+    local FUNCTION_NAME=$1
+
+    echo "+--------------------------------------------------+"
+    echo "Syncing APIM operations for function app: $FUNCTION_NAME"
+    echo "+--------------------------------------------------+"
+
+    # The APIM service must exist before we can add operations to it.
+    if ! az apim show --name "$API_MANAGEMENT" --resource-group "$RESOURCE_GROUP" > /dev/null 2>&1; then
+        echo "⚠️  WARNING: API Management service '$API_MANAGEMENT' not found in '$RESOURCE_GROUP'. Skipping APIM operation sync."
+        echo "   Provision APIM and the base API via setup/setup_infra.sh before syncing operations."
+        return 0
+    fi
+
+    # The base API (api-id == function app name) must already be imported into
+    # APIM; new endpoints can only be added to an existing API.
+    if ! az apim api show --resource-group "$RESOURCE_GROUP" --service-name "$API_MANAGEMENT" --api-id "$FUNCTION_NAME" > /dev/null 2>&1; then
+        echo "⚠️  WARNING: APIM API '$FUNCTION_NAME' not found in '$API_MANAGEMENT'. Skipping APIM operation sync."
+        echo "   The base API is created by setup/setup_infra.sh; run it once before relying on incremental endpoint sync."
+        return 0
+    fi
+
+    # Enumerate the function app's endpoints from Azure.
+    local FUNCTION_OPERATIONS
+    FUNCTION_OPERATIONS=$(az functionapp function list --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" -o json) || {
+        echo "⚠️  WARNING: Failed to list functions for '$FUNCTION_NAME'. Skipping APIM operation sync."
+        return 0
+    }
+
+    while read -r OPERATION; do
+        local OPERATION_NAME OPERATION_METHOD OPERATION_ROUTE TEMPLATE_PARAMETERS
+        OPERATION_NAME=$(echo "$OPERATION" | jq -r '.config.name // (.id | split("/")[-1])')
+        OPERATION_METHOD=$(echo "$OPERATION" | jq -r '.config.bindings[0].methods[0] // empty')
+        OPERATION_ROUTE=$(echo "$OPERATION" | jq -r '.config.bindings[0].route // .config.name')
+
+        # Skip non-HTTP triggers (queue/timer/blob triggers have no HTTP method).
+        if [ -z "$OPERATION_METHOD" ] || [ "$OPERATION_METHOD" = "null" ]; then
+            echo "Skipping '$OPERATION_NAME' (no HTTP method - not an HTTP endpoint)."
+            continue
+        fi
+
+        echo "Processing endpoint: $OPERATION_NAME [method: $OPERATION_METHOD, route: $OPERATION_ROUTE]"
+
+        # Translate route template parameters (e.g. options/{*path}) into the
+        # named template parameter APIM expects.
+        TEMPLATE_PARAMETERS=""
+        case "$OPERATION_ROUTE" in
+            *"{"*"}"*)
+                OPERATION_ROUTE=$(echo "$OPERATION_ROUTE" | sed 's/\*//g')
+                OPERATION_ROUTE_PARAM=$(echo "$OPERATION_ROUTE" | sed 's/{//g;s/}//g')
+                TEMPLATE_PARAMETERS="name=$OPERATION_ROUTE_PARAM required=true type=string"
+                echo "  template parameter detected -> $OPERATION_ROUTE_PARAM"
+                ;;
+        esac
+
+        # Only create operations that don't already exist - this is the "new
+        # endpoint detection" step.
+        if az apim api operation show \
+            --resource-group "$RESOURCE_GROUP" \
+            --service-name "$API_MANAGEMENT" \
+            --api-id "$FUNCTION_NAME" \
+            --operation-id "$OPERATION_NAME" > /dev/null 2>&1; then
+            echo "  operation '$OPERATION_NAME' already exists in APIM. Skipping."
+            continue
+        fi
+
+        echo "  creating new APIM operation '$OPERATION_NAME'..."
+        # shellcheck disable=SC2046
+        az apim api operation create \
+            --resource-group "$RESOURCE_GROUP" \
+            --service-name "$API_MANAGEMENT" \
+            --api-id "$FUNCTION_NAME" \
+            --operation-id "$OPERATION_NAME" \
+            --display-name "$OPERATION_NAME" \
+            --method "$(echo "$OPERATION_METHOD" | tr '[:lower:]' '[:upper:]')" \
+            --url-template "/$OPERATION_ROUTE" \
+            $( [ -n "$TEMPLATE_PARAMETERS" ] && echo "--template-parameters $TEMPLATE_PARAMETERS" ) || {
+            echo "⚠️  WARNING: Failed to create operation '$OPERATION_NAME'. Continuing with remaining endpoints."
+            continue
+        }
+
+        # Route the new operation to the function app backend via policy.
+        local BICEP_TEMPLATE BICEP_TEMPLATE_FILE
+        BICEP_TEMPLATE=$(cat <<EOF
+resource operationPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2024-06-01-preview' = {
+  name: '$API_MANAGEMENT/$FUNCTION_NAME/$OPERATION_NAME/policy'
+  properties: {
+    value: '''
+<policies>
+  <inbound>
+    <base />
+    <set-backend-service id="apim-generated-policy" backend-id="$FUNCTION_NAME" />
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>
+'''
+    format: 'xml'
+  }
+}
+EOF
+        )
+        BICEP_TEMPLATE_FILE=$(mktemp).bicep
+        echo "$BICEP_TEMPLATE" > "$BICEP_TEMPLATE_FILE"
+        if az deployment group create --resource-group "$RESOURCE_GROUP" --template-file "$BICEP_TEMPLATE_FILE"; then
+            echo "✅ Operation '$OPERATION_NAME' added to APIM and routed to '$FUNCTION_NAME'."
+        else
+            echo "⚠️  WARNING: Failed to set backend policy for '$OPERATION_NAME'."
+        fi
+        rm -f "$BICEP_TEMPLATE_FILE"
+    done < <(echo "$FUNCTION_OPERATIONS" | jq -c '.[]')
+
+    echo "APIM operation sync complete for '$FUNCTION_NAME'."
+}
+
 echo "Deploying component: $COMPONENT"
 
 case "$COMPONENT" in
     all)
         deploy_function "$FUNCTION_API" "$(dirname "$0")/../../api/hastefuncapi" true
+        sync_apim_operations "$FUNCTION_API"
         deploy_function "$FUNCTION_TITILER_API" "$(dirname "$0")/../../api/titilerfuncapi" false
         deploy_function "$FUNCTION_QUEUE_API" "$(dirname "$0")/../../api/hastefuncqueues" true
         deploy_static_web_app
         ;;
     funcapi)
         deploy_function "$FUNCTION_API" "$(dirname "$0")/../../api/hastefuncapi" true
+        sync_apim_operations "$FUNCTION_API"
         ;;
     funcqueue)
         deploy_function "$FUNCTION_QUEUE_API" "$(dirname "$0")/../../api/hastefuncqueues" true
