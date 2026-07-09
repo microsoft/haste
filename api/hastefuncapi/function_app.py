@@ -1147,11 +1147,13 @@ _MODEL_ARTIFACT_URL_FIELDS = {
     "pmtiles": "pmtilesUrl",
     "sidecar": "featuresSidecarUrl",
     "geojson": "embeddingsGeoJSONUrl",
+    "gpkg": "gpkgUrl",
 }
 _MODEL_ARTIFACT_CONTENT_TYPES = {
     "pmtiles": "application/octet-stream",
     "sidecar": "application/octet-stream",
     "geojson": "application/geo+json",
+    "gpkg": "application/geopackage+sqlite3",
 }
 
 
@@ -1171,6 +1173,12 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
     browser fetches same-origin ``/api`` and the function app does the
     blob I/O server-side over the Azure backbone, honoring ``Range`` so
     pmtiles.js can do partial reads.
+
+    Supported ``kind`` values: ``pmtiles``, ``sidecar`` and ``geojson``
+    (fetched/parsed in-browser), plus ``gpkg`` — the per-building
+    predictions GeoPackage saved by ``PutBuildingPredictions``, served as
+    a downloadable attachment. Example:
+    ``GET /api/GetModelArtifact?projectId=<pid>&modelId=<mid>&kind=gpkg``.
     """
     try:
         project_id = _require_guid_param(req, "projectId")
@@ -1232,6 +1240,13 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
         "Content-Length": str(len(result.data)),
         "Cache-Control": "private, max-age=3600",
     }
+    # The GeoPackage predictions artifact is a downloadable file (the
+    # interactive labeler's other artifacts are fetched by range and parsed
+    # in-browser, so they must NOT be forced as downloads).
+    if kind == "gpkg":
+        headers[
+            "Content-Disposition"
+        ] = f'attachment; filename="building_predictions_{model_id}.gpkg"'
     if result.etag:
         headers["ETag"] = (
             result.etag if result.etag.startswith('"') else f'"{result.etag}"'

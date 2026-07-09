@@ -15,11 +15,12 @@ import { useContext, useState } from "react";
 import React from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
-import { apiDelete } from "../../util/api";
+import { apiDelete, buildUrl } from "../../util/api";
 import { AppContext } from "../../AppContext";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
+import { fileDownload } from "../../util/file";
 import { limitTextLength } from "../../util/conversion";
 
 // Friendly per-row label for the embedding backbone column. The Model schema
@@ -128,6 +129,33 @@ const EmbeddingModelRow = ({
 
   const moreMenuOptions = {
     items: [
+      {
+        key: "downloadPredictions",
+        text: "Download Predictions (.gpkg)",
+        iconProps: { iconName: "Download" },
+        disabled: !hasPredictions,
+        onClick: () => {
+          if (!hasPredictions) {
+            setDialog(
+              "Error",
+              "No predictions available for this embedding yet. " +
+                "Run predictions in the Interactive Labeler first."
+            );
+            return;
+          }
+          // Stream the predictions GeoPackage through the same-origin API
+          // (GetModelArtifact) rather than the raw blob URL, so it works for
+          // remote labelers behind the storage firewall — matching how the
+          // labeler fetches the model's other artifacts.
+          fileDownload(
+            buildUrl(
+              `GetModelArtifact?projectId=${projectId}` +
+                `&modelId=${model.modelId}&kind=gpkg`
+            ),
+            setDialog
+          );
+        },
+      },
       {
         key: "remove",
         text: "Remove",
