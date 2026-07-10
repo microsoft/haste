@@ -68,6 +68,7 @@ const EmbeddingModelRow = ({
   imageLayerId,
   index,
   fetchProjectDetails,
+  validationLabelCount = 0,
   mobile = false,
 }) => {
   EmbeddingModelRow.propTypes = {
@@ -76,6 +77,7 @@ const EmbeddingModelRow = ({
     imageLayerId: PropTypes.string.isRequired,
     index: PropTypes.number.isRequired,
     fetchProjectDetails: PropTypes.func.isRequired,
+    validationLabelCount: PropTypes.number,
     mobile: PropTypes.bool,
   };
 
@@ -133,13 +135,19 @@ const EmbeddingModelRow = ({
         key: "validationReport",
         text: "Validation Report",
         iconProps: { iconName: "ReportDocument" },
-        disabled: !hasPredictions,
+        // Match the standard workflow (ModelResultsButton): the validation
+        // report needs Building Validation labels to compute precision/recall,
+        // so it stays disabled until at least one exists.
+        disabled: !hasPredictions || !(validationLabelCount > 0),
         onClick: () => setShowValidationReport(true),
       },
       {
         key: "assessmentReport",
         text: "Assessment Report",
         iconProps: { iconName: "AnalyticsReport" },
+        // Predictions alone (+ cached footprints) are enough for the
+        // damage-count estimate; labels are optional, so this only needs
+        // predictions — same as the standard workflow.
         disabled: !hasPredictions,
         onClick: () => setShowAssessmentReport(true),
       },
