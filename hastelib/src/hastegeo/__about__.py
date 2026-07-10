@@ -5,4 +5,4 @@
 # storage (see ../../../haste_build.py) so that source/Docker installs report
 # the same version that was published. Committed value tracks the latest
 # published release.
-__version__ = "1.0.25"
+__version__ = "1.0.26"
