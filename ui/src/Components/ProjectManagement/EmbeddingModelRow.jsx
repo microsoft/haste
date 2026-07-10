@@ -108,8 +108,27 @@ const EmbeddingModelRow = ({
     setIsLoading(false);
   }
 
-  const reportsMenu = {
+  const resultsMenu = {
     items: [
+      {
+        key: "downloadGeopackage",
+        text: "Download Geopackage (.gpkg)",
+        iconProps: { iconName: "download" },
+        disabled: !hasPredictions,
+        onClick: () => {
+          // Stream the predictions GeoPackage through the same-origin API
+          // (GetModelArtifact) rather than the raw blob URL, so it works for
+          // remote labelers behind the storage firewall — matching how the
+          // labeler fetches the model's other artifacts.
+          fileDownload(
+            buildUrl(
+              `GetModelArtifact?projectId=${projectId}` +
+                `&modelId=${model.modelId}&kind=gpkg`
+            ),
+            setDialog
+          );
+        },
+      },
       {
         key: "validationReport",
         text: "Validation Report",
@@ -129,33 +148,6 @@ const EmbeddingModelRow = ({
 
   const moreMenuOptions = {
     items: [
-      {
-        key: "downloadPredictions",
-        text: "Download Predictions (.gpkg)",
-        iconProps: { iconName: "Download" },
-        disabled: !hasPredictions,
-        onClick: () => {
-          if (!hasPredictions) {
-            setDialog(
-              "Error",
-              "No predictions available for this embedding yet. " +
-                "Run predictions in the Interactive Labeler first."
-            );
-            return;
-          }
-          // Stream the predictions GeoPackage through the same-origin API
-          // (GetModelArtifact) rather than the raw blob URL, so it works for
-          // remote labelers behind the storage firewall — matching how the
-          // labeler fetches the model's other artifacts.
-          fileDownload(
-            buildUrl(
-              `GetModelArtifact?projectId=${projectId}` +
-                `&modelId=${model.modelId}&kind=gpkg`
-            ),
-            setDialog
-          );
-        },
-      },
       {
         key: "remove",
         text: "Remove",
@@ -272,9 +264,9 @@ const EmbeddingModelRow = ({
                 Interactive Label
               </DefaultButton>
               <PrimaryButton
-                id={"embeddingReports" + index}
-                text="Reports"
-                menuProps={reportsMenu}
+                id={"embeddingResults" + index}
+                text="Results"
+                menuProps={resultsMenu}
                 allowDisabledFocus
                 className="dashboard-button ms-2"
                 disabled={!hasPredictions}
@@ -349,9 +341,9 @@ const EmbeddingModelRow = ({
             Interactive Label
           </DefaultButton>{" "}
           <PrimaryButton
-            id={"embeddingReports" + index}
-            text="Reports"
-            menuProps={reportsMenu}
+            id={"embeddingResults" + index}
+            text="Results"
+            menuProps={resultsMenu}
             allowDisabledFocus
             className="dashboard-button ms-2"
             disabled={!hasPredictions}
