@@ -129,6 +129,7 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
               imageLayerId={imageLayerId}
               index={index}
               fetchProjectDetails={fetchProjectDetails}
+              validationLabelCount={validationLabelCount}
             />
           );
         }

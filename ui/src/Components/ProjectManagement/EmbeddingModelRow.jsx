@@ -15,11 +15,12 @@ import { useContext, useState } from "react";
 import React from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
-import { apiDelete } from "../../util/api";
+import { apiDelete, buildUrl } from "../../util/api";
 import { AppContext } from "../../AppContext";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
+import { fileDownload } from "../../util/file";
 import { limitTextLength } from "../../util/conversion";
 
 // Friendly per-row label for the embedding backbone column. The Model schema
@@ -67,6 +68,7 @@ const EmbeddingModelRow = ({
   imageLayerId,
   index,
   fetchProjectDetails,
+  validationLabelCount = 0,
   mobile = false,
 }) => {
   EmbeddingModelRow.propTypes = {
@@ -75,6 +77,7 @@ const EmbeddingModelRow = ({
     imageLayerId: PropTypes.string.isRequired,
     index: PropTypes.number.isRequired,
     fetchProjectDetails: PropTypes.func.isRequired,
+    validationLabelCount: PropTypes.number,
     mobile: PropTypes.bool,
   };
 
@@ -107,19 +110,44 @@ const EmbeddingModelRow = ({
     setIsLoading(false);
   }
 
-  const reportsMenu = {
+  const resultsMenu = {
     items: [
+      {
+        key: "downloadGeopackage",
+        text: "Download Geopackage (.gpkg)",
+        iconProps: { iconName: "download" },
+        disabled: !hasPredictions,
+        onClick: () => {
+          // Stream the predictions GeoPackage through the same-origin API
+          // (GetModelArtifact) rather than the raw blob URL, so it works for
+          // remote labelers behind the storage firewall — matching how the
+          // labeler fetches the model's other artifacts.
+          fileDownload(
+            buildUrl(
+              `GetModelArtifact?projectId=${projectId}` +
+                `&modelId=${model.modelId}&kind=gpkg`
+            ),
+            setDialog
+          );
+        },
+      },
       {
         key: "validationReport",
         text: "Validation Report",
         iconProps: { iconName: "ReportDocument" },
-        disabled: !hasPredictions,
+        // Match the standard workflow (ModelResultsButton): the validation
+        // report needs Building Validation labels to compute precision/recall,
+        // so it stays disabled until at least one exists.
+        disabled: !hasPredictions || !(validationLabelCount > 0),
         onClick: () => setShowValidationReport(true),
       },
       {
         key: "assessmentReport",
         text: "Assessment Report",
         iconProps: { iconName: "AnalyticsReport" },
+        // Predictions alone (+ cached footprints) are enough for the
+        // damage-count estimate; labels are optional, so this only needs
+        // predictions — same as the standard workflow.
         disabled: !hasPredictions,
         onClick: () => setShowAssessmentReport(true),
       },
@@ -244,9 +272,9 @@ const EmbeddingModelRow = ({
                 Interactive Label
               </DefaultButton>
               <PrimaryButton
-                id={"embeddingReports" + index}
-                text="Reports"
-                menuProps={reportsMenu}
+                id={"embeddingResults" + index}
+                text="Results"
+                menuProps={resultsMenu}
                 allowDisabledFocus
                 className="dashboard-button ms-2"
                 disabled={!hasPredictions}
@@ -321,9 +349,9 @@ const EmbeddingModelRow = ({
             Interactive Label
           </DefaultButton>{" "}
           <PrimaryButton
-            id={"embeddingReports" + index}
-            text="Reports"
-            menuProps={reportsMenu}
+            id={"embeddingResults" + index}
+            text="Results"
+            menuProps={resultsMenu}
             allowDisabledFocus
             className="dashboard-button ms-2"
             disabled={!hasPredictions}
