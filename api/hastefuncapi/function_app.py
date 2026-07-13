@@ -3842,6 +3842,33 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json",
             )
 
+        # ── 2. Load labels from the right store ────────────────────────────────
+        # Embedding models (building workflow) use the model-scoped interactive
+        # labels; standard models use the layer-scoped Building Validation store.
+        label_meta = _validation_label_source(model_data, image_layer_id)
+        try:
+            validation_data = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=label_meta["type"],
+                    partition_key=project_id,
+                ).load,
+                label_meta["key"],
+            )
+        except FileNotFoundError:
+            return func.HttpResponse(
+                json.dumps({"error": "No validation labels found."}),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        labels_dict = validation_data.get("labels") or {}
+        if not labels_dict:
+            return func.HttpResponse(
+                json.dumps({"error": "No validation labels found."}),
+                status_code=404,
+                mimetype="application/json",
+            )
+
         # ── 3. Load image layer to get buildingFootprintsUrl ──────────────────
         image_layer_data = await asyncio.to_thread(
             MetadataProcessor(

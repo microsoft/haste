@@ -109,6 +109,12 @@ const Project = ({ setModalComponent }) => {
         setComponentState((prevState) => ({
           ...prevState,
           project: response,
+          visibleModelId:
+            prevState.visibleModelId !== "-1"
+              ? prevState.visibleModelId
+              : response.imageLayer && response.imageLayer.length > 0 && response.imageLayer[0].models && response.imageLayer[0].models.length > 0
+                ? response.imageLayer[0].imageLayerId
+                : "-1",
           sectionHeaderProperties: {
             iconName: "OpenFolderHorizontal",
             path: [

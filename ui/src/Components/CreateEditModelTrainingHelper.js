@@ -3,31 +3,21 @@
 
 import { apiGet } from "../util/api";
 
-export async function createComponentDefaultState(modelToEdit, imageLayer, projectId) {
+export async function createComponentDefaultState(modelToEdit, imageLayer, projectId, eventTypes) {
   try {
 
-    var eventTypes = "";
+    var  eventTypesL = "eventTypes=" + eventTypes;
     var imagerySource = "";
 
-    await apiGet("GetProjectDetails?projectId=" + projectId + "&includeModels=False")
-      .then((response) => {
-        if (response.eventTypes) {
-          eventTypes = "eventTypes=" + response.eventTypes;
-        }
-      })
-      .catch((error) => {
-        console.error("Error fetching project details:", error);
-      });
-
     if (imageLayer.sourceTypePostEvent !== "" && imageLayer.sourceTypePostEvent !== null && imageLayer.sourceTypePostEvent !== undefined) {
-      var concatChar = eventTypes === "" ? "" : "&";
-      eventTypes += concatChar + "imagerySource=" + imageLayer.sourceTypePostEvent;
+      var concatChar = eventTypesL === "" ? "" : "&";
+      eventTypesL += concatChar + "imagerySource=" + imageLayer.sourceTypePostEvent;
     }
 
     var cataloguedModels = [];
 
     
-    await apiGet(`GetModelCatalog?${eventTypes}${imagerySource}`)
+    await apiGet(`GetModelCatalog?${eventTypesL}${imagerySource}`)
       .then((response) => {
         cataloguedModels.push(
           ...response.modelCatalog.map((model) => ({

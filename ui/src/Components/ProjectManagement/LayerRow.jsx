@@ -286,6 +286,7 @@ const LayerRow = ({
                       setImageLayerComponentState={setComponentState}
                       guidedTour="createEditModelTrainingModalGuide"
                       autoLaunchGuidedTour={true}
+                      eventTypes={eventTypes}
                     />
                   )
                 }
@@ -381,6 +382,7 @@ const LayerRow = ({
                       setModalComponent={setModalComponent}
                       fetchProjectDetails={fetchProjectDetails}
                       setComponentState={setComponentState}
+                      eventTypes={eventTypes}
                     />
                     <ModelRowMobile
                       models={item.models}

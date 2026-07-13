@@ -32,6 +32,7 @@ const CreateEditModelTrainingModal = ({
   modelToEdit,
   guidedTour,
   autoLaunchGuidedTour,
+  eventTypes,
 }) => {
   CreateEditModelTrainingModal.propTypes = {
     onClose: proptypes.func.isRequired,
@@ -40,8 +41,9 @@ const CreateEditModelTrainingModal = ({
     modelToEdit: proptypes.object,
     guidedTour: proptypes.string.isRequired,
     autoLaunchGuidedTour: proptypes.bool.isRequired,
+    eventTypes: proptypes.array.isRequired,
   };
-
+  
   const { setDialog, appParams, setIsLoading, initCurrentTour } =
     useContext(AppContext);
   const [componentState, setComponentState] = useState(null);
@@ -50,7 +52,7 @@ const CreateEditModelTrainingModal = ({
   useEffect(() => {
     async function initComponent() {
       setComponentState(
-        await createComponentDefaultState(modelToEdit, imageLayer, projectId)
+        await createComponentDefaultState(modelToEdit, imageLayer, projectId, eventTypes)
       );
 
       if (autoLaunchGuidedTour) {

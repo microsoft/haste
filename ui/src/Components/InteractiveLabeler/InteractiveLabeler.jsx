@@ -1121,8 +1121,8 @@ const InteractiveLabeler = () => {
       counts[CLASS_INTACT] + counts[CLASS_DAMAGED] + counts[CLASS_CLOUDY];
     const message =
       total > 0
-        ? `Clear all ${total} label(s) for this model? This also removes them from the saved store and cannot be undone.`
-        : "Clear any saved labels for this model? This cannot be undone.";
+        ? `Clear all ${total} label(s) and predictions for this model? This removes them from the database and cannot be undone.`
+        : "Clear any saved labels and predictions for this model? This cannot be undone.";
     setDialog("Are you sure?", message, [
       {
         type: "primary",
@@ -1132,38 +1132,43 @@ const InteractiveLabeler = () => {
           setDialog();
           setIsLoading(true, "Clearing labels…");
           try {
-            // Drop the label feature-state on every currently-rendered
-            // building (so the map repaints to the unlabeled color).
+            // Clear ALL feature-state for the buildings source in one
+            // call per source (instead of per-feature, which freezes the
+            // browser on large viewports).
             const gl = glMapRef.current;
-            const layers = internalLayerIdsRef.current;
-            if (gl && layers.length) {
-              let rendered = [];
-              try {
-                rendered = gl.queryRenderedFeatures(undefined, { layers });
-              } catch {
-                rendered = [];
+            if (gl) {
+              for (const sourceId of internalSourceIdsRef.current) {
+                try {
+                  gl.removeFeatureState(
+                    { source: sourceId, sourceLayer: PMTILES_SOURCE_LAYER }
+                  );
+                } catch { /* ignore */ }
               }
-              for (const f of rendered) {
-                if (f.id != null) {
-                  clearFeatureStateLabel(f.source, f.id);
-                }
-              }
+              mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
             }
-            // In-memory reset.
+            // In-memory reset (labels + predictions).
             labeledMapRef.current = {};
             savedLabelsRef.current = {};
+            predictionsMapRef.current = {};
             trainedModelRef.current = null;
             labelsDirtyRef.current = true;
             refreshCounts();
             setMetrics(null);
-            setStatus("Cleared all labels.");
-            // Persist the empty document so revisits don't re-hydrate
-            // stale labels. PutInteractiveLabels is a whole-doc replace.
+            setViewportPredicted(0);
+            setStatus("Cleared all labels and predictions.");
+            // Persist empty labels and empty predictions so the DB
+            // matches the UI state.
             await apiPut("PutInteractiveLabels", {
               projectId,
               imageLayerId,
               modelId,
               labels: {},
+            });
+            await apiPut("PutBuildingPredictions", {
+              projectId,
+              imageLayerId,
+              modelId,
+              predictions: [],
             });
           } catch (e) {
             console.error("Error clearing labels:", e);
@@ -1336,12 +1341,12 @@ const InteractiveLabeler = () => {
       <div
         style={{
           position: "absolute",
-          left: 10,
           top: 10,
+          left: 10,
+          zIndex: 1000,
           backgroundColor: "rgba(255, 255, 255, 1)",
           padding: "5px 10px",
           borderRadius: "5px",
-          zIndex: 1000,
         }}
       >
         <ActionButton

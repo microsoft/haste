@@ -122,7 +122,7 @@ function App() {
             modalProps={modalProps}
           >
             <DialogFooter>
-              {appParams.dialogParams.buttons.map((button) =>
+              {(appParams.dialogParams.buttons || []).map((button) =>
                 button.type === "primary" ? (
                   <PrimaryButton key={button.key} onClick={button.onClick}>
                     {button.text}
@@ -133,7 +133,7 @@ function App() {
                   </DefaultButton>
                 )
               )}
-              {appParams.dialogParams.buttons.length === 0 && (
+              {(!appParams.dialogParams.buttons || appParams.dialogParams.buttons.length === 0) && (
                 <DefaultButton onClick={() => setDialog()}>Close</DefaultButton>
               )}
             </DialogFooter>

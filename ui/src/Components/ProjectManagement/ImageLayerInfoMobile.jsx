@@ -10,12 +10,13 @@ import { useNavigate } from "react-router-dom";
 import CreateEditModelTrainingModal from "../CreateEditModelTrainingModal";
 import CreateEditEmbeddingModal from "../CreateEditEmbeddingModal";
 
-const ImageLayerInfoMobile = ({ item, setModalComponent, fetchProjectDetails, setComponentState  }) => {
+const ImageLayerInfoMobile = ({ item, setModalComponent, fetchProjectDetails, setComponentState, eventTypes  }) => {
   ImageLayerInfoMobile.propTypes = {
     item: PropTypes.object.isRequired,
     setModalComponent: PropTypes.func.isRequired,
     fetchProjectDetails: PropTypes.func.isRequired,
     setComponentState: PropTypes.func.isRequired,
+    eventTypes: PropTypes.array.isRequired,
   };
 
   const navigate = useNavigate();
