@@ -25,7 +25,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
+        # Fetch Git LFS objects (docs/_static/**/*.mp4) so the built site
+        # serves real videos, not 132-byte LFS pointer files.
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Set up Python
         uses: actions/setup-python@v5

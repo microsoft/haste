@@ -6,8 +6,9 @@ of project-specific conventions that aren't obvious from the source
 itself.
 
 > **Mirrored at `.github/copilot-instructions.md`.** GitHub Copilot's
-> chat reads that file directly; other tools read this one. Keep them
-> in sync — they should be identical.
+> chat reads that file directly; other tools read this one. Keep the two
+> in sync — they cover the same guidance, though formatting and some
+> sections differ between them.
 
 ---
 
@@ -138,20 +139,12 @@ Dockerfiles that `pip install /tmp/hastelib/` set
 `HASTE_SKIP_VERSION_BUMP=1`. Don't strip that. Only run `hatch build`
 when you genuinely want to cut a release (and have `az login` set up).
 
-### APIM operations are managed out-of-band
-
-The `haste-dev.aiforgood.ai` deployment fronts the function app with
-Azure API Management. **Each new HTTP endpoint you add to `function_app.py`
-needs a matching APIM operation registered separately** — otherwise it
-404s with `{"statusCode": 404, "message": "Resource not found"}` in the
-dev/prod environments (works fine locally, since the local stack hits
-the function app directly). There is no APIM config in this repo;
-treat new-endpoint PRs as needing an out-of-band ops handoff.
-
 ---
 
 ## See also
 
+- `QUICKSTART.md` — agent runbook to stand up the local stack (phased,
+  verify-gated; for Claude Code / Copilot driving setup end-to-end).
 - `README.md` — getting-started for the dev stack.
 - `docker/README.md` — service-by-service docker compose architecture.
 - `docs/development.md` — broader contributor guide.

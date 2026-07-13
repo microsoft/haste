@@ -30,12 +30,12 @@ import {
   Toggle,
 } from "@fluentui/react";
 import { PMTiles, Protocol } from "pmtiles";
-import { apiGet, apiPut } from "../../util/api";
+import { apiGet, apiPut, buildUrl } from "../../util/api";
 import {
   getAzureMapsAuthOptions,
   isAzureMapsPlaceholder,
 } from "../../util/azureMapsAuth";
-import { toBrowserBlobUrl, toBrowserTitilerUrl } from "../../util/blobUrl";
+import { toBrowserTitilerUrl } from "../../util/blobUrl";
 import { AppContext } from "../../AppContext.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
 import {
@@ -62,6 +62,44 @@ if (typeof window !== "undefined" && window.atlas) {
 // Tippecanoe writes the buildings layer with `-l buildings`. The
 // VectorTileSource references this layer name to draw the polygons.
 const PMTILES_SOURCE_LAYER = "buildings";
+
+// pmtiles.js reads an archive through a `Source` (getKey + getBytes). Its
+// default FetchSource issues HTTP Range requests, but the Interactive
+// Labeler is served behind an Azure Static Web App whose /api proxy does
+// NOT honor byte serving: a ranged GET comes back as a full 200, so
+// pmtiles throws "Server returned no content-length header or content-length
+// exceeding request." We sidestep that by downloading the whole archive once
+// (a plain full GET, which the SWA proxy handles fine — same as the HFTR
+// sidecar) and satisfying every range read from that in-memory buffer.
+// `getKey()` must equal the string used in the `pmtiles://<key>` source URL
+// so Protocol.add()'s lookup matches.
+class InMemoryPMTilesSource {
+  constructor(key, arrayBuffer) {
+    this._key = key;
+    this._buf = arrayBuffer;
+  }
+  getKey() {
+    return this._key;
+  }
+  async getBytes(offset, length) {
+    // ArrayBuffer.slice clamps to the buffer end, which is what pmtiles
+    // expects for the initial 16 KB header read on a smaller archive.
+    return { data: this._buf.slice(offset, offset + length) };
+  }
+}
+
+// Download an entire artifact through the same-origin API proxy as raw
+// bytes. Used for the PMTiles archive so it can be read fully in memory
+// (see InMemoryPMTilesSource) rather than via unsupported range requests.
+async function fetchArtifactBuffer(url) {
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(
+      `Failed to fetch PMTiles archive (HTTP ${resp.status}) at ${url}`
+    );
+  }
+  return resp.arrayBuffer();
+}
 
 // Class colors (match index.html). Index = class number.
 const CLASS_COLORS = ["#107C10", "#C50F1F", "#5B5FC7"]; // intact, damaged, cloudy
@@ -119,6 +157,23 @@ function fillColorExpr(stateKey) {
     ["==", ["feature-state", stateKey], CLASS_DAMAGED], CLASS_COLORS[CLASS_DAMAGED],
     ["==", ["feature-state", stateKey], CLASS_CLOUDY], CLASS_COLORS[CLASS_CLOUDY],
     UNLABELED_COLOR,
+  ];
+}
+
+// Fill opacity for a labeled/predicted building. Unlabeled buildings (no
+// matching feature-state for stateKey) get a fully transparent fill so only
+// their outline shows.
+const LABELED_FILL_OPACITY = 0.5;
+
+// Build the fillOpacity paint expression for a given feature-state key,
+// mirroring fillColorExpr so opacity tracks the same "label"/"pred" state.
+function fillOpacityExpr(stateKey) {
+  return [
+    "case",
+    ["==", ["feature-state", stateKey], CLASS_INTACT], LABELED_FILL_OPACITY,
+    ["==", ["feature-state", stateKey], CLASS_DAMAGED], LABELED_FILL_OPACITY,
+    ["==", ["feature-state", stateKey], CLASS_CLOUDY], LABELED_FILL_OPACITY,
+    0,
   ];
 }
 
@@ -325,22 +380,40 @@ const InteractiveLabeler = () => {
         "No features sidecar available for this model — re-embed the layer to produce one."
       );
     }
-    // Dev-only host rewrite (azurite -> localhost). No-op in prod.
-    const browserPmtilesUrl = toBrowserBlobUrl(pmtilesUrl);
-    const browserSidecarUrl = toBrowserBlobUrl(sidecarUrl);
+    // Fetch both artifacts through the same-origin API proxy: the
+    // GetModelArtifact route streams the blob server-side via managed
+    // identity. This keeps the browser off the firewalled storage account —
+    // a direct *.blob SAS URL only works from allowlisted IPs, so
+    // remote/mobile labelers hit a 403.
+    const browserPmtilesUrl = buildUrl(
+      `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
+        `&kind=pmtiles`
+    );
+    const browserSidecarUrl = buildUrl(
+      `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
+        `&kind=sidecar`
+    );
 
-    // Read the PMTiles header up front so we can place the camera over the
-    // archive's bounds (otherwise the map sits at [0, 0] zoom 3 and the user
-    // sees no tiles). One ~16 KB byte-range read, cached by pmtiles' shared
-    // promise cache so the source's later reads reuse it.
+    // Download the whole archive once and serve pmtiles.js from memory. The
+    // SWA /api proxy in front of the function app does not support HTTP range
+    // requests (a ranged GET returns a full 200), so a network-backed
+    // FetchSource fails with a byte-serving error. Reading the archive fully
+    // and handing pmtiles an in-memory source makes every subsequent range
+    // read hit the local buffer instead of the network. `getKey()` returns
+    // browserPmtilesUrl so it matches the `pmtiles://<url>` source below.
     let pmtilesHeader = null;
     try {
-      const pm = new PMTiles(browserPmtilesUrl);
+      const pmtilesBuffer = await fetchArtifactBuffer(browserPmtilesUrl);
+      const pm = new PMTiles(
+        new InMemoryPMTilesSource(browserPmtilesUrl, pmtilesBuffer)
+      );
       // Pre-register so the protocol can serve tile reads from the same handle.
       _pmtilesProtocol.add(pm);
+      // Read the header so we can place the camera over the archive's bounds
+      // (otherwise the map sits at [0, 0] zoom 3 and the user sees no tiles).
       pmtilesHeader = await pm.getHeader();
     } catch (e) {
-      console.warn("Failed to read PMTiles header (continuing):", e);
+      console.warn("Failed to load PMTiles archive (continuing):", e);
     }
 
     // Fetch the binary features sidecar and parse the HFTR header. The
@@ -459,7 +532,7 @@ const InteractiveLabeler = () => {
         {
           sourceLayer: PMTILES_SOURCE_LAYER,
           fillColor: fillColorExpr("label"),
-          fillOpacity: 0.5,
+          fillOpacity: fillOpacityExpr("label"),
         }
       );
       map.layers.add(fillLayer);
@@ -469,10 +542,10 @@ const InteractiveLabeler = () => {
           sourceLayer: PMTILES_SOURCE_LAYER,
           strokeColor: "#1a5276",
           // Outlines are noise when zoomed out: hide them below z15, draw
-          // them very thin in the z15-16 transition, and use the full
-          // width once the user is zoomed in past z16.
+          // them thin in the z15-16 transition, and use the full width once
+          // the user is zoomed in past z16.
           minZoom: 15,
-          strokeWidth: ["step", ["zoom"], 0.5, 16, 1],
+          strokeWidth: ["step", ["zoom"], 1, 16, 2],
         })
       );
 
@@ -710,8 +783,9 @@ const InteractiveLabeler = () => {
   }
 
   // ── Repaint when the view-mode toggle flips ───────────────────────────────
-  // We don't recreate the layer — we mutate its fillColor expression so
-  // the renderer reads the right feature-state key without re-tessellating.
+  // We don't recreate the layer — we mutate its fillColor/fillOpacity
+  // expressions so the renderer reads the right feature-state key without
+  // re-tessellating.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -719,6 +793,7 @@ const InteractiveLabeler = () => {
     if (!fill) return;
     fill.setOptions({
       fillColor: fillColorExpr(viewMode === "predict" ? "pred" : "label"),
+      fillOpacity: fillOpacityExpr(viewMode === "predict" ? "pred" : "label"),
     });
     if (viewMode === "predict") hydrateViewport(map);
   }, [viewMode, isMapReady]);

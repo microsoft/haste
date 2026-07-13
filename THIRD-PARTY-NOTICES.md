@@ -12,7 +12,7 @@ This software includes third-party packages and libraries. The complete list of 
 - `api/titilerfuncapi/requirements.txt`
 - `docker/imageryprep/requirements.txt`
 - `docker/training/env/env.yml`
-- `hasteutils/pyproject.toml`
+- `hastelib/pyproject.toml`
 - `env.yml`
 
 ### Node.js Dependencies

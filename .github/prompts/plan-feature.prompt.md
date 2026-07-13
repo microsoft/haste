@@ -27,4 +27,3 @@ Create a spec-driven implementation plan for the described feature or change.
 ## Output
 
 The spec files in `spec/features/<feature-name>/` with at minimum `README.md`, `design.md`, and `plan.md` filled in. Plus a summary of the plan.
-```

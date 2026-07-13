@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-HASTE (High-speed Assessment and Satellite Tracking for Emergencies) is an AI-driven framework for rapid disaster assessment using satellite imagery. The repository is published as a **library + reference deployment**: Microsoft operates the public reference deployment, while external consumers integrate the `haste_geo` Python library and may optionally redeploy the full stack (UI + Function Apps + Azure Batch) into their own subscription.
+HASTE (High-speed Assessment and Satellite Tracking for Emergencies) is an AI-driven framework for rapid disaster assessment using satellite imagery. The repository is published as a **library + reference deployment**: Microsoft operates the public reference deployment, while external consumers integrate the `hastegeo` Python library and may optionally redeploy the full stack (UI + Function Apps + Azure Batch) into their own subscription.
 
 This guide tells you how to **configure HASTE securely** in your environment. It covers:
 
@@ -34,7 +34,7 @@ HASTE supports three deployment modes. Each has a distinct threat model.
 |------|--------------|------------------|
 | **Local development** (Docker Compose) | Single-developer evaluation only | Disabled auth, wildcard CORS, hardcoded dev keys (Azurite). **Never expose to a network beyond `localhost`.** |
 | **Self-hosted Azure deployment** | Customer running HASTE in their own subscription | Production-grade if configured per this guide. Customer is responsible for SWA auth, Key Vault, RBAC, and infra hardening. |
-| **Library-only integration** | Consuming the `haste_geo` Python package in your own application | You inherit only the library's process-level threat model; deployment-time controls are yours. |
+| **Library-only integration** | Consuming the `hastegeo` Python package in your own application | You inherit only the library's process-level threat model; deployment-time controls are yours. |
 
 **Required disclosure**: The local-development Docker Compose stack (`docker/docker-compose.yml`) mounts `/var/run/docker.sock` into containers to enable a local execution mode. This grants root-equivalent host access and is acceptable **only** on developer workstations. The file header documents this; this guide repeats it because it is the single most consequential local-vs-production gap.
 
@@ -96,7 +96,7 @@ EMAIL_CONNECTION_STRING = @Microsoft.KeyVault(SecretUri=https://<vault>.vault.az
 
 ### 4.3 Function master keys
 
-The deployment scripts (`setup/deploy_apps.sh`, `.github/scripts/deploy_apps.sh`) write the Function App master key to `.env` during setup. **Treat this file as sensitive and remove it from any machine that is not your local workstation.** Rotate this key periodically in production via:
+The CI deploy script (`.github/scripts/deploy_apps.sh`) writes the Function App master key to `.env` during deployment. **Treat this file as sensitive and remove it from any machine that is not your local workstation.** (The `azd` workflow instead injects the Function host key into the APIM backends via the postdeploy hook and does not persist it to disk.) Rotate this key periodically in production via:
 
 ```bash
 az functionapp keys set --resource-group <rg> --name <function-app> --key-type masterKey --key-name default
@@ -269,9 +269,9 @@ See §3.1 for the recommended SWA linked-backend topology.
 
 The UI does not send explicit CSRF tokens. Protection depends on the SWA Easy Auth session cookie's `SameSite=Lax` attribute and on `Origin`/`Referer` enforcement at the SWA edge. If you replace the auth layer or front the API with a different proxy, reintroduce equivalent CSRF protection.
 
-### 8.3 Self-hosted CI runner — applies if you fork the repo
+### 8.3 CI runners — applies if you fork the repo
 
-If you fork HASTE and reuse the included `azure-pipelines.yml` with a self-hosted runner on a public fork, fork-pull-request builds can execute arbitrary code on your runner. Either disable Azure Pipelines and rely on GitHub Actions, or restrict pipeline triggers to internal branches before exposing the fork.
+CI runs on GitHub Actions with GitHub-hosted runners (CodeQL and Gitleaks secret scanning); the legacy `azure-pipelines.yml`, which used a self-hosted pool, has been removed. If you fork HASTE and add self-hosted runners, note that fork pull-request builds can execute arbitrary code on a self-hosted runner. Keep untrusted-fork PRs on GitHub-hosted runners, or restrict workflow triggers to internal branches before exposing the fork.
 
 ### 8.4 Path traversal hardening in chunked uploads
 
@@ -301,6 +301,15 @@ The UI's logout flow validates the `redirectPath` parameter via `sanitizeRedirec
 - **`VITE_AZURE_MAPS_KEY` removed (post-v1.4.1)**: The UI no longer reads `VITE_AZURE_MAPS_KEY`. Set `VITE_AZURE_MAPS_CLIENT_ID` to your Function App's managed-identity client ID. **If you ever set `VITE_AZURE_MAPS_KEY`, rotate the corresponding Azure Maps subscription key**, because it was previously baked into the client bundle and may have been distributed.
 - **`azurite` removed from `package.json`**: Developers must now install Azurite globally (`npm install -g azurite`). No production impact.
 - **Imagery URL allowlist enforced (post-v1.4.1)**: `PutLayer` now rejects requests whose `preEventImageryUrls` or `postEventImageryUrls` contain a host outside `*.blob.core.windows.net` or `*.amazonaws.com`. The pre-existing batch-download code silently skipped such URLs, so this change makes the rejection visible at submission time rather than producing failed jobs with empty outputs. Customers with API integrations that submit imagery from other sources must move that imagery into an allowlisted source before upgrading, or the affected layer-creation calls will fail.
+
+### 8.8 GDAL driver allowlist and ingestion size/type limits
+
+GDAL `3.9.2` is pinned (no trusted prebuilt pip wheel exists for the patched 3.13 line under HASTE's runtime), so three memory-safety CVEs — most notably **CVE-2026-8087**, a heap overflow in the HDF4/HDF-EOS driver — are deferred under a documented exception with **compensating controls enforced in code** (see [`known-vulnerabilities.md`](https://github.com/microsoft/haste/blob/main/docs/known-vulnerabilities.md) Root Cause C and [ADR-0004](https://github.com/microsoft/haste/blob/main/spec/architecture/decisions/0004-gdal-driver-allowlist.md)).
+
+- **Driver allowlist.** At process startup `hastegeo.core.utils.gdal_security.harden_gdal()` restricts GDAL/OGR to the drivers HASTE actually uses (raster `GTiff, COG, VRT, JPEG, PNG, MEM`; vector `GPKG, GeoJSON, Memory`) by deregistering every other driver. Because GDAL dispatches by sniffing file *content* (not the extension), this removes the vulnerable HDF4/HDF-EOS code path from every `gdal.Open`/`rasterio.open`/`pyogrio` read in-process. The imageryprep and training containers also set `GDAL_SKIP="HDF4 HDF4Image HDF5 HDF5Image netCDF"` so subprocess GDAL CLI tools (`gdalwarp`/`gdal_translate`) refuse those drivers too.
+- **Ingestion size/type limits.** Chunked uploads are capped (`HASTE_MAX_UPLOAD_BYTES`, default 5 GiB) and the assembled file's magic bytes must match its declared format before GDAL parses it. Remote imagery fetches are capped (`HASTE_MAX_IMAGERY_DOWNLOAD_BYTES`, default 8 GiB) and refuse cross-host redirects (SSRF guard). Defaults are generous because satellite COGs are legitimately large; tune them to your largest expected imagery.
+
+**Operator action:** keep `GDAL_SKIP` set in any custom GDAL-bearing image, and do not add file formats to the pipeline without extending the allowlist in `gdal_security.py`. If you legitimately need a format outside the allowlist, add its driver explicitly rather than disabling the control.
 
 Each HASTE release documents security-relevant changes in [`CHANGELOG.md`](https://github.com/microsoft/haste/blob/main/CHANGELOG.md). The rolling list of acknowledged dependency vulnerabilities — fixed, dismissed with rationale, or pending — is maintained at [`docs/known-vulnerabilities.md`](https://github.com/microsoft/haste/blob/main/docs/known-vulnerabilities.md).
 

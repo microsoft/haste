@@ -14,4 +14,4 @@ applyTo: "**/*.py"
 - API endpoints use `@app.route()` with `AUTH_LEVEL` — never hardcode `ANONYMOUS`.
 - Use `MetadataUtils` for ID generation and timestamps.
 - Pin dependency versions in `requirements.txt` files.
-- Run tests via Docker: `docker run --rm haste-test` (build first: `docker build -f hastelib/Dockerfile.test -t haste-test .` from repo root). Alternative: `cd hastelib && hatch run test:pytest`.
+- Run tests with hatch: `cd hastelib && hatch run test:pytest` (from repo root).

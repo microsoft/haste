@@ -11,7 +11,7 @@ function resolveVarConcatChar(text) {
   return text.includes("?") ? "&" : "?";
 }
 
-function buildUrl(endpoint) {
+export function buildUrl(endpoint) {
   const base = APIUrl + endpoint;
   if (APIMSubscriptionKey) {
     const sep = base.includes("?") ? "&" : "?";

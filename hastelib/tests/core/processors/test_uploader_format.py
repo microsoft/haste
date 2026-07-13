@@ -55,5 +55,61 @@ class TestResolveDataFormat(unittest.TestCase):
                     u._resolve_data_format(v)
 
 
+class TestUploadSizeAndContentChecks(unittest.TestCase):
+    """Size cap + magic-byte type checks at the upload boundary."""
+
+    def _uploader_with_tmpdir(self):
+        import tempfile
+
+        u = _make_uploader()
+        u.temp_dir = tempfile.mkdtemp()
+        return u
+
+    def _write_chunk(self, u, file_id, n, data):
+        import os
+
+        path = os.path.join(u.temp_dir, f"{file_id}_chunk_{n}")
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return path
+
+    def test_cumulative_size_limit_rejects_and_cleans_up(self):
+        import os
+
+        u = self._uploader_with_tmpdir()
+        self._write_chunk(u, "f1", 0, b"a" * 60)
+        self._write_chunk(u, "f1", 1, b"b" * 60)
+        with self.assertRaises(ValueError):
+            u._enforce_cumulative_size_limit("f1", max_bytes=100)
+        # Offending chunks are removed.
+        self.assertEqual(
+            [p for p in os.listdir(u.temp_dir) if p.startswith("f1_")], []
+        )
+
+    def test_cumulative_size_limit_allows_within_cap(self):
+        u = self._uploader_with_tmpdir()
+        self._write_chunk(u, "f2", 0, b"a" * 40)
+        # Under the cap → no raise.
+        u._enforce_cumulative_size_limit("f2", max_bytes=100)
+
+    def test_content_matches_declared_accepts_tiff(self):
+        u = self._uploader_with_tmpdir()
+        self._write_chunk(u, "f3", 0, b"II*\x00" + b"\x00" * 80)
+        u._assert_content_matches_declared("f3", "tif")  # no raise
+
+    def test_content_mismatch_rejected(self):
+        u = self._uploader_with_tmpdir()
+        # GPKG bytes declared as tif must be rejected before GDAL parses.
+        gpkg = b"SQLite format 3\x00" + b"\x00" * (68 - 16) + b"GPKG"
+        self._write_chunk(u, "f4", 0, gpkg)
+        with self.assertRaises(ValueError):
+            u._assert_content_matches_declared("f4", "tif")
+
+    def test_content_check_skipped_when_no_local_chunk(self):
+        u = self._uploader_with_tmpdir()
+        # No chunk_0 staged → skip rather than block a legitimate finalize.
+        u._assert_content_matches_declared("absent", "tif")  # no raise
+
+
 if __name__ == "__main__":
     unittest.main()

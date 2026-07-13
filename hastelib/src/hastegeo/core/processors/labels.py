@@ -15,7 +15,12 @@ from ..models.projects import (
     LabelingImagery,
     LabelProject,
 )
+from ..utils.gdal_security import harden_gdal
 from ..utils.metadata import MetadataUtils
+
+# Harden GDAL drivers before any rasterio read (GDAL CVE compensating
+# control — docs/known-vulnerabilities.md Root Cause C).
+harden_gdal()
 
 
 class LabelTaskGenerator:

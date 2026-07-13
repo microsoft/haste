@@ -11,8 +11,12 @@ import rasterio
 from osgeo import gdal
 
 from ..utils.logs import Logger
+from .gdal_security import harden_gdal
 
-gdal.UseExceptions()
+# Restrict GDAL to an allowlist of drivers (and enable exceptions) before
+# any imagery is parsed — compensating control for the deferred GDAL CVE
+# exception (docs/known-vulnerabilities.md Root Cause C).
+harden_gdal()
 
 logger = Logger.get_logger(__name__)
 

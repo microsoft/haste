@@ -42,13 +42,38 @@ HASTE runtime depends on `GDAL==3.9.2` via externally hosted pip wheels in API a
 
 The current decision is to defer upgrade and apply compensating controls until a trusted upstream wheel source is available or the deployment model is changed.
 
-### Compensating controls (required while deferred)
+### Compensating controls (implemented)
 
-- Only ingest imagery from authenticated, allowlisted providers and controlled blob endpoints.
-- Reject unsupported formats before GDAL parsing (including HDF4/EOS where not required by product workflows).
-- Enforce strict size and type checks at upload and download boundaries.
-- Keep SSRF protections and cross-host redirect restrictions enabled for remote fetch paths.
-- Review this exception weekly and close it immediately when a trusted wheel path becomes available.
+These controls are enforced in code — see
+[`spec/features/gdal-compensating-controls/`](../spec/features/gdal-compensating-controls/)
+and [ADR-0004](../spec/architecture/decisions/0004-gdal-driver-allowlist.md).
+
+- **Authenticated, allowlisted providers/endpoints.** User-supplied imagery
+  and footprint URLs are validated against an allowlist
+  (`hastelib/src/hastegeo/core/utils/url_allowlist.py`); `PutLayer` rejects
+  off-allowlist hosts at submission time.
+- **Reject unsupported formats before GDAL parsing (incl. HDF4/EOS).** GDAL/OGR
+  is restricted at process startup to an allowlist of the drivers HASTE
+  actually uses (raster `GTiff, COG, VRT, JPEG, PNG, MEM`; vector
+  `GPKG, GeoJSON, Memory`) by deregistering every other driver
+  (`hastelib/src/hastegeo/core/utils/gdal_security.py::harden_gdal`, wired into
+  every parse site). The HDF4/HDF4Image/HDF5/HDF5Image/netCDF families are
+  additionally refused via `GDAL_SKIP` in the imageryprep and training
+  Dockerfiles, covering subprocess GDAL CLI tools.
+- **Strict size and type checks at upload and download boundaries.** The
+  chunked uploader enforces a cumulative size cap and a magic-byte check that
+  the assembled file matches its declared format before it reaches GDAL
+  (`core/processors/uploader.py`, `gdal_security.sniff_file_type`). The imagery
+  downloader caps download size and (for blob/S3) checks object size first
+  (`core/utils/downloader.py`). Limits are env-tunable
+  (`HASTE_MAX_UPLOAD_BYTES`, `HASTE_MAX_IMAGERY_DOWNLOAD_BYTES`).
+- **SSRF / cross-host redirect guards.** Both the imagery downloader and the
+  user-footprint fetch (`workflows/prepare_imagery.py`) refuse to follow
+  redirects, so an allowlisted source cannot bounce a server-side fetch to an
+  internal host.
+- **Weekly exception review.** Tracked per
+  [triage-process.md](triage-process.md#weekly-dependency-exception-review);
+  closes when a trusted GDAL 3.13+ wheel or a deployment-model change lands.
 
 | Alert # | Package | CVE | Advisory | Dependabot state | Current disposition |
 |---------|---------|-----|----------|------------------|---------------------|

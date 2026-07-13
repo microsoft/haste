@@ -7,10 +7,9 @@ applyTo: "**/*.test.*,**/*.spec.*,**/test_*,**/tests/**"
 - Write tests that are isolated, deterministic, and well-documented.
 - Each test should test one behavior. Use descriptive test names: `test_<what>_<when>_<expected>`.
 - Follow the Arrange-Act-Assert (AAA) pattern.
-- Python tests: use pytest via the Docker test runner (preferred) or hatch:
-  - **Docker (preferred):** `docker run --rm haste-test` (runs all tests). Build first with `docker build -f hastelib/Dockerfile.test -t haste-test .` from repo root.
-  - **Docker (specific tests):** `docker run --rm haste-test tests/path/to/test_file.py -v`
-  - **Hatch (alternative):** `cd hastelib && hatch run test:pytest`
+- Python tests: use pytest via hatch:
+  - **All tests:** `cd hastelib && hatch run test:pytest` (from repo root).
+  - **Specific tests:** `cd hastelib && hatch run test:pytest tests/path/to/test_file.py -v`
 - UI tests: use Playwright for E2E validation.
 - Mock external dependencies (Azure Blob, Cosmos DB, Azure Batch, queues) — never call real services in unit tests.
 - Use `pytest-mock` (`mocker` fixture) for mocking — never manipulate `sys.modules` directly.

@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import tempfile
-from typing import Tuple
+from typing import NamedTuple, Optional, Tuple
 from urllib.parse import urlparse
 
 
@@ -85,3 +86,86 @@ async def download_blob_to_tempfile(url: str, suffix: str = "") -> str:
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(blob_bytes)
         return tmp.name
+
+
+class BlobRange(NamedTuple):
+    """A slice of a blob plus the metadata needed to build HTTP headers."""
+
+    data: bytes
+    total_size: int
+    content_type: str
+    etag: Optional[str]
+
+
+def parse_byte_range(
+    value: Optional[str],
+) -> Tuple[int, Optional[int], bool]:
+    """Parse a single HTTP ``Range`` header of the form ``bytes=start-end``.
+
+    Returns ``(offset, length, is_range)``. ``length`` is ``None`` for an
+    open-ended ``bytes=start-`` range (read to EOF); ``is_range`` is
+    ``False`` when no Range header is present.
+
+    Raises:
+        ValueError: for suffix ranges (``bytes=-N``), multi-range values,
+            or otherwise malformed syntax. Callers should fall back to a
+            full ``200`` response in that case.
+    """
+    if not value:
+        return 0, None, False
+    match = re.match(r"^bytes=(\d*)-(\d*)$", value.strip())
+    if not match:
+        raise ValueError(f"Unsupported Range header: {value!r}")
+    start_s, end_s = match.group(1), match.group(2)
+    if start_s == "":
+        # Suffix range (last N bytes) — not emitted by pmtiles.js.
+        raise ValueError(f"Suffix Range unsupported: {value!r}")
+    offset = int(start_s)
+    if end_s == "":
+        return offset, None, True
+    end = int(end_s)
+    if end < offset:
+        raise ValueError(f"Invalid Range bounds: {value!r}")
+    return offset, end - offset + 1, True
+
+
+async def read_blob_range(
+    url: str, offset: int = 0, length: Optional[int] = None
+) -> BlobRange:
+    """Read ``length`` bytes from ``offset`` of the blob at ``url``.
+
+    Routes the read through the function-app-internal
+    ``BLOB_CONNECTION_STRING`` (so it stays on the docker network in dev
+    and on the Azure backbone in prod); only the container/blob path is
+    taken from ``url`` — its host and SAS are ignored. ``length=None``
+    reads to EOF. ``data`` is clamped to the blob size; an ``offset`` at
+    or past EOF yields empty ``data`` (callers should answer ``416``).
+    """
+    from azure.storage.blob import BlobServiceClient
+
+    conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
+    container_name, blob_name = split_blob_url(url)
+
+    def _read() -> BlobRange:
+        bsc = BlobServiceClient.from_connection_string(conn_str)
+        blob_client = bsc.get_container_client(container_name).get_blob_client(
+            blob_name
+        )
+        props = blob_client.get_blob_properties()
+        total = props.size or 0
+        settings = props.content_settings
+        content_type = (
+            settings.content_type if settings else None
+        ) or "application/octet-stream"
+        if total == 0 or offset >= total:
+            return BlobRange(b"", total, content_type, props.etag)
+        if length is None:
+            downloader = blob_client.download_blob(offset=offset)
+        else:
+            clamped = max(0, min(length, total - offset))
+            downloader = blob_client.download_blob(
+                offset=offset, length=clamped
+            )
+        return BlobRange(downloader.readall(), total, content_type, props.etag)
+
+    return await asyncio.to_thread(_read)

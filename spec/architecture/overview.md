@@ -22,14 +22,14 @@ HASTE (High-speed Assessment and Satellite Tracking for Emergencies) is an AI-dr
        │ /api/*                                     │ tile requests
 ┌──────▼──────────────┐                    ┌────────▼─────────────┐
 │   hastefuncapi       │                    │   titilerfuncapi     │
-│   (28 HTTP routes)   │                    │   (TiTiler/FastAPI)  │
+│   (41 HTTP routes)   │                    │   (TiTiler/FastAPI)  │
 │   Azure Functions    │                    │   COG tile serving   │
 │   Python 3.11+       │                    │   Python             │
 └──────┬──────────────┘                    └──────────────────────┘
        │ Queue messages
 ┌──────▼──────────────┐
 │   hastefuncqueues    │
-│   (6 queue triggers) │
+│   (7 queue triggers) │
 │   Azure Functions    │
 └──────┬──────────────┘
        │
@@ -57,11 +57,11 @@ HASTE (High-speed Assessment and Satellite Tracking for Emergencies) is an AI-dr
 
 ### REST API — `hastefuncapi` (`api/hastefuncapi/`)
 - Python Azure Functions (v4 programming model)
-- 28 HTTP endpoints: projects, image layers, models, labels, users, admin, model catalog
+- 41 HTTP endpoints: projects, image layers, models, labels, users, admin, model catalog
 - Auth: `func.AuthLevel.FUNCTION`
 
 ### Queue Workers — `hastefuncqueues` (`api/hastefuncqueues/`)
-- Python Azure Functions with 6 queue-triggered functions
+- Python Azure Functions with 7 queue-triggered functions (6 workers plus a poison-queue handler)
 - Handles: imagery preprocessing, model training, inference, artifact management
 
 ### Tile Server — `titilerfuncapi` (`api/titilerfuncapi/`)
@@ -96,8 +96,8 @@ HASTE (High-speed Assessment and Satellite Tracking for Emergencies) is an AI-dr
 - **Database:** Cosmos DB
 - **Hosting:** Azure Static Web Apps
 - **Auth:** Entra ID (MSAL)
-- **CI/CD:** GitHub Actions (deploy-apps, docker-build-and-push, docs-deploy, secret-scan)
-- **Compliance:** Azure Pipelines (CredScan, PoliCheck, Component Governance)
+- **CI/CD:** GitHub Actions (deploy-apps, docker-build-and-push, docs-deploy, codeql, secret-scan)
+- **Compliance:** GitHub Actions security scanning (CodeQL code scanning, Gitleaks secret scan) plus GitHub-native Dependabot dependency alerts
 
 ## Agent Architecture
 

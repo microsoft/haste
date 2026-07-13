@@ -1,8 +1,8 @@
 # Data Models
 
-The `haste.core.models` package contains Pydantic data models used throughout the HASTE platform for validation, serialization, and type safety.
+The `hastegeo.core.models` package contains Pydantic data models used throughout the HASTE platform for validation, serialization, and type safety.
 
-## Projects (`haste.core.models.projects`)
+## Projects (`hastegeo.core.models.projects`)
 
 Core domain models for HASTE projects:
 
@@ -23,13 +23,13 @@ Core domain models for HASTE projects:
 - **`ModelArtifacts`** — Model artifact management and packaging state
 
 ```{eval-rst}
-.. automodule:: haste.core.models.projects
+.. automodule:: hastegeo.core.models.projects
    :members:
    :undoc-members:
    :show-inheritance:
 ```
 
-## Admin (`haste.core.models.admin`)
+## Admin (`hastegeo.core.models.admin`)
 
 Administrative configuration models:
 
@@ -42,13 +42,13 @@ Administrative configuration models:
 - **`AdminConfig`** — Administrative configuration container
 
 ```{eval-rst}
-.. automodule:: haste.core.models.admin
+.. automodule:: hastegeo.core.models.admin
    :members:
    :undoc-members:
    :show-inheritance:
 ```
 
-## Training (`haste.core.models.training`)
+## Training (`hastegeo.core.models.training`)
 
 ML training and experiment configuration:
 
@@ -61,13 +61,13 @@ ML training and experiment configuration:
 - **`CatalogModel`** — Model catalog entry with metadata
 
 ```{eval-rst}
-.. automodule:: haste.core.models.training
+.. automodule:: hastegeo.core.models.training
    :members:
    :undoc-members:
    :show-inheritance:
 ```
 
-## Statistics (`haste.core.models.stats`)
+## Statistics (`hastegeo.core.models.stats`)
 
 Project statistics models:
 
@@ -77,13 +77,13 @@ Project statistics models:
 - **`ProjectsSummary`** — Container for all project statistics
 
 ```{eval-rst}
-.. automodule:: haste.core.models.stats
+.. automodule:: hastegeo.core.models.stats
    :members:
    :undoc-members:
    :show-inheritance:
 ```
 
-## Users (`haste.core.models.users`)
+## Users (`hastegeo.core.models.users`)
 
 User management models:
 
@@ -94,13 +94,13 @@ User management models:
 - **`AddUsersRequest`** — Request to add multiple users with roles
 
 ```{eval-rst}
-.. automodule:: haste.core.models.users
+.. automodule:: hastegeo.core.models.users
    :members:
    :undoc-members:
    :show-inheritance:
 ```
 
-## Visualizer (`haste.core.models.visualizer`)
+## Visualizer (`hastegeo.core.models.visualizer`)
 
 Visualization configuration:
 
@@ -108,20 +108,20 @@ Visualization configuration:
 - **`Visualizer`** — Visualization config with pre/post event imagery and damage predictions
 
 ```{eval-rst}
-.. automodule:: haste.core.models.visualizer
+.. automodule:: hastegeo.core.models.visualizer
    :members:
    :undoc-members:
    :show-inheritance:
 ```
 
-## Uploader (`haste.core.models.uploader`)
+## Uploader (`hastegeo.core.models.uploader`)
 
 File upload models:
 
 - **`FileUploadRequest`** — File upload status and progress tracking
 
 ```{eval-rst}
-.. automodule:: haste.core.models.uploader
+.. automodule:: hastegeo.core.models.uploader
    :members:
    :undoc-members:
    :show-inheritance:

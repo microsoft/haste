@@ -1,0 +1,55 @@
+# azd configuration for HASTE. `azd provision` applies infra/main.bicep;
+# `azd deploy` publishes the three Function Apps; the postdeploy hook builds and
+# publishes the Static Web App. Resource names resolve from main.bicep outputs.
+#
+# The SWA is deployed by a hook rather than an azd `web` service on purpose:
+# azd only passes `swa deploy --env production` when there is NO swa-cli.config.json
+# in the service path (see azure-dev service_target_staticwebapp.go). We must keep
+# ui/swa-cli.config.json for local `swa start`, which would force azd's native
+# deploy into a *preview* environment. The hook calls `swa deploy --env production`
+# explicitly, keeping one-command `azd up` while landing on the production slot.
+name: haste
+metadata:
+  template: haste@1.0.0
+
+infra:
+  provider: bicep
+  path: infra
+  module: main
+
+services:
+  api:
+    project: api/hastefuncapi
+    language: python
+    host: function
+    resourceName: ${FUNCTION_API_NAME}
+  titiler:
+    project: api/titilerfuncapi
+    language: python
+    host: function
+    resourceName: ${FUNCTION_TITILER_NAME}
+  queues:
+    project: api/hastefuncqueues
+    language: python
+    host: function
+    resourceName: ${FUNCTION_QUEUE_NAME}
+
+# Before provisioning: when reusing a shared Batch pool, resolve its (immutable)
+# container image tags into HASTE_TRAINING_IMAGE / HASTE_IMAGERYPREP_IMAGE so the
+# app settings match the pool without manual tag-matching (no-op otherwise). See
+# deploy/resolve-batch-image-tags.ps1.
+#
+# After the function apps deploy: publish the SWA to production, then sync APIM
+# operations for the deployed endpoints, seed admin settings, and invite the
+# deployer to the SWA. Runs on `azd up` and `azd deploy`. See deploy/postdeploy.ps1.
+# (Scripts live in deploy/, not hooks/ — the latter is blocked by an org push rule
+# that restricts the git-hooks directory name.)
+hooks:
+  preprovision:
+    shell: pwsh
+    continueOnError: true
+    run: ./deploy/resolve-batch-image-tags.ps1
+  postdeploy:
+    shell: pwsh
+    continueOnError: false
+    run: ./deploy/postdeploy.ps1

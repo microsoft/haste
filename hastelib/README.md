@@ -1,7 +1,7 @@
-# haste
+# hastegeo
 
-[![PyPI - Version](https://img.shields.io/pypi/v/haste.svg)](https://pypi.org/project/haste)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/haste.svg)](https://pypi.org/project/haste)
+[![PyPI - Version](https://img.shields.io/pypi/v/hastegeo.svg)](https://pypi.org/project/hastegeo)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/hastegeo.svg)](https://pypi.org/project/hastegeo)
 
 -----
 
@@ -13,9 +13,9 @@
 ## Installation
 
 ```console
-pip install haste
+pip install hastegeo
 ```
 
 ## License
 
-`haste` is distributed under the terms of the [MIT](https://opensource.org/license/mit) license.
+`hastegeo` is distributed under the terms of the [MIT](https://opensource.org/license/mit) license.

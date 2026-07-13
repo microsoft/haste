@@ -40,6 +40,29 @@ In-repo security signals:
 
 A monthly sweep reviews all dismissed alerts older than 90 days to confirm waivers are still valid (e.g., upstream may have shipped a fix, threat model may have changed).
 
+### Weekly dependency-exception review
+
+Some dependency exceptions are higher-risk than a routine dismissal and are
+reviewed **weekly** rather than on the monthly sweep — currently the deferred
+**GDAL 3.9.2** CVEs (alerts #33/#34/#38), which run with compensating controls
+instead of a patch (see [known-vulnerabilities.md](known-vulnerabilities.md)
+Root Cause C).
+
+- **Owner:** Project lead (or delegate) — same sign-off authority as a
+  High-severity waiver.
+- **Cadence:** Weekly, until the exception closes.
+- **Checklist each week:**
+  1. Has a trusted, prebuilt pip wheel for the patched GDAL 3.13+ line become
+     available for HASTE's Linux runtime? (If yes → schedule the upgrade and
+     close the exception.)
+  2. Are the compensating controls still in force in code (driver allowlist,
+     ingestion size/type checks, SSRF/redirect guards)? Confirm CI is green.
+  3. Has the threat model or deployment model changed in a way that removes the
+     pip-wheel dependency?
+- **Exit criterion:** A trusted GDAL 3.13+ wheel (or a deployment-model change
+  that removes the externally-hosted-wheel dependency) is adopted; the alerts
+  are then remediated and this exception removed.
+
 ## Workflow per signal
 
 ### Dependabot alert
@@ -76,7 +99,7 @@ A monthly sweep reviews all dismissed alerts older than 90 days to confirm waive
 
 - **Critical** severity or evidence of active exploitation in the wild → notify MSRC and project lead immediately; assume incident-response cadence rather than the table above.
 - Cannot remediate within the SLA window → open a tracking issue, document the blocker (upstream not patched, breaking-change cost, etc.), and obtain explicit risk-acceptance sign-off recorded on the issue.
-- Disagreement on disposition → escalate to the security review team contact (currently Pedro Enriquez's team, per the 2026-05-01 review).
+- Disagreement on disposition → escalate to the security review team contact (the HASTE maintainers).
 
 ## Records
 

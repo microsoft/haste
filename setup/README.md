@@ -1,193 +1,111 @@
 # Infrastructure setup
 
-To perform the infrastructure setup, you need to run the `setup_infra.sh` script. This script will create the necessary resources in Azure for the HASTE project. You will need to replace the parameters with your own values for deployment.
+HASTE environments are provisioned and deployed with a single command using the
+[Azure Developer CLI (`azd`)](https://learn.microsoft.com/azure/developer/azure-developer-cli/).
+`azd` applies the Bicep in [`infra/`](../infra) and deploys the three Function
+Apps and the Static Web App. The legacy bash scripts (`setup_infra.sh`,
+`deploy_apps.sh`) have been retired — see
+[ADR-0003](../spec/architecture/decisions/0003-bicep-azd-infra-migration.md) and
+the [infra-iac-migration spec](../spec/features/infra-iac-migration/README.md).
 
-If you delete the deployment you cannot use the same prefix or suffix again. You will need to change one of them with a new one or wait for a day or two for the resources to be deleted in the Azure backend.
+## Contents
+
+- [Prerequisites](#prerequisites)
+- [Quickstart](#quickstart)
+- [What `azd up` does](#what-azd-up-does)
+- [Configuration](#configuration)
+- [Preview changes (what-if)](#preview-changes-what-if)
+- [Other files in this folder](#other-files-in-this-folder)
+
+## Prerequisites
+
+- An Azure subscription and rights to create resources in it.
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) (`az`).
+- [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) (`azd`).
+- [PowerShell 7+](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) (`pwsh`) — the deploy hooks are cross-platform PowerShell.
+- [Node.js](https://nodejs.org/) and the [Static Web Apps CLI](https://azure.github.io/static-web-apps-cli/) (`swa`) — used by the postdeploy hook to build and publish the UI.
+- Python 3.11 (for the Function App deploys).
+
+## Quickstart
 
 ```bash
-cd setup
+# Authenticate (azd and az share the same login on most setups).
+azd auth login
+az login
 
-sh ./setup_infra.sh <YOUR_TENANT_ID> <YOUR_SUBSCRIPTION_ID> <YOUR_PREFIX> <YOUR_REGION> <YOUR_SUFFIX>
+# Create a new azd environment (pick a short, unique name, e.g. dev3).
+azd env new dev3
 
+# Required configuration.
+azd env set HASTE_RESOURCE_PREFIX     ai4gl
+azd env set HASTE_RANDOM_SUFFIX       dev3
+azd env set AZURE_LOCATION            westus2
+azd env set HASTE_APIM_PUBLISHER_EMAIL you@example.com
+
+# Optional configuration — see the Configuration section below.
+
+# Provision infrastructure and deploy the apps in one step.
+azd up
 ```
 
-Example:
+> **Naming note:** if you delete an environment you cannot immediately reuse the
+> same `HASTE_RESOURCE_PREFIX` + `HASTE_RANDOM_SUFFIX`. Some resources (APIM,
+> Front Door, Batch) are soft-deleted and retained by Azure for a day or two.
+> Choose a new suffix or wait for the purge (see the [housekeeping notes in the
+> configuration guide](../docs/configuration.md#cleaning-up-an-environment)).
+
+## What `azd up` does
+
+1. **Preprovision hook** — when reusing an existing shared Batch pool, resolves
+   the pool's (immutable) container image tags into `HASTE_TRAINING_IMAGE` /
+   `HASTE_IMAGERYPREP_IMAGE` so the app settings match the pool automatically
+   ([`deploy/resolve-batch-image-tags.ps1`](../deploy/resolve-batch-image-tags.ps1)).
+2. **Provision** — applies [`infra/main.bicep`](../infra/main.bicep): resource
+   group, identity and roles, network, storage, monitoring, communication
+   (email), APIM, three Function Apps, Batch, the Static Web App, and the
+   feature-flagged Front Door.
+3. **Deploy** — publishes the `api`, `titiler`, and `queues` Function Apps.
+4. **Postdeploy hook** ([`deploy/postdeploy.ps1`](../deploy/postdeploy.ps1)):
+   - builds and publishes the UI to the Static Web App production environment;
+   - syncs APIM operations for the deployed endpoints and injects the Function
+     host key into the APIM backends;
+   - seeds default admin settings and the first admin user (`users_acl.json`);
+   - invites the first admin to the Static Web App and prints the invitation URL.
+
+## Configuration
+
+All configuration is set with `azd env set <NAME> <value>` before `azd up`. The
+full matrix — Batch (create vs. bring-your-own), the email sender domain, the
+Front Door flag, development mode, and the first-admin seed — is documented in
+the [configuration guide](../docs/configuration.md).
+
+Common knobs:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HASTE_RESOURCE_PREFIX` | `ai4gl` | Resource name prefix. |
+| `HASTE_RANDOM_SUFFIX` | `dev1` | Per-environment suffix. |
+| `AZURE_LOCATION` | `westus2` | Azure region. |
+| `HASTE_APIM_PUBLISHER_EMAIL` | — | APIM publisher email. |
+| `HASTE_FIRST_ADMIN_EMAIL` | signed-in user | First admin for non-interactive/CI deploys. |
+| `HASTE_ENABLE_FRONT_DOOR` | `false` | Provision Front Door + WAF. |
+| `HASTE_DEVELOPMENT_MODE` | `false` | Dev-only anonymous auth + auto-provisioning. Never `true` in production. |
+
+## Preview changes (what-if)
+
 ```bash
-sh ./setup_infra.sh 00000000-0000-0000-0000-000000000000 11111111-1111-1111-1111-111111111111 haste westus2 dev
+azd provision --preview
 ```
 
-# Azure Container Registry
+This runs `az deployment sub what-if` and reports what would change against the
+live environment without applying anything.
 
-Add AcrPull RBAC role to the identity created by the setup access to the shared azure container registry.
+## Other files in this folder
 
-# Azure Batch Setup
-
-Pool Name: h100-ai4g-pool
-
-Description: AI For Good BDA H100 Pool
-
-Managed Identity: Yes / Add User Assigned Identity created by de setup script 
-
-Node COnfig:
-
-- OS Disk: 1023 GB (1TB) Premium SSD
-- VM Size: Standard_NC40ads_H100_v5 - 40 vCPUs, 320 GB Memory
-- VM Publisher: microsoft-dsvm
-- VM Offer: ubuntu-hpc
-- Sku: 22-04
-
-Container config:
-
-Server: {CONTAINER_REGISTRY}.azurecr.io
-
-Managed Identity: Yes / Add User Assigned Identity created by de setup script
-
-Images: 
-- {CONTAINER_REGISTRY}.azurecr.io/hastetraining:latest
-- {CONTAINER_REGISTRY}.azurecr.io/hasteimageryprep:latest
-
-Scaling config:
-
-- Select autoscale
-
-- Auto scale formula:
-
-```
-// Get pending tasks for the past 15 minutes.
-$samples = $ActiveTasks.GetSamplePercent(TimeInterval_Minute * 15);
-// If we have fewer than 70 percent data points, we use the last sample point, otherwise we use the maximum of last sample point and the history average.
-$tasks = $samples < 70 ? max(0, $ActiveTasks.GetSample(1)) : 
-max( $ActiveTasks.GetSample(1), avg($ActiveTasks.GetSample(TimeInterval_Minute * 15)));
-// If number of pending tasks is not 0, set targetVM to pending tasks, otherwise half of current dedicated.
-$targetVMs = $tasks > 0 ? $tasks : max(0, $TargetDedicatedNodes / 2);
-// The pool size is capped at 20, if target VM value is more than that, set it to 20. This value should be adjusted according to your use case.
-cappedPoolSize = 3;
-$TargetDedicatedNodes = max(1, min($targetVMs, cappedPoolSize));
-// Set node deallocation mode - keep nodes active only until tasks finish
-$NodeDeallocationOption = taskcompletion;
-
-```
-
-VNET Config:
-- VNET: add vnet created by setup script
-
-
-
-Example config of the pool:
-
-```json
-{
-    "id": "h100-arc-pool",
-    "displayName": "Pool for American Red cross",
-    "url": "/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.Batch/batchAccounts/{BATCH_ACCOUNT_NAME}/pools/h100-arc-pool",
-    "lastModified": "2025-04-21T15:13:37.947Z",
-    "creationTime": "2025-04-21T15:09:27.740Z",
-    "state": "active",
-    "stateTransitionTime": "2025-04-21T15:09:27.740Z",
-    "allocationState": "steady",
-    "allocationStateTransitionTime": "2025-04-21T15:14:08.541Z",
-    "vmSize": "STANDARD_NC40ads_H100_v5",
-    "virtualMachineConfiguration": {
-        "imageReference": {
-            "publisher": "microsoft-dsvm",
-            "offer": "ubuntu-hpc",
-            "sku": "2204",
-            "version": "latest",
-            "virtualMachineImageId": null,
-            "exactVersion": "latest"
-        },
-        "nodeAgentSKUId": "batch.node.ubuntu 22.04",
-        "licenseType": null,
-        "containerConfiguration": {
-            "type": "dockerCompatible",
-            "containerImageNames": [
-                "{CONTAINER_REGISTRY}.azurecr.io/hastetraining:latest",
-                "{CONTAINER_REGISTRY}.azurecr.io/hasteimageryprep:latest"
-            ],
-            "containerRegistries": [
-                {
-                    "username": null,
-                    "password": null,
-                    "registryServer": "{CONTAINER_REGISTRY}.azurecr.io",
-                    "identityReference": {
-                        "resourceId": "/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{USER_MANAGED_IDENTITY}"
-                    }
-                }
-            ]
-        },
-        "diskEncryptionConfiguration": {},
-        "nodePlacementConfiguration": {
-            "policy": "regional"
-        },
-        "osDisk": {
-            "caching": "none",
-            "managedDisk": {
-                "storageAccountType": "premium_lrs",
-                "securityProfile": {}
-            },
-            "diskSizeGB": 1023,
-            "writeAcceleratorEnabled": null
-        }
-    },
-    "resizeTimeout": "PT15M",
-    "currentDedicatedNodes": 1,
-    "currentLowPriorityNodes": 0,
-    "targetDedicatedNodes": 1,
-    "targetLowPriorityNodes": 0,
-    "enableAutoScale": true,
-    "autoScaleFormula": "// Get pending tasks for the past 15 minutes.\n$samples = $ActiveTasks.GetSamplePercent(TimeInterval_Minute * 15);\n// If we have fewer than 70 percent data points, we use the last sample point, otherwise we use the maximum of last sample point and the history average.\n$tasks = $samples < 70 ? max(0, $ActiveTasks.GetSample(1)) : \nmax( $ActiveTasks.GetSample(1), avg($ActiveTasks.GetSample(TimeInterval_Minute * 15)));\n// If number of pending tasks is not 0, set targetVM to pending tasks, otherwise half of current dedicated.\n$targetVMs = $tasks > 0 ? $tasks : max(0, $TargetDedicatedNodes / 2);\n// The pool size is capped at 20, if target VM value is more than that, set it to 20. This value should be adjusted according to your use case.\ncappedPoolSize = 3;\n$TargetDedicatedNodes = max(1, min($targetVMs, cappedPoolSize));\n// Set node deallocation mode - keep nodes active only until tasks finish\n$NodeDeallocationOption = taskcompletion;",
-    "autoScaleEvaluationInterval": "PT5M",
-    "autoScaleRun": {
-        "timestamp": "2025-04-24T11:34:37.971Z",
-        "results": "$TargetDedicatedNodes=1;$TargetLowPriorityNodes=0;$NodeDeallocationOption=taskcompletion;$samples=96.6667;$targetVMs=0.5;$tasks=0;cappedPoolSize=3"
-    },
-    "enableInterNodeCommunication": false,
-    "networkConfiguration": {
-        "subnetId": "/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{NETWORK_RESOURCE_GROUP}/providers/Microsoft.Network/virtualNetworks/{VNET_NAME}/subnets/{SUBNET_NAME}",
-        "dynamicVNetAssignmentScope": null,
-        "publicIPAddressConfiguration": {
-            "provision": "batchmanaged"
-        },
-        "enableAcceleratedNetworking": false
-    },
-    "taskSlotsPerNode": 1,
-    "taskSchedulingPolicy": {
-        "nodeFillType": "pack"
-    },
-    "identity": {
-        "type": "UserAssigned",
-        "userAssignedIdentities": [
-            {
-                "resourceId": "/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{USER_MANAGED_IDENTITY}",
-                "clientId": "{CLIENT_ID_1}",
-                "principalId": "{PRINCIPAL_ID_1}"
-            },
-            {
-                "resourceId": "/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{NETWORK_RESOURCE_GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{NETWORK_USER_MANAGED_IDENTITY}",
-                "clientId": "{CLIENT_ID_2}",
-                "principalId": "{PRINCIPAL_ID_2}"
-            }
-        ]
-    },
-    "targetNodeCommunicationMode": "default",
-    "currentNodeCommunicationMode": "classic",
-    "upgradePolicy": {
-        "mode": "Manual",
-        "automaticOSUpgradePolicy": {
-            "disableAutomaticRollback": false,
-            "enableAutomaticOSUpgrade": false,
-            "useRollingUpgradePolicy": false,
-            "osRollingUpgradeDeferral": false
-        },
-        "rollingUpgradePolicy": {
-            "enableCrossZoneUpgrade": null,
-            "maxBatchInstancePercent": 20,
-            "maxUnhealthyInstancePercent": 20,
-            "maxUnhealthyUpgradedInstancePercent": 20,
-            "pauseTimeBetweenBatches": "P0D",
-            "prioritizeUnhealthyInstances": null,
-            "rollbackFailedInstancesOnPolicyBreach": false
-        }
-    }
-}
-```
+| File | Purpose |
+|---|---|
+| [`config_admin_settings.json`](config_admin_settings.json) | Default admin settings (source types, base models, labeling settings) seeded to the `data` container by the postdeploy hook. |
+| [`start-task.sh`](start-task.sh) | Batch node start task: formats and mounts the local NVMe disk for GPU jobs. |
+| [`create_conda_env.sh`](create_conda_env.sh) | Local dev helper: builds the conda environment from `env.yml`. |
+| [`install_python.ps1`](install_python.ps1) | Local dev helper: installs Python (used by the VS Code tasks). |
+| [`create_invitations.sh`](create_invitations.sh) | Standalone helper for issuing Static Web App invitations outside `azd`. |

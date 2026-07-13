@@ -30,7 +30,7 @@ After agent work sessions, record:
 - What was validated and by whom
 - What spec status changes occurred
 
-### 2. Run Logs
+### 3. Run Logs
 Maintain structured logs of agent activity:
 
 ```markdown

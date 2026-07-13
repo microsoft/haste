@@ -6,6 +6,7 @@ from hastegeo.core.config import Config
 
 from ..data_layer.unified import UnifiedDataLayer
 from ..models.uploader import FileUploadRequest
+from ..utils.gdal_security import assert_matches_declared, max_upload_bytes
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 
@@ -62,8 +63,22 @@ class FileUploader:
         chunk_path = os.path.join(
             self.temp_dir, f"{file_id}_chunk_{chunk_number}"
         )
+        # Size cap at the upload boundary: reject an oversized single chunk
+        # outright, then reject once the cumulative upload exceeds the cap,
+        # so a hostile/accidental multi-GB upload can't fill disk or OOM
+        # downstream GDAL parsing (GDAL CVE compensating control —
+        # docs/known-vulnerabilities.md Root Cause C).
+        max_bytes = max_upload_bytes()
+        data = chunk_data.read()
+        if len(data) > max_bytes:
+            raise ValueError(
+                f"Upload chunk exceeds the max upload size of "
+                f"{max_bytes} bytes."
+            )
         with open(chunk_path, "wb") as chunk_file:
-            chunk_file.write(chunk_data.read())
+            chunk_file.write(data)
+
+        self._enforce_cumulative_size_limit(file_id, max_bytes)
 
         # Save chunk from local to storage
         self.storage.save_chunk(
@@ -107,6 +122,11 @@ class FileUploader:
 
     def finalize(self, file_id, total_chunks, data_format: str = None):
         data_format = self._resolve_data_format(data_format)
+        # Content/type check at the upload boundary: the assembled file
+        # must actually be the declared format, so a hostile client cannot
+        # upload e.g. an HDF4 file as ".tif" and have GDAL parse it (GDAL
+        # CVE compensating control — docs/known-vulnerabilities.md C).
+        self._assert_content_matches_declared(file_id, data_format)
         identifier = f"{self.default_name_prefix}_{file_id}"
         output_remote_path = self.storage.finalize_save(
             identifier=identifier,
@@ -138,6 +158,47 @@ class FileUploader:
         raise ValueError(
             f"Unsupported chunked-upload data_format: {data_format!r}"
         )
+
+    def _local_chunk_paths(self, file_id):
+        """Return the locally-staged chunk paths for ``file_id``, sorted."""
+        import glob
+
+        pattern = os.path.join(self.temp_dir, f"{file_id}_chunk_*")
+        return sorted(glob.glob(pattern))
+
+    def _enforce_cumulative_size_limit(self, file_id, max_bytes):
+        """Reject (and clean up) once the staged chunks exceed ``max_bytes``.
+
+        Bounds total upload size so a hostile/accidental multi-GB upload
+        can't fill disk or OOM downstream GDAL parsing.
+        """
+        total = 0
+        for path in self._local_chunk_paths(file_id):
+            try:
+                total += os.path.getsize(path)
+            except OSError:
+                continue
+        if total > max_bytes:
+            for path in self._local_chunk_paths(file_id):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            raise ValueError(
+                f"Upload exceeds the max upload size of {max_bytes} bytes."
+            )
+
+    def _assert_content_matches_declared(self, file_id, data_format):
+        """Verify the assembled file's magic bytes match ``data_format``.
+
+        Reads the head of the first staged chunk (the start of the file).
+        Skips silently if no local chunk is present (e.g. a finalize with
+        no local staging) rather than blocking a legitimate finalize.
+        """
+        chunk0 = os.path.join(self.temp_dir, f"{file_id}_chunk_0")
+        if not os.path.exists(chunk0):
+            return
+        assert_matches_declared(chunk0, data_format)
 
     def get_chunk(self, chunk_key):
         chunk_path = os.path.join(self.temp_dir, chunk_key)

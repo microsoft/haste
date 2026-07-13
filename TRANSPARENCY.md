@@ -21,7 +21,7 @@ HASTE was designed around two ideas that emerged from earlier in-browser damage-
 
 The HASTE research is intended for:
 
-- **Contributing information to Rapid preliminary damage assessment** in the first hours and days after a disaster, to support situational awareness and inform — but not replace — expert humanitarian assessment.
+- **Contributing information to rapid preliminary damage assessment** in the first hours and days after a disaster, to support situational awareness and inform — but not replace — expert humanitarian assessment.
 - **Supplementing informational signals** for downstream humanitarian decision-makers (NGOs, UN agencies, government users) about where damage may be concentrated within affected areas.
 - **Exploratory geospatial analysis** by trained humanitarian / disaster-response practitioners working with post-event imagery.
 - **Methodology research** on rapid event-specific damage modeling, including evaluation of imagery sources, label workflows, and aggregation approaches.
@@ -107,7 +107,7 @@ The HASTE workflow has well-understood limitations. These are not edge cases —
 
 **Representative examples of incorrect or ambiguous outputs.**
 
-> During the Hurricane Melissa response in 2025, an initial training set of 153 labels generated incorrect labels for impacted buildings. One set of buildings was identified as “20% Damaged” when in fact they were “100% Damaged.” The labeler identified the issue through visual validation of the labels in the visualizer tool, and to rectify the issue, added an addition of 107 labels to the training set and trained the model. Users need to validate the output before fully using the analysis.
+> During the Hurricane Melissa response in 2025, an initial training set of 153 labels generated incorrect labels for impacted buildings. One set of buildings was identified as “20% Damaged” when in fact they were “100% Damaged.” The labeler identified the issue through visual validation of the labels in the visualizer tool, and to rectify the issue, added an additional 107 labels to the training set and trained the model. Users need to validate the output before fully using the analysis.
 
 As a research artifact, the HASTE workflow has not been tested to meet the reliability, accuracy, or safety thresholds required for operational deployment as an authoritative assessment system.
 

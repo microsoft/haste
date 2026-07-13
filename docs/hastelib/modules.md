@@ -1,11 +1,11 @@
-# HASTE Core Library (`haste_geo`)
+# HASTE Core Library (`hastegeo`)
 
-The `haste-geo` package is the shared Python library used by all HASTE API services. It provides data models, storage backends, processing pipelines, and utilities for geospatial machine learning workflows.
+The `hastegeo` package is the shared Python library used by all HASTE API services. It provides data models, storage backends, processing pipelines, and utilities for geospatial machine learning workflows.
 
 ## Package Structure
 
 ```
-haste_geo/
+hastegeo/
 ├── core/
 │   ├── config.py              — Environment-aware configuration
 │   ├── artifact_storage/      — Artifact storage abstraction

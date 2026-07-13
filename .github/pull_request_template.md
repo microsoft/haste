@@ -17,7 +17,7 @@ Fixes # <!-- issue number, if applicable -->
 - [ ] I have read [CONTRIBUTING.md](../CONTRIBUTING.md)
 - [ ] My changes follow the project's coding standards (PEP 8 for Python, ESLint rules for JS/TS)
 - [ ] I have added or updated tests that cover my changes
-- [ ] All existing tests pass locally (`pytest` / `npm test`)
+- [ ] Python tests pass locally (`cd hastelib && hatch run test:pytest`) and the UI lints clean (`cd ui && npm run lint`)
 - [ ] I have updated the relevant documentation (README, docs/, inline comments)
 - [ ] I have added an entry to [CHANGELOG.md](../CHANGELOG.md) if this is a user-facing change
 

@@ -4,107 +4,65 @@ This guide covers deploying HASTE to various environments.
 
 ## Azure Deployment
 
+HASTE is provisioned and deployed with the
+[Azure Developer CLI (`azd`)](https://learn.microsoft.com/azure/developer/azure-developer-cli/),
+which applies the Bicep in [`infra/`](https://github.com/microsoft/haste/tree/main/infra) and deploys the three Function
+Apps and the Static Web App in one command. See
+[`setup/README.md`](https://github.com/microsoft/haste/blob/main/setup/README.md) for the full quickstart and
+[`configuration.md`](configuration.md) for the configuration matrix.
+
 ### Prerequisites
 
-- Azure subscription
-- Azure CLI installed and configured
-- Docker (for containerized deployments)
+- An Azure subscription and rights to create resources in it.
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) (`az`) and
+  [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) (`azd`).
+- [PowerShell 7+](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) (`pwsh`) — the deploy hooks are cross-platform PowerShell.
+- [Node.js](https://nodejs.org/) and the [Static Web Apps CLI](https://azure.github.io/static-web-apps-cli/) (`swa`), plus Python 3.11.
 
-### Function Apps
-
-The API is deployed as Azure Function Apps:
-
-```bash
-# Create resource group
-az group create --name haste-rg --location eastus
-
-# Create function app
-az functionapp create \
-  --resource-group haste-rg \
-  --consumption-plan-location eastus \
-  --runtime python \
-  --runtime-version 3.11 \
-  --functions-version 4 \
-  --name haste-api \
-  --storage-account hastestorage
-```
-
-### Environment Variables
-
-Configure the following environment variables:
+### Provision and deploy
 
 ```bash
-az functionapp config appsettings set \
-  --name haste-api \
-  --resource-group haste-rg \
-  --settings \
-    AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=..." \
-    AZURE_COSMOSDB_CONNECTION_STRING="AccountEndpoint=..." \
-    IMAGERY_API_KEY="your-api-key"  # pragma: allowlist secret
+azd auth login
+az login
+
+# Create an environment and set the required configuration.
+azd env new dev3
+azd env set HASTE_RESOURCE_PREFIX      ai4gl
+azd env set HASTE_RANDOM_SUFFIX        dev3
+azd env set AZURE_LOCATION             westus2
+azd env set HASTE_APIM_PUBLISHER_EMAIL you@example.com
+
+# Provision infrastructure and deploy the apps.
+azd up
 ```
 
-### Static Web App (UI)
+`azd up` provisions all resources, deploys the `api`, `titiler`, and `queues`
+Function Apps, then runs the postdeploy hook: it publishes the UI to the Static
+Web App, syncs APIM operations and injects the Function host key, seeds default
+admin settings and the first admin user, and invites the first admin.
 
-Deploy the React UI as an Azure Static Web App:
+### Configuration
+
+All settings are supplied with `azd env set <NAME> <value>` before `azd up` — no
+in-place `<REPLACE_ME>` edits and no manually pasted connection strings (the
+email backend is provisioned in-IaC). The full matrix, including Batch
+create-vs-bring-your-own, the email sender domain, the Front Door flag,
+development mode, and the first-admin seed, is documented in the
+[configuration guide](configuration.md).
+
+### Preview changes (what-if)
 
 ```bash
-# Create static web app
-az staticwebapp create \
-  --name haste-ui \
-  --resource-group haste-rg \
-  --source https://github.com/microsoft/haste \
-  --branch main \
-  --app-location "/ui" \
-  --api-location "/api"
+azd provision --preview
 ```
+
+This runs `az deployment sub what-if` and reports what would change against the
+live environment without applying anything.
 
 ## Local Development
 
-### Docker Compose
-
-Use Docker Compose for local development:
-
-```bash
-cd docker
-docker-compose up -d
-```
-
-The `docker/docker-compose.yml` defines the following services:
-
-| Service | Base Image | Port | Description |
-|---------|-----------|------|-------------|
-| `training` | Azure ML GPU (CUDA 11.8) | — | Model training with GPU support (20GB shared memory) |
-| `api` | Azure Functions Python 3.11 | 7071 | REST API (commented out by default) |
-| `ui` | Node.js 20 | 5000 | Production UI build (commented out by default) |
-| `emulators` | Azurite | 10000-10002 | Azure Storage emulator (commented out by default) |
-
-Uncomment the services you need in `docker-compose.yml`. The training service mounts `../data/training` for data access.
-
-### Manual Setup
-
-For manual local setup:
-
-1. **Start API services**:
-
-   ```bash
-   cd api/hastefuncapi
-   func host start
-   ```
-
-2. **Start queue processing**:
-
-   ```bash
-   cd api/hastefuncqueues
-   func host start
-   ```
-
-3. **Start UI**:
-
-   ```bash
-   cd ui
-   npm install
-   npm run dev
-   ```
+For running HASTE locally, see the [Local Development](setup/local-dev.md) guide, which
+brings up the full stack with Docker Compose.
 
 ## Production Considerations
 
@@ -126,14 +84,20 @@ For production deployments, follow the [Secure Configuration Guidance](security-
 
 ## CI/CD Pipeline
 
-### Azure Pipelines
+### Security scanning
 
-The project uses Azure Pipelines (`azure-pipelines.yml`) for security and compliance scanning on pushes to `master`:
+Security and compliance scanning runs on GitHub Actions against `main` (on every push and
+pull request):
 
-- **CredScan** — Credential scanning
-- **VulnerabilityAssessment** — Security vulnerability detection
-- **PoliCheck** — Content policy checking
-- **ComponentGovernanceComponentDetection** — Dependency scanning (High alert level)
+- **[CodeQL](https://github.com/microsoft/haste/blob/main/.github/workflows/codeql.yml)** —
+  static code analysis for Python, JavaScript/TypeScript, and GitHub Actions workflows, on
+  push/PR plus a weekly schedule. Findings surface in the repository's
+  **Security → Code scanning** tab.
+- **[Secret scanning](https://github.com/microsoft/haste/blob/main/.github/workflows/secret-scan.yml)** —
+  [Gitleaks](https://github.com/gitleaks/gitleaks) scans each push/PR commit range and fails
+  the build if a secret is detected.
+- **Dependency alerts** — GitHub-native Dependabot flags vulnerable dependencies via the
+  repository's security settings.
 
 ### Docker Image Build & Push
 

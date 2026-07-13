@@ -10,7 +10,7 @@ existing test_artifacts.py.
 
 import unittest
 
-from hastegeo.core.utils.blob import split_blob_url
+from hastegeo.core.utils.blob import parse_byte_range, split_blob_url
 
 
 class TestSplitBlobUrl(unittest.TestCase):
@@ -59,6 +59,41 @@ class TestSplitBlobUrl(unittest.TestCase):
     def test_azurite_short_url_raises(self):
         with self.assertRaises(ValueError):
             split_blob_url("http://azurite:10000/devstoreaccount1/data")
+
+
+class TestParseByteRange(unittest.TestCase):
+    def test_no_header(self):
+        self.assertEqual(parse_byte_range(None), (0, None, False))
+        self.assertEqual(parse_byte_range(""), (0, None, False))
+
+    def test_closed_range(self):
+        # pmtiles.js' typical header read.
+        self.assertEqual(parse_byte_range("bytes=0-16383"), (0, 16384, True))
+        self.assertEqual(parse_byte_range("bytes=100-199"), (100, 100, True))
+
+    def test_open_ended_range(self):
+        self.assertEqual(parse_byte_range("bytes=200-"), (200, None, True))
+
+    def test_whitespace_tolerated(self):
+        self.assertEqual(parse_byte_range(" bytes=0-9 "), (0, 10, True))
+
+    def test_suffix_range_unsupported(self):
+        with self.assertRaises(ValueError):
+            parse_byte_range("bytes=-500")
+
+    def test_multi_range_unsupported(self):
+        with self.assertRaises(ValueError):
+            parse_byte_range("bytes=0-9,20-29")
+
+    def test_malformed_raises(self):
+        with self.assertRaises(ValueError):
+            parse_byte_range("kilobytes=0-9")
+        with self.assertRaises(ValueError):
+            parse_byte_range("bytes=abc-def")
+
+    def test_inverted_bounds_raise(self):
+        with self.assertRaises(ValueError):
+            parse_byte_range("bytes=200-100")
 
 
 if __name__ == "__main__":

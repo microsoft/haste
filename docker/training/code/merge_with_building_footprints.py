@@ -189,6 +189,15 @@ def main(args):
 
 
 if __name__ == "__main__":
+    # GDAL CVE compensating control (docs/known-vulnerabilities.md Root
+    # Cause C): restrict GDAL drivers in-process. The GDAL_SKIP env in the
+    # training image also covers this; soft-fail if hastegeo is absent.
+    try:
+        from hastegeo.core.utils.gdal_security import harden_gdal
+
+        harden_gdal()
+    except Exception:
+        pass
     parser = set_up_parser()
     args = parser.parse_args()
     main(args)

@@ -39,7 +39,11 @@ from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.processors.stats import StatsPreProcessor
 from hastegeo.core.processors.train import TrainPreprocessor
 from hastegeo.core.processors.uploader import FileUploader
-from hastegeo.core.utils.blob import download_blob_to_tempfile
+from hastegeo.core.utils.blob import (
+    download_blob_to_tempfile,
+    parse_byte_range,
+    read_blob_range,
+)
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
@@ -1135,6 +1139,120 @@ async def GetLayerModelsDetails(req: func.HttpRequest) -> func.HttpResponse:
             stack_info=True,
         )
         return func.HttpResponse("Error loading models.", status_code=500)
+
+
+# Embedding-model artifacts the Interactive Labeler fetches by HTTP byte
+# range, mapped to the Model field that holds each blob URL.
+_MODEL_ARTIFACT_URL_FIELDS = {
+    "pmtiles": "pmtilesUrl",
+    "sidecar": "featuresSidecarUrl",
+    "geojson": "embeddingsGeoJSONUrl",
+}
+_MODEL_ARTIFACT_CONTENT_TYPES = {
+    "pmtiles": "application/octet-stream",
+    "sidecar": "application/octet-stream",
+    "geojson": "application/geo+json",
+}
+
+
+@app.route(
+    route="GetModelArtifact",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
+    """Stream an embedding model's browser artifact via managed identity.
+
+    The Interactive Labeler reads the PMTiles archive (and its features
+    sidecar) by HTTP byte-range straight from the browser. Handing the
+    client a direct ``*.blob.core.windows.net`` SAS URL only works from
+    IPs on the storage firewall allowlist, so remote/mobile/external
+    labelers get a 403. This route keeps the standard HASTE pattern: the
+    browser fetches same-origin ``/api`` and the function app does the
+    blob I/O server-side over the Azure backbone, honoring ``Range`` so
+    pmtiles.js can do partial reads.
+    """
+    try:
+        project_id = _require_guid_param(req, "projectId")
+        model_id = _require_short_int_id_param(req, "modelId")
+    except ValueError as e:
+        return _bad_request(str(e))
+
+    kind = (req.params.get("kind") or "").lower()
+    url_field = _MODEL_ARTIFACT_URL_FIELDS.get(kind)
+    if url_field is None:
+        return _bad_request(
+            f"kind must be one of {sorted(_MODEL_ARTIFACT_URL_FIELDS)}"
+        )
+
+    try:
+        model = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).load,
+            model_id,
+        )
+    except FileNotFoundError:
+        return func.HttpResponse("Model not found.", status_code=404)
+    except Exception as e:
+        logger.error(
+            f"GetModelArtifact model load failed: {e}\n"
+            f"{traceback.format_exc()}"
+        )
+        return func.HttpResponse("Error loading model.", status_code=500)
+
+    blob_url = (model or {}).get(url_field) or ""
+    if not blob_url:
+        return func.HttpResponse(
+            "Artifact not available for this model.", status_code=404
+        )
+
+    try:
+        offset, length, is_range = parse_byte_range(req.headers.get("Range"))
+    except ValueError:
+        # Unsupported/suffix/multi-range -> serve the whole object.
+        offset, length, is_range = 0, None, False
+
+    try:
+        result = await read_blob_range(blob_url, offset, length)
+    except ValueError as e:
+        logger.error(f"GetModelArtifact bad blob url: {e}")
+        return func.HttpResponse("Artifact unavailable.", status_code=500)
+    except Exception as e:
+        logger.error(
+            f"GetModelArtifact read failed: {e}\n{traceback.format_exc()}"
+        )
+        return func.HttpResponse("Error reading artifact.", status_code=502)
+
+    content_type = _MODEL_ARTIFACT_CONTENT_TYPES.get(kind, result.content_type)
+    headers = {
+        "Content-Type": content_type,
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(len(result.data)),
+        "Cache-Control": "private, max-age=3600",
+    }
+    if result.etag:
+        headers["ETag"] = (
+            result.etag if result.etag.startswith('"') else f'"{result.etag}"'
+        )
+
+    if is_range:
+        if offset >= result.total_size:
+            return func.HttpResponse(
+                "Requested range not satisfiable.",
+                status_code=416,
+                headers={"Content-Range": f"bytes */{result.total_size}"},
+            )
+        end = offset + len(result.data) - 1
+        headers["Content-Range"] = f"bytes {offset}-{end}/{result.total_size}"
+        return func.HttpResponse(
+            body=result.data, status_code=206, headers=headers
+        )
+
+    return func.HttpResponse(
+        body=result.data, status_code=200, headers=headers
+    )
 
 
 @app.route(
@@ -3671,7 +3789,54 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         if not gpkg_url:
             return func.HttpResponse(
                 json.dumps(
-                    {"error": "No inference results available for this model."}
+                    {
+                        "error": (
+                            "No inference results available for this model. "
+                            "Run inference on this model, then generate the "
+                            "validation report."
+                        )
+                    }
+                ),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        # ── 2. Load labels from the Building Validation store ──────────────────
+        # The report always reads the layer-scoped Building Validation labels,
+        # regardless of model type (see _validation_label_source).
+        label_meta = _validation_label_source(model_data, image_layer_id)
+        try:
+            validation_data = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=label_meta["type"],
+                    partition_key=project_id,
+                ).load,
+                label_meta["key"],
+            )
+        except FileNotFoundError:
+            return func.HttpResponse(
+                json.dumps(
+                    {
+                        "error": (
+                            "No validation labels found. Run Building "
+                            "Validation for this image layer first."
+                        )
+                    }
+                ),
+                status_code=404,
+                mimetype="application/json",
+            )
+
+        labels_dict = validation_data.get("labels") or {}
+        if not labels_dict:
+            return func.HttpResponse(
+                json.dumps(
+                    {
+                        "error": (
+                            "No validation labels found. Run Building "
+                            "Validation for this image layer first."
+                        )
+                    }
                 ),
                 status_code=404,
                 mimetype="application/json",

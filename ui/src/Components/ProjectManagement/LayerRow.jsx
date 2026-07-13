@@ -40,7 +40,7 @@ const LayerRow = ({
   };
   const navigate = useNavigate();
   const { setIsLoading, appParams } = useContext(AppContext);
- 
+
   // Building labeling workflow: layers created with workflowType "building"
   // get an Embed button (kicks off a MOSAIKS embedding job) instead of the
   // Label/Train actions. Everything else (imageryprep, Building Validation)

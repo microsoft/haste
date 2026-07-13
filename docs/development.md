@@ -37,7 +37,7 @@ The pre-commit configuration includes:
 - **Black**: Code formatting (79 character line length)
 - **isort**: Import sorting
 - **flake8**: Linting and style checking
-- **ruff**: Fast Python linter (also available in `env.yml`)
+- **detect-secrets**: Scans staged changes for accidentally committed secrets
 
 ## Documentation Standards
 

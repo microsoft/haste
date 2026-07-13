@@ -7,6 +7,10 @@
 > This guide walks you through **every step** required to run the full HASTE stack locally
 > with Docker Compose — from provisioning a VM to verifying that training and inference
 > jobs complete successfully.
+>
+> **Automating setup with an AI agent?** See [`../QUICKSTART.md`](../QUICKSTART.md) — a
+> condensed, decision-driven runbook for Claude Code / GitHub Copilot with explicit verify
+> gates. This file remains the comprehensive human reference.
 
 ---
 
@@ -71,7 +75,7 @@
 │                                               │ Spawns GPU containers       │
 │   ┌──────────┐                                ▼                             │
 │   │  TiTiler │◀────────┐  ┌────────────────────────────────────────────┐   │
-│   │  :8080   │         │  │       GPU Processing Containers            │   │
+│   │  :8000   │         │  │       GPU Processing Containers            │   │
 │   │ COG tiles│         │  │  ┌──────────────┐  ┌──────────────┐        │   │
 │   └──────────┘         │  │  │haste-imagery-│  │haste-training│        │   │
 │                        │  │  │prep (download,│  │(fine-tune,   │        │   │
@@ -395,7 +399,7 @@ hastefuncapi + hastefuncqueues + titiler
 - Listens on **port 7071** (matches the default Azure Functions port for familiarity).
 - Routes:
   - `GET/POST /api/titiler/*` → `http://titiler:8000/` (strips the prefix)
-  - `GET/POST /api/*` → `http://hastefuncapi:80` (preserves full URI)
+  - `GET/POST /api/*` → `http://hastefuncapi:8080` (preserves full URI)
 - Adds `Access-Control-Allow-Origin: *` headers to every response (CORS).
 - Handles `OPTIONS` preflight requests.
 
@@ -419,7 +423,7 @@ hastefuncapi + hastefuncqueues + titiler
 - **Startup script** (`startup.py`): waits for Azurite, then regenerates `project_stats.json`
   so the dashboard shows existing projects after a container restart.
 - **Bind mount:** `../data:/app/data` for local data access.
-- **Docker socket mount:** `/var/run/docker.sock` (read-only, for future extensibility).
+- **Docker socket mount:** `/var/run/docker.sock` (read-write; lets the API and queue containers spawn sibling training/imageryprep containers via the local runner).
 - Copies `hastelib/src/hastegeo` directly into the image (avoids wheel installation in Docker).
 
 #### hastefuncqueues (Queue Worker)
@@ -441,7 +445,7 @@ hastefuncapi + hastefuncqueues + titiler
 ### UI Service
 
 - **Dockerfile:** `ui/Dockerfile`
-- **Base image:** `mcr.microsoft.com/azurelinux/base/nodejs:20.14`
+- **Base image:** `mcr.microsoft.com/azurelinux/base/nodejs:24`
 - Uses **Vite** for dev HMR and **Azure Static Web Apps CLI** to serve the app.
 - Reads a `.env.docker` file baked into the image for default `VITE_API_URL`.
 - Environment variables in `docker-compose.yml` **override** the baked-in `.env.docker` values.
@@ -479,7 +483,7 @@ The `hastefuncqueues` LocalRunner spawns them on-demand via the Docker socket.
 |------|---------|-------------|--------------------|
 | **4280** | UI (SWA CLI) | Web interface | ✅ Yes |
 | **7071** | api-proxy (nginx) | Unified API + TiTiler proxy | ✅ Yes |
-| **8080** | TiTiler (direct) | COG tile server | ❌ Optional (use proxy) |
+| **8000** | TiTiler (direct) | COG tile server | ❌ Optional (use proxy) |
 | **10000** | Azurite Blob | Blob Storage emulator | ✅ Yes (UI reads blobs directly) |
 | **10001** | Azurite Queue | Queue Storage emulator | ❌ Internal only |
 | **10002** | Azurite Table | Table Storage emulator | ❌ Internal only |
@@ -719,7 +723,7 @@ curl http://localhost:10000/devstoreaccount1?comp=list
 curl http://localhost:7071/api/GetAdminSettings
 
 # Check TiTiler health
-curl http://localhost:8080/healthz
+curl http://localhost:8000/healthz
 
 # See what queues exist
 curl "http://localhost:10001/devstoreaccount1?comp=list"
@@ -810,7 +814,7 @@ docker logs <container_id>
 ```bash
 # Check TiTiler is running
 docker compose ps titiler
-curl http://localhost:8080/healthz
+curl http://localhost:8000/healthz
 
 # Restart the proxy
 docker restart docker-api-proxy-1

@@ -1,0 +1,197 @@
+// The three HASTE Flex Consumption function apps (API, TiTiler, Queues),
+// each built from functionApp.bicep with its own always-ready instance count
+// (matching create_function_app's 10 / 5 / 1).
+
+@description('Azure region.')
+param location string
+
+@description('API function app name.')
+param functionApiName string
+
+@description('TiTiler function app name.')
+param functionTitilerName string
+
+@description('Queue-triggers function app name.')
+param functionQueueName string
+
+@description('Functions storage account name.')
+param storageAccountName string
+
+@description('Premium file storage account name.')
+param fileStorageAccountName string
+
+@description('User-assigned managed identity resource id.')
+param umiResourceId string
+
+@description('VNet name.')
+param vnetName string
+
+@description('Functions subnet name.')
+param functionsSubnetName string
+
+@description('Log Analytics workspace resource id.')
+param logAnalyticsId string
+
+// --- hastegeo application config (api + queues; titiler needs none) ---------
+
+@description('Batch account name the apps submit jobs to.')
+param batchAccountName string
+
+@description('Batch account location (for the batch service URL).')
+param batchAccountLocation string
+
+@description('GPU/imageryprep Batch pool id.')
+param batchPoolName string
+
+@description('ACR login server (e.g. myreg.azurecr.io). Empty when no ACR is wired.')
+param acrLoginServer string
+
+@description('Training container image (tag included).')
+param trainingImage string
+
+@description('Imageryprep container image (tag included).')
+param imageryprepImage string
+
+@description('Static Web App name (for the invitation/email flow).')
+param staticWebAppName string
+
+@description('Static Web App default hostname (for the invitation/email flow).')
+param staticAppDomain string
+
+@description('ACS sender domain (EMAIL_SENDER = DoNotReply@<domain>).')
+param emailSenderDomain string
+
+@description('ACS connection string for outbound email.')
+@secure()
+param emailConnectionString string
+
+@description('Batch account primary key.')
+@secure()
+param batchAccountKey string
+
+@description('Dev-only: auto-provision any authenticated user as admin and drop function-key auth (anonymous). Must be false for production.')
+param developmentMode bool = false
+
+@description('Resource tags.')
+param tags object = {}
+
+// Storage account (env RG) — used to derive the blob/queue URLs and the
+// key-based BLOB_CONNECTION_STRING that hastegeo's utils/blob.py path requires.
+resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: storageAccountName
+}
+
+// Application settings shared by the api and queues apps. hastegeo's Config()
+// (instantiated at import time) reads these, so they must be present or the
+// worker cannot index function_app.py. Storage/queue access is identity-based
+// (BLOB_ACCOUNT_URL + role grants); only BLOB_CONNECTION_STRING, the Batch key,
+// and the ACS string are key-based (per ADR: no Key Vault, deploy-time values).
+var appConfigSettings = [
+  { name: 'env', value: 'prod' }
+  { name: 'DEVELOPMENT_MODE', value: developmentMode ? 'true' : 'false' }
+  { name: 'IMAGE_QUEUE_NAME', value: 'image-layers-queue' }
+  { name: 'INFERENCE_QUEUE_NAME', value: 'inference-queue' }
+  { name: 'STATS_QUEUE_NAME', value: 'stats-queue' }
+  { name: 'TRAIN_QUEUE_NAME', value: 'train-queue' }
+  { name: 'ZIP_QUEUE_NAME', value: 'zip-queue' }
+  { name: 'IMAGERY_STORAGE_TYPE', value: 'blob' }
+  { name: 'METADATA_STORAGE_TYPE', value: 'blob' }
+  { name: 'ARTIFACT_STORAGE_TYPE', value: 'blob' }
+  { name: 'RUNNER_TYPE', value: 'azure_batch' }
+  { name: 'TEMP_DATA_PATH', value: '/data' }
+  { name: 'DATA_PATH', value: '/data' }
+  { name: 'TITILER_ENDPOINT', value: '/api/titiler/' }
+  { name: 'BLOB_CONTAINER', value: 'data' }
+  { name: 'BLOB_ACCOUNT_URL', value: storageAccount.properties.primaryEndpoints.blob }
+  { name: 'QUEUE_ACCOUNT_URL', value: storageAccount.properties.primaryEndpoints.queue }
+  {
+    name: 'BLOB_CONNECTION_STRING'
+    value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
+  }
+  { name: 'AZURE_BATCH_ACCOUNT_NAME', value: batchAccountName }
+  { name: 'AZURE_BATCH_URL', value: 'https://${batchAccountName}.${batchAccountLocation}.batch.azure.com' }
+  { name: 'AZURE_BATCH_ACCOUNT_KEY', value: batchAccountKey }
+  { name: 'AZURE_BATCH_DOCKER_IMAGE', value: '${acrLoginServer}/${trainingImage}' }
+  { name: 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', value: '${acrLoginServer}/${imageryprepImage}' }
+  { name: 'AZURE_BATCH_OUTPUT_CONTAINER_URL', value: '${storageAccount.properties.primaryEndpoints.blob}data' }
+  { name: 'AZURE_BATCH_TRAINING_POOL_ID', value: batchPoolName }
+  { name: 'AZURE_BATCH_IMAGERYPREP_POOL_ID', value: batchPoolName }
+  { name: 'AZURE_BATCH_REGISTRY_SERVER_URL', value: 'https://${acrLoginServer}' }
+  { name: 'AZURE_BATCH_REGISTRY_IMAGE', value: '${acrLoginServer}/${trainingImage}' }
+  { name: 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', value: umiResourceId }
+  { name: 'STATIC_APP_SUBSCRIPTION_ID', value: subscription().subscriptionId }
+  { name: 'STATIC_APP_RESOURCE_GROUP', value: resourceGroup().name }
+  { name: 'STATIC_APP_NAME', value: staticWebAppName }
+  { name: 'STATIC_APP_DOMAIN', value: staticAppDomain }
+  { name: 'EMAIL_CONNECTION_STRING', value: emailConnectionString }
+  { name: 'EMAIL_SENDER', value: 'DoNotReply@${emailSenderDomain}' }
+]
+
+module apiApp 'functionApp.bicep' = {
+  name: 'fn-api'
+  params: {
+    location: location
+    name: functionApiName
+    planName: '${functionApiName}-plan'
+    alwaysReadyCount: 10
+    storageAccountName: storageAccountName
+    fileStorageAccountName: fileStorageAccountName
+    umiResourceId: umiResourceId
+    vnetName: vnetName
+    functionsSubnetName: functionsSubnetName
+    logAnalyticsId: logAnalyticsId
+    appSettings: appConfigSettings
+    tags: tags
+  }
+}
+
+module titilerApp 'functionApp.bicep' = {
+  name: 'fn-titiler'
+  params: {
+    location: location
+    name: functionTitilerName
+    planName: '${functionTitilerName}-plan'
+    alwaysReadyCount: 5
+    storageAccountName: storageAccountName
+    fileStorageAccountName: fileStorageAccountName
+    umiResourceId: umiResourceId
+    vnetName: vnetName
+    functionsSubnetName: functionsSubnetName
+    logAnalyticsId: logAnalyticsId
+    tags: tags
+  }
+  // All three apps integrate with the same func-subnet. A subnet's
+  // ServiceAssociationLink lease is single-writer, so the integrations must be
+  // serialized — otherwise concurrent deployments fail with a SAL lease conflict.
+  dependsOn: [
+    apiApp
+  ]
+}
+
+module queueApp 'functionApp.bicep' = {
+  name: 'fn-queue'
+  params: {
+    location: location
+    name: functionQueueName
+    planName: '${functionQueueName}-plan'
+    alwaysReadyCount: 1
+    storageAccountName: storageAccountName
+    fileStorageAccountName: fileStorageAccountName
+    umiResourceId: umiResourceId
+    vnetName: vnetName
+    functionsSubnetName: functionsSubnetName
+    logAnalyticsId: logAnalyticsId
+    appSettings: appConfigSettings
+    tags: tags
+  }
+  dependsOn: [
+    titilerApp
+  ]
+}
+
+// Used by roles.bicep to grant the SWA invitation role to the API app's
+// system-assigned identity.
+output apiSystemPrincipalId string = apiApp.outputs.systemPrincipalId
+output apiName string = apiApp.outputs.name
+output titilerName string = titilerApp.outputs.name
+output queueName string = queueApp.outputs.name

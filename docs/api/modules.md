@@ -7,10 +7,10 @@ The HASTE API provides a comprehensive set of Azure Functions for managing geosp
 The HASTE API follows a microservices architecture with clear separation of concerns:
 
 **REST API Functions** (`hastefuncapi`)
-: 28 synchronous HTTP endpoints for real-time operations including project management, user interactions, file uploads, labeling, model configuration, and system administration.
+: 41 synchronous HTTP endpoints for real-time operations including project management, user interactions, file uploads, labeling, model configuration, and system administration.
 
 **Queue Processing Functions** (`hastefuncqueues`)
-: 6 asynchronous background workers for compute-intensive tasks such as image preprocessing, model training, inference execution, statistics aggregation, and artifact packaging.
+: 6 asynchronous background workers (plus a poison-queue handler) for compute-intensive tasks such as image preprocessing, model training, inference execution, statistics aggregation, and artifact packaging.
 
 **Tile Server** (`titilerfuncapi`)
 : A TiTiler-based tile server for serving Cloud Optimized GeoTIFF imagery tiles, STAC catalog access, and mosaic generation.
@@ -23,5 +23,5 @@ This design ensures:
 - **Monitoring**: Comprehensive logging and telemetry across all operations
 
 :::{note}
-The function_app modules use Azure Functions decorators and require specific environment configuration including Azure Storage, Cosmos DB, Azure Batch, and compute resources for full functionality. See the {doc}`../getting-started` guide for configuration details.
+The function_app modules use Azure Functions decorators and require specific environment configuration including Azure Storage, Cosmos DB, Azure Batch, and compute resources for full functionality. See the {doc}`../configuration` guide for configuration details.
 :::

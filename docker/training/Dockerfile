@@ -3,14 +3,27 @@ FROM mcr.microsoft.com/azureml/curated/minimal-py312-cuda12.4-inference AS conda
 
 USER root
 
-# Install micromamba and conda-pack (micromamba avoids Python version conflicts)
+# Pin micromamba's root prefix to the base image's conda root rather than relying
+# on auto-detection from the base image's conda activation. Without this,
+# `micromamba create -f env.yml` (name-based, no -p) can't resolve a root prefix
+# and aborts at startup ("tl::bad_expected_access ... Bad expected access").
+# Rooting it at /opt/miniconda also places the `bda` env at
+# /opt/miniconda/envs/bda, where the later `conda-pack -n bda` looks for it.
+ENV MAMBA_ROOT_PREFIX=/opt/miniconda
+
+# Install micromamba and conda-pack (micromamba avoids Python version conflicts).
+# Install conda-pack with micromamba rather than the base image's `conda`: a
+# plain `conda install conda-pack` also drags in a conda self-upgrade (26.5.0 ->
+# 26.5.3) whose conda-forge build bricks the base `conda` on link
+# (ModuleNotFoundError: No module named 'conda'). micromamba installs conda-pack
+# into the same /opt/miniconda prefix without touching/upgrading conda.
 RUN for i in 1 2 3 4 5; do \
 		apt-get update && apt-get install -y --no-install-recommends libgl1-mesa-glx curl && break || sleep 15; \
 	done \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C /usr/local bin/micromamba \
-	&& conda install -n base -c conda-forge conda-pack --yes \
-	&& conda clean -afy
+	&& micromamba install -p /opt/miniconda -c conda-forge conda-pack --yes \
+	&& micromamba clean -afy
 
 # Copy only env.yml first (maximize build cache)
 COPY docker/training/env/env.yml /tmp/env.yml
@@ -70,6 +83,14 @@ ENV GDAL_DATA=/opt/conda/envs/bda/share/gdal
 ENV PYTHONPATH=/app
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
+# Refuse the GDAL drivers carrying the deferred CVEs (HDF4/HDF-EOS heap
+# overflow CVE-2026-8087 et al.) at the GDAL level, so subprocess CLI tools
+# (gdalwarp/gdal_translate) and the runtime never register them. In-process
+# training step entrypoints additionally call hastegeo.core.utils.
+# gdal_security.harden_gdal(). See docs/known-vulnerabilities.md Root Cause C.
+ENV GDAL_SKIP="HDF4 HDF4Image HDF5 HDF5Image netCDF"
+
 
 # Pre-bake DINOv2 source + weights into an image-level torch.hub cache so
 # Azure Batch nodes don't need internet access (or the GitHub API) at job

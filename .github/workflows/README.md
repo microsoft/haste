@@ -24,10 +24,10 @@ The workflow can build the following Docker images:
 on:
   pull_request:
     branches:
-      - development
+      - main
 ```
 
-**When**: Automatically triggered when PRs are opened, updated, or synchronized against the `development` branch.
+**When**: Automatically triggered when PRs are opened, updated, or synchronized against the `main` branch.
 
 **Default Behavior**:
 - **Image Directory**: `all` (builds both images)
@@ -74,12 +74,12 @@ Create a repository variable named:
 #### Tag Generation Logic
 
 ```yaml
-IMAGE_TAG: ${{ github.event.inputs.image_tag || format('{0}-RC-{1}', vars.TAG_PREFIX, github.event.number) }}
+IMAGE_TAG: ${{ github.event.inputs.image_tag || format('{0}-rc{1}', vars.TAG_PREFIX, github.event.number) }}
 ```
 
 **Logic**:
 - **Manual dispatch**: Uses custom input tag
-- **PR to development**: Uses `{TAG_PREFIX}-rc{PR_NUMBER}` format
+- **PR to main**: Uses `{TAG_PREFIX}-rc{PR_NUMBER}` format
 
 #### Tag Examples
 
@@ -87,7 +87,7 @@ IMAGE_TAG: ${{ github.event.inputs.image_tag || format('{0}-RC-{1}', vars.TAG_PR
 |--------------|-------|---------------|---------|
 | Manual Dispatch | Custom tag: `v2.0.0` | `v2.0.0` | `hastetraining:v2.0.0` |
 | Manual Dispatch | Default | `test-manual` | `hastetraining:test-manual` |
-| PR #123 to development | N/A | `1.0.1-rc123` | `hastetraining:1.0.1-rc123` |
+| PR #123 to main | N/A | `1.0.1-rc123` | `hastetraining:1.0.1-rc123` |
 
 ### Security and Authentication
 
@@ -189,7 +189,7 @@ az acr build \
 
 #### Example 2: Development Release Candidate (Automatic)
 
-Create a PR against the `development` branch.
+Create a PR against the `main` branch.
 
 **Result**: Automatically builds both images with tag `1.0.1-rc{PR_NUMBER}` (e.g., `hastetraining:1.0.1-rc123`)
 
@@ -223,7 +223,7 @@ Create a PR against the `development` branch.
 #### Workflow Not Triggering
 
 - Check branch names in trigger configuration
-- Verify PR is against the `development` branch
+- Verify PR is against the `main` branch
 - Ensure manual dispatch is run with proper parameters
 
 #### Build Failures
@@ -319,3 +319,17 @@ No YAML changes are required to add a new environment.
 ### Deployment Process
 
 Executes the `deploy_apps.sh` script with parameters resolved from inputs and repository/environment secrets to deploy all Azure resources and configure application settings.
+
+---
+
+## Other Workflows
+
+These workflows run automatically and require no manual configuration beyond the standard repository setup.
+
+| Workflow | File | Triggers | Purpose |
+|----------|------|----------|---------|
+| **CodeQL Advanced** | `codeql.yml` | Push and PR to `main`, plus a weekly schedule (Mondays 09:15 UTC) | Static analysis / code scanning for the `actions`, `javascript-typescript`, and `python` languages |
+| **Deploy Documentation** | `docs-deploy.yml` | Push to `main`, plus manual dispatch | Builds the Jupyter Book docs and deploys them to GitHub Pages |
+| **Secret Scan** | `secret-scan.yml` | Push and PR to `main`, plus manual dispatch | Runs Gitleaks to detect accidentally committed secrets |
+
+> **Note on the Docker build workflow:** the `detect-changes` job uses [`dorny/paths-filter`](https://github.com/dorny/paths-filter) so that a PR only rebuilds the images whose source actually changed (`docker/training/**` or `hastelib/**` for training, `docker/imageryprep/**` for imagery prep). Manual dispatch always builds the requested image(s).

@@ -26,6 +26,13 @@ import math
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
+from .gdal_security import harden_gdal
+
+# Harden GDAL/OGR drivers before any geopandas/fiona read of the
+# predictions/footprints GeoPackages (GDAL CVE compensating control —
+# docs/known-vulnerabilities.md Root Cause C).
+harden_gdal()
+
 DAMAGED = "Damaged"
 NOT_DAMAGED = "NotDamaged"
 UNKNOWN = "Unknown"

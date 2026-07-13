@@ -145,6 +145,7 @@ const ModelRowMobile = ({ models, projectId, imageLayerId, fetchProjectDetails, 
               imageLayerId={imageLayerId}
               index={index}
               fetchProjectDetails={fetchProjectDetails}
+              mobile={true}
             />
           );
         }

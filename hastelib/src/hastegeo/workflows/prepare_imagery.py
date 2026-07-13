@@ -14,6 +14,7 @@ from string import Template
 import requests
 from hastegeo.core.config import Config
 from hastegeo.core.utils.downloader import ImageryDownloader
+from hastegeo.core.utils.gdal_security import harden_gdal
 from hastegeo.core.utils.imagery import ImageryUtils
 from hastegeo.core.utils.imagery import logger as imagery_utils_logger
 from hastegeo.core.utils.logs import Logger as HasteLogger
@@ -852,6 +853,10 @@ def log_progress(message):
 
 
 def main():
+    # Restrict GDAL to the driver allowlist before any imagery parsing
+    # (GDAL CVE compensating control — docs/known-vulnerabilities.md
+    # Root Cause C). Idempotent; also runs at ImageryUtils import.
+    harden_gdal()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config", type=str, required=True, help="Path to config file"

@@ -1,8 +1,8 @@
 # Processors
 
-The `haste.core.processors` package contains the business logic layer for all HASTE operations. Processors coordinate between data layers, runners, and utilities to implement the platform's core functionality.
+The `hastegeo.core.processors` package contains the business logic layer for all HASTE operations. Processors coordinate between data layers, runners, and utilities to implement the platform's core functionality.
 
-## Imagery (`haste.core.processors.imagery`)
+## Imagery (`hastegeo.core.processors.imagery`)
 
 Handles satellite imagery download, preprocessing, and Cloud Optimized GeoTIFF creation.
 
@@ -11,13 +11,13 @@ Handles satellite imagery download, preprocessing, and Cloud Optimized GeoTIFF c
 - **`ImageryLogRecord`** — Timestamped log record for imagery processing
 
 ```{eval-rst}
-.. automodule:: haste.core.processors.imagery
+.. automodule:: hastegeo.core.processors.imagery
    :members:
    :undoc-members:
    :show-inheritance:
 ```
 
-## Training (`haste.core.processors.train`)
+## Training (`hastegeo.core.processors.train`)
 
 ML model training workflow management.
 
@@ -26,13 +26,13 @@ ML model training workflow management.
 - **`TrainPostprocessor`** — Execute and monitor training jobs on Azure Batch
 
 ```{eval-rst}
-.. automodule:: haste.core.processors.train
+.. automodule:: hastegeo.core.processors.train
    :members:
    :undoc-members:
    :show-inheritance:
 ```
 
-## Inference (`haste.core.processors.inference`)
+## Inference (`hastegeo.core.processors.inference`)
 
 Model inference execution and monitoring.
 
@@ -42,39 +42,39 @@ Model inference execution and monitoring.
 - **`InferenceLogRecord`** — Timestamped inference log entry
 
 ```{eval-rst}
-.. automodule:: haste.core.processors.inference
+.. automodule:: hastegeo.core.processors.inference
    :members:
    :undoc-members:
    :show-inheritance:
 ```
 
-## Labels (`haste.core.processors.labels`)
+## Labels (`hastegeo.core.processors.labels`)
 
 Labeling task generation from imagery.
 
 - **`LabelTaskGenerator`** — Generate labeling tasks from imagery layers with optional grid-based subdivision
 
 ```{eval-rst}
-.. automodule:: haste.core.processors.labels
+.. automodule:: hastegeo.core.processors.labels
    :members:
    :undoc-members:
    :show-inheritance:
 ```
 
-## Metadata (`haste.core.processors.metadata`)
+## Metadata (`hastegeo.core.processors.metadata`)
 
 High-level metadata operations over the data layer.
 
 - **`MetadataProcessor`** — CRUD operations for project/model/user metadata with support for multiple storage backends
 
 ```{eval-rst}
-.. automodule:: haste.core.processors.metadata
+.. automodule:: hastegeo.core.processors.metadata
    :members:
    :undoc-members:
    :show-inheritance:
 ```
 
-## Statistics (`haste.core.processors.stats`)
+## Statistics (`hastegeo.core.processors.stats`)
 
 Project statistics aggregation.
 
@@ -82,33 +82,33 @@ Project statistics aggregation.
 - **`StatsPostProcessor`** — Process stats updates (add/update/delete project entries)
 
 ```{eval-rst}
-.. automodule:: haste.core.processors.stats
+.. automodule:: hastegeo.core.processors.stats
    :members:
    :undoc-members:
    :show-inheritance:
 ```
 
-## Artifacts (`haste.core.processors.artifacts`)
+## Artifacts (`hastegeo.core.processors.artifacts`)
 
 Model artifact management, packaging, and download.
 
 - **`ArtifactProcessor`** — Manages model artifacts including zipping, downloading, and Azure Batch zip job submission
 
 ```{eval-rst}
-.. automodule:: haste.core.processors.artifacts
+.. automodule:: hastegeo.core.processors.artifacts
    :members:
    :undoc-members:
    :show-inheritance:
 ```
 
-## Uploader (`haste.core.processors.uploader`)
+## Uploader (`hastegeo.core.processors.uploader`)
 
 Chunked file upload handling.
 
 - **`FileUploader`** — Process chunked file uploads with chunk storage and final assembly
 
 ```{eval-rst}
-.. automodule:: haste.core.processors.uploader
+.. automodule:: hastegeo.core.processors.uploader
    :members:
    :undoc-members:
    :show-inheritance:

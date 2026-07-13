@@ -21,6 +21,12 @@ import rasterio
 import rasterio.features
 import shapely.geometry
 
+from .gdal_security import harden_gdal
+
+# Harden GDAL drivers before any rasterio read (GDAL CVE compensating
+# control — docs/known-vulnerabilities.md Root Cause C).
+harden_gdal()
+
 logger = logging.getLogger(__name__)
 
 

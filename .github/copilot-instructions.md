@@ -17,9 +17,9 @@
 ```
 React UI (Vite + FluentUI + Azure Maps + MSAL)
   └─ Azure Static Web Apps / SWA CLI
-       ├─ hastefuncapi (28 HTTP routes, Azure Functions, Python)
+       ├─ hastefuncapi (41 HTTP routes, Azure Functions, Python)
        ├─ titilerfuncapi (TiTiler/FastAPI, COG tile serving)
-       └─ hastefuncqueues (6 queue triggers, Azure Functions, Python)
+       └─ hastefuncqueues (7 queue triggers, Azure Functions, Python)
             └─ hastegeo core library (hastelib/)
                  ├─ Config · Models · Processors · Data Layers
                  ├─ Runners (Azure Batch GPU) · Utils · Workflows
@@ -29,9 +29,8 @@ React UI (Vite + FluentUI + Azure Maps + MSAL)
 ## Build & Test
 
 - **Core library build**: `cd hastelib && hatch build -t wheel`
-- **Core library tests (Docker, preferred)**: `docker build -f hastelib/Dockerfile.test -t haste-test .` then `docker run --rm haste-test`
-- **Core library tests (specific file)**: `docker run --rm haste-test tests/path/to/test_file.py -v`
-- **Core library tests (hatch, alternative)**: `cd hastelib && hatch run test:pytest`
+- **Core library tests**: `cd hastelib && hatch run test:pytest`
+- **Core library tests (specific file)**: `cd hastelib && hatch run test:pytest tests/path/to/test_file.py -v`
 - **UI build**: `cd ui && npm run build`
 - **UI lint**: `cd ui && npm run lint`
 - **API local run**: `cd api/hastefuncapi && func host start`

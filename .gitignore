@@ -29,5 +29,12 @@ docs/_build
 LESSONS_LEARNED.md
 HANDOFF.md
 
+# Local infra what-if / deployment scratch (may contain internal names/IPs)
+infra/.whatif*
+
+
+# azd environment (contains subscription-scoped values)
+.azure/
+
 # Local-only debug pages + sandbox (not part of the repo)
 debug/

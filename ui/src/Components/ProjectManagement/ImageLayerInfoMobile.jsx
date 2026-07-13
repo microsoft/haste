@@ -8,6 +8,7 @@ import React from "react";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
 import { useNavigate } from "react-router-dom";
 import CreateEditModelTrainingModal from "../CreateEditModelTrainingModal";
+import CreateEditEmbeddingModal from "../CreateEditEmbeddingModal";
 
 const ImageLayerInfoMobile = ({ item, setModalComponent, fetchProjectDetails, setComponentState, eventTypes  }) => {
   ImageLayerInfoMobile.propTypes = {
@@ -19,6 +20,25 @@ const ImageLayerInfoMobile = ({ item, setModalComponent, fetchProjectDetails, se
   };
 
   const navigate = useNavigate();
+
+  // Mirror LayerRow's desktop logic: layers created with the "building"
+  // embedding workflow expose an Embed action (kicks off an embedding job)
+  // instead of the Launch Labeling Tool / Train Model actions.
+  const isBuildingWorkflow = item.workflowType === "building";
+  const embeddingModels =
+    (item.models || []).filter((m) => m.modelType === "embedding") || [];
+
+  function handleEmbed() {
+    setModalComponent(
+      <CreateEditEmbeddingModal
+        onClose={() => setModalComponent(null)}
+        projectId={item.projectId}
+        imageLayer={item}
+        fetchProjectDetails={fetchProjectDetails}
+      />
+    );
+  }
+
   return (
     <React.Fragment key={"imageLayerInfoMobile_" + item.projectId + "_" + item.imageLayerId}>
       <tr>
@@ -46,46 +66,85 @@ const ImageLayerInfoMobile = ({ item, setModalComponent, fetchProjectDetails, se
             />
           </div>
 
-          <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2">
-            <DefaultButton
-              id={"singleProjectLabelingToolLaunch" + item.imageLayerId}
-              className="dashboard-button"
-              onClick={() =>
-                navigate(`/labeling-tool/${item.projectId}/${item.imageLayerId}`)
-              }
-              disabled={item.status !== "Processed"}
-            >
-              Launch Labeling Tool
-            </DefaultButton>{" "}
-            <Text className="pe-4" variant="small">
-              ({item.labelProjectCount})
-            </Text>
-          </div>
+          {isBuildingWorkflow ? (
+            <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2">
+              <DefaultButton
+                id={"singleProjectEmbed" + item.imageLayerId}
+                className="dashboard-button"
+                styles={{ root: { width: "100%" } }}
+                onClick={handleEmbed}
+                disabled={
+                  item.status !== "Processed" || !item.buildingFootprintsUrl
+                }
+              >
+                Embed
+              </DefaultButton>
+              <Text className="d-block pt-1" variant="small">
+                Embeddings: {embeddingModels.length}
+              </Text>
+            </div>
+          ) : (
+            <>
+              <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2">
+                <DefaultButton
+                  id={"singleProjectLabelingToolLaunch" + item.imageLayerId}
+                  className="dashboard-button"
+                  styles={{ root: { width: "100%" } }}
+                  onClick={() =>
+                    navigate(`/labeling-tool/${item.projectId}/${item.imageLayerId}`)
+                  }
+                  disabled={item.status !== "Processed"}
+                >
+                  Launch Labeling Tool
+                </DefaultButton>
+                <Text className="d-block pt-1" variant="small">
+                  Label projects: {item.labelProjectCount}
+                </Text>
+              </div>
+
+              <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2">
+                <DefaultButton
+                  id={"singleProjectModelTraining" + item.imageLayerId}
+                  className="dashboard-button"
+                  styles={{ root: { width: "100%" } }}
+                  onClick={() =>
+                    setModalComponent(
+                      <CreateEditModelTrainingModal
+                        onClose={() => setModalComponent(null)}
+                        projectId={item.projectId}
+                        imageLayer={item}
+                        fetchProjectDetails={fetchProjectDetails}
+                        setImageLayerComponentState={setComponentState}
+                        guidedTour="createEditModelTrainingModalGuide"
+                        autoLaunchGuidedTour={true}
+                      />
+                    )
+                  }
+                  disabled={item.status !== "Processed" || item.labelProjectCount < 1}
+                >
+                  Train Model
+                </DefaultButton>
+                <Text className="d-block pt-1" variant="small">
+                  Models: {item.models && item.models.length > 0 ? item.models.length : 0}
+                </Text>
+              </div>
+            </>
+          )}
 
           <div style={{ borderBottom: "1px solid #ccc" }} className="pb-2 pt-2">
             <DefaultButton
-              id={"singleProjectModelTraining" + item.imageLayerId}
+              id={"singleProjectBuildingValidation" + item.imageLayerId}
               className="dashboard-button"
+              styles={{ root: { width: "100%" } }}
               onClick={() =>
-                setModalComponent(
-                  <CreateEditModelTrainingModal
-                    onClose={() => setModalComponent(null)}
-                    projectId={item.projectId}
-                    imageLayer={item}
-                    fetchProjectDetails={fetchProjectDetails}
-                    setImageLayerComponentState={setComponentState}
-                    guidedTour="createEditModelTrainingModalGuide"
-                    autoLaunchGuidedTour={true}
-                    eventTypes={eventTypes}
-                  />
-                )
+                navigate(`/validation/${item.projectId}/${item.imageLayerId}`)
               }
-              disabled={item.status !== "Processed" || item.labelProjectCount < 1}
+              disabled={!item.buildingFootprintsUrl}
             >
-              Train Model
-            </DefaultButton>{" "}
-            <Text className="pe-4" variant="small">
-              ({item.models && item.models.length > 0 ? item.models.length : 0})
+              Launch Validation Tool
+            </DefaultButton>
+            <Text className="d-block pt-1" variant="small">
+              Validation labels: {item.validationLabelCount || 0}
             </Text>
           </div>
         </td>

@@ -15,7 +15,7 @@ import {
   mergeStyles,
 } from "@fluentui/react";
 import PropTypes from "prop-types";
-import { apiGet } from "../../util/api";
+import { buildUrl } from "../../util/api";
 
 /* ── Fluent v8 design tokens ─────────────────────────────────── */
 const tokens = {
@@ -205,14 +205,35 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
     setLoading(true);
     setError(null);
     setReport(null);
-    apiGet(
-      `GetValidationReport?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}`
+    // Fetch directly (not via apiGet) so we can read the JSON body on a 404.
+    // GetValidationReport returns { error } with a 404 when a prerequisite is
+    // missing — no inference results, no saved validation labels, or no
+    // building footprints — and with a 200 when nothing matched. Surface that
+    // specific message as a soft notice; only an opaque/unparseable response
+    // is a hard error.
+    fetch(
+      buildUrl(
+        `GetValidationReport?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}`
+      )
     )
-      .then((data) => {
-        if (data.error) setError(data.error);
-        else setReport(data);
+      .then(async (response) => {
+        let data = null;
+        try {
+          data = await response.json();
+        } catch {
+          data = null;
+        }
+        if (data && data.error) {
+          setError({ message: data.error, soft: true });
+        } else if (!response.ok || !data) {
+          setError({ message: "Failed to load validation report.", soft: false });
+        } else {
+          setReport(data);
+        }
       })
-      .catch(() => setError("Failed to load validation report."))
+      .catch(() =>
+        setError({ message: "Failed to load validation report.", soft: false })
+      )
       .finally(() => setLoading(false));
   };
 
@@ -248,8 +269,11 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
       )}
 
       {!loading && error && (
-        <MessageBar messageBarType={MessageBarType.error} isMultiline={false}>
-          {error}
+        <MessageBar
+          messageBarType={error.soft ? MessageBarType.warning : MessageBarType.error}
+          isMultiline={true}
+        >
+          {error.message}
         </MessageBar>
       )}
 

@@ -1,6 +1,6 @@
 # Configuration
 
-The `haste.core.config` module provides environment-aware configuration for all HASTE services. It reads environment variables to configure storage backends, queue names, paths, and credentials.
+The `hastegeo.core.config` module provides environment-aware configuration for all HASTE services. It reads environment variables to configure storage backends, queue names, paths, and credentials.
 
 ## Key Classes
 
@@ -25,7 +25,7 @@ The `Config` class reads from these key environment variables (see `local.settin
 | `IMAGE_QUEUE`, `TRAIN_QUEUE`, etc. | Queue names for async processing |
 
 ```{eval-rst}
-.. automodule:: haste.core.config
+.. automodule:: hastegeo.core.config
    :members:
    :undoc-members:
    :show-inheritance:

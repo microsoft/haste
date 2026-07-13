@@ -70,8 +70,8 @@ Follow the setup instructions in the README.md to get your development environme
 
 Before submitting a pull request:
 
-1. Run Python tests: `pytest`
-2. Run JavaScript tests: `cd ui && npm test`
+1. Run Python tests: `cd hastelib && hatch run test:pytest`
+2. Run the JavaScript linter: `cd ui && npm run lint`
 3. Test the full application locally
 4. Verify all functionality works end-to-end
 

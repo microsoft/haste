@@ -12,6 +12,7 @@ import {
   TooltipHost,
 } from "@fluentui/react";
 import { useContext, useState } from "react";
+import React from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
 import { apiDelete } from "../../util/api";
@@ -66,6 +67,7 @@ const EmbeddingModelRow = ({
   imageLayerId,
   index,
   fetchProjectDetails,
+  mobile = false,
 }) => {
   EmbeddingModelRow.propTypes = {
     model: PropTypes.object.isRequired,
@@ -73,6 +75,7 @@ const EmbeddingModelRow = ({
     imageLayerId: PropTypes.string.isRequired,
     index: PropTypes.number.isRequired,
     fetchProjectDetails: PropTypes.func.isRequired,
+    mobile: PropTypes.bool,
   };
 
   const { setDialog, setIsLoading } = useContext(AppContext);
@@ -149,6 +152,125 @@ const EmbeddingModelRow = ({
     ],
   };
 
+  const reportModals = (
+    <>
+      {showValidationReport && (
+        <ValidationReportModal
+          projectId={projectId}
+          imageLayerId={imageLayerId}
+          modelId={model.modelId}
+          modelName={model.name}
+          onDismiss={() => setShowValidationReport(false)}
+        />
+      )}
+      {showAssessmentReport && (
+        <AssessmentReportModal
+          projectId={projectId}
+          imageLayerId={imageLayerId}
+          modelId={model.modelId}
+          modelName={model.name}
+          onDismiss={() => setShowAssessmentReport(false)}
+        />
+      )}
+    </>
+  );
+
+  // Stacked mobile layout: one field per row with full-width action buttons,
+  // mirroring ModelRowMobile's standard-model layout so the embedding list
+  // doesn't stay squished into desktop columns on narrow screens.
+  if (mobile) {
+    return (
+      <React.Fragment
+        key={"embeddingMobile_" + projectId + "_" + model.modelId}
+      >
+        <tr>
+          <td className="custom-text-no-wrap pt-1">
+            <Text variant="small">
+              <span className="fw-semibold">Name:</span>{" "}
+              <span>{model.name}</span>
+            </Text>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <Text variant="small">
+              <span className="fw-semibold">Model:</span>{" "}
+              {embeddingModelLabel(model)}
+            </Text>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <Text variant="small">
+              <span className="fw-semibold">Embedded:</span> {createdDate}
+            </Text>
+          </td>
+        </tr>
+        <tr>
+          <td className="pe-3 custom-text-no-wrap">
+            <Text variant="small">
+              <span className="fw-semibold">User:</span>{" "}
+              {limitTextLength(model.userId, false, 35)}
+            </Text>
+          </td>
+        </tr>
+        <tr>
+          <td className="pe-3 custom-text-no-wrap d-flex align-items-center">
+            <StatusIndicator
+              currentStep={model.currentStep}
+              totalSteps={model.totalSteps}
+              progressPct={model.progressPct}
+              status={model.status}
+              statusMessage={model.statusMessage}
+              id={`singleEmbeddingStatus${index}`}
+              prefix={embeddingModelLabel(model)}
+              infoMetadata={embeddingInfoMetadata(model)}
+            />
+          </td>
+        </tr>
+        <tr>
+          <td className="pb-2 pt-2">
+            <div className="d-flex align-items-center">
+              <DefaultButton
+                id={"interactiveLabel" + index}
+                className="dashboard-button"
+                onClick={() =>
+                  navigate(
+                    `/interactive-label/${projectId}/${imageLayerId}/${model.modelId}`
+                  )
+                }
+                disabled={!isProcessed}
+              >
+                Interactive Label
+              </DefaultButton>
+              <PrimaryButton
+                id={"embeddingReports" + index}
+                text="Reports"
+                menuProps={reportsMenu}
+                allowDisabledFocus
+                className="dashboard-button ms-2"
+                disabled={!hasPredictions}
+              />
+            </div>
+          </td>
+        </tr>
+        <tr className="model-mobile-row">
+          <td className="pb-2">
+            <IconButton
+              id={`singleEmbeddingMoreOptions${index}`}
+              className="no-dropdown-icon"
+              menuProps={moreMenuOptions}
+              iconProps={{ iconName: "more" }}
+              title="Menu"
+              ariaLabel="Menu"
+            />
+          </td>
+        </tr>
+        {reportModals}
+      </React.Fragment>
+    );
+  }
+
   return (
     <tr>
       <td className="pe-3 custom-text-no-wrap">
@@ -218,24 +340,7 @@ const EmbeddingModelRow = ({
           ariaLabel="Menu"
         />
       </td>
-      {showValidationReport && (
-        <ValidationReportModal
-          projectId={projectId}
-          imageLayerId={imageLayerId}
-          modelId={model.modelId}
-          modelName={model.name}
-          onDismiss={() => setShowValidationReport(false)}
-        />
-      )}
-      {showAssessmentReport && (
-        <AssessmentReportModal
-          projectId={projectId}
-          imageLayerId={imageLayerId}
-          modelId={model.modelId}
-          modelName={model.name}
-          onDismiss={() => setShowAssessmentReport(false)}
-        />
-      )}
+      {reportModals}
     </tr>
   );
 };

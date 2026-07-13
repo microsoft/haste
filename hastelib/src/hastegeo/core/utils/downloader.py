@@ -17,6 +17,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from .gdal_security import max_download_bytes
 from .logs import Logger
 from .url_allowlist import validate_imagery_url
 
@@ -80,6 +81,7 @@ class ImageryDownloader:
             urls = list(set(urls))
             file_paths = []
             existing_names = set()
+            max_bytes = max_download_bytes()
 
             for url in urls:
                 # Defense-in-depth: never fetch a URL whose host is not on the
@@ -89,9 +91,23 @@ class ImageryDownloader:
                 except ValueError as e:
                     self.logger.warning(f"Skipping URL not in allowlist: {e}")
                     continue
-                response = requests.get(url)
+                # allow_redirects=False so an allowlisted source can't bounce
+                # the fetch to an internal host (SSRF guard); stream so the
+                # body can be size-capped before it is buffered to disk.
+                response = requests.get(
+                    url, allow_redirects=False, stream=True, timeout=60
+                )
+                if response.status_code in (301, 302, 303, 307, 308):
+                    self.logger.warning(
+                        "Refusing redirect for imagery URL %s (status %s)",
+                        url,
+                        response.status_code,
+                    )
+                    response.close()
+                    continue
                 if response.status_code != 200:
                     self.logger.error(f"Failed to fetch data from URL: {url}")
+                    response.close()
                     continue
 
                 image_name = os.path.basename(url)
@@ -108,8 +124,7 @@ class ImageryDownloader:
                 existing_names.add(image_name)
 
                 self.logger.info(f"Downloading {image_name}...")
-                with open(image_path, "wb") as file:
-                    file.write(response.content)
+                if self._stream_to_file(response, image_path, max_bytes, url):
                     file_paths.append(image_path)
 
             self.logger.info("Download complete.")
@@ -117,6 +132,57 @@ class ImageryDownloader:
         except Exception as e:
             self.logger.error(f"Error occurred while downloading imagery: {e}")
             raise e
+
+    def _stream_to_file(self, response, image_path, max_bytes, url):
+        """Stream a response body to ``image_path``, capped at ``max_bytes``.
+
+        Returns ``True`` on success. If the body exceeds ``max_bytes``
+        (via ``Content-Length`` or while streaming), the partial file is
+        removed and ``False`` is returned so the URL is skipped without
+        failing the whole batch. Bounds memory + disk against a hostile or
+        accidental multi-GB response.
+        """
+        content_length = response.headers.get("Content-Length")
+        if content_length is not None:
+            try:
+                if int(content_length) > max_bytes:
+                    self.logger.warning(
+                        "Imagery %s exceeds max size %d "
+                        "(Content-Length %s); skipping.",
+                        url,
+                        max_bytes,
+                        content_length,
+                    )
+                    response.close()
+                    return False
+            except (TypeError, ValueError):
+                pass
+
+        written = 0
+        oversize = False
+        try:
+            with open(image_path, "wb") as file:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if not chunk:
+                        continue
+                    written += len(chunk)
+                    if written > max_bytes:
+                        oversize = True
+                        break
+                    file.write(chunk)
+        finally:
+            response.close()
+
+        if oversize:
+            self.logger.warning(
+                "Imagery %s exceeded max size %d mid-stream; aborting.",
+                url,
+                max_bytes,
+            )
+            if os.path.exists(image_path):
+                os.remove(image_path)
+            return False
+        return True
 
     def _validate_url(self, url: str) -> str:
         return validate_imagery_url(url)
@@ -155,6 +221,23 @@ class ImageryDownloader:
 
             existing_names.add(file_name)
             self.logger.info(f"Downloading {file_name}...")
+
+            # Size guard at the download boundary: skip blobs larger than
+            # the cap (cheap properties call, no body transfer).
+            try:
+                blob_size = blob_client.get_blob_properties().size
+                if blob_size and blob_size > max_download_bytes():
+                    self.logger.warning(
+                        "Blob %s exceeds max size %d (%d bytes); skipping.",
+                        url,
+                        max_download_bytes(),
+                        blob_size,
+                    )
+                    continue
+            except Exception as err:
+                self.logger.warning(
+                    "Could not read blob properties for %s: %s", url, err
+                )
 
             try:
                 with open(file_path, "wb") as file:
@@ -237,6 +320,23 @@ class ImageryDownloader:
                 self.logger.info(
                     f"Downloading {file_name} from bucket {bucket} with key {key}...to file path {file_path}"
                 )
+
+                try:
+                    head = s3.head_object(Bucket=bucket, Key=key)
+                    obj_size = head.get("ContentLength")
+                    if obj_size and obj_size > max_download_bytes():
+                        self.logger.warning(
+                            "S3 object %s exceeds max size %d (%s bytes); "
+                            "skipping.",
+                            url,
+                            max_download_bytes(),
+                            obj_size,
+                        )
+                        continue
+                except Exception as err:
+                    self.logger.warning(
+                        "Could not head S3 object %s: %s", url, err
+                    )
 
                 try:
                     s3.download_file(

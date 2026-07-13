@@ -27,7 +27,14 @@ import pyarrow.dataset as ds
 import pyarrow.fs as fs
 from geopandas import GeoDataFrame
 
+from .gdal_security import harden_gdal
+
 logger = logging.getLogger(__name__)
+
+# Harden GDAL/OGR drivers before any geopandas/fiona read of a
+# user-supplied vector file (GDAL CVE compensating control —
+# docs/known-vulnerabilities.md Root Cause C).
+harden_gdal()
 
 OVERTURE_ACCOUNT_NAME = "overturemapswestus2"
 FALLBACK_RELEASE = "2026-02-18.0"

@@ -3,13 +3,24 @@ root: intro
 parts:
   - caption: User Guide
     chapters:
-      - file: getting-started
+      - file: usage/overview
+      - file: usage/rapid-building-assessment
+      - file: usage/damage-mapping
+      - file: usage/building-blocks
+        sections:
+          - file: usage/projects
+          - file: usage/image-layers
+          - file: usage/model-catalog
+  - caption: Setup & Deployment
+    chapters:
+      - file: setup/local-dev
+      - file: deployment
+      - file: configuration
+      - file: security-configuration
+  - caption: Reference
+    chapters:
       - file: architecture
       - file: api-overview
-      - file: deployment
-      - file: security-configuration
-  - caption: API Reference
-    chapters:
       - file: api/modules
         sections:
           - file: api/hastefuncapi

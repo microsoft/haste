@@ -1,9 +1,15 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import os
+import re
 
 from azure.storage.blob import BlobServiceClient
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+
+ACCOUNT_URL = "https://researchlabwuopendata.blob.core.windows.net"
+CONTAINER_NAME = "haste-binaries"
+# Matches the version in a wheel filename, e.g. "hastegeo-1.0.19-py3-none-any.whl"
+WHEEL_VERSION_RE = re.compile(r"^hastegeo-(\d+)\.(\d+)\.(\d+)")
 
 
 class CustomBuildHook(BuildHookInterface):
@@ -31,31 +37,56 @@ class CustomBuildHook(BuildHookInterface):
         """Return the license of the plugin."""
         return "MIT"
 
+    def _get_container_client(self):
+        """Return an authenticated client for the haste-binaries container."""
+        from azure.identity import AzureCliCredential
+
+        # Use AzureCliCredential specifically to match Azure CLI behavior
+        credential = AzureCliCredential()
+        blob_service_client = BlobServiceClient(
+            account_url=ACCOUNT_URL, credential=credential
+        )
+        return blob_service_client.get_container_client(CONTAINER_NAME)
+
+    def get_latest_published_version(self):
+        """Return the highest (major, minor, patch) tuple already published to
+        blob storage, or None if nothing is found or the listing fails."""
+        try:
+            container_client = self._get_container_client()
+            versions = []
+            for blob in container_client.list_blobs(
+                name_starts_with="hastegeo-"
+            ):
+                match = WHEEL_VERSION_RE.match(blob.name)
+                if match:
+                    versions.append(tuple(int(x) for x in match.groups()))
+
+            if not versions:
+                print("No published hastegeo wheels found in blob storage.")
+                return None
+
+            latest = max(versions)
+            print(
+                "Latest published version in blob storage: "
+                f"{'.'.join(map(str, latest))}"
+            )
+            return latest
+        except Exception as e:
+            print(f"Could not list blob storage versions: {e}")
+            return None
+
     def upload_to_blob_storage(self, file_path: str, blob_name: str) -> str:
         """Upload file to Azure blob storage and return the URL."""
         try:
-            from azure.identity import AzureCliCredential
-
-            # Use AzureCliCredential specifically to match Azure CLI behavior
-            credential = AzureCliCredential()
-            account_url = "https://researchlabwuopendata.blob.core.windows.net"
-
-            blob_service_client = BlobServiceClient(
-                account_url=account_url, credential=credential
-            )
-            container_name = "haste-binaries"
-
-            # Create blob client
-            blob_client = blob_service_client.get_blob_client(
-                container=container_name, blob=blob_name
-            )
+            container_client = self._get_container_client()
+            blob_client = container_client.get_blob_client(blob_name)
 
             # Upload file
             with open(file_path, "rb") as data:
                 blob_client.upload_blob(data, overwrite=True)
 
             # Return the public URL
-            blob_url = f"https://researchlabwuopendata.blob.core.windows.net/{container_name}/{blob_name}"
+            blob_url = f"{ACCOUNT_URL}/{CONTAINER_NAME}/{blob_name}"
             print(
                 f"Successfully uploaded {blob_name} to blob storage: {blob_url}"
             )
@@ -66,18 +97,72 @@ class CustomBuildHook(BuildHookInterface):
             print("Falling back to local file copy...")
             return None
 
+    def _write_version_file(self, version_str: str) -> None:
+        """Persist the resolved version to __about__.py so that source/Docker
+        installs (which build from this tree) report the published version."""
+        version_file_path = os.path.join(
+            self.root, "src", "hastegeo", "__about__.py"
+        )
+        with open(version_file_path, "r") as version_file:
+            lines = version_file.readlines()
+        for i, line in enumerate(lines):
+            if line.startswith("__version__"):
+                lines[i] = f'__version__ = "{version_str}"\n'
+                break
+        with open(version_file_path, "w") as version_file:
+            version_file.writelines(lines)
+        print(f"Wrote version {version_str} to {version_file_path}")
+
     def initialize(self, version, build_data):
         """Pre build activities"""
         if version == "editable":
             print("Editable build detected. Skipping version bump.")
             return
-        major, minor, patch = map(int, self.metadata.version.split("."))
         if os.getenv("HASTE_SKIP_VERSION_BUMP"):
             print("HASTE_SKIP_VERSION_BUMP set, skipping auto-increment.")
             return
-        new_version_number = f"{major}.{minor}.{patch + 1}"
-        self.metadata._version = new_version_number
-        print(f"Bumped package version to: {self.metadata.version}")
+
+        # Explicit version override always wins, e.g. HASTE_SET_VERSION=2.0.0
+        explicit = os.getenv("HASTE_SET_VERSION")
+        if explicit:
+            self.metadata._version = explicit.strip()
+            self._write_version_file(self.metadata.version)
+            print(
+                f"Set package version to: {self.metadata.version} "
+                "(HASTE_SET_VERSION)"
+            )
+            return
+
+        # Base the next version on the highest version already published to
+        # blob storage so we never overwrite an existing wheel. Fall back to
+        # the local __about__.py version if the listing is unavailable.
+        base = self.get_latest_published_version()
+        if base is None:
+            base = tuple(map(int, self.metadata.version.split(".")))
+            print(f"Falling back to local version: {'.'.join(map(str, base))}")
+        major, minor, patch = base
+
+        bump = os.getenv("HASTE_BUMP", "patch").strip().lower()
+        if bump == "major":
+            new_version = (major + 1, 0, 0)
+        elif bump == "minor":
+            new_version = (major, minor + 1, 0)
+        elif bump == "patch":
+            new_version = (major, minor, patch + 1)
+        else:
+            raise ValueError(
+                f"Invalid HASTE_BUMP value: {bump!r} "
+                "(expected 'major', 'minor', or 'patch')"
+            )
+
+        self.metadata._version = ".".join(map(str, new_version))
+        # Persist before the wheel is assembled so the bundled __about__.py
+        # matches the wheel metadata and any source/Docker install agrees.
+        self._write_version_file(self.metadata.version)
+        print(
+            f"Bumped package version to: {self.metadata.version} "
+            f"(bump={bump})"
+        )
 
     def finalize(self, version, build_data, artifact):
         """Perform actions after the build process."""
@@ -90,19 +175,9 @@ class CustomBuildHook(BuildHookInterface):
                 "requirements rewrite."
             )
             return
-        version_file_path = os.path.join(
-            self.root, "src", "hastegeo", "__about__.py"
-        )
-        with open(version_file_path, "r") as version_file:
-            lines = version_file.readlines()
-            for i, line in enumerate(lines):
-                if line.startswith("__version__"):
-                    lines[i] = f'__version__ = "{self.metadata.version}"\n'
-                    break
-        with open(version_file_path, "w") as version_file:
-            version_file.writelines(lines)
 
-        print(f"Updated version file at {version_file_path}")
+        # __about__.py was already updated to the resolved version in
+        # initialize() (before the wheel was assembled), so nothing to do here.
 
         build_dir = "dist"
         wheel_file = None
