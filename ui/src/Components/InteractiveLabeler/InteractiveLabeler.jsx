@@ -1197,7 +1197,10 @@ const InteractiveLabeler = () => {
         true
       );
       // Wire the native swipe control: the divider reveals `secondary`
-      // (pre-event / satellite) over the primary labeler map.
+      // (pre-event / satellite) over the primary labeler map. atlas.SwipeMap
+      // keeps BOTH cameras in sync on every 'move' internally, so we must NOT
+      // add our own camera-sync handler (doing so double-updates the cameras
+      // and makes panning jump/stutter).
       try {
         swipeRef.current = new window.atlas.SwipeMap(primary, secondary);
       } catch (e) {
@@ -1205,25 +1208,7 @@ const InteractiveLabeler = () => {
       }
     });
 
-    // Camera-sync fallback: atlas.SwipeMap already syncs both maps on 'move',
-    // but guard against any build where it doesn't by copying the camera on
-    // the primary's 'moveend'.
-    const syncSecondary = () => {
-      const sec = swipeSecondaryMapRef.current;
-      if (!sec) return;
-      const c = primary.getCamera();
-      sec.setCamera({
-        center: c.center,
-        zoom: c.zoom,
-        bearing: c.bearing,
-        pitch: c.pitch,
-        type: "jump",
-      });
-    };
-    primary.events.add("moveend", syncSecondary);
-
     return () => {
-      primary.events.remove("moveend", syncSecondary);
       // Tear down the swipe control first — its dispose() removes the divider
       // handle it appended to the primary container — then dispose the
       // secondary map and reset the container so the primary labeler map and
@@ -1542,18 +1527,18 @@ const InteractiveLabeler = () => {
         </ActionButton>
       </div>
 
-      {/* Map area: the primary labeler map plus an absolutely-positioned
-          overlay that hosts the Advanced → Swipe secondary map. The overlay
-          covers the exact map footprint (inset:0 of this relative wrapper) so
-          atlas.SwipeMap's clip/divider line up with the primary map. It stays
-          display:none until the swipe toggle is on. */}
-      <div
-        style={{ position: "relative", flexGrow: 1, display: "flex" }}
-      >
+      {/* Map area: the primary labeler map plus an overlay that hosts the
+          Advanced → Swipe secondary map. Both map divs are absolutely
+          positioned and fill this relative wrapper exactly (the same layout
+          the Visualizer's swipe uses — see Visualizer.jsx + visualizer.css
+          `.map`), so atlas.SwipeMap's clip/divider on the secondary line up
+          with the primary underneath. The overlay stays display:none until the
+          swipe toggle is on. */}
+      <div style={{ position: "relative", flexGrow: 1 }}>
         <div
           ref={mapContainerRef}
           id="interactiveLabelerMap"
-          style={{ flexGrow: 1 }}
+          style={{ position: "absolute", inset: 0 }}
         />
         <div
           ref={swipeMapContainerRef}
