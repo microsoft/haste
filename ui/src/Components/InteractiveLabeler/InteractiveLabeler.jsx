@@ -26,6 +26,8 @@ import {
   DefaultButton,
   PrimaryButton,
   ProgressIndicator,
+  Spinner,
+  SpinnerSize,
   Text,
   Toggle,
 } from "@fluentui/react";
@@ -43,6 +45,7 @@ import {
   CLASS_DAMAGED,
   CLASS_INTACT,
   OvRLogisticRegression,
+  crossValidateMetrics,
   holdoutMetricsDamaged,
   isValidVector,
 } from "./interactiveModel.js";
@@ -103,6 +106,8 @@ async function fetchArtifactBuffer(url) {
 
 // Class colors (match index.html). Index = class number.
 const CLASS_COLORS = ["#107C10", "#C50F1F", "#5B5FC7"]; // intact, damaged, cloudy
+// Human-readable class names, indexed by class number (parallel to CLASS_COLORS).
+const CLASS_LABELS = ["Intact", "Damaged", "Cloudy"];
 const UNLABELED_COLOR = "#BDBDBD";
 
 // In-browser class -> validation-report vocabulary (Damaged/NotDamaged/Unknown).
@@ -231,6 +236,18 @@ async function fetchFeaturesSidecar(url) {
   return { matrix, n, d };
 }
 
+// Format a { mean, std } CV-metric block for the Advanced results table.
+// asPercent=true renders precision/recall as "92 ± 3%"; otherwise (AUC) as
+// two-decimal "0.92 ± 0.03". Returns an em-dash when the metric is undefined
+// (mean == null, e.g. no fold produced a defined value).
+function fmtMetric(m, asPercent) {
+  if (!m || m.mean == null) return "—";
+  if (asPercent) {
+    return `${(m.mean * 100).toFixed(0)} ± ${(m.std * 100).toFixed(0)}%`;
+  }
+  return `${m.mean.toFixed(2)} ± ${m.std.toFixed(2)}`;
+}
+
 const InteractiveLabeler = () => {
   const { projectId, imageLayerId, modelId } = useParams();
   const navigate = useNavigate();
@@ -279,6 +296,16 @@ const InteractiveLabeler = () => {
   const labelsDirtyRef = useRef(true);
   const fullPredictAbortRef = useRef({ cancelled: false });
 
+  // Advanced → Swipe view. The existing labeler map (mapRef.current) is the
+  // primary; swipeSecondaryMapRef holds a satellite map overlaid exactly on
+  // top of it, and swipeRef holds the atlas.SwipeMap that draws the divider.
+  // layerImageryRef caches the layer's imagery URLs (resolved in createMap) so
+  // the swipe effect can load the pre-event tiles onto the secondary map.
+  const swipeMapContainerRef = useRef(null);
+  const swipeSecondaryMapRef = useRef(null);
+  const swipeRef = useRef(null);
+  const layerImageryRef = useRef(null);
+
   const [isMapReady, setIsMapReady] = useState(false);
   const [selectedClass, setSelectedClass] = useState(CLASS_DAMAGED);
   const [viewMode, setViewMode] = useState("label"); // "label" | "predict"
@@ -292,6 +319,11 @@ const InteractiveLabeler = () => {
   // Progress state for the "Predict all buildings" full-coverage pass.
   const [fullPredict, setFullPredict] = useState(null);
   const [backend, setBackend] = useState(null);
+  // Advanced section: expand/collapse, 5-fold CV result + busy flag, swipe view.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [cvResult, setCvResult] = useState(null);
+  const [cvRunning, setCvRunning] = useState(false);
+  const [swipeOn, setSwipeOn] = useState(false);
 
   // selectedClass / viewMode are read by long-lived map event handlers.
   const selectedClassRef = useRef(selectedClass);
@@ -352,6 +384,10 @@ const InteractiveLabeler = () => {
     } catch {
       // Imagery is optional — labeling works without it.
     }
+    // Cache the imagery URLs for the Advanced → Swipe view, which loads the
+    // pre-event tiles onto its secondary map (falls back to satellite when
+    // the layer has no pre-event imagery).
+    layerImageryRef.current = layerData?.imagery || null;
 
     // Resolve the model's PMTiles URL. Models are returned by
     // GetLayerModelsDetails; pick ours by modelId. The pmtilesUrl is
@@ -1069,6 +1105,154 @@ const InteractiveLabeler = () => {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // ── Advanced → 5-fold cross-validation ────────────────────────────────────
+  // Runs stratified k-fold CV over the current labels via the pure
+  // crossValidateMetrics helper. The crunch is synchronous CPU work (a few
+  // hundred ms for large label sets), so we flip cvRunning first and yield to
+  // the event loop with a 0ms timeout, letting the disabled/spinner state paint
+  // before the main thread blocks.
+  async function handleRunCV() {
+    const entries = Object.values(labeledMapRef.current).filter((e) =>
+      isValidVector(e.features)
+    );
+    if (entries.length === 0) {
+      setCvResult({ ok: false, reason: "Label some buildings first." });
+      return;
+    }
+    setCvRunning(true);
+    setCvResult(null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    try {
+      setCvResult(crossValidateMetrics(entries, { k: 5 }));
+    } catch (e) {
+      console.error("Cross-validation failed:", e);
+      setCvResult({
+        ok: false,
+        reason: `Cross-validation failed: ${e?.message || e}`,
+      });
+    } finally {
+      setCvRunning(false);
+    }
+  }
+
+  // ── Advanced → Swipe view (pre-event imagery reveal) ──────────────────────
+  // Mirrors the Visualizer's swipe pattern (Visualizer.jsx:140-155, 315-345)
+  // using the global atlas.SwipeMap loaded from
+  // /assets/js/azure-maps-swipe-map.min.js in index.html — NOT an npm import.
+  //
+  // The existing labeler map (mapRef.current) is the PRIMARY. We create a
+  // SECONDARY satellite map in an absolutely-positioned overlay that covers the
+  // exact map footprint, then hand both maps to atlas.SwipeMap. SwipeMap draws
+  // the draggable divider (appended into the primary container), clips the
+  // secondary to the revealed side, and keeps the two cameras in sync on every
+  // 'move'. The secondary loads the layer's pre-event imagery; loadImagery("")
+  // falls back to Azure's microsoft.imagery satellite tiles when the layer has
+  // no pre-event imagery (and the secondary's base style is "satellite" too),
+  // satisfying the "satellite basemap if no pre-event imagery" requirement.
+  useEffect(() => {
+    if (!isMapReady || !swipeOn) return undefined;
+    const primary = mapRef.current;
+    const container = swipeMapContainerRef.current;
+    if (!primary || !container || !window.atlas || !window.atlas.SwipeMap) {
+      return undefined;
+    }
+
+    // Seed the secondary with the primary's current camera so the two start
+    // aligned before SwipeMap takes over camera synchronization.
+    const cam = primary.getCamera();
+    const secondary = new window.atlas.Map(container, {
+      center: cam.center,
+      zoom: cam.zoom,
+      bearing: cam.bearing || 0,
+      pitch: cam.pitch || 0,
+      maxPitch: 0,
+      // Match the primary labeler map's style handling: "satellite" shows the
+      // Azure aerial basemap in real deployments, while local docker dev (no
+      // Azure Maps subscription) uses "blank" so the map control still fires
+      // "ready" without a valid token. The pre-event TileLayer is added on top
+      // in either case; with no pre-event imagery, loadImagery("") falls back
+      // to the Azure satellite tileset (which renders once a real token exists).
+      style: isAzureMapsPlaceholder ? "blank" : "satellite",
+      language: "en-US",
+      authOptions: getAzureMapsAuthOptions(),
+    });
+    swipeSecondaryMapRef.current = secondary;
+
+    secondary.events.add("ready", () => {
+      // Match the primary map's interaction constraints (no rotate / pitch).
+      secondary.setUserInteraction({
+        dragRotateInteraction: false,
+        scrollZoomInteraction: true,
+        pinchZoomInteraction: true,
+        pinchRotateInteraction: false,
+      });
+      // Pre-event imagery on the revealed side. loadImagery falls back to the
+      // Azure satellite tileset when the tile URL is "" (no pre-event imagery).
+      const preUrl = layerImageryRef.current?.preEventTileUrl || "";
+      loadImagery(
+        toBrowserTitilerUrl(preUrl),
+        secondary,
+        { current: null },
+        "swipePreEventLayer",
+        true
+      );
+      // Wire the native swipe control: the divider reveals `secondary`
+      // (pre-event / satellite) over the primary labeler map.
+      try {
+        swipeRef.current = new window.atlas.SwipeMap(primary, secondary);
+      } catch (e) {
+        console.warn("atlas.SwipeMap init failed:", e);
+      }
+    });
+
+    // Camera-sync fallback: atlas.SwipeMap already syncs both maps on 'move',
+    // but guard against any build where it doesn't by copying the camera on
+    // the primary's 'moveend'.
+    const syncSecondary = () => {
+      const sec = swipeSecondaryMapRef.current;
+      if (!sec) return;
+      const c = primary.getCamera();
+      sec.setCamera({
+        center: c.center,
+        zoom: c.zoom,
+        bearing: c.bearing,
+        pitch: c.pitch,
+        type: "jump",
+      });
+    };
+    primary.events.add("moveend", syncSecondary);
+
+    return () => {
+      primary.events.remove("moveend", syncSecondary);
+      // Tear down the swipe control first — its dispose() removes the divider
+      // handle it appended to the primary container — then dispose the
+      // secondary map and reset the container so the primary labeler map and
+      // its footprint interactions are untouched.
+      if (swipeRef.current) {
+        try {
+          if (typeof swipeRef.current.dispose === "function") {
+            swipeRef.current.dispose();
+          }
+        } catch (e) {
+          console.warn("atlas.SwipeMap dispose failed:", e);
+        }
+        swipeRef.current = null;
+      }
+      if (swipeSecondaryMapRef.current) {
+        try {
+          swipeSecondaryMapRef.current.dispose();
+        } catch (e) {
+          console.warn("swipe secondary map dispose failed:", e);
+        }
+        swipeSecondaryMapRef.current = null;
+      }
+      // SwipeMap sets an inline `clip` on the secondary container; clear it and
+      // any leftover atlas DOM so the next toggle starts from a clean slate.
+      container.style.clip = "";
+      container.innerHTML = "";
+    };
+  }, [isMapReady, swipeOn]);
+
   // ── Save labels ───────────────────────────────────────────────────────────
   // Persists the manual labels to the model-scoped interactive-labeler store.
   // Predictions are persisted by the separate "Predict all buildings" flow
@@ -1358,11 +1542,29 @@ const InteractiveLabeler = () => {
         </ActionButton>
       </div>
 
+      {/* Map area: the primary labeler map plus an absolutely-positioned
+          overlay that hosts the Advanced → Swipe secondary map. The overlay
+          covers the exact map footprint (inset:0 of this relative wrapper) so
+          atlas.SwipeMap's clip/divider line up with the primary map. It stays
+          display:none until the swipe toggle is on. */}
       <div
-        ref={mapContainerRef}
-        id="interactiveLabelerMap"
-        style={{ flexGrow: 1 }}
-      />
+        style={{ position: "relative", flexGrow: 1, display: "flex" }}
+      >
+        <div
+          ref={mapContainerRef}
+          id="interactiveLabelerMap"
+          style={{ flexGrow: 1 }}
+        />
+        <div
+          ref={swipeMapContainerRef}
+          id="interactiveLabelerSwipeMap"
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: swipeOn ? "block" : "none",
+          }}
+        />
+      </div>
 
       {isMapReady && (
         <div
@@ -1490,6 +1692,140 @@ const InteractiveLabeler = () => {
             style={{ marginTop: 8, width: "100%", color: "#a4262c" }}
             title="Remove every label for this model — both in-session and in the saved store."
           />
+
+          {/* Advanced: expandable container for the 5-fold CV report and the
+              swipe (pre-event) comparison view. */}
+          <ActionButton
+            iconProps={{
+              iconName: advancedOpen ? "ChevronDown" : "ChevronRight",
+            }}
+            onClick={() => setAdvancedOpen((v) => !v)}
+            styles={{ root: { marginTop: 12, paddingLeft: 0, height: 28 } }}
+          >
+            Advanced
+          </ActionButton>
+
+          {advancedOpen && (
+            <div style={{ marginTop: 4 }}>
+              <DefaultButton
+                text={cvRunning ? "Running…" : "Run 5-fold CV"}
+                disabled={cvRunning || totalLabeled === 0}
+                onClick={handleRunCV}
+                style={{ width: "100%" }}
+                title="Stratified 5-fold cross-validation of the in-browser model over your current labels. Reports per-class precision, recall, and one-vs-rest AUC as mean ± stdev across folds."
+              />
+
+              {cvRunning && (
+                <div style={{ marginTop: 6 }}>
+                  <Spinner
+                    size={SpinnerSize.small}
+                    label="Cross-validating…"
+                    labelPosition="right"
+                  />
+                </div>
+              )}
+
+              {cvResult && !cvResult.ok && (
+                <div
+                  style={{ marginTop: 6, fontSize: 12, color: "#a4262c" }}
+                >
+                  {cvResult.reason}
+                </div>
+              )}
+
+              {cvResult && cvResult.ok && (
+                <div style={{ marginTop: 8, fontSize: 12, color: "#333" }}>
+                  <table
+                    style={{
+                      width: "100%",
+                      borderCollapse: "collapse",
+                      fontSize: 12,
+                    }}
+                  >
+                    <thead>
+                      <tr style={{ color: "#666" }}>
+                        <th style={{ textAlign: "left", padding: "2px 3px" }}>
+                          Class
+                        </th>
+                        <th style={{ textAlign: "right", padding: "2px 3px" }}>
+                          P
+                        </th>
+                        <th style={{ textAlign: "right", padding: "2px 3px" }}>
+                          R
+                        </th>
+                        <th style={{ textAlign: "right", padding: "2px 3px" }}>
+                          AUC
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cvResult.classes.map((c) => {
+                        const pc = cvResult.perClass[c];
+                        return (
+                          <tr key={c}>
+                            <td
+                              style={{
+                                padding: "2px 3px",
+                                color: CLASS_COLORS[c],
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {CLASS_LABELS[c] ?? `Class ${c}`}
+                            </td>
+                            <td
+                              style={{
+                                padding: "2px 3px",
+                                textAlign: "right",
+                              }}
+                            >
+                              {fmtMetric(pc.precision, true)}
+                            </td>
+                            <td
+                              style={{
+                                padding: "2px 3px",
+                                textAlign: "right",
+                              }}
+                            >
+                              {fmtMetric(pc.recall, true)}
+                            </td>
+                            <td
+                              style={{
+                                padding: "2px 3px",
+                                textAlign: "right",
+                              }}
+                            >
+                              {fmtMetric(pc.auc, false)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <div style={{ color: "#999", marginTop: 4 }}>
+                    k-fold={cvResult.k}
+                    {cvResult.k < cvResult.requestedK &&
+                      " (reduced — insufficient per-class samples)"}
+                    {" · "}mean ± stdev across folds
+                  </div>
+                </div>
+              )}
+
+              <Toggle
+                label="Swipe (pre-event)"
+                onText="On"
+                offText="Off"
+                checked={swipeOn}
+                onChange={(e, checked) => setSwipeOn(!!checked)}
+                style={{ marginTop: 12 }}
+              />
+              <div
+                style={{ fontSize: 11, color: "#999", marginTop: -4 }}
+              >
+                Drag the divider to reveal pre-event imagery (satellite basemap
+                when the layer has none).
+              </div>
+            </div>
+          )}
 
           <div style={{ marginTop: 12, fontSize: 11, color: "#999" }}>
             Click a building to label it · right-click to clear ·{" "}
