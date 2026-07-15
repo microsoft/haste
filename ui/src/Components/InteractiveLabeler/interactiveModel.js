@@ -386,7 +386,7 @@ function meanStd(vals) {
 // when the fold has no true positives, or AUC when the held-out fold is
 // single-class for that label) are skipped for that metric so one degenerate
 // fold does not drag the estimate toward 0.
-export function crossValidateMetrics(entries, { k = 5, opts } = {}) {
+export async function crossValidateMetrics(entries, { k = 5, opts } = {}) {
   const usable = (entries || []).filter((e) => isValidVector(e.features));
   const classes = [...new Set(usable.map((e) => e.label))].sort(
     (a, b) => a - b
@@ -480,6 +480,10 @@ export function crossValidateMetrics(entries, { k = 5, opts } = {}) {
         if (auc != null) aucVals[c].push(auc);
       }
     }
+    // Yield to the event loop between folds so a browser caller stays
+    // responsive (the map keeps repainting) instead of freezing for the whole
+    // CPU-bound cross-validation.
+    await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
   const perClass = {};

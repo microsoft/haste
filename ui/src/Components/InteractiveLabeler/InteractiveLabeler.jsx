@@ -1248,6 +1248,21 @@ const InteractiveLabeler = () => {
         // when the map container doesn't have focus.
         e.preventDefault();
         setShowFootprints((v) => !v);
+      } else if (
+        swipeRef.current &&
+        (e.key === "a" || e.key === "s" || e.key === "d")
+      ) {
+        // Snap the swipe divider: 'a' = full left, 's' = middle, 'd' = full
+        // right. sliderPosition is in pixels from the left of the map; the
+        // SwipeMap module clamps out-of-range values to [0, width].
+        const el = swipeMapContainerRef.current || mapContainerRef.current;
+        const w = el ? el.getBoundingClientRect().width : 0;
+        const pos = e.key === "a" ? 0 : e.key === "s" ? w / 2 : w;
+        try {
+          swipeRef.current.setOptions({ sliderPosition: pos });
+        } catch (err) {
+          console.warn("swipe setOptions (sliderPosition) failed:", err);
+        }
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -1255,11 +1270,10 @@ const InteractiveLabeler = () => {
   }, []);
 
   // ── Advanced → 5-fold cross-validation ────────────────────────────────────
-  // Runs stratified k-fold CV over the current labels via the pure
-  // crossValidateMetrics helper. The crunch is synchronous CPU work (a few
-  // hundred ms for large label sets), so we flip cvRunning first and yield to
-  // the event loop with a 0ms timeout, letting the disabled/spinner state paint
-  // before the main thread blocks.
+  // Runs stratified k-fold CV over the current labels via crossValidateMetrics.
+  // It's CPU-bound, so crossValidateMetrics is async and yields between folds —
+  // this keeps the main thread free enough that the map keeps rendering instead
+  // of blanking out while the CV runs.
   async function handleRunCV() {
     const entries = Object.values(labeledMapRef.current).filter((e) =>
       isValidVector(e.features)
@@ -1272,7 +1286,7 @@ const InteractiveLabeler = () => {
     setCvResult(null);
     await new Promise((resolve) => setTimeout(resolve, 0));
     try {
-      setCvResult(crossValidateMetrics(entries, { k: 5 }));
+      setCvResult(await crossValidateMetrics(entries, { k: 5 }));
     } catch (e) {
       console.error("Cross-validation failed:", e);
       setCvResult({
@@ -1825,6 +1839,79 @@ const InteractiveLabeler = () => {
             </div>
           </>
         )}
+
+        {/* Legend, bottom-right of the map. Shows the class colors normally
+            (Intact / Damaged / Cloudy), or the uncertainty ramp when the
+            uncertainty view is on. Hidden when footprints are hidden. */}
+        {isMapReady && showFootprints && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 10,
+              right: 10,
+              zIndex: 900,
+              background: "rgba(255,255,255,0.95)",
+              padding: "8px 10px",
+              borderRadius: 6,
+              boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
+              fontSize: 11,
+              color: "#333",
+              lineHeight: 1.5,
+              pointerEvents: "none",
+            }}
+          >
+            {uncertaintyOn ? (
+              <>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  Model uncertainty
+                </div>
+                <div
+                  style={{
+                    width: 130,
+                    height: 10,
+                    borderRadius: 3,
+                    background: UNCERTAINTY_LEGEND_GRADIENT,
+                  }}
+                />
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    fontSize: 10,
+                    color: "#999",
+                    marginTop: 2,
+                  }}
+                >
+                  <span>Low (confident)</span>
+                  <span>High</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  {viewMode === "predict" ? "Predicted" : "Labels"}
+                </div>
+                {CLASS_LABELS.map((name, i) => (
+                  <div
+                    key={name}
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <span
+                      style={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: 2,
+                        background: CLASS_COLORS[i],
+                        border: "1px solid rgba(0,0,0,0.25)",
+                      }}
+                    />
+                    <span>{name}</span>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {isMapReady && (
@@ -2103,35 +2190,8 @@ const InteractiveLabeler = () => {
               <div style={{ fontSize: 11, color: "#999", marginTop: -4 }}>
                 Recolors every scored footprint by the model&apos;s predictive
                 uncertainty. Needs {MIN_PER_CLASS}+ labels in at least 2 classes.
+                A legend appears on the map.
               </div>
-              {uncertaintyOn && (
-                <div style={{ marginTop: 8 }}>
-                  <div
-                    style={{ fontSize: 11, color: "#666", marginBottom: 3 }}
-                  >
-                    Model uncertainty
-                  </div>
-                  <div
-                    style={{
-                      height: 10,
-                      borderRadius: 3,
-                      background: UNCERTAINTY_LEGEND_GRADIENT,
-                    }}
-                  />
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      fontSize: 10,
-                      color: "#999",
-                      marginTop: 2,
-                    }}
-                  >
-                    <span>Low (confident)</span>
-                    <span>High</span>
-                  </div>
-                </div>
-              )}
             </div>
           )}
           </div>
@@ -2148,7 +2208,8 @@ const InteractiveLabeler = () => {
             Click a building to label it · right-click to clear ·{" "}
             <kbd>Ctrl</kbd>+drag to box-label · <kbd>1</kbd>/<kbd>2</kbd>/
             <kbd>3</kbd> set class · <kbd>P</kbd> toggle view ·{" "}
-            <kbd>Space</kbd> show/hide footprints
+            <kbd>Space</kbd> show/hide footprints · with swipe on,{" "}
+            <kbd>A</kbd>/<kbd>S</kbd>/<kbd>D</kbd> snap divider left/center/right
           </div>
         </div>
       )}
