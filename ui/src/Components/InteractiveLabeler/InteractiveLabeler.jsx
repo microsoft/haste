@@ -26,6 +26,7 @@ import {
   DefaultButton,
   PrimaryButton,
   ProgressIndicator,
+  Separator,
   Spinner,
   SpinnerSize,
   Text,
@@ -182,6 +183,53 @@ function fillOpacityExpr(stateKey) {
   ];
 }
 
+// ── Uncertainty view ────────────────────────────────────────────────────────
+// Colors every scored building by the model's predictive uncertainty (0 =
+// confident, 1 = maximally uncertain). Stops match UNCERTAINTY_LEGEND_GRADIENT
+// used by the panel legend. The driver reads the "unc" feature-state; buildings
+// without a computed value coalesce to 0 (and are hidden by the opacity expr).
+const UNCERTAINTY_STOPS = [
+  [0, "#2c7bb6"],
+  [0.25, "#abd9e9"],
+  [0.5, "#ffffbf"],
+  [0.75, "#fdae61"],
+  [1, "#d7191c"],
+];
+const UNCERTAINTY_LEGEND_GRADIENT =
+  "linear-gradient(to right, #2c7bb6, #abd9e9, #ffffbf, #fdae61, #d7191c)";
+const UNCERTAINTY_FILL_OPACITY = 0.6;
+
+function fillColorExprUncertainty() {
+  return [
+    "interpolate",
+    ["linear"],
+    ["coalesce", ["feature-state", "unc"], 0],
+    ...UNCERTAINTY_STOPS.flat(),
+  ];
+}
+
+// Only buildings with a computed "unc" value are painted; the rest stay
+// transparent (coalesce sentinel -1 marks "no value").
+function fillOpacityExprUncertainty() {
+  return [
+    "case",
+    ["==", ["coalesce", ["feature-state", "unc"], -1], -1], 0,
+    UNCERTAINTY_FILL_OPACITY,
+  ];
+}
+
+// Normalized Shannon entropy of a probability vector, in [0, 1] (0 = a single
+// class has all the mass, 1 = uniform across k classes). Used as the per-
+// building uncertainty score for the uncertainty view.
+function normalizedEntropy(probs) {
+  const k = probs.length;
+  if (k <= 1) return 0;
+  let h = 0;
+  for (const p of probs) if (p > 0) h -= p * Math.log(p);
+  const norm = h / Math.log(k);
+  return Math.max(0, Math.min(1, norm));
+}
+
 // Binary HFTR sidecar:
 //   bytes  0-3  : magic "HFTR"
 //   bytes  4-7  : u32 LE  version (currently 1)
@@ -296,15 +344,21 @@ const InteractiveLabeler = () => {
   const labelsDirtyRef = useRef(true);
   const fullPredictAbortRef = useRef({ cancelled: false });
 
-  // Advanced → Swipe view. The existing labeler map (mapRef.current) is the
-  // primary; swipeSecondaryMapRef holds a satellite map overlaid exactly on
-  // top of it, and swipeRef holds the atlas.SwipeMap that draws the divider.
-  // layerImageryRef caches the layer's imagery URLs (resolved in createMap) so
-  // the swipe effect can load the pre-event tiles onto the secondary map.
+  // Advanced → Swipe view. atlas.SwipeMap always reveals its SECONDARY map on
+  // the RIGHT of the divider and shows its PRIMARY on the LEFT, so to land PRE
+  // imagery on the left / POST imagery on the right we make the labeler map
+  // (mapRef.current: post-event imagery + footprints + interaction) the
+  // SECONDARY and a freshly-built pre-event map the PRIMARY. swipePreMapRef
+  // holds that new pre-event map (created in swipeMapContainerRef), swipeRef
+  // holds the atlas.SwipeMap that draws the divider, layerImageryRef caches the
+  // layer's imagery URLs (resolved in createMap), and swipePmtilesUrlRef caches
+  // the PMTiles archive URL so the pre map can draw the same building
+  // footprints from the same source.
   const swipeMapContainerRef = useRef(null);
-  const swipeSecondaryMapRef = useRef(null);
+  const swipePreMapRef = useRef(null);
   const swipeRef = useRef(null);
   const layerImageryRef = useRef(null);
+  const swipePmtilesUrlRef = useRef(null);
 
   const [isMapReady, setIsMapReady] = useState(false);
   const [selectedClass, setSelectedClass] = useState(CLASS_DAMAGED);
@@ -324,6 +378,9 @@ const InteractiveLabeler = () => {
   const [cvResult, setCvResult] = useState(null);
   const [cvRunning, setCvRunning] = useState(false);
   const [swipeOn, setSwipeOn] = useState(false);
+  // Advanced → Uncertainty view: recolor every scored footprint by the model's
+  // predictive uncertainty (with a legend).
+  const [uncertaintyOn, setUncertaintyOn] = useState(false);
 
   // selectedClass / viewMode are read by long-lived map event handlers.
   const selectedClassRef = useRef(selectedClass);
@@ -334,6 +391,12 @@ const InteractiveLabeler = () => {
   useEffect(() => {
     viewModeRef.current = viewMode;
   }, [viewMode]);
+  // Read by long-lived map handlers (hydrateViewport) to decide whether to
+  // compute per-building uncertainty on each viewport settle.
+  const uncertaintyOnRef = useRef(uncertaintyOn);
+  useEffect(() => {
+    uncertaintyOnRef.current = uncertaintyOn;
+  }, [uncertaintyOn]);
 
   // Detect the compute backend up-front so the panel shows WebGPU vs CPU.
   useEffect(() => {
@@ -548,6 +611,11 @@ const InteractiveLabeler = () => {
       // then overzooms tiles at z>maxZoom automatically. Setting
       // maxSourceZoom explicitly capped at 14 makes Atlas treat z>14 as
       // "source has no data" and stop rendering past that zoom.
+      // Cache the PMTiles archive URL so the Advanced → Swipe pre map can draw
+      // the same building footprints from the same source (see the swipe
+      // effect below). Must match this source's `pmtiles://<url>` exactly so
+      // both maps route through the same in-memory pmtiles handle.
+      swipePmtilesUrlRef.current = browserPmtilesUrl;
       const source = new window.atlas.source.VectorTileSource("buildings", {
         type: "vector",
         url: `pmtiles://${browserPmtilesUrl}`,
@@ -769,6 +837,65 @@ const InteractiveLabeler = () => {
     if (viewModeRef.current === "predict") {
       maybeTrainAndPredict(features);
     }
+
+    // Uncertainty view — recolor the on-screen buildings by model uncertainty.
+    if (uncertaintyOnRef.current) {
+      computeUncertaintyForViewport(features);
+    }
+  }
+
+  // Train (or reuse the cached model) and paint per-building uncertainty as the
+  // "unc" feature-state for every building currently in the viewport. Shares
+  // trainedModelRef with the predict path; returns silently (with a status
+  // hint) when there aren't enough labels to train.
+  function computeUncertaintyForViewport(features) {
+    const entries = Object.values(labeledMapRef.current).filter((e) =>
+      isValidVector(e.features)
+    );
+    const perClass = {};
+    entries.forEach((e) => (perClass[e.label] = (perClass[e.label] || 0) + 1));
+    const classesReady = Object.values(perClass).filter(
+      (n) => n >= MIN_PER_CLASS
+    ).length;
+    if (classesReady < 2) {
+      setStatus(
+        `Need ${MIN_PER_CLASS}+ labels in at least 2 classes for uncertainty.`
+      );
+      return;
+    }
+    // Reuse the cached model unless the label set changed since it was trained.
+    if (labelsDirtyRef.current || !trainedModelRef.current) {
+      const ovr = new OvRLogisticRegression({
+        learningRate: 0.1,
+        numSteps: 500,
+        lambda: 0.01,
+      });
+      ovr.train(
+        entries.map((e) => e.features),
+        entries.map((e) => e.label)
+      );
+      trainedModelRef.current = ovr;
+      labelsDirtyRef.current = false;
+    }
+    const model = trainedModelRef.current;
+
+    const ids = [];
+    const matrix = [];
+    const sources = [];
+    for (const f of features) {
+      if (f.id == null) continue;
+      const vec = lookupFeatureVector(f.id);
+      if (!isValidVector(vec)) continue;
+      ids.push(f.id);
+      matrix.push(vec);
+      sources.push(f.source);
+    }
+    if (matrix.length === 0) return;
+    const probs = model.predictProba(matrix);
+    for (let i = 0; i < ids.length; i++) {
+      const unc = normalizedEntropy(Object.values(probs[i]));
+      setFeatureStateUnc(sources[i], ids[i], unc);
+    }
   }
 
   // ── feature-state helpers (drive renderer paint) ──────────────────────────
@@ -796,6 +923,19 @@ const InteractiveLabeler = () => {
       mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
     } catch (err) {
       console.warn("setFeatureState (pred) failed:", err);
+    }
+  }
+  function setFeatureStateUnc(sourceId, id, unc) {
+    const gl = glMapRef.current;
+    if (!gl) return;
+    try {
+      gl.setFeatureState(
+        { source: sourceId, sourceLayer: PMTILES_SOURCE_LAYER, id },
+        { unc }
+      );
+      mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
+    } catch (err) {
+      console.warn("setFeatureState (unc) failed:", err);
     }
   }
   function clearFeatureStateLabel(sourceId, id) {
@@ -827,12 +967,21 @@ const InteractiveLabeler = () => {
     if (!map) return;
     const fill = map.layers.getLayerById?.("embeddingFill");
     if (!fill) return;
-    fill.setOptions({
-      fillColor: fillColorExpr(viewMode === "predict" ? "pred" : "label"),
-      fillOpacity: fillOpacityExpr(viewMode === "predict" ? "pred" : "label"),
-    });
-    if (viewMode === "predict") hydrateViewport(map);
-  }, [viewMode, isMapReady]);
+    if (uncertaintyOn) {
+      // Uncertainty view overrides the label/predict coloring entirely.
+      fill.setOptions({
+        fillColor: fillColorExprUncertainty(),
+        fillOpacity: fillOpacityExprUncertainty(),
+      });
+      hydrateViewport(map);
+    } else {
+      fill.setOptions({
+        fillColor: fillColorExpr(viewMode === "predict" ? "pred" : "label"),
+        fillOpacity: fillOpacityExpr(viewMode === "predict" ? "pred" : "label"),
+      });
+      if (viewMode === "predict") hydrateViewport(map);
+    }
+  }, [viewMode, uncertaintyOn, isMapReady]);
 
   // Show / hide the buildings layers without unmounting them. Driven by
   // the panel toggle + spacebar hotkey; the feature-state and the cached
@@ -1136,73 +1285,126 @@ const InteractiveLabeler = () => {
   }
 
   // ── Advanced → Swipe view (pre-event imagery reveal) ──────────────────────
-  // Mirrors the Visualizer's swipe pattern (Visualizer.jsx:140-155, 315-345)
+  // Mirrors the Visualizer's swipe pattern (Visualizer.jsx:140-155, 466-467)
   // using the global atlas.SwipeMap loaded from
   // /assets/js/azure-maps-swipe-map.min.js in index.html — NOT an npm import.
   //
-  // The existing labeler map (mapRef.current) is the PRIMARY. We create a
-  // SECONDARY satellite map in an absolutely-positioned overlay that covers the
-  // exact map footprint, then hand both maps to atlas.SwipeMap. SwipeMap draws
-  // the draggable divider (appended into the primary container), clips the
-  // secondary to the revealed side, and keeps the two cameras in sync on every
-  // 'move'. The secondary loads the layer's pre-event imagery; loadImagery("")
-  // falls back to Azure's microsoft.imagery satellite tiles when the layer has
-  // no pre-event imagery (and the secondary's base style is "satellite" too),
-  // satisfying the "satellite basemap if no pre-event imagery" requirement.
+  // atlas.SwipeMap always clips its SECONDARY map to reveal it on the RIGHT of
+  // the divider and shows its PRIMARY on the LEFT, and syncs both cameras on
+  // every 'move'. To land PRE imagery on the left / POST imagery on the right
+  // we therefore wire:
+  //   • PRIMARY   = a freshly-built PRE-event map (created in
+  //                 swipeMapContainerRef, the FIRST/behind map div), and
+  //   • SECONDARY = the existing labeler map (mapRef.current: post-event
+  //                 imagery + building footprints + click/label interaction),
+  //                 which sits in the SECOND/on-top map div so its clipped
+  //                 right half reveals the pre map underneath on the left.
+  // The labeler map is ADOPTED as the secondary — SwipeMap only adds 'move' +
+  // 'resize' handlers and clips its container, so an already-"ready" map
+  // adopts cleanly and its own click/label/hydrate handlers are untouched. On
+  // teardown we dispose ONLY the swipe control + the new pre map and clear the
+  // clip SwipeMap left on the labeler's container; the labeler map itself is
+  // never disposed here, so toggling swipe off/on repeatedly leaves the
+  // labeler and its footprint interactions fully intact.
   useEffect(() => {
     if (!isMapReady || !swipeOn) return undefined;
-    const primary = mapRef.current;
+    const labelerMap = mapRef.current;
     const container = swipeMapContainerRef.current;
-    if (!primary || !container || !window.atlas || !window.atlas.SwipeMap) {
+    // Capture the labeler map's container node up front so the cleanup below
+    // does not read a ref (mapContainerRef.current) that may have changed by
+    // teardown — the node is stable for this effect's lifetime.
+    const labelerContainer = mapContainerRef.current;
+    if (!labelerMap || !container || !window.atlas || !window.atlas.SwipeMap) {
       return undefined;
     }
 
-    // Seed the secondary with the primary's current camera so the two start
+    // Seed the new pre map with the labeler's current camera so the two start
     // aligned before SwipeMap takes over camera synchronization.
-    const cam = primary.getCamera();
-    const secondary = new window.atlas.Map(container, {
+    const cam = labelerMap.getCamera();
+    const preMap = new window.atlas.Map(container, {
       center: cam.center,
       zoom: cam.zoom,
       bearing: cam.bearing || 0,
       pitch: cam.pitch || 0,
       maxPitch: 0,
-      // Match the primary labeler map's style handling: "satellite" shows the
-      // Azure aerial basemap in real deployments, while local docker dev (no
-      // Azure Maps subscription) uses "blank" so the map control still fires
-      // "ready" without a valid token. The pre-event TileLayer is added on top
-      // in either case; with no pre-event imagery, loadImagery("") falls back
-      // to the Azure satellite tileset (which renders once a real token exists).
+      // Match the labeler map's style handling: "satellite" shows the Azure
+      // aerial basemap in real deployments, while local docker dev (no Azure
+      // Maps subscription) uses "blank" so the map control still fires "ready"
+      // without a valid token. The pre-event TileLayer is added on top in
+      // either case; with no pre-event imagery, loadImagery("") falls back to
+      // the Azure satellite tileset (which renders once a real token exists).
       style: isAzureMapsPlaceholder ? "blank" : "satellite",
       language: "en-US",
       authOptions: getAzureMapsAuthOptions(),
     });
-    swipeSecondaryMapRef.current = secondary;
+    swipePreMapRef.current = preMap;
 
-    secondary.events.add("ready", () => {
-      // Match the primary map's interaction constraints (no rotate / pitch).
-      secondary.setUserInteraction({
+    preMap.events.add("ready", () => {
+      // Match the labeler map's interaction constraints (no rotate / pitch).
+      preMap.setUserInteraction({
         dragRotateInteraction: false,
         scrollZoomInteraction: true,
         pinchZoomInteraction: true,
         pinchRotateInteraction: false,
       });
-      // Pre-event imagery on the revealed side. loadImagery falls back to the
-      // Azure satellite tileset when the tile URL is "" (no pre-event imagery).
+      // Pre-event imagery on the LEFT (primary) pane. loadImagery falls back to
+      // the Azure satellite tileset when the tile URL is "" (no pre-event
+      // imagery).
       const preUrl = layerImageryRef.current?.preEventTileUrl || "";
       loadImagery(
         toBrowserTitilerUrl(preUrl),
-        secondary,
+        preMap,
         { current: null },
         "swipePreEventLayer",
         true
       );
-      // Wire the native swipe control: the divider reveals `secondary`
-      // (pre-event / satellite) over the primary labeler map. atlas.SwipeMap
-      // keeps BOTH cameras in sync on every 'move' internally, so we must NOT
-      // add our own camera-sync handler (doing so double-updates the cameras
-      // and makes panning jump/stutter).
+
+      // Draw the building footprints on the pre map too, from the SAME PMTiles
+      // archive + styling helpers the labeler uses, so outlines (and the
+      // unlabeled fill) span BOTH panes continuously — SwipeMap clips an entire
+      // map, so a single footprint layer can only appear on one side.
+      //
+      // NOTE: per-building label colors are driven by feature-state on the
+      // labeler's internal GL map (glMapRef), which this pre map does not have,
+      // so footprints render here in the UNLABELED color while still showing
+      // outlines. Per-building label colors currently render on the
+      // post/interactive (right) pane only; mirroring feature-state across the
+      // two GL maps would be a follow-up.
+      if (swipePmtilesUrlRef.current) {
+        try {
+          preMap.sources.add(
+            new window.atlas.source.VectorTileSource("buildings", {
+              type: "vector",
+              url: `pmtiles://${swipePmtilesUrlRef.current}`,
+            })
+          );
+          preMap.layers.add(
+            new window.atlas.layer.PolygonLayer("buildings", "swipeFill", {
+              sourceLayer: PMTILES_SOURCE_LAYER,
+              fillColor: fillColorExpr("label"),
+              fillOpacity: fillOpacityExpr("label"),
+            })
+          );
+          preMap.layers.add(
+            new window.atlas.layer.LineLayer("buildings", "swipeOutline", {
+              sourceLayer: PMTILES_SOURCE_LAYER,
+              strokeColor: "#1a5276",
+              minZoom: 15,
+              strokeWidth: ["step", ["zoom"], 1, 16, 2],
+            })
+          );
+        } catch (e) {
+          console.warn("Swipe pre-map footprints failed:", e);
+        }
+      }
+
+      // Wire the native swipe control: PRIMARY = pre map (revealed on the
+      // LEFT), SECONDARY = labeler map (clipped, revealed on the RIGHT).
+      // atlas.SwipeMap keeps BOTH cameras in sync on every 'move' internally,
+      // so we must NOT add our own camera-sync handler (doing so
+      // double-updates the cameras and makes panning jump/stutter).
       try {
-        swipeRef.current = new window.atlas.SwipeMap(primary, secondary);
+        swipeRef.current = new window.atlas.SwipeMap(preMap, labelerMap);
       } catch (e) {
         console.warn("atlas.SwipeMap init failed:", e);
       }
@@ -1210,9 +1412,10 @@ const InteractiveLabeler = () => {
 
     return () => {
       // Tear down the swipe control first — its dispose() removes the divider
-      // handle it appended to the primary container — then dispose the
-      // secondary map and reset the container so the primary labeler map and
-      // its footprint interactions are untouched.
+      // handle it appended to the PRIMARY (pre map) container and detaches the
+      // 'move'/'resize' sync handlers from BOTH maps — then dispose the new pre
+      // map. The labeler map (mapRef.current / the SECONDARY) is deliberately
+      // NOT disposed so its footprint interactions survive toggling swipe off.
       if (swipeRef.current) {
         try {
           if (typeof swipeRef.current.dispose === "function") {
@@ -1223,16 +1426,31 @@ const InteractiveLabeler = () => {
         }
         swipeRef.current = null;
       }
-      if (swipeSecondaryMapRef.current) {
+      if (swipePreMapRef.current) {
         try {
-          swipeSecondaryMapRef.current.dispose();
+          swipePreMapRef.current.dispose();
         } catch (e) {
-          console.warn("swipe secondary map dispose failed:", e);
+          console.warn("swipe pre map dispose failed:", e);
         }
-        swipeSecondaryMapRef.current = null;
+        swipePreMapRef.current = null;
       }
-      // SwipeMap sets an inline `clip` on the secondary container; clear it and
-      // any leftover atlas DOM so the next toggle starts from a clean slate.
+      // SwipeMap.dispose() does NOT clear the inline `clip` it set on the
+      // SECONDARY (labeler) map's container, so clear it here or the labeler
+      // stays clipped to its right half after swipe is turned off. Clear it on
+      // both the element getMapContainer() reports and the div we passed to the
+      // Map constructor, to be safe across Atlas builds.
+      try {
+        if (labelerMap && typeof labelerMap.getMapContainer === "function") {
+          labelerMap.getMapContainer().style.clip = "";
+        }
+      } catch (e) {
+        console.warn("clearing labeler map clip failed:", e);
+      }
+      if (labelerContainer) {
+        labelerContainer.style.clip = "";
+      }
+      // Reset the pre map's container so the next toggle starts from a clean
+      // slate (any leftover atlas DOM / clip is removed).
       container.style.clip = "";
       container.innerHTML = "";
     };
@@ -1527,19 +1745,21 @@ const InteractiveLabeler = () => {
         </ActionButton>
       </div>
 
-      {/* Map area: the primary labeler map plus an overlay that hosts the
-          Advanced → Swipe secondary map. Both map divs are absolutely
-          positioned and fill this relative wrapper exactly (the same layout
-          the Visualizer's swipe uses — see Visualizer.jsx + visualizer.css
-          `.map`), so atlas.SwipeMap's clip/divider on the secondary line up
-          with the primary underneath. The overlay stays display:none until the
+      {/* Map area: the labeler map plus the Advanced → Swipe view. Both map
+          divs are absolutely positioned and fill this relative wrapper exactly
+          (the same overlapping layout the Visualizer's swipe uses — see
+          Visualizer.jsx + visualizer.css `.map`). atlas.SwipeMap reveals its
+          SECONDARY on the RIGHT and shows its PRIMARY on the LEFT, so to land
+          PRE imagery on the left / POST imagery on the right the PRE map
+          (primary) must sit in the FIRST/behind div and the labeler map (post +
+          footprints, secondary) in the SECOND/on-top div — its clipped right
+          half then reveals the pre map underneath on the left. The divider
+          handle (z-index:1, appended into the primary/pre container) still
+          paints above both. The pre-map overlay stays display:none until the
           swipe toggle is on. */}
       <div style={{ position: "relative", flexGrow: 1 }}>
-        <div
-          ref={mapContainerRef}
-          id="interactiveLabelerMap"
-          style={{ position: "absolute", inset: 0 }}
-        />
+        {/* FIRST/behind: swipe PRIMARY = the new pre-event map (built on
+            demand by the swipe effect while the toggle is on). */}
         <div
           ref={swipeMapContainerRef}
           id="interactiveLabelerSwipeMap"
@@ -1549,6 +1769,62 @@ const InteractiveLabeler = () => {
             display: swipeOn ? "block" : "none",
           }}
         />
+        {/* SECOND/on-top: the labeler map. When swipe is on it is adopted as
+            the SwipeMap SECONDARY and clipped to its right half; when swipe is
+            off it is the only visible map. */}
+        <div
+          ref={mapContainerRef}
+          id="interactiveLabelerMap"
+          style={{ position: "absolute", inset: 0 }}
+        />
+
+        {/* Pane labels, shown only while swipe is on. Rendered inside this
+            relative wrapper so left/right map to the map area (not the window).
+            "Pre imagery" sits below the Back button badge so the two don't
+            overlap; "Post imagery" hugs the top-right corner. pointerEvents:
+            none so they never intercept a divider drag. */}
+        {swipeOn && (
+          <>
+            <div
+              style={{
+                position: "absolute",
+                top: 64,
+                left: 10,
+                zIndex: 1000,
+                background: "rgba(255,255,255,0.95)",
+                padding: "4px 10px",
+                borderRadius: 6,
+                boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
+                fontSize: 12,
+                fontWeight: 600,
+                color: "#444",
+                whiteSpace: "nowrap",
+                pointerEvents: "none",
+              }}
+            >
+              Pre imagery
+            </div>
+            <div
+              style={{
+                position: "absolute",
+                top: 10,
+                right: 10,
+                zIndex: 1000,
+                background: "rgba(255,255,255,0.95)",
+                padding: "4px 10px",
+                borderRadius: 6,
+                boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
+                fontSize: 12,
+                fontWeight: 600,
+                color: "#444",
+                whiteSpace: "nowrap",
+                pointerEvents: "none",
+              }}
+            >
+              Post imagery
+            </div>
+          </>
+        )}
       </div>
 
       {isMapReady && (
@@ -1558,9 +1834,11 @@ const InteractiveLabeler = () => {
             padding: 16,
             background: "#fff",
             borderLeft: "1px solid #e1e1e1",
-            overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
           }}
         >
+          <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
           <Text variant="large" block style={{ marginBottom: 2 }}>
             Interactive Labeler
           </Text>
@@ -1795,6 +2073,8 @@ const InteractiveLabeler = () => {
                 </div>
               )}
 
+              <Separator styles={{ root: { marginTop: 12 } }} />
+
               <Toggle
                 label="Swipe (pre-event)"
                 onText="On"
@@ -1806,13 +2086,65 @@ const InteractiveLabeler = () => {
               <div
                 style={{ fontSize: 11, color: "#999", marginTop: -4 }}
               >
-                Drag the divider to reveal pre-event imagery (satellite basemap
-                when the layer has none).
+                Drag the divider to compare pre-event imagery (left) with
+                post-event imagery (right). Satellite basemap is used on the pre
+                side when the layer has no pre-event imagery.
               </div>
+
+              <Separator styles={{ root: { marginTop: 12 } }} />
+
+              <Toggle
+                label="Uncertainty view"
+                onText="On"
+                offText="Off"
+                checked={uncertaintyOn}
+                onChange={(e, checked) => setUncertaintyOn(!!checked)}
+              />
+              <div style={{ fontSize: 11, color: "#999", marginTop: -4 }}>
+                Recolors every scored footprint by the model&apos;s predictive
+                uncertainty. Needs {MIN_PER_CLASS}+ labels in at least 2 classes.
+              </div>
+              {uncertaintyOn && (
+                <div style={{ marginTop: 8 }}>
+                  <div
+                    style={{ fontSize: 11, color: "#666", marginBottom: 3 }}
+                  >
+                    Model uncertainty
+                  </div>
+                  <div
+                    style={{
+                      height: 10,
+                      borderRadius: 3,
+                      background: UNCERTAINTY_LEGEND_GRADIENT,
+                    }}
+                  />
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 10,
+                      color: "#999",
+                      marginTop: 2,
+                    }}
+                  >
+                    <span>Low (confident)</span>
+                    <span>High</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
+          </div>
 
-          <div style={{ marginTop: 12, fontSize: 11, color: "#999" }}>
+          <div
+            style={{
+              marginTop: 12,
+              paddingTop: 10,
+              borderTop: "1px solid #e1e1e1",
+              fontSize: 11,
+              color: "#999",
+            }}
+          >
             Click a building to label it · right-click to clear ·{" "}
             <kbd>Ctrl</kbd>+drag to box-label · <kbd>1</kbd>/<kbd>2</kbd>/
             <kbd>3</kbd> set class · <kbd>P</kbd> toggle view ·{" "}
