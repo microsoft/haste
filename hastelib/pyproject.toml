@@ -34,7 +34,10 @@ dependencies = [
   "azure-storage-file-datalake",
   "azure-storage-queue",
   "azure-mgmt-containerregistry",
-  "azure-batch",
+  # Pinned: azure-batch 15.x is a track-2 rewrite that restructures the models
+  # this code uses (e.g. ComputeNodeIdentityReference). Migration tracked
+  # separately; keep on the last track-1 release until then.
+  "azure-batch==14.2.0",
   "azure-core",
   "azure-identity",
   "psycopg2-binary",

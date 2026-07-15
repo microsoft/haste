@@ -8,7 +8,7 @@ targetScope = 'subscription'
 // Core parameters (replace the positional CLI args of setup_infra.sh)
 // ---------------------------------------------------------------------------
 
-@description('Short prefix used to build every resource name (e.g. "ai4gl").')
+@description('Short prefix used to build every resource name (e.g. "haste").')
 param resourcePrefix string
 
 @description('Azure region for the environment resource group and resources.')

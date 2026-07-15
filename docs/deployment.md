@@ -27,7 +27,7 @@ az login
 
 # Create an environment and set the required configuration.
 azd env new dev3
-azd env set HASTE_RESOURCE_PREFIX      ai4gl
+azd env set HASTE_RESOURCE_PREFIX      myorg
 azd env set HASTE_RANDOM_SUFFIX        dev3
 azd env set AZURE_LOCATION             westus2
 azd env set HASTE_APIM_PUBLISHER_EMAIL you@example.com
@@ -65,6 +65,15 @@ For running HASTE locally, see the [Local Development](setup/local-dev.md) guide
 brings up the full stack with Docker Compose.
 
 ## Production Considerations
+
+### GPU compute at scale
+
+Running many environments against limited GPU quota? HASTE supports **shared,
+multi-tenant Batch pools** (provisioned separately from `azd up` via
+[`infra/shared-pools.bicep`](https://github.com/microsoft/haste/blob/main/infra/shared-pools.bicep)),
+with per-job user-delegation SAS for tenant data isolation and capacity-aware
+routing. See [Shared multi-tenant GPU pools](configuration.md#shared-multi-tenant-gpu-pools)
+in the configuration guide.
 
 ### Security
 

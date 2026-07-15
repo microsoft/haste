@@ -4,7 +4,7 @@ using './main.bicep'
 // variables from `azd env set ...`). Defaults keep `az bicep build` / local
 // what-if runs working without azd.
 
-param resourcePrefix = readEnvironmentVariable('HASTE_RESOURCE_PREFIX', 'ai4gl')
+param resourcePrefix = readEnvironmentVariable('HASTE_RESOURCE_PREFIX', 'haste')
 param location = readEnvironmentVariable('AZURE_LOCATION', 'westus2')
 param randomSuffix = readEnvironmentVariable('HASTE_RANDOM_SUFFIX', 'dev1')
 

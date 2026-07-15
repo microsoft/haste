@@ -63,6 +63,9 @@ class ArtifactProcessor:
             runner_type=self.config.runner_type,
             config=self.config,
             pool_id=self.config.get_azure_batch_config()["imageprep_pool_id"],
+            candidate_pool_ids=self.config.get_azure_batch_config()[
+                "imageryprep_pool_ids"
+            ],
         )
         self.model_artifacts = model_artifacts
         if self.model_data is not None:

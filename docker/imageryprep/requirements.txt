@@ -31,4 +31,4 @@ pyarrow==23.0.1
 fiona==1.10.1
 fsspec==2024.10.0
 adlfs==2024.12.0
-hastegeo @ https://researchlabwuopendata.blob.core.windows.net/haste-binaries/hastegeo-1.0.26-py3-none-any.whl
+hastegeo @ https://researchlabwuopendata.blob.core.windows.net/haste-binaries/hastegeo-1.0.27-py3-none-any.whl
