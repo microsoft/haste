@@ -1735,6 +1735,12 @@ const InteractiveLabeler = () => {
       style={{
         display: "flex",
         flexGrow: 1,
+        minHeight: 0,
+        // Pin to the space below the 40px app header so the right panel scrolls
+        // internally (its own scrollbar) instead of growing the page — which
+        // would otherwise push the map and its on-map legends below the fold
+        // when the Advanced tab is expanded. Mirrors the Visualizer container.
+        height: "calc(100vh - 40px - var(--footer-height, 0px))",
         position: "relative",
         overflow: "hidden",
       }}
@@ -1742,7 +1748,9 @@ const InteractiveLabeler = () => {
       <div
         style={{
           position: "absolute",
-          top: 10,
+          // While the swipe view is on, the "Pre imagery" label sits at the top
+          // and the Back button drops just below it.
+          top: swipeOn ? 46 : 10,
           left: 10,
           zIndex: 1000,
           backgroundColor: "rgba(255, 255, 255, 1)",
@@ -1794,15 +1802,16 @@ const InteractiveLabeler = () => {
 
         {/* Pane labels, shown only while swipe is on. Rendered inside this
             relative wrapper so left/right map to the map area (not the window).
-            "Pre imagery" sits below the Back button badge so the two don't
-            overlap; "Post imagery" hugs the top-right corner. pointerEvents:
-            none so they never intercept a divider drag. */}
+            "Pre imagery" sits at the very top-left (above the Back button, which
+            drops to top:46 while swiping); "Post imagery" hugs the top-right
+            corner. pointerEvents: none so they never intercept a divider
+            drag. */}
         {swipeOn && (
           <>
             <div
               style={{
                 position: "absolute",
-                top: 64,
+                top: 10,
                 left: 10,
                 zIndex: 1000,
                 background: "rgba(255,255,255,0.95)",
