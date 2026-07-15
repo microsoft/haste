@@ -397,6 +397,9 @@ const InteractiveLabeler = () => {
   useEffect(() => {
     uncertaintyOnRef.current = uncertaintyOn;
   }, [uncertaintyOn]);
+  // Read by the P hotkey (long-lived listener) so it can't switch to the
+  // Predicted view before there are enough labels to train.
+  const canTrainRef = useRef(false);
 
   // Detect the compute backend up-front so the panel shows WebGPU vs CPU.
   useEffect(() => {
@@ -1241,9 +1244,15 @@ const InteractiveLabeler = () => {
       else if (e.key === "3") setSelectedClass(CLASS_CLOUDY);
       else if (e.key === "t" || e.key === "T")
         setSelectedClass((c) => (c + 1) % 3);
-      else if (e.key === "p" || e.key === "P")
-        setViewMode((v) => (v === "label" ? "predict" : "label"));
-      else if (e.key === " " || e.code === "Space") {
+      else if (e.key === "p" || e.key === "P") {
+        // Predicted view needs a trained model; ignore until we have enough
+        // labels (matches the disabled View toggle).
+        if (!canTrainRef.current) return;
+        const next = viewModeRef.current === "label" ? "predict" : "label";
+        setViewMode(next);
+        // Predicted view and Uncertainty view are mutually exclusive.
+        if (next === "predict") setUncertaintyOn(false);
+      } else if (e.key === " " || e.code === "Space") {
         // preventDefault to stop the browser from scrolling the page
         // when the map container doesn't have focus.
         e.preventDefault();
@@ -1729,6 +1738,25 @@ const InteractiveLabeler = () => {
   }
 
   const totalLabeled = counts[0] + counts[1] + counts[2];
+  // The Predicted and Uncertainty views both need a trained model, which needs
+  // at least MIN_PER_CLASS labels in 2+ classes. Gate both toggles on this.
+  const canTrain =
+    [
+      counts[CLASS_INTACT],
+      counts[CLASS_DAMAGED],
+      counts[CLASS_CLOUDY],
+    ].filter((n) => n >= MIN_PER_CLASS).length >= 2;
+
+  // If labels drop back below the trainable threshold (e.g. after clearing),
+  // fall back to the Labeled view so we don't sit in a now-disabled Predicted
+  // or Uncertainty view with no model behind it.
+  useEffect(() => {
+    canTrainRef.current = canTrain;
+    if (!canTrain) {
+      setUncertaintyOn(false);
+      setViewMode("label");
+    }
+  }, [canTrain]);
 
   return (
     <div
@@ -1974,11 +2002,20 @@ const InteractiveLabeler = () => {
             onText="Predicted"
             offText="Labeled"
             checked={viewMode === "predict"}
-            onChange={(e, checked) =>
-              setViewMode(checked ? "predict" : "label")
-            }
+            disabled={!canTrain}
+            onChange={(e, checked) => {
+              setViewMode(checked ? "predict" : "label");
+              // Predicted view and Uncertainty view are mutually exclusive.
+              if (checked) setUncertaintyOn(false);
+            }}
             style={{ marginTop: 12 }}
           />
+          {!canTrain && (
+            <div style={{ fontSize: 11, color: "#999", marginTop: -4 }}>
+              Predicted / Uncertainty views need {MIN_PER_CLASS}+ labels in at
+              least 2 classes.
+            </div>
+          )}
 
           <Toggle
             label="Footprints"
@@ -2194,7 +2231,13 @@ const InteractiveLabeler = () => {
                 onText="On"
                 offText="Off"
                 checked={uncertaintyOn}
-                onChange={(e, checked) => setUncertaintyOn(!!checked)}
+                disabled={!canTrain}
+                onChange={(e, checked) => {
+                  setUncertaintyOn(!!checked);
+                  // Uncertainty view and Predicted view are mutually exclusive;
+                  // switching this on drops the map back to the Labeled view.
+                  if (checked) setViewMode("label");
+                }}
               />
               <div style={{ fontSize: 11, color: "#999", marginTop: -4 }}>
                 Recolors every scored footprint by the model&apos;s predictive
