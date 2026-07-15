@@ -131,13 +131,12 @@ Three traps worth knowing:
 
 ### Wheel publishing (`hatch build -t wheel`)
 
-`hastelib/haste_build.py` is a Hatchling custom hook that, on every
-wheel build, **bumps the patch in `__about__.py`, uploads to a private
-Azure blob, and rewrites `requirements.txt` pins across the repo**.
-None of that should happen inside a Docker build, so the three
-Dockerfiles that `pip install /tmp/hastelib/` set
-`HASTE_SKIP_VERSION_BUMP=1`. Don't strip that. Only run `hatch build`
-when you genuinely want to cut a release (and have `az login` set up).
+`hastelib/haste_build.py` is build-only. It stamps `HASTE_SET_VERSION`
+when provided and leaves the wheel under `hastelib/dist/`; it never
+queries or mutates GitHub. The CI workflow resolves RC/stable versions,
+builds without write credentials, and passes the wheel to a separate
+approval-gated trusted publisher. Published assets are immutable (no
+clobber), and stable versions are tied to source tags.
 
 ---
 

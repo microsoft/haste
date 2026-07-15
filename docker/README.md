@@ -633,31 +633,46 @@ http://<HOST_IP>:4280
 
 ## Rebuilding the Haste Wheel
 
-The `hastelib/` directory contains the shared Python library (`hastegeo` package) used by
-the API services, imageryprep, and training containers. In the Docker deployment, the
-source is **copied directly** into images (no wheel install needed).
+The `hastelib/` directory holds the shared `hastegeo` package used by the API
+services, imageryprep, and training containers.
 
-However, if deploying to Azure (non-Docker), you'll need a wheel:
+**Local docker-compose builds from source.** The function-app `requirements.txt`
+default to an editable install (`-e ../../hastelib`), so `docker compose build`
+picks up local changes with no wheel publish or `hatch build`. The local/remote
+toggle lives in `requirements.txt`, not the Dockerfiles.
+
+**CI builds one matching RC artifact set.** The hastegeo workflows:
+
+1. Resolves the next PEP 440 RC (`1.0.26rc1`) or stable (`1.0.26`) version.
+2. Builds and tests the wheel in a read-only job with no persisted Git
+   credentials.
+3. Passes the validated wheel as an Actions artifact to a trusted publisher.
+4. Automatically publishes same-repository PR RC wheels without overwriting an
+   existing asset.
+5. Builds training and imageryprep exactly once in ACR, in parallel, with the
+   exact same RC tag (`1.0.26rc1`). Stable releases remain approval-gated.
+
+The deploy workflow swaps the editable line for a verified wheel via
+`.github/scripts/set_hastegeo_source.py` before `func publish`. For an RC
+deployment, `hastegeo_version`, `training_image_tag`, and
+`imageprep_image_tag` must all be the same `X.Y.ZrcN`; blank image-tag inputs
+default to the resolved wheel version.
+
+To build a wheel locally (this does not publish):
 
 ```bash
 cd hastelib
+# Build a specific version for local validation:
+HASTE_SET_VERSION=1.0.26rc1 hatch build -t wheel
 
-# Build the wheel (auto-bumps version, uploads to blob, updates requirements.txt)
-python haste_build.py
-
-# Or build manually without the custom script:
-pip install build hatchling
-python -m build --wheel
+# Or build the explicit local-development version (0.0.0+local):
+hatch build -t wheel
 ```
 
-The custom `haste_build.py` script:
-1. Increments the version in `src/hastegeo/__about__.py`
-2. Builds a `.whl` file under `hastelib/dist/`
-3. Uploads it to `researchlabwuopendata.blob.core.windows.net/haste-binaries/` (requires `az login`) and removes the local copy from `hastelib/dist/`
-4. Rewrites the `hastegeo @ <url>` line in `api/hastefuncapi/requirements.txt`, `api/hastefuncqueues/requirements.txt`, and `docker/imageryprep/requirements.txt` so they pin the new wheel URL
-
-> **For local Docker**, you do NOT need to rebuild the wheel — the Dockerfiles
-> copy the source directly with `COPY hastelib/src/hastegeo /home/site/wwwroot/hastegeo`.
+Version resolution is implemented in
+`.github/scripts/resolve_hastegeo_version.py`. Default is the latest stable
+release plus one patch; workflow inputs support minor/major or exact-version
+overrides. The Hatch hook only stamps the explicit version and builds.
 
 ---
 

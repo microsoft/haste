@@ -1,0 +1,4 @@
+# hastegeo rc wheels to retain (never auto-pruned by rc-cleanup.yml).
+# One asset filename per line, e.g.:
+#   hastegeo-1.5.0rc7-py3-none-any.whl
+# Lines starting with # are ignored.

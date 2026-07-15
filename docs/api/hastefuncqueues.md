@@ -160,7 +160,9 @@ The app ships as a Docker container.
 
 **Base image:** `mcr.microsoft.com/azure-functions/python:4-python3.11`
 
-The container runs as a non-root `appuser`. Local `hastegeo` source is copied in alongside the installed wheel to support development builds. Set `HASTE_SKIP_VERSION_BUMP=1` during the build to prevent version bumping.
+The container runs as a non-root `appuser`. Its requirements default to an
+editable `/home/hastelib` install so local Docker builds use the checked-out
+source. Deployment CI rewrites that requirement to a validated release wheel.
 
 ```bash
 docker build -t hastefuncqueues .

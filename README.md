@@ -100,7 +100,6 @@ Source for the docs lives in [`docs/`](docs/) and is built with [Jupyter Book](h
   └────────┘  └────────┘  └──────┘  └──────────────┘
 ```
 
-
 ## Components
 
 | Component | Technology | Description |

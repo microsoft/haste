@@ -5,7 +5,7 @@
 #   docs/.venv/Scripts/activate          (Windows)
 #   source docs/.venv/bin/activate       (Linux/Mac)
 #   pip install -r docs/requirements.txt
-#   pip install --no-deps hastegeo @ https://researchlabwuopendata.blob.core.windows.net/haste-binaries/hastegeo-1.0.25-py3-none-any.whl
+#   pip install --no-deps "hastegeo @ https://github.com/microsoft/haste/releases/download/haste-binaries/hastegeo-<version>-py3-none-any.whl"
 #   cd docs && jupyter-book build .
 
 # --- Doc tooling ---
@@ -39,7 +39,7 @@ shapely
 
 # NOTE: The haste wheel must be installed separately with --no-deps
 # because its metadata declares gdal==3.9.2 which can't build from source
-# on most platforms. The GDAL whl on blob storage is linux-only.
-# Run:  pip install --no-deps hastegeo @ https://researchlabwuopendata.blob.core.windows.net/haste-binaries/hastegeo-1.0.25-py3-none-any.whl
+# on most platforms. The GDAL wheel on the GitHub release is linux-only.
+# Run:  pip install --no-deps "hastegeo @ https://github.com/microsoft/haste/releases/download/haste-binaries/hastegeo-<version>-py3-none-any.whl"
 #
 # osgeo/gdal, rasterio, and opencv-python are mocked in conf.py.
