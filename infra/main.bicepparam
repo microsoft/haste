@@ -37,3 +37,10 @@ param enableFrontDoor = bool(readEnvironmentVariable('HASTE_ENABLE_FRONT_DOOR', 
 
 // Dev-only auto-provisioning + anonymous auth (never true for production).
 param developmentMode = bool(readEnvironmentVariable('HASTE_DEVELOPMENT_MODE', 'false'))
+
+// v2.1.0 capacity-aware routing + per-job SAS (default = legacy single-pool).
+param trainingPoolIds = readEnvironmentVariable('HASTE_BATCH_TRAINING_POOL_IDS', '')
+param inferencePoolIds = readEnvironmentVariable('HASTE_BATCH_INFERENCE_POOL_IDS', '')
+param imageryprepPoolIds = readEnvironmentVariable('HASTE_BATCH_IMAGERYPREP_POOL_IDS', '')
+param useSas = bool(readEnvironmentVariable('HASTE_BATCH_USE_SAS', 'false'))
+param managePools = bool(readEnvironmentVariable('HASTE_BATCH_MANAGE_POOLS', 'true'))

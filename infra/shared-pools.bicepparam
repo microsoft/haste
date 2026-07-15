@@ -17,6 +17,7 @@ using './shared-pools.bicep'
 
 param sharedPrefix = readEnvironmentVariable('HASTE_RESOURCE_PREFIX', 'haste')
 param sharedGroup = readEnvironmentVariable('HASTE_SHARED_GROUP', 'dev')
+param sharedNodeType = readEnvironmentVariable('HASTE_SHARED_NODE_TYPE', 'Dedicated')
 param batchAccountName = readEnvironmentVariable('HASTE_EXISTING_BATCH_ACCOUNT', '')
 param acrName = readEnvironmentVariable('HASTE_SHARED_ACR_NAME', '')
 param umiResourceId = readEnvironmentVariable('HASTE_SHARED_UMI_ID', '')

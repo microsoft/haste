@@ -102,6 +102,21 @@ param enableFrontDoor bool = false
 @description('Dev-only: api/queues auto-provision any authenticated user as admin and use anonymous auth. Keep false for production.')
 param developmentMode bool = false
 
+@description('Ordered candidate training pool ids (comma-separated). Empty => single training pool.')
+param trainingPoolIds string = ''
+
+@description('Ordered candidate inference/embedding pool ids (comma-separated).')
+param inferencePoolIds string = ''
+
+@description('Ordered candidate imageryprep/artifacts pool ids (comma-separated).')
+param imageryprepPoolIds string = ''
+
+@description('Use per-job user-delegation SAS for Batch blob I/O (multi-tenant shared pools).')
+param useSas bool = false
+
+@description('Runner auto-creates/resizes its pool. False for pre-created autoscale pools.')
+param managePools bool = true
+
 // ---------------------------------------------------------------------------
 // Computed names — mirror the bash naming scheme exactly.
 // ---------------------------------------------------------------------------
@@ -269,6 +284,11 @@ module functions 'modules/functions.bicep' = {
     emailConnectionString: communication.outputs.connectionString
     batchAccountKey: batchAccountRef.listKeys().primary
     developmentMode: developmentMode
+    trainingPoolIds: trainingPoolIds
+    inferencePoolIds: inferencePoolIds
+    imageryprepPoolIds: imageryprepPoolIds
+    useSas: useSas
+    managePools: managePools
     tags: tags
   }
   dependsOn: [

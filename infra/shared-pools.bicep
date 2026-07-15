@@ -39,6 +39,13 @@ param h100MaxNodes int = 2
 @description('T4 autoscale max nodes (formula cap).')
 param t4MaxNodes int = 2
 
+@description('Node cost tier. Dedicated (draws from the account dedicated-core quota). Set LowPriority only where low-priority GPU quota is available (cheaper, preemptible).')
+@allowed([
+  'Dedicated'
+  'LowPriority'
+])
+param sharedNodeType string = 'Dedicated'
+
 module h100Pool 'modules/batchPool.bicep' = {
   name: 'shared-${sharedGroup}-h100'
   params: {
@@ -46,7 +53,7 @@ module h100Pool 'modules/batchPool.bicep' = {
     poolName: '${sharedPrefix}-shared-${sharedGroup}-h100-pool'
     vmSize: 'Standard_NC40ads_H100_v5'
     scaleMode: 'Autoscale'
-    nodeType: 'LowPriority'
+    nodeType: sharedNodeType
     minNodes: 0
     maxNodes: h100MaxNodes
     umiResourceId: umiResourceId
@@ -65,7 +72,7 @@ module t4Pool 'modules/batchPool.bicep' = {
     poolName: '${sharedPrefix}-shared-${sharedGroup}-t4-pool'
     vmSize: 'Standard_NC16as_T4_v3'
     scaleMode: 'Autoscale'
-    nodeType: 'LowPriority'
+    nodeType: sharedNodeType
     minNodes: 0
     maxNodes: t4MaxNodes
     umiResourceId: umiResourceId
