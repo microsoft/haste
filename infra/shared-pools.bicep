@@ -39,6 +39,9 @@ param h100MaxNodes int = 2
 @description('T4 autoscale max nodes (formula cap).')
 param t4MaxNodes int = 2
 
+@description('T4 autoscale floor. 0 = scale-to-zero when idle; >0 keeps a warm baseline of always-on nodes.')
+param t4MinNodes int = 0
+
 @description('Node cost tier. Dedicated (draws from the account dedicated-core quota). Set LowPriority only where low-priority GPU quota is available (cheaper, preemptible).')
 @allowed([
   'Dedicated'
@@ -46,13 +49,24 @@ param t4MaxNodes int = 2
 ])
 param sharedNodeType string = 'Dedicated'
 
+@description('H100 pool scale mode. Fixed reserves a baseline for the scarce GPU tier (recommended for contended regions where scale-to-zero can never reacquire a node); Autoscale scales-to-zero when idle.')
+@allowed([
+  'Fixed'
+  'Autoscale'
+])
+param h100ScaleMode string = 'Autoscale'
+
+@description('H100 reserved node count when h100ScaleMode == Fixed.')
+param h100FixedNodeCount int = 1
+
 module h100Pool 'modules/batchPool.bicep' = {
   name: 'shared-${sharedGroup}-h100'
   params: {
     batchAccountName: batchAccountName
     poolName: '${sharedPrefix}-shared-${sharedGroup}-h100-pool'
     vmSize: 'Standard_NC40ads_H100_v5'
-    scaleMode: 'Autoscale'
+    scaleMode: h100ScaleMode
+    fixedNodeCount: h100FixedNodeCount
     nodeType: sharedNodeType
     minNodes: 0
     maxNodes: h100MaxNodes
@@ -73,7 +87,7 @@ module t4Pool 'modules/batchPool.bicep' = {
     vmSize: 'Standard_NC16as_T4_v3'
     scaleMode: 'Autoscale'
     nodeType: sharedNodeType
-    minNodes: 0
+    minNodes: t4MinNodes
     maxNodes: t4MaxNodes
     umiResourceId: umiResourceId
     acrName: acrName
