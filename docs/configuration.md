@@ -120,16 +120,44 @@ az deployment group create -g <shared-rg> \
 ```
 
 Pools are named `<prefix>-shared-<group>-<tier>-pool` (e.g. the dev-group H100
-pool); `HASTE_SHARED_GROUP` selects the group (`dev`,
-`demo`, …). They autoscale on low-priority nodes and scale to zero when idle. The
-pool identity is used **only** for ACR pull (`haste-shared-acr-umi`) — it holds no
-storage access.
+pool); `HASTE_SHARED_GROUP` selects the group (`dev`, `demo`, …). They autoscale
+on **dedicated** nodes within a central per-pool core-quota ceiling. A scarce tier
+(H100) can keep a warm floor instead of scaling to zero — under regional GPU
+contention an autoscale floor (or `Fixed` target) **auto-retries allocation each
+evaluation** until capacity frees, whereas a one-shot fixed resize gets stuck in
+its error state. The pool identity is used **only** for ACR pull
+(`haste-shared-acr-umi`) — it holds no storage access.
+
+Shared-pool deploy knobs (env vars read by `shared-pools.bicep`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HASTE_SHARED_GROUP` | `dev` | Pool group (`dev`, `demo`, …) — drives the pool names. |
+| `HASTE_SHARED_H100_SCALE_MODE` | `Autoscale` | `Autoscale`, or `Fixed` reserved baseline for the scarce H100 tier. |
+| `HASTE_SHARED_H100_MIN_NODES` | `0` | H100 autoscale floor (>0 keeps chasing/holding a warm node). |
+| `HASTE_SHARED_T4_MIN_NODES` / `HASTE_SHARED_T4_MAX_NODES` | `0` / `2` | T4 autoscale floor / cap. |
+| `HASTE_SHARED_BATCH_SUBNET_ID` | — | Shared hub batch-subnet to VNet-inject both pools into (see Blob↔Batch networking below). |
 
 **Data isolation.** Tenants share compute but not data: each job mints a
 short-lived **user-delegation SAS** scoped to its own storage container, so a
 tenant's task can never read another tenant's data. This requires the submitting
 Function App identity to hold **Storage Blob Delegator** on its storage account
 (granted in `functionApp.bicep`).
+
+**Blob↔Batch networking.** SAS is an *auth* boundary, not network reach — each
+tenant storage is `Deny`, so the pools must additionally be *network-allowed* to
+it or blob I/O fails with `403 AuthorizationFailure`. The shared pools are
+VNet-injected into a **shared hub batch-subnet** (`haste-hub-vnet/batch-subnet`,
+carrying the `Microsoft.Storage` service endpoint), and **each tenant's storage
+allowlists that subnet** with a VNet rule. Onboarding a new env is *just that one
+storage rule* — wired in `storage.bicep` via `HASTE_SHARED_BATCH_SUBNET_ID` so it
+lands on `azd provision`; the shared pools are never touched. Two one-time
+prerequisites per hub (not per env): create the subnet, and grant the *Microsoft
+Azure Batch* service principal `Network Contributor` on it so Batch can
+VNet-inject. `HASTE_SHARED_BATCH_SUBNET_ID` is read by **both** the shared-pools
+deploy (which subnet to inject the pools into) and each env deploy (which subnet
+its storage allowlists). Full design:
+[`networking.md`](https://github.com/microsoft/haste/blob/main/spec/features/batch-compute-expansion/networking.md).
 
 **Per-environment app settings** (set on the `api`/`queues` Function Apps to opt
 an environment into the shared pools — all default to the legacy single-pool,

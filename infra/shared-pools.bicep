@@ -59,6 +59,12 @@ param h100ScaleMode string = 'Autoscale'
 @description('H100 reserved node count when h100ScaleMode == Fixed.')
 param h100FixedNodeCount int = 1
 
+@description('H100 autoscale floor (when h100ScaleMode == Autoscale). 0 = scale-to-zero; >0 keeps chasing a warm baseline (auto-retries allocation each eval under GPU contention).')
+param h100MinNodes int = 0
+
+@description('VNet subnet resource id to inject BOTH shared pools into (blob<->batch reach via Microsoft.Storage service endpoint + per-tenant storage VNet rule). Empty => no VNet injection (BatchManaged public IPs). See spec/features/batch-compute-expansion/networking.md.')
+param sharedBatchSubnetId string = ''
+
 module h100Pool 'modules/batchPool.bicep' = {
   name: 'shared-${sharedGroup}-h100'
   params: {
@@ -68,14 +74,13 @@ module h100Pool 'modules/batchPool.bicep' = {
     scaleMode: h100ScaleMode
     fixedNodeCount: h100FixedNodeCount
     nodeType: sharedNodeType
-    minNodes: 0
+    minNodes: h100MinNodes
     maxNodes: h100MaxNodes
     umiResourceId: umiResourceId
     acrName: acrName
     trainingImage: trainingImage
     imageryprepImage: imageryprepImage
-    // subnetId omitted => no VNet injection yet; finalize subnet + per-tenant
-    // storage firewall allowlisting before running real workloads.
+    subnetId: sharedBatchSubnetId
   }
 }
 
@@ -93,6 +98,7 @@ module t4Pool 'modules/batchPool.bicep' = {
     acrName: acrName
     trainingImage: trainingImage
     imageryprepImage: imageryprepImage
+    subnetId: sharedBatchSubnetId
   }
 }
 

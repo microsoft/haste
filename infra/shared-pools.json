@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "1769188842529029875"
+      "templateHash": "16520244299666787717"
     }
   },
   "parameters": {
@@ -103,6 +103,20 @@
       "metadata": {
         "description": "H100 reserved node count when h100ScaleMode == Fixed."
       }
+    },
+    "h100MinNodes": {
+      "type": "int",
+      "defaultValue": 0,
+      "metadata": {
+        "description": "H100 autoscale floor (when h100ScaleMode == Autoscale). 0 = scale-to-zero; >0 keeps chasing a warm baseline (auto-retries allocation each eval under GPU contention)."
+      }
+    },
+    "sharedBatchSubnetId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "VNet subnet resource id to inject BOTH shared pools into (blob<->batch reach via Microsoft.Storage service endpoint + per-tenant storage VNet rule). Empty => no VNet injection (BatchManaged public IPs). See spec/features/batch-compute-expansion/networking.md."
+      }
     }
   },
   "resources": [
@@ -135,7 +149,7 @@
             "value": "[parameters('sharedNodeType')]"
           },
           "minNodes": {
-            "value": 0
+            "value": "[parameters('h100MinNodes')]"
           },
           "maxNodes": {
             "value": "[parameters('h100MaxNodes')]"
@@ -151,6 +165,9 @@
           },
           "imageryprepImage": {
             "value": "[parameters('imageryprepImage')]"
+          },
+          "subnetId": {
+            "value": "[parameters('sharedBatchSubnetId')]"
           }
         },
         "template": {
@@ -327,6 +344,9 @@
           },
           "imageryprepImage": {
             "value": "[parameters('imageryprepImage')]"
+          },
+          "subnetId": {
+            "value": "[parameters('sharedBatchSubnetId')]"
           }
         },
         "template": {

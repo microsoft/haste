@@ -88,6 +88,7 @@ limits and requires mutating a shared, semi-immutable pool per tenant.
 | [impact-analysis.md](impact-analysis.md) | Risk, dependencies, blast radius, security | approved |
 | [user-stories.md](user-stories.md) | User stories & acceptance criteria | approved |
 | [design.md](design.md) | Technical design: topology, isolation, routing, fairness, IaC + app | approved |
+| [networking.md](networking.md) | Blob↔Batch network path: VNet injection + per-tenant storage rule | approved |
 | [test-plan.md](test-plan.md) | Test strategy & coverage matrix | approved |
 | [rollout.md](rollout.md) | Rollout phases, opt-in flags, rollback, monitoring | approved |
 | data-model.md | Cosmos/Blob/Data Lake schema changes | n/a — no schema changes |
@@ -104,6 +105,7 @@ limits and requires mutating a shared, semi-immutable pool per tenant.
 | 2026-07-14 | Shared pools deploy into the existing shared framework RG | Where the Batch account + ACR already live; clean logical ownership, no new RG. |
 | 2026-07-14 | Generic-default IaC (prefix defaults to `haste`, BYO account/ACR) | Reusable by other partners; this deployment overrides via `shared-pools.bicepparam`. |
 | 2026-07-14 | Pin `azure-batch==14.2.0` | 15.x track-2 rewrite restructures the model API the code uses; migration tracked separately. |
+| 2026-07-15 | Blob↔Batch via VNet-injected pools + per-tenant storage VNet rule (not `Allow`/IP band-aid) — see [networking.md](networking.md) | Keeps tenant storage `Deny`; onboarding stays a storage-side self-service step (zero shared-pool change per tenant). One-time pool recreate to migrate the existing subnet-less pools. |
 
 ## Remaining gates (before/during build)
 

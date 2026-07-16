@@ -72,6 +72,9 @@ param batchPoolMaxNodes int = 3
 @description('Subnet name (in the env VNet) used by the Batch pool.')
 param batchPoolSubnetName string = 'batch-subnet'
 
+@description('Shared hub batch-subnet resource id where the SHARED multi-tenant pools are VNet-injected. Set for shared-pool envs (dev/demo) so this env storage allowlists that subnet; empty for single-tenant prod. See spec/features/batch-compute-expansion/networking.md.')
+param sharedBatchSubnetId string = ''
+
 @description('Training container image (tag included).')
 param trainingImage string = 'hastetraining:1.4.1'
 
@@ -211,6 +214,7 @@ module storage 'modules/storage.bicep' = {
     defaultSubnetName: 'default'
     functionsSubnetName: functionsSubnetName
     batchSubnetName: batchPoolSubnetName
+    sharedBatchSubnetId: sharedBatchSubnetId
     tags: tags
   }
   dependsOn: [

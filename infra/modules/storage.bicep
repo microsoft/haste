@@ -26,6 +26,9 @@ param functionsSubnetName string
 @description('Batch subnet name.')
 param batchSubnetName string
 
+@description('Shared hub batch-subnet resource id (where the SHARED multi-tenant pools are VNet-injected). Empty for single-tenant envs (prod) that run their own in-env pool. See spec/features/batch-compute-expansion/networking.md.')
+param sharedBatchSubnetId string = ''
+
 @description('Resource tags.')
 param tags object = {}
 
@@ -54,7 +57,11 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     networkAcls: {
       bypass: 'Logging, Metrics, AzureServices'
       defaultAction: 'Deny'
-      virtualNetworkRules: [
+      // The env's own subnets, plus (for shared-pool envs) the shared hub
+      // batch-subnet so the multi-tenant pools can reach this tenant's blobs
+      // over the Microsoft.Storage service endpoint. Adding a demo env = this
+      // one rule; no shared-pool change (see networking.md).
+      virtualNetworkRules: concat([
         {
           id: defaultSubnetId
           action: 'Allow'
@@ -67,7 +74,12 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
           id: batchSubnetId
           action: 'Allow'
         }
-      ]
+      ], empty(sharedBatchSubnetId) ? [] : [
+        {
+          id: sharedBatchSubnetId
+          action: 'Allow'
+        }
+      ])
     }
   }
 }
