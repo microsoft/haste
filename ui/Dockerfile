@@ -17,6 +17,10 @@ RUN npm install
 # Copy application files
 COPY --chown=nonroot:nonroot . .
 
+# The emulator grants "authenticated" by default; development mode then
+# auto-provisions that local user as an administrator.
+RUN node -e "const fs=require('node:fs');const p='public/staticwebapp.config.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));const r=c.routes.find(({route})=>route==='/*');if(!r||!Array.isArray(r.allowedRoles)||r.allowedRoles.join(',')!=='administrators,contributors')throw new Error('Unexpected SWA roles');r.allowedRoles.unshift('authenticated');fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');"
+
 # Copy the Docker-specific environment file
 COPY --chown=nonroot:nonroot .env.docker .env
 

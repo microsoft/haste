@@ -242,15 +242,11 @@ browser. The SWA emulator presents a **mock-login portal** (`DEVELOPMENT_MODE=tr
 bypasses real Azure AD in the API, but the UI still runs the SWA emulator auth).
 **Report this URL to the user as the finish line.**
 
-> **⚠️ You MUST supply a role at the mock-login form, or you get a redirect
-> loop.** Every route in `ui/public/staticwebapp.config.json` requires
-> `allowedRoles: ["administrators", "contributors"]`, and the SWA emulator only
-> grants `anonymous`/`authenticated` by default — so logging in without a role
-> just bounces you back to the login page (logs show `/401.html → 401` then
-> `/.auth/login/aad → 200`, repeating). On the emulator login form fill:
-> **User ID** = anything (e.g. `dev`), **Username** = anything, and
-> **User's roles** = **`administrators`** (or `administrators,contributors`),
-> then click **Login**. The app then loads.
+> For Docker Compose, keep the SWA emulator's default roles. Enter any
+> **User ID** and **Username**, then click **Login**. The local UI image accepts
+> the emulator's `authenticated` role, and `DEVELOPMENT_MODE=true` auto-creates
+> the user as an `administrators` user. This behavior is limited to the local
+> Docker image and does not change production authorization.
 
 If any check fails, go to [§9 Troubleshooting](#9-troubleshooting), apply the
 fix, and re-run this section.
@@ -334,7 +330,7 @@ Match the failing gate to a fix, apply it, then **re-run the gate**.
 | Pull dies mid-layer with `EOF` / `TLS handshake timeout` | flaky/VPN'd connection to `mcr.microsoft.com` | Turn off VPN; retry — Docker resumes cached layers, so a loop of retries converges. Pre-pull the base: `docker pull --platform linux/amd64 mcr.microsoft.com/azure-functions/python:4-python3.11` |
 | `up -d` unexpectedly builds `haste-training` (CUDA/torch wheels) | `hastefuncqueues depends_on training_image` | Start runtime services with `--no-deps` (§4) |
 | `--gpus all` test fails on Linux | NVIDIA Container Toolkit missing | Install it (`docker/README.md` §3), `sudo systemctl restart docker` |
-| UI stuck in login loop (login page reloads; logs show `401.html`↔`/.auth/login/aad`) | mock-login granted no role; routes need `administrators`/`contributors` | On the SWA emulator login form set **User's roles** = `administrators`, then Login (Gate 5) |
+| UI stuck in login loop (login page reloads; logs show `401.html`↔`/.auth/login/aad`) | stale `ui` image built before the Docker-only auth default was added | Rebuild and recreate only `ui`, then log in with the emulator's default roles (Gate 5) |
 | UI blank / "Network Error" (Gate 5) | `HOST_IP` wrong, or nginx stale | `cat docker/.env`; `docker compose ... restart api-proxy` |
 | `/api/GetAdminSettings` refuses connection | `hastefuncapi` not up / Azurite not ready | `docker compose ... logs --tail=200 hastefuncapi`; restart it |
 | `/api/*` returns 404 after a recreate | nginx cached old upstream IP | `docker compose ... restart api-proxy` (Trap #2) |
@@ -362,7 +358,7 @@ Report success to the user only when **all** of these hold:
 - [ ] `docker/.env` written with correct `HOST_IP`, `DOCKER_GID`, and GPU flag.
 - [ ] `docker compose ps` shows all long-running services `Up` and `data-init` `Exited (0)`.
 - [ ] Gate 5 health checks all pass (Azurite, API, TiTiler, UI).
-- [ ] The UI loads at `http://<HOST_IP>:4280` and you can complete the SWA emulator mock-login with role `administrators` (or `contributors`).
+- [ ] The UI loads at `http://<HOST_IP>:4280`, accepts the SWA emulator's default mock-login roles, and creates the local user as an administrator.
 - [ ] You told the user the profile (`gpu`/`cpu`) and, if `cpu`, that
       training/inference will be slow or limited.
 - [ ] On Apple Silicon: you exported `DOCKER_DEFAULT_PLATFORM=linux/amd64`,

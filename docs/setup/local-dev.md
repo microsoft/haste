@@ -72,8 +72,9 @@ Once running:
 - **Azurite blob** — `http://<HOST_IP>:10000`
 
 ```{important}
-At the SWA mock-login form, set **User's roles** to `administrators`, or the app bounces
-you back to the login page.
+For Docker Compose, keep the SWA mock-login form's default roles. Enter a user
+ID and username, then select **Login**. The local API automatically creates the
+user as an administrator.
 ```
 
 ```{tip}

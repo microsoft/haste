@@ -573,8 +573,10 @@ Open a browser and navigate to:
 http://<HOST_IP>:4280
 ```
 
-> In `DEVELOPMENT_MODE=true`, authentication is bypassed. You'll be logged in as an
-> auto-created development user.
+> The SWA mock-login portal still appears for the UI. Keep its default roles,
+> enter any user ID and username, and select **Login**. The Docker-only UI
+> configuration accepts the default `authenticated` role, and
+> `DEVELOPMENT_MODE=true` auto-creates that local user as an administrator.
 
 ### Creating a Project
 
