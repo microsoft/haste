@@ -3,6 +3,9 @@ FROM mcr.microsoft.com/azurelinux/base/nodejs:24
 # Install global CLI as root first
 RUN npm install -g @azure/static-web-apps-cli
 
+# Prefill the administrator role in the Docker-only SWA mock-login portal.
+RUN node -e "const fs=require('node:fs');const path=require('node:path');const {execFileSync}=require('node:child_process');const root=execFileSync('npm',['root','-g'],{encoding:'utf8'}).trim();const p=path.join(root,'@azure','static-web-apps-cli','dist','public','auth.html');let s=fs.readFileSync(p,'utf8');const defaults='const defaultRoles = [\"anonymous\", \"authenticated\"];';const cached='input.val(userRoles.join(\"\\\\n\"));';if(!s.includes(defaults)||!s.includes(cached))throw new Error('Unexpected SWA auth portal');s=s.replace(defaults,'const defaultRoles = [\"anonymous\", \"authenticated\", \"administrators\"];').replace(cached,'input.val([...new Set([...userRoles, ...settings.defaultRoles])].join(\"\\\\n\"));\\n                input.saveToLocalStorage();');fs.writeFileSync(p,s);"
+
 # Set up workdir and ownership *before* switching users
 WORKDIR /app
 RUN chown nonroot:nonroot /app
@@ -16,10 +19,6 @@ RUN npm install
 
 # Copy application files
 COPY --chown=nonroot:nonroot . .
-
-# The emulator grants "authenticated" by default; development mode then
-# auto-provisions that local user as an administrator.
-RUN node -e "const fs=require('node:fs');const p='public/staticwebapp.config.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));const r=c.routes.find(({route})=>route==='/*');if(!r||!Array.isArray(r.allowedRoles)||r.allowedRoles.join(',')!=='administrators,contributors')throw new Error('Unexpected SWA roles');r.allowedRoles.unshift('authenticated');fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');"
 
 # Copy the Docker-specific environment file
 COPY --chown=nonroot:nonroot .env.docker .env
