@@ -94,14 +94,22 @@ Compute the values:
 #          the VM's PUBLIC IP if you'll reach it from another machine.
 HOST_IP=localhost
 
-# DOCKER_GID: GID of the docker socket, so hastefuncqueues can spawn siblings.
-# Linux:
+# DOCKER_GID: GID that owns the docker socket *inside the container*, so
+# hastefuncqueues can spawn sibling containers (imageryprep/training).
+# Linux: the mounted socket keeps its host GID, so read it from the host:
 DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
-# macOS (BSD stat — the -c form does NOT work). Docker Desktop puts the socket
-# under $HOME, NOT /var/run, so resolve the real path from the docker context:
-# SOCK=$(docker context inspect --format '{{.Endpoints.docker.Host}}' | sed 's|unix://||')
-# DOCKER_GID=$(stat -f '%g' "$SOCK")   # typically 20 (staff) on macOS
+# macOS (Docker Desktop): the socket is bind-mounted into the container as
+# root:root, so the container-visible GID is 0 — NOT the host `stat` value
+# (which is typically 20/staff). Use 0 or the worker gets
+# `PermissionError(13, 'Permission denied')` and every job spawn fails:
+# DOCKER_GID=0
 ```
+
+> **⚠️ macOS gotcha:** set `DOCKER_GID=0`. The host socket may show GID 20, but
+> Docker Desktop presents it to the container as `root:root`, so `group_add`
+> must be 0. A non-zero value here is the usual cause of jobs that submit,
+> immediately fail, and show
+> `Error while fetching server API version: ... PermissionError(13)`.
 
 Write the file (adjust `HASTE_ENABLE_GPU` per your Gate-1 profile):
 

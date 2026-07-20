@@ -292,6 +292,9 @@ class ImageryPostProcessor:
             "user_building_footprints_url": (
                 self.image_data.userBuildingFootprintsUrl
             ),
+            # Optional server-side clip AOI ([w, s, e, n] EPSG:4326). When set,
+            # prepare-imagery clips the pre/post mosaics to this box.
+            "clip_bbox": self.image_data.clipBbox,
         }
         self.storage.save(
             identifier=self.image_data.imageLayerId,

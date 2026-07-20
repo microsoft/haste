@@ -45,6 +45,11 @@ class ImageryDownloader:
             dst_directory = kwargs.get("dst_directory", "./downloads")
             azure_urls = []
             aws_urls = []
+            # Allowlisted hosts without a dedicated SDK path (e.g. Source
+            # Cooperative / data.source.coop, used by the Planet Open Data
+            # catalog) are fetched over plain HTTPS via
+            # download_imagery_from_urls.
+            http_urls = []
 
             for url in urls:
                 try:
@@ -53,6 +58,8 @@ class ImageryDownloader:
                         azure_urls.append(url)
                     elif url_type == "awss3":
                         aws_urls.append(url)
+                    else:
+                        http_urls.append(url)
                 except Exception as e:
                     self.logger.warning(f"Skipping URL not in allowlist: {e}")
 
@@ -64,6 +71,10 @@ class ImageryDownloader:
             if aws_urls:
                 file_paths.extend(
                     self.download_aws_s3_files(aws_urls, dst_directory)
+                )
+            if http_urls:
+                file_paths.extend(
+                    self.download_imagery_from_urls(http_urls, dst_directory)
                 )
             return file_paths
 

@@ -82,6 +82,7 @@ class ImageryWorkflow:
         fine_tune=False,
         dst_directory=None,
         user_building_footprints_url=None,
+        clip_bbox=None,
     ):
         """Initialize the ImageryWorkflow class.
         Args:
@@ -107,6 +108,9 @@ class ImageryWorkflow:
         self.fine_tune = fine_tune
         self.dst_directory = dst_directory or os.path.join(".", "outputs")
         self.user_building_footprints_url = user_building_footprints_url
+        # Optional server-side clip AOI ([w, s, e, n] EPSG:4326). Applied to
+        # both pre and post mosaics so only the drawn area is processed.
+        self.clip_bbox = clip_bbox
 
         self.pre_event_raw_paths = []
         self.pre_event_preview_paths = []
@@ -205,6 +209,7 @@ class ImageryWorkflow:
             self.pre_event_raw_paths,
             dst_directory=self.dst_directory,
             save_as_prefix=save_as_prefix,
+            clip_bbox=self.clip_bbox,
         )
 
         cog_file_name = self.generate_prefix(PRE_EVENT_PROCESSED_COG_PREFIX)
@@ -243,6 +248,7 @@ class ImageryWorkflow:
             self.post_event_raw_paths,
             dst_directory=self.dst_directory,
             save_as_prefix=save_as_prefix,
+            clip_bbox=self.clip_bbox,
         )
 
         # The RGB band and scale adjusted imagery serves as supporting input to training and inference
@@ -763,12 +769,15 @@ def _save_raw_imagery(
     return raw_image_paths, preview_image_paths
 
 
-def _create_mosaic_cog(tif_files, dst_directory=None, save_as_prefix=None):
+def _create_mosaic_cog(
+    tif_files, dst_directory=None, save_as_prefix=None, clip_bbox=None
+):
     """Create a mosaic of TIFF files and convert to COG.
     Args:
         tif_files (list): List of TIFF files to mosaic (combine).
         dst_directory (str): (Optional) Directory to save the mosaic file. Defaults to current directory
         save_as_prefix (str): (Optional) Prefix for the saved mosaic file.
+        clip_bbox (list): (Optional) [w, s, e, n] EPSG:4326 AOI to clip to.
     Returns:
         str: Path to the created mosaic file."""
     dst_directory = dst_directory or "."
@@ -776,6 +785,7 @@ def _create_mosaic_cog(tif_files, dst_directory=None, save_as_prefix=None):
         tif_files,
         os.path.join(dst_directory, f"{save_as_prefix}.tif"),
         GDAL_WARP_PARAMS,
+        clip_bbox=clip_bbox,
     )
 
 
@@ -891,6 +901,7 @@ def main():
             user_building_footprints_url=config.get(
                 "user_building_footprints_url"
             ),
+            clip_bbox=config.get("clip_bbox"),
         )
 
         log_progress("Downloading imagery")

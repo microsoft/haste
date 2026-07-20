@@ -41,6 +41,17 @@ class TestValidateImageryUrl(unittest.TestCase):
             "awss3",
         )
 
+    def test_accepts_source_cooperative_host(self):
+        # Planet Open Data STAC catalogs/COGs surfaced by the Open Data
+        # Catalog explorer are served from data.source.coop.
+        self.assertEqual(
+            validate_imagery_url(
+                "https://data.source.coop/planet/venezuela-earthquake"
+                "-2026-06-24/post-event/scene.tif"
+            ),
+            "sourcecoop",
+        )
+
     def test_rejects_arbitrary_host(self):
         with self.assertRaises(ValueError):
             validate_imagery_url("https://evil.example.com/x.tif")
@@ -320,6 +331,58 @@ class TestValidateImageLayerUserFootprintsUrl(unittest.TestCase):
         msg = validate_image_layer_user_footprints_url(layer)
         self.assertIsNotNone(msg)
         self.assertIn("evil.example", msg)
+
+
+class TestValidateClipBbox(unittest.TestCase):
+    """Tests for validate_clip_bbox (server-side clip AOI on an ImageLayer)."""
+
+    def _layer(self, bbox):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(clipBbox=bbox)
+
+    def test_none_returns_none(self):
+        from hastegeo.core.utils.url_allowlist import validate_clip_bbox
+
+        self.assertIsNone(validate_clip_bbox(self._layer(None)))
+
+    def test_valid_bbox_returns_none(self):
+        from hastegeo.core.utils.url_allowlist import validate_clip_bbox
+
+        self.assertIsNone(
+            validate_clip_bbox(self._layer([-67.03, 10.54, -66.97, 10.61]))
+        )
+
+    def test_wrong_length_rejected(self):
+        from hastegeo.core.utils.url_allowlist import validate_clip_bbox
+
+        self.assertIsNotNone(validate_clip_bbox(self._layer([1, 2, 3])))
+
+    def test_non_numeric_rejected(self):
+        from hastegeo.core.utils.url_allowlist import validate_clip_bbox
+
+        self.assertIsNotNone(
+            validate_clip_bbox(self._layer([-67, "x", -66, 11]))
+        )
+
+    def test_out_of_range_rejected(self):
+        from hastegeo.core.utils.url_allowlist import validate_clip_bbox
+
+        self.assertIsNotNone(
+            validate_clip_bbox(self._layer([-67, 10, -66, 99]))
+        )
+
+    def test_inverted_bounds_rejected(self):
+        from hastegeo.core.utils.url_allowlist import validate_clip_bbox
+
+        # west >= east
+        self.assertIsNotNone(
+            validate_clip_bbox(self._layer([-66, 10.5, -67, 10.6]))
+        )
+        # south >= north
+        self.assertIsNotNone(
+            validate_clip_bbox(self._layer([-67, 10.6, -66, 10.5]))
+        )
 
 
 if __name__ == "__main__":

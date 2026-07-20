@@ -173,6 +173,8 @@ services:
       # Memory settings for training containers (increase for large VMs)
       HASTE_DOCKER_SHM_SIZE: "${HASTE_DOCKER_SHM_SIZE:-64g}"
       HASTE_DOCKER_MEM_LIMIT: "${HASTE_DOCKER_MEM_LIMIT:-256g}"
+      # Debug: keep failed spawned containers so their logs can be inspected.
+      CLEANUP_CONTAINERS: "${CLEANUP_CONTAINERS:-1}"
     volumes:
       - ../data:/app/data
       - azurite-data:/shared/azurite  # Mount azurite blob storage for LocalRunner access

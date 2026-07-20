@@ -752,6 +752,11 @@ class ImageLayer(BaseModel):
     labelsUrl: Optional[str] = Field(default=None)
     buildingFootprintsUrl: Optional[str] = Field(default=None)
     userBuildingFootprintsUrl: Optional[str] = Field(default=None)
+    # Optional server-side clip AOI, [west, south, east, north] in EPSG:4326.
+    # When set, imagery prep clips the pre/post mosaics to this box (gdalwarp
+    # -te) so only the drawn area is processed/labeled. Set by the Open Data
+    # Catalog "clip to area" flow.
+    clipBbox: Optional[list[float]] = Field(default=None)
     validAreaMaskUrl: Optional[str] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("Project", "projectId")

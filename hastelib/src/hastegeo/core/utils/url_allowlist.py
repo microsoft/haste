@@ -16,8 +16,9 @@ logger = logging.getLogger(__name__)
 # Human-readable description used in user-facing error messages. Keep in
 # sync with the JS allowlist in ui/src/util/validation.js.
 ALLOWED_HOST_DESCRIPTION = (
-    "Azure Blob Storage (*.blob.core.windows.net) "
-    "or AWS S3 (*.amazonaws.com)"
+    "Azure Blob Storage (*.blob.core.windows.net), "
+    "AWS S3 (*.amazonaws.com), "
+    "or Source Cooperative (data.source.coop)"
 )
 
 # Building-footprint URLs additionally permit the host of the configured
@@ -61,6 +62,13 @@ def validate_imagery_url(url: str) -> str:
         or host.endswith(".amazonaws.com")
     ):
         return "awss3"
+
+    # Source Cooperative — Planet Open Data STAC catalogs and COGs surfaced
+    # by the Open Data Catalog explorer are served from data.source.coop.
+    # This is a public, well-known open-data host (not user-controlled),
+    # so allowlisting it does not meaningfully widen SSRF exposure.
+    if host == "data.source.coop" or host.endswith(".source.coop"):
+        return "sourcecoop"
 
     raise ValueError(
         f"URL host {host!r} is not on the allowlist of permitted imagery sources"
@@ -231,4 +239,35 @@ def validate_image_layer_user_footprints_url(image_layer) -> Optional[str]:
             f"allowlist of permitted hosts ({FOOTPRINT_ALLOWED_HOST_DESCRIPTION}). "
             f"Rejected host: {host}."
         )
+    return None
+
+
+def validate_clip_bbox(image_layer) -> Optional[str]:
+    """Validate the optional server-side clip AOI on an ImageLayer.
+
+    Returns a user-facing error message if ``clipBbox`` is set but malformed,
+    or ``None`` when it is absent or valid. Expected shape:
+    ``[west, south, east, north]`` in EPSG:4326 with ``west < east``,
+    ``south < north`` and coordinates within valid lon/lat ranges. Callers
+    (PutLayer) treat a non-None return as a hard 400.
+
+    Lives here (not in utils/aoi.py) so the lightweight PutLayer validation
+    path doesn't pull rasterio/GDAL into the API process just to bounds-check
+    four numbers.
+    """
+    bbox = getattr(image_layer, "clipBbox", None)
+    if bbox is None:
+        return None
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return "clipBbox must be a [west, south, east, north] array."
+    try:
+        west, south, east, north = (float(v) for v in bbox)
+    except (TypeError, ValueError):
+        return "clipBbox values must be numbers."
+    if not (-180 <= west <= 180 and -180 <= east <= 180):
+        return "clipBbox longitudes must be within [-180, 180]."
+    if not (-90 <= south <= 90 and -90 <= north <= 90):
+        return "clipBbox latitudes must be within [-90, 90]."
+    if west >= east or south >= north:
+        return "clipBbox must have west < east and south < north."
     return None

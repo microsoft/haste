@@ -4,6 +4,7 @@ import { useState, useContext, useEffect } from "react";
 import {
   TextField,
   PrimaryButton,
+  DefaultButton,
   Text,
   DatePicker,
   Dropdown,
@@ -13,11 +14,13 @@ import { useParams } from "react-router-dom";
 import SectionHeader from "./Section/SectionHeader";
 import CreateEditImageLayerFormImagerySources from "./CreateEditImageLayerFormImagerySources";
 import CreateEditImageLayerFormBuildingFootprints from "./CreateEditImageLayerFormBuildingFootprints";
+import OpenDataCatalogPanel from "./OpenDataCatalog/OpenDataCatalogPanel";
 
 import {
   createComponentDefaultState,
   onFormChange,
   getUrlList,
+  addSceneToEventImagery,
 } from "./CreateEditImageLayerHelper";
 
 import { apiPut } from "../util/api";
@@ -39,6 +42,21 @@ const CreateEditImageLayerModal = () => {
   const projectId = useParams().projectId;
   const imageLayerId = useParams().imageLayerId;
   const [isUploading, setIsUploading] = useState(false);
+  const [isCatalogOpen, setIsCatalogOpen] = useState(false);
+
+  // Add a scene picked from the Open Data Catalog explorer into the pre/post
+  // imagery array (with source-type + capture-date auto-fill). Returns the
+  // helper's { ok, error } result so the panel can surface a message inline.
+  function handleAddScene(scene, field) {
+    return addSceneToEventImagery(setComponentState, componentState, scene, field);
+  }
+
+  // Server-side clip AOI: the Open Data Catalog draws a box and sets a single
+  // layer-level clip bbox ([w, s, e, n] EPSG:4326). Imagery prep clips the
+  // pre/post mosaics to it — no client-side crop/upload wait.
+  function handleClipAoiChange(bbox) {
+    onFormChange(bbox, "clipBbox", setComponentState, componentState);
+  }
 
   useEffect(() => {
     async function initComponent() {
@@ -209,6 +227,7 @@ const CreateEditImageLayerModal = () => {
           imageryCaptureDatePreEvent: imageryCaptureDatePreEvent,
           imageryCaptureDatePostEvent: imageryCaptureDatePostEvent,
           userBuildingFootprintsUrl: userBuildingFootprintsUrl,
+          clipBbox: componentState.clipBbox || null,
           userId: appParams.userId,
         };
 
@@ -316,6 +335,19 @@ const CreateEditImageLayerModal = () => {
                   You can combine files from both a URL and a local directory if
                   needed. All files must be valid GeoTIFF (.tif) files.
                 </Text>
+                {!imageLayerId && (
+                  <div className="mt-3">
+                    <DefaultButton
+                      iconProps={{ iconName: "Nav2DMapView" }}
+                      text="Browse Open Data Catalog"
+                      onClick={() => setIsCatalogOpen(true)}
+                    />
+                    <Text variant="small" className="d-block mt-1" style={{ color: "#616161" }}>
+                      Explore Vantor/Maxar and Planet open imagery for a disaster
+                      and add scenes straight into the sections below.
+                    </Text>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -511,6 +543,18 @@ const CreateEditImageLayerModal = () => {
           </div>
         </div>
       </div>
+
+      {!imageLayerId && (
+        <OpenDataCatalogPanel
+          isOpen={isCatalogOpen}
+          onDismiss={() => setIsCatalogOpen(false)}
+          onAddScene={handleAddScene}
+          clipAoi={componentState.clipBbox}
+          onClipAoiChange={handleClipAoiChange}
+          preUrls={getUrlList(componentState.preEventImageryUrls)}
+          postUrls={getUrlList(componentState.postEventImageryUrls)}
+        />
+      )}
     </div>
   );
 };
