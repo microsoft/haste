@@ -133,6 +133,7 @@ Shared-pool deploy knobs (env vars read by `shared-pools.bicep`):
 | Variable | Default | Purpose |
 |---|---|---|
 | `HASTE_SHARED_GROUP` | `dev` | Pool group (`dev`, `demo`, …) — drives the pool names. |
+| `HASTE_SHARED_NODE_TYPE` | `LowPriority` | Node cost tier: `LowPriority` (spot) or `Dedicated`. |
 | `HASTE_SHARED_H100_SCALE_MODE` | `Autoscale` | `Autoscale`, or `Fixed` reserved baseline for the scarce H100 tier. |
 | `HASTE_SHARED_H100_MIN_NODES` | `0` | H100 autoscale floor (>0 keeps chasing/holding a warm node). |
 | `HASTE_SHARED_T4_MIN_NODES` / `HASTE_SHARED_T4_MAX_NODES` | `0` / `2` | T4 autoscale floor / cap. |
