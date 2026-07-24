@@ -423,6 +423,16 @@ class Config:
         imageryprep_pool_id = os.getenv(
             "AZURE_BATCH_IMAGERYPREP_POOL_ID", "imageryprep-pool"
         )
+
+        def _split_ids(raw, fallback):
+            # Ordered candidate pool ids for capacity-aware routing (v2.1.0).
+            # Comma-separated env override; fall back to the single legacy id.
+            if raw:
+                ids = [p.strip() for p in raw.split(",") if p.strip()]
+                if ids:
+                    return ids
+            return [fallback]
+
         return {
             "account_name": os.getenv(
                 "AZURE_BATCH_ACCOUNT_NAME", "<batch-account-name>"
@@ -438,6 +448,30 @@ class Config:
             "imageprep_pool_id": os.getenv(
                 "AZURE_BATCH_IMAGERYPREP_POOL_ID", "imageryprep-pool"
             ),
+            # Ordered candidate pools per workload (v2.1.0 capacity-aware
+            # routing): preference-first, spillover-second
+            # (e.g. AZURE_BATCH_TRAINING_POOL_IDS="h100-pool,t4-pool").
+            "training_pool_ids": _split_ids(
+                os.getenv("AZURE_BATCH_TRAINING_POOL_IDS"), training_pool_id
+            ),
+            "inference_pool_ids": _split_ids(
+                os.getenv("AZURE_BATCH_INFERENCE_POOL_IDS"), training_pool_id
+            ),
+            "imageryprep_pool_ids": _split_ids(
+                os.getenv("AZURE_BATCH_IMAGERYPREP_POOL_IDS"),
+                imageryprep_pool_id,
+            ),
+            # Per-job user-delegation SAS instead of pool-identity for blob I/O
+            # (required for multi-tenant shared pools). Default off = legacy
+            # identity_reference path.
+            "use_sas": os.getenv("AZURE_BATCH_USE_SAS", "false").lower()
+            == "true",
+            # Whether the runner auto-creates/resizes its pool. Off for
+            # pre-created IaC/autoscale pools (resize fails on autoscale).
+            "manage_pools": os.getenv(
+                "AZURE_BATCH_MANAGE_POOLS", "true"
+            ).lower()
+            == "true",
             "registry_server": os.getenv(
                 "AZURE_BATCH_REGISTRY_SERVER",
                 "<registry-name>.azurecr.io",

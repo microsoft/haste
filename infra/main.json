@@ -1,0 +1,3925 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "languageVersion": "2.0",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "12934134840547041152"
+    }
+  },
+  "parameters": {
+    "resourcePrefix": {
+      "type": "string",
+      "metadata": {
+        "description": "Short prefix used to build every resource name (e.g. \"haste\")."
+      }
+    },
+    "location": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure region for the environment resource group and resources."
+      }
+    },
+    "randomSuffix": {
+      "type": "string",
+      "minLength": 1,
+      "metadata": {
+        "description": "4-digit suffix that disambiguates parallel environments."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {
+        "project": "haste"
+      },
+      "metadata": {
+        "description": "Tags applied to the resource group and resources."
+      }
+    },
+    "sharedResourceGroup": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Resource group holding BYO shared resources (Batch, ACR). Empty => env RG."
+      }
+    },
+    "sharedAcrName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of an existing ACR to pull training/imageryprep images from. Empty => no ACR wiring."
+      }
+    },
+    "apimPublisherEmail": {
+      "type": "string",
+      "metadata": {
+        "description": "APIM publisher email."
+      }
+    },
+    "apimPublisherName": {
+      "type": "string",
+      "defaultValue": "AI For Good Lab",
+      "metadata": {
+        "description": "APIM publisher organisation name."
+      }
+    },
+    "batchAccountMode": {
+      "type": "string",
+      "defaultValue": "Create",
+      "allowedValues": [
+        "Create",
+        "Existing"
+      ],
+      "metadata": {
+        "description": "Create a new Batch account in the env RG, or reference an existing shared one."
+      }
+    },
+    "existingBatchAccountName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing Batch account name (required when batchAccountMode == Existing)."
+      }
+    },
+    "batchPoolMode": {
+      "type": "string",
+      "defaultValue": "Create",
+      "allowedValues": [
+        "Create",
+        "Existing"
+      ],
+      "metadata": {
+        "description": "Create the GPU pool, or reference an existing one for app-settings wiring only."
+      }
+    },
+    "existingBatchPoolId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing Batch pool id (required when batchPoolMode == Existing)."
+      }
+    },
+    "batchPoolVmSize": {
+      "type": "string",
+      "defaultValue": "STANDARD_NC40ads_H100_v5",
+      "metadata": {
+        "description": "VM size for the GPU pool."
+      }
+    },
+    "batchPoolMaxNodes": {
+      "type": "int",
+      "defaultValue": 3,
+      "metadata": {
+        "description": "Max dedicated nodes for the autoscale formula."
+      }
+    },
+    "batchPoolSubnetName": {
+      "type": "string",
+      "defaultValue": "batch-subnet",
+      "metadata": {
+        "description": "Subnet name (in the env VNet) used by the Batch pool."
+      }
+    },
+    "sharedBatchSubnetId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Shared hub batch-subnet resource id where the SHARED multi-tenant pools are VNet-injected. Set for shared-pool envs (dev/demo) so this env storage allowlists that subnet; empty for single-tenant prod. See spec/features/batch-compute-expansion/networking.md."
+      }
+    },
+    "trainingImage": {
+      "type": "string",
+      "defaultValue": "hastetraining:1.4.1",
+      "metadata": {
+        "description": "Training container image (tag included)."
+      }
+    },
+    "imageryprepImage": {
+      "type": "string",
+      "defaultValue": "hasteimageryprep:1.4.1",
+      "metadata": {
+        "description": "Imageryprep container image (tag included)."
+      }
+    },
+    "emailSenderDomainType": {
+      "type": "string",
+      "defaultValue": "AzureManaged",
+      "allowedValues": [
+        "AzureManaged",
+        "Custom"
+      ],
+      "metadata": {
+        "description": "Sender-domain mode for the email backend."
+      }
+    },
+    "emailCustomDomain": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Custom sender domain (required when emailSenderDomainType == Custom)."
+      }
+    },
+    "enableFrontDoor": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Provision Front Door + WAF in front of the Static Web App."
+      }
+    },
+    "developmentMode": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Dev-only: api/queues auto-provision any authenticated user as admin and use anonymous auth. Keep false for production."
+      }
+    },
+    "trainingPoolIds": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Ordered candidate training pool ids (comma-separated). Empty => single training pool."
+      }
+    },
+    "inferencePoolIds": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Ordered candidate inference/embedding pool ids (comma-separated)."
+      }
+    },
+    "imageryprepPoolIds": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Ordered candidate imageryprep/artifacts pool ids (comma-separated)."
+      }
+    },
+    "useSas": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Use per-job user-delegation SAS for Batch blob I/O (multi-tenant shared pools)."
+      }
+    },
+    "managePools": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Runner auto-creates/resizes its pool. False for pre-created autoscale pools."
+      }
+    }
+  },
+  "variables": {
+    "rgName": "[format('{0}-haste-{1}-rg', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "storageAccountName": "[format('{0}haste{1}sa', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "fileStorageAccountName": "[format('{0}haste{1}fs', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "umiName": "[format('{0}-haste-{1}-umi', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "vnetName": "[format('{0}-haste-{1}-vnet', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "nsgName": "[format('{0}-haste-{1}-nsg', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "apimName": "[format('{0}-haste-{1}-apim', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "functionApiName": "[format('{0}haste{1}func', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "functionTitilerName": "[format('{0}hastetitiler{1}func', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "functionQueueName": "[format('{0}hastequeue{1}func', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "staticWebAppName": "[format('{0}haste{1}swa', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "logAnalyticsName": "[format('{0}-haste-{1}-law', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "mapsAccountName": "[format('{0}haste{1}maps', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "wafPolicyName": "[format('{0}haste{1}waf', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "frontDoorName": "[format('{0}haste{1}fd', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "acsName": "[format('{0}-haste-{1}-acs', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "emailServiceName": "[format('{0}-haste-{1}-email', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "functionsSubnetName": "func-subnet",
+    "createBatchAccount": "[equals(parameters('batchAccountMode'), 'Create')]",
+    "resolvedSharedRg": "[if(empty(parameters('sharedResourceGroup')), variables('rgName'), parameters('sharedResourceGroup'))]",
+    "createdBatchAccountName": "[format('{0}haste{1}batch', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "resolvedBatchAccountName": "[if(variables('createBatchAccount'), variables('createdBatchAccountName'), parameters('existingBatchAccountName'))]",
+    "batchAccountRg": "[if(variables('createBatchAccount'), variables('rgName'), variables('resolvedSharedRg'))]",
+    "createdBatchPoolName": "[format('{0}-haste-{1}-pool', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "wireAcr": "[not(empty(parameters('sharedAcrName')))]"
+  },
+  "resources": {
+    "rg": {
+      "type": "Microsoft.Resources/resourceGroups",
+      "apiVersion": "2024-03-01",
+      "name": "[variables('rgName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]"
+    },
+    "batchAccountRef": {
+      "existing": true,
+      "type": "Microsoft.Batch/batchAccounts",
+      "apiVersion": "2024-07-01",
+      "resourceGroup": "[variables('batchAccountRg')]",
+      "name": "[variables('resolvedBatchAccountName')]"
+    },
+    "monitoring": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "monitoring",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "logAnalyticsName": {
+            "value": "[variables('logAnalyticsName')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "9380957498639667481"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "logAnalyticsName": {
+              "type": "string",
+              "metadata": {
+                "description": "Log Analytics workspace name."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.OperationalInsights/workspaces",
+              "apiVersion": "2023-09-01",
+              "name": "[parameters('logAnalyticsName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "sku": {
+                  "name": "PerGB2018"
+                },
+                "retentionInDays": 30
+              }
+            }
+          ],
+          "outputs": {
+            "logAnalyticsId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsName'))]"
+            },
+            "logAnalyticsName": {
+              "type": "string",
+              "value": "[parameters('logAnalyticsName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "identity": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "identity",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "umiName": {
+            "value": "[variables('umiName')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "16963761547890363884"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "umiName": {
+              "type": "string",
+              "metadata": {
+                "description": "User-assigned managed identity name."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+              "apiVersion": "2023-01-31",
+              "name": "[parameters('umiName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]"
+            }
+          ],
+          "outputs": {
+            "resourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('umiName'))]"
+            },
+            "principalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('umiName')), '2023-01-31').principalId]"
+            },
+            "clientId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('umiName')), '2023-01-31').clientId]"
+            },
+            "name": {
+              "type": "string",
+              "value": "[parameters('umiName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "network": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "network",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "vnetName": {
+            "value": "[variables('vnetName')]"
+          },
+          "nsgName": {
+            "value": "[variables('nsgName')]"
+          },
+          "functionsSubnetName": {
+            "value": "[variables('functionsSubnetName')]"
+          },
+          "batchSubnetName": {
+            "value": "[parameters('batchPoolSubnetName')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "9880370881471562028"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "vnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Virtual network name."
+              }
+            },
+            "nsgName": {
+              "type": "string",
+              "metadata": {
+                "description": "Network security group name."
+              }
+            },
+            "functionsSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Functions VNet-integration subnet name."
+              }
+            },
+            "batchSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Batch pool subnet name."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/networkSecurityGroups",
+              "apiVersion": "2023-11-01",
+              "name": "[parameters('nsgName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "securityRules": []
+              }
+            },
+            {
+              "type": "Microsoft.Network/virtualNetworks",
+              "apiVersion": "2023-11-01",
+              "name": "[parameters('vnetName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "addressSpace": {
+                  "addressPrefixes": [
+                    "10.0.0.0/16"
+                  ]
+                },
+                "subnets": [
+                  {
+                    "name": "default",
+                    "properties": {
+                      "addressPrefix": "10.0.0.0/24",
+                      "networkSecurityGroup": {
+                        "id": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('nsgName'))]"
+                      },
+                      "serviceEndpoints": [
+                        {
+                          "service": "Microsoft.Web"
+                        },
+                        {
+                          "service": "Microsoft.Storage"
+                        }
+                      ],
+                      "delegations": [
+                        {
+                          "name": "serverFarms",
+                          "properties": {
+                            "serviceName": "Microsoft.Web/serverFarms"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "[parameters('functionsSubnetName')]",
+                    "properties": {
+                      "addressPrefix": "10.0.1.0/24",
+                      "networkSecurityGroup": {
+                        "id": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('nsgName'))]"
+                      },
+                      "serviceEndpoints": [
+                        {
+                          "service": "Microsoft.Storage"
+                        },
+                        {
+                          "service": "Microsoft.Web"
+                        }
+                      ],
+                      "delegations": [
+                        {
+                          "name": "appEnvironments",
+                          "properties": {
+                            "serviceName": "Microsoft.App/environments"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "[parameters('batchSubnetName')]",
+                    "properties": {
+                      "addressPrefix": "10.0.2.0/24",
+                      "serviceEndpoints": [
+                        {
+                          "service": "Microsoft.Storage"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('nsgName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "vnetId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+            },
+            "vnetName": {
+              "type": "string",
+              "value": "[parameters('vnetName')]"
+            },
+            "defaultSubnetId": {
+              "type": "string",
+              "value": "[format('{0}/subnets/default', resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName')))]"
+            },
+            "functionsSubnetId": {
+              "type": "string",
+              "value": "[format('{0}/subnets/{1}', resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName')), parameters('functionsSubnetName'))]"
+            },
+            "batchSubnetId": {
+              "type": "string",
+              "value": "[format('{0}/subnets/{1}', resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName')), parameters('batchSubnetName'))]"
+            },
+            "nsgId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('nsgName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "storage": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "storage",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "storageAccountName": {
+            "value": "[variables('storageAccountName')]"
+          },
+          "fileStorageAccountName": {
+            "value": "[variables('fileStorageAccountName')]"
+          },
+          "umiPrincipalId": {
+            "value": "[reference('identity').outputs.principalId.value]"
+          },
+          "vnetName": {
+            "value": "[variables('vnetName')]"
+          },
+          "defaultSubnetName": {
+            "value": "default"
+          },
+          "functionsSubnetName": {
+            "value": "[variables('functionsSubnetName')]"
+          },
+          "batchSubnetName": {
+            "value": "[parameters('batchPoolSubnetName')]"
+          },
+          "sharedBatchSubnetId": {
+            "value": "[parameters('sharedBatchSubnetId')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "16630728933207302616"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Functions storage account name."
+              }
+            },
+            "fileStorageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Premium file storage account name."
+              }
+            },
+            "umiPrincipalId": {
+              "type": "string",
+              "metadata": {
+                "description": "Principal id of the user-assigned managed identity."
+              }
+            },
+            "vnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "VNet name holding the allowed subnets."
+              }
+            },
+            "defaultSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Default subnet name."
+              }
+            },
+            "functionsSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Functions subnet name."
+              }
+            },
+            "batchSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Batch subnet name."
+              }
+            },
+            "sharedBatchSubnetId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Shared hub batch-subnet resource id (where the SHARED multi-tenant pools are VNet-injected). Empty for single-tenant envs (prod) that run their own in-env pool. See spec/features/batch-compute-expansion/networking.md."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            }
+          },
+          "variables": {
+            "blobDataOwnerRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')]",
+            "defaultSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('defaultSubnetName'))]",
+            "functionsSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('functionsSubnetName'))]",
+            "batchSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('batchSubnetName'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2023-05-01",
+              "name": "[parameters('storageAccountName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "kind": "StorageV2",
+              "properties": {
+                "accessTier": "Hot",
+                "allowSharedKeyAccess": true,
+                "minimumTlsVersion": "TLS1_2",
+                "supportsHttpsTrafficOnly": true,
+                "networkAcls": {
+                  "bypass": "Logging, Metrics, AzureServices",
+                  "defaultAction": "Deny",
+                  "virtualNetworkRules": "[concat(createArray(createObject('id', variables('defaultSubnetId'), 'action', 'Allow'), createObject('id', variables('functionsSubnetId'), 'action', 'Allow'), createObject('id', variables('batchSubnetId'), 'action', 'Allow')), if(empty(parameters('sharedBatchSubnetId')), createArray(), createArray(createObject('id', parameters('sharedBatchSubnetId'), 'action', 'Allow'))))]"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2023-05-01",
+              "name": "[parameters('fileStorageAccountName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Premium_LRS"
+              },
+              "kind": "FileStorage",
+              "properties": {
+                "allowSharedKeyAccess": true,
+                "minimumTlsVersion": "TLS1_2",
+                "supportsHttpsTrafficOnly": true,
+                "networkAcls": {
+                  "bypass": "Logging, Metrics, AzureServices",
+                  "defaultAction": "Deny",
+                  "virtualNetworkRules": [
+                    {
+                      "id": "[variables('defaultSubnetId')]",
+                      "action": "Allow"
+                    },
+                    {
+                      "id": "[variables('functionsSubnetId')]",
+                      "action": "Allow"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/fileServices",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}', parameters('fileStorageAccountName'), 'default')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('fileStorageAccountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', parameters('fileStorageAccountName'), 'default', 'data')]",
+              "properties": {
+                "shareQuota": 1000
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/fileServices', parameters('fileStorageAccountName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}', parameters('storageAccountName'), 'default')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', 'data')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', parameters('storageAccountName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('umiPrincipalId'), 'blobDataOwner')]",
+              "properties": {
+                "roleDefinitionId": "[variables('blobDataOwnerRoleId')]",
+                "principalId": "[parameters('umiPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('fileStorageAccountName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('fileStorageAccountName')), parameters('umiPrincipalId'), 'blobDataOwner')]",
+              "properties": {
+                "roleDefinitionId": "[variables('blobDataOwnerRoleId')]",
+                "principalId": "[parameters('umiPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('fileStorageAccountName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "storageAccountName": {
+              "type": "string",
+              "value": "[parameters('storageAccountName')]"
+            },
+            "storageAccountId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+            },
+            "fileStorageAccountName": {
+              "type": "string",
+              "value": "[parameters('fileStorageAccountName')]"
+            },
+            "fileStorageAccountId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Storage/storageAccounts', parameters('fileStorageAccountName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "identity",
+        "network",
+        "rg"
+      ]
+    },
+    "communication": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "communication",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "acsName": {
+            "value": "[variables('acsName')]"
+          },
+          "emailServiceName": {
+            "value": "[variables('emailServiceName')]"
+          },
+          "emailSenderDomainType": {
+            "value": "[parameters('emailSenderDomainType')]"
+          },
+          "emailCustomDomain": {
+            "value": "[parameters('emailCustomDomain')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.0",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "2299531501285707142"
+            }
+          },
+          "parameters": {
+            "acsName": {
+              "type": "string",
+              "metadata": {
+                "description": "Communication Services resource name."
+              }
+            },
+            "emailServiceName": {
+              "type": "string",
+              "metadata": {
+                "description": "Email Communication Services resource name."
+              }
+            },
+            "emailSenderDomainType": {
+              "type": "string",
+              "allowedValues": [
+                "AzureManaged",
+                "Custom"
+              ],
+              "metadata": {
+                "description": "Sender-domain mode."
+              }
+            },
+            "emailCustomDomain": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Custom sender domain (required when emailSenderDomainType == Custom)."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            }
+          },
+          "variables": {
+            "isCustom": "[equals(parameters('emailSenderDomainType'), 'Custom')]",
+            "domainResourceName": "[if(variables('isCustom'), parameters('emailCustomDomain'), 'AzureManagedDomain')]"
+          },
+          "resources": {
+            "emailService": {
+              "type": "Microsoft.Communication/emailServices",
+              "apiVersion": "2023-04-01",
+              "name": "[parameters('emailServiceName')]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "dataLocation": "United States"
+              }
+            },
+            "emailDomain": {
+              "type": "Microsoft.Communication/emailServices/domains",
+              "apiVersion": "2023-04-01",
+              "name": "[format('{0}/{1}', parameters('emailServiceName'), variables('domainResourceName'))]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "domainManagement": "[if(variables('isCustom'), 'CustomerManaged', 'AzureManaged')]",
+                "userEngagementTracking": "Disabled"
+              },
+              "dependsOn": [
+                "emailService"
+              ]
+            },
+            "acs": {
+              "type": "Microsoft.Communication/communicationServices",
+              "apiVersion": "2023-04-01",
+              "name": "[parameters('acsName')]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "dataLocation": "United States",
+                "linkedDomains": [
+                  "[resourceId('Microsoft.Communication/emailServices/domains', parameters('emailServiceName'), variables('domainResourceName'))]"
+                ]
+              },
+              "dependsOn": [
+                "emailDomain"
+              ]
+            }
+          },
+          "outputs": {
+            "connectionString": {
+              "type": "securestring",
+              "value": "[listKeys('acs', '2023-04-01').primaryConnectionString]"
+            },
+            "senderDomain": {
+              "type": "string",
+              "value": "[reference('emailDomain').fromSenderDomain]"
+            },
+            "acsName": {
+              "type": "string",
+              "value": "[parameters('acsName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "apim": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "apim",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "apimName": {
+            "value": "[variables('apimName')]"
+          },
+          "publisherEmail": {
+            "value": "[parameters('apimPublisherEmail')]"
+          },
+          "publisherName": {
+            "value": "[parameters('apimPublisherName')]"
+          },
+          "umiResourceId": {
+            "value": "[reference('identity').outputs.resourceId.value]"
+          },
+          "vnetName": {
+            "value": "[variables('vnetName')]"
+          },
+          "defaultSubnetName": {
+            "value": "default"
+          },
+          "storageAccountName": {
+            "value": "[variables('storageAccountName')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "16571433796004974762"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "apimName": {
+              "type": "string",
+              "metadata": {
+                "description": "API Management service name."
+              }
+            },
+            "publisherEmail": {
+              "type": "string",
+              "metadata": {
+                "description": "Publisher email."
+              }
+            },
+            "publisherName": {
+              "type": "string",
+              "metadata": {
+                "description": "Publisher organisation name."
+              }
+            },
+            "umiResourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "User-assigned managed identity resource id."
+              }
+            },
+            "vnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "VNet name holding the APIM subnet."
+              }
+            },
+            "defaultSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Subnet name for APIM VNet integration."
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Storage account name to grant the APIM identity blob access on."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            }
+          },
+          "variables": {
+            "blobDataOwnerRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ApiManagement/service",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[parameters('apimName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "StandardV2",
+                "capacity": 1
+              },
+              "identity": {
+                "type": "SystemAssigned, UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', parameters('umiResourceId'))]": {}
+                }
+              },
+              "properties": {
+                "publisherEmail": "[parameters('publisherEmail')]",
+                "publisherName": "[parameters('publisherName')]",
+                "virtualNetworkType": "External",
+                "virtualNetworkConfiguration": {
+                  "subnetResourceId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('defaultSubnetName'))]"
+                },
+                "legacyPortalStatus": "Disabled",
+                "developerPortalStatus": "Disabled",
+                "releaseChannel": "Default",
+                "publicNetworkAccess": "Enabled",
+                "natGatewayState": "Enabled",
+                "customProperties": {
+                  "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10": "False",
+                  "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11": "False",
+                  "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Ssl30": "False",
+                  "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls10": "False",
+                  "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls11": "False",
+                  "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Ssl30": "False"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.ApiManagement/service', parameters('apimName')), 'blobDataOwner')]",
+              "properties": {
+                "roleDefinitionId": "[variables('blobDataOwnerRoleId')]",
+                "principalId": "[reference(resourceId('Microsoft.ApiManagement/service', parameters('apimName')), '2024-06-01-preview', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "resourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.ApiManagement/service', parameters('apimName'))]"
+            },
+            "name": {
+              "type": "string",
+              "value": "[parameters('apimName')]"
+            },
+            "systemPrincipalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ApiManagement/service', parameters('apimName')), '2024-06-01-preview', 'full').identity.principalId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "identity",
+        "network",
+        "rg",
+        "storage"
+      ]
+    },
+    "functions": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "functions",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "functionApiName": {
+            "value": "[variables('functionApiName')]"
+          },
+          "functionTitilerName": {
+            "value": "[variables('functionTitilerName')]"
+          },
+          "functionQueueName": {
+            "value": "[variables('functionQueueName')]"
+          },
+          "storageAccountName": {
+            "value": "[variables('storageAccountName')]"
+          },
+          "fileStorageAccountName": {
+            "value": "[variables('fileStorageAccountName')]"
+          },
+          "umiResourceId": {
+            "value": "[reference('identity').outputs.resourceId.value]"
+          },
+          "vnetName": {
+            "value": "[variables('vnetName')]"
+          },
+          "functionsSubnetName": {
+            "value": "[variables('functionsSubnetName')]"
+          },
+          "logAnalyticsId": {
+            "value": "[reference('monitoring').outputs.logAnalyticsId.value]"
+          },
+          "batchAccountName": {
+            "value": "[variables('resolvedBatchAccountName')]"
+          },
+          "batchAccountLocation": {
+            "value": "[parameters('location')]"
+          },
+          "batchPoolName": "[if(equals(parameters('batchPoolMode'), 'Create'), createObject('value', variables('createdBatchPoolName')), createObject('value', parameters('existingBatchPoolId')))]",
+          "acrLoginServer": "[if(variables('wireAcr'), createObject('value', format('{0}.azurecr.io', parameters('sharedAcrName'))), createObject('value', ''))]",
+          "trainingImage": {
+            "value": "[parameters('trainingImage')]"
+          },
+          "imageryprepImage": {
+            "value": "[parameters('imageryprepImage')]"
+          },
+          "staticWebAppName": {
+            "value": "[variables('staticWebAppName')]"
+          },
+          "staticAppDomain": {
+            "value": "[reference('frontend').outputs.staticWebAppHostName.value]"
+          },
+          "emailSenderDomain": {
+            "value": "[reference('communication').outputs.senderDomain.value]"
+          },
+          "emailConnectionString": {
+            "value": "[listOutputsWithSecureValues('communication', '2025-04-01').connectionString]"
+          },
+          "batchAccountKey": {
+            "value": "[listKeys('batchAccountRef', '2024-07-01').primary]"
+          },
+          "developmentMode": {
+            "value": "[parameters('developmentMode')]"
+          },
+          "trainingPoolIds": {
+            "value": "[parameters('trainingPoolIds')]"
+          },
+          "inferencePoolIds": {
+            "value": "[parameters('inferencePoolIds')]"
+          },
+          "imageryprepPoolIds": {
+            "value": "[parameters('imageryprepPoolIds')]"
+          },
+          "useSas": {
+            "value": "[parameters('useSas')]"
+          },
+          "managePools": {
+            "value": "[parameters('managePools')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "1968129085219592897"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "functionApiName": {
+              "type": "string",
+              "metadata": {
+                "description": "API function app name."
+              }
+            },
+            "functionTitilerName": {
+              "type": "string",
+              "metadata": {
+                "description": "TiTiler function app name."
+              }
+            },
+            "functionQueueName": {
+              "type": "string",
+              "metadata": {
+                "description": "Queue-triggers function app name."
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Functions storage account name."
+              }
+            },
+            "fileStorageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Premium file storage account name."
+              }
+            },
+            "umiResourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "User-assigned managed identity resource id."
+              }
+            },
+            "vnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "VNet name."
+              }
+            },
+            "functionsSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Functions subnet name."
+              }
+            },
+            "logAnalyticsId": {
+              "type": "string",
+              "metadata": {
+                "description": "Log Analytics workspace resource id."
+              }
+            },
+            "batchAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Batch account name the apps submit jobs to."
+              }
+            },
+            "batchAccountLocation": {
+              "type": "string",
+              "metadata": {
+                "description": "Batch account location (for the batch service URL)."
+              }
+            },
+            "batchPoolName": {
+              "type": "string",
+              "metadata": {
+                "description": "GPU/imageryprep Batch pool id."
+              }
+            },
+            "acrLoginServer": {
+              "type": "string",
+              "metadata": {
+                "description": "ACR login server (e.g. myreg.azurecr.io). Empty when no ACR is wired."
+              }
+            },
+            "trainingImage": {
+              "type": "string",
+              "metadata": {
+                "description": "Training container image (tag included)."
+              }
+            },
+            "imageryprepImage": {
+              "type": "string",
+              "metadata": {
+                "description": "Imageryprep container image (tag included)."
+              }
+            },
+            "staticWebAppName": {
+              "type": "string",
+              "metadata": {
+                "description": "Static Web App name (for the invitation/email flow)."
+              }
+            },
+            "staticAppDomain": {
+              "type": "string",
+              "metadata": {
+                "description": "Static Web App default hostname (for the invitation/email flow)."
+              }
+            },
+            "emailSenderDomain": {
+              "type": "string",
+              "metadata": {
+                "description": "ACS sender domain (EMAIL_SENDER = DoNotReply@<domain>)."
+              }
+            },
+            "emailConnectionString": {
+              "type": "securestring",
+              "metadata": {
+                "description": "ACS connection string for outbound email."
+              }
+            },
+            "batchAccountKey": {
+              "type": "securestring",
+              "metadata": {
+                "description": "Batch account primary key."
+              }
+            },
+            "developmentMode": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Dev-only: auto-provision any authenticated user as admin and drop function-key auth (anonymous). Must be false for production."
+              }
+            },
+            "trainingPoolIds": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Ordered candidate training pool ids (comma-separated). Empty => single training pool."
+              }
+            },
+            "inferencePoolIds": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Ordered candidate inference/embedding pool ids (comma-separated)."
+              }
+            },
+            "imageryprepPoolIds": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Ordered candidate imageryprep/artifacts pool ids (comma-separated)."
+              }
+            },
+            "useSas": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Use per-job user-delegation SAS for Batch blob I/O (multi-tenant shared pools)."
+              }
+            },
+            "managePools": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Runner auto-creates/resizes its pool. False for pre-created autoscale pools."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "fn-api",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "name": {
+                    "value": "[parameters('functionApiName')]"
+                  },
+                  "planName": {
+                    "value": "[format('{0}-plan', parameters('functionApiName'))]"
+                  },
+                  "alwaysReadyCount": {
+                    "value": 10
+                  },
+                  "storageAccountName": {
+                    "value": "[parameters('storageAccountName')]"
+                  },
+                  "fileStorageAccountName": {
+                    "value": "[parameters('fileStorageAccountName')]"
+                  },
+                  "umiResourceId": {
+                    "value": "[parameters('umiResourceId')]"
+                  },
+                  "vnetName": {
+                    "value": "[parameters('vnetName')]"
+                  },
+                  "functionsSubnetName": {
+                    "value": "[parameters('functionsSubnetName')]"
+                  },
+                  "logAnalyticsId": {
+                    "value": "[parameters('logAnalyticsId')]"
+                  },
+                  "appSettings": {
+                    "value": [
+                      {
+                        "name": "env",
+                        "value": "prod"
+                      },
+                      {
+                        "name": "DEVELOPMENT_MODE",
+                        "value": "[if(parameters('developmentMode'), 'true', 'false')]"
+                      },
+                      {
+                        "name": "IMAGE_QUEUE_NAME",
+                        "value": "image-layers-queue"
+                      },
+                      {
+                        "name": "INFERENCE_QUEUE_NAME",
+                        "value": "inference-queue"
+                      },
+                      {
+                        "name": "STATS_QUEUE_NAME",
+                        "value": "stats-queue"
+                      },
+                      {
+                        "name": "TRAIN_QUEUE_NAME",
+                        "value": "train-queue"
+                      },
+                      {
+                        "name": "ZIP_QUEUE_NAME",
+                        "value": "zip-queue"
+                      },
+                      {
+                        "name": "IMAGERY_STORAGE_TYPE",
+                        "value": "blob"
+                      },
+                      {
+                        "name": "METADATA_STORAGE_TYPE",
+                        "value": "blob"
+                      },
+                      {
+                        "name": "ARTIFACT_STORAGE_TYPE",
+                        "value": "blob"
+                      },
+                      {
+                        "name": "RUNNER_TYPE",
+                        "value": "azure_batch"
+                      },
+                      {
+                        "name": "TEMP_DATA_PATH",
+                        "value": "/data"
+                      },
+                      {
+                        "name": "DATA_PATH",
+                        "value": "/data"
+                      },
+                      {
+                        "name": "TITILER_ENDPOINT",
+                        "value": "/api/titiler/"
+                      },
+                      {
+                        "name": "BLOB_CONTAINER",
+                        "value": "data"
+                      },
+                      {
+                        "name": "BLOB_ACCOUNT_URL",
+                        "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob]"
+                      },
+                      {
+                        "name": "QUEUE_ACCOUNT_URL",
+                        "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue]"
+                      },
+                      {
+                        "name": "BLOB_CONNECTION_STRING",
+                        "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_ACCOUNT_NAME",
+                        "value": "[parameters('batchAccountName')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_URL",
+                        "value": "[format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_ACCOUNT_KEY",
+                        "value": "[parameters('batchAccountKey')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_DOCKER_IMAGE",
+                        "value": "[format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE",
+                        "value": "[format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_OUTPUT_CONTAINER_URL",
+                        "value": "[format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_TRAINING_POOL_ID",
+                        "value": "[parameters('batchPoolName')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_IMAGERYPREP_POOL_ID",
+                        "value": "[parameters('batchPoolName')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_REGISTRY_SERVER_URL",
+                        "value": "[format('https://{0}', parameters('acrLoginServer'))]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_REGISTRY_IMAGE",
+                        "value": "[format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID",
+                        "value": "[parameters('umiResourceId')]"
+                      },
+                      {
+                        "name": "STATIC_APP_SUBSCRIPTION_ID",
+                        "value": "[subscription().subscriptionId]"
+                      },
+                      {
+                        "name": "STATIC_APP_RESOURCE_GROUP",
+                        "value": "[resourceGroup().name]"
+                      },
+                      {
+                        "name": "STATIC_APP_NAME",
+                        "value": "[parameters('staticWebAppName')]"
+                      },
+                      {
+                        "name": "STATIC_APP_DOMAIN",
+                        "value": "[parameters('staticAppDomain')]"
+                      },
+                      {
+                        "name": "EMAIL_CONNECTION_STRING",
+                        "value": "[parameters('emailConnectionString')]"
+                      },
+                      {
+                        "name": "EMAIL_SENDER",
+                        "value": "[format('DoNotReply@{0}', parameters('emailSenderDomain'))]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_TRAINING_POOL_IDS",
+                        "value": "[parameters('trainingPoolIds')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_INFERENCE_POOL_IDS",
+                        "value": "[parameters('inferencePoolIds')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_IMAGERYPREP_POOL_IDS",
+                        "value": "[parameters('imageryprepPoolIds')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_USE_SAS",
+                        "value": "[if(parameters('useSas'), 'true', 'false')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_MANAGE_POOLS",
+                        "value": "[if(parameters('managePools'), 'true', 'false')]"
+                      }
+                    ]
+                  },
+                  "tags": {
+                    "value": "[parameters('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.43.8.12551",
+                      "templateHash": "12545021642088417436"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Azure region."
+                      }
+                    },
+                    "name": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Function app name."
+                      }
+                    },
+                    "planName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "App Service (Flex Consumption) plan name."
+                      }
+                    },
+                    "alwaysReadyCount": {
+                      "type": "int",
+                      "metadata": {
+                        "description": "Always-ready HTTP instance count."
+                      }
+                    },
+                    "storageAccountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Functions storage account name."
+                      }
+                    },
+                    "fileStorageAccountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Premium file storage account name (mounted at /data)."
+                      }
+                    },
+                    "umiResourceId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "User-assigned managed identity resource id."
+                      }
+                    },
+                    "vnetName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "VNet name for VNet integration."
+                      }
+                    },
+                    "functionsSubnetName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Functions subnet name."
+                      }
+                    },
+                    "logAnalyticsId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Log Analytics workspace resource id."
+                      }
+                    },
+                    "appSettings": {
+                      "type": "array",
+                      "defaultValue": [],
+                      "metadata": {
+                        "description": "Extra application settings (name/value pairs) merged after the base settings. api/queues pass the hastegeo app config here; titiler passes none."
+                      }
+                    },
+                    "tags": {
+                      "type": "object",
+                      "defaultValue": {},
+                      "metadata": {
+                        "description": "Resource tags."
+                      }
+                    }
+                  },
+                  "variables": {
+                    "blobDataOwnerRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')]",
+                    "queueDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
+                    "blobDelegatorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')]",
+                    "deploymentContainerName": "[format('app-package-{0}', parameters('name'))]"
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+                      "apiVersion": "2023-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', variables('deploymentContainerName'))]"
+                    },
+                    {
+                      "type": "Microsoft.Insights/components",
+                      "apiVersion": "2020-02-02",
+                      "name": "[format('{0}-ai', parameters('name'))]",
+                      "location": "[parameters('location')]",
+                      "kind": "web",
+                      "tags": "[parameters('tags')]",
+                      "properties": {
+                        "Application_Type": "web",
+                        "WorkspaceResourceId": "[parameters('logAnalyticsId')]"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Web/serverfarms",
+                      "apiVersion": "2023-12-01",
+                      "name": "[parameters('planName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "sku": {
+                        "tier": "FlexConsumption",
+                        "name": "FC1"
+                      },
+                      "kind": "functionapp",
+                      "properties": {
+                        "reserved": true
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Web/sites",
+                      "apiVersion": "2023-12-01",
+                      "name": "[parameters('name')]",
+                      "location": "[parameters('location')]",
+                      "kind": "functionapp,linux",
+                      "tags": "[parameters('tags')]",
+                      "identity": {
+                        "type": "SystemAssigned, UserAssigned",
+                        "userAssignedIdentities": {
+                          "[format('{0}', parameters('umiResourceId'))]": {}
+                        }
+                      },
+                      "properties": {
+                        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]",
+                        "httpsOnly": true,
+                        "virtualNetworkSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('functionsSubnetName'))]",
+                        "functionAppConfig": {
+                          "deployment": {
+                            "storage": {
+                              "type": "blobContainer",
+                              "value": "[format('{0}{1}', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob, variables('deploymentContainerName'))]",
+                              "authentication": {
+                                "type": "SystemAssignedIdentity"
+                              }
+                            }
+                          },
+                          "scaleAndConcurrency": {
+                            "maximumInstanceCount": 100,
+                            "instanceMemoryMB": 4096,
+                            "alwaysReady": [
+                              {
+                                "name": "http",
+                                "instanceCount": "[parameters('alwaysReadyCount')]"
+                              }
+                            ]
+                          },
+                          "runtime": {
+                            "name": "python",
+                            "version": "3.11"
+                          }
+                        },
+                        "siteConfig": {
+                          "ftpsState": "Disabled",
+                          "appSettings": "[concat(createArray(createObject('name', 'AzureWebJobsStorage__accountName', 'value', parameters('storageAccountName')), createObject('name', 'AzureWebJobsStorage__blobServiceUri', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'AzureWebJobsStorage__queueServiceUri', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Insights/components', format('{0}-ai', parameters('name'))), '2020-02-02').ConnectionString)), parameters('appSettings'))]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Insights/components', format('{0}-ai', parameters('name')))]",
+                        "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Web/sites/config",
+                      "apiVersion": "2023-12-01",
+                      "name": "[format('{0}/{1}', parameters('name'), 'azurestorageaccounts')]",
+                      "properties": {
+                        "data": {
+                          "type": "AzureFiles",
+                          "accountName": "[parameters('fileStorageAccountName')]",
+                          "shareName": "data",
+                          "mountPath": "/data",
+                          "accessKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('fileStorageAccountName')), '2023-05-01').keys[0].value]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('name'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.Web/sites', parameters('name')), 'blobDataOwner')]",
+                      "properties": {
+                        "roleDefinitionId": "[variables('blobDataOwnerRoleId')]",
+                        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01', 'full').identity.principalId]",
+                        "principalType": "ServicePrincipal"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('name'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.Web/sites', parameters('name')), 'queueDataContributor')]",
+                      "properties": {
+                        "roleDefinitionId": "[variables('queueDataContributorRoleId')]",
+                        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01', 'full').identity.principalId]",
+                        "principalType": "ServicePrincipal"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('name'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.Web/sites', parameters('name')), 'blobDelegator')]",
+                      "properties": {
+                        "roleDefinitionId": "[variables('blobDelegatorRoleId')]",
+                        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01', 'full').identity.principalId]",
+                        "principalType": "ServicePrincipal"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('name'))]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "name": {
+                      "type": "string",
+                      "value": "[parameters('name')]"
+                    },
+                    "defaultHostName": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01').defaultHostName]"
+                    },
+                    "systemPrincipalId": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01', 'full').identity.principalId]"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "fn-titiler",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "name": {
+                    "value": "[parameters('functionTitilerName')]"
+                  },
+                  "planName": {
+                    "value": "[format('{0}-plan', parameters('functionTitilerName'))]"
+                  },
+                  "alwaysReadyCount": {
+                    "value": 5
+                  },
+                  "storageAccountName": {
+                    "value": "[parameters('storageAccountName')]"
+                  },
+                  "fileStorageAccountName": {
+                    "value": "[parameters('fileStorageAccountName')]"
+                  },
+                  "umiResourceId": {
+                    "value": "[parameters('umiResourceId')]"
+                  },
+                  "vnetName": {
+                    "value": "[parameters('vnetName')]"
+                  },
+                  "functionsSubnetName": {
+                    "value": "[parameters('functionsSubnetName')]"
+                  },
+                  "logAnalyticsId": {
+                    "value": "[parameters('logAnalyticsId')]"
+                  },
+                  "tags": {
+                    "value": "[parameters('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.43.8.12551",
+                      "templateHash": "12545021642088417436"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Azure region."
+                      }
+                    },
+                    "name": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Function app name."
+                      }
+                    },
+                    "planName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "App Service (Flex Consumption) plan name."
+                      }
+                    },
+                    "alwaysReadyCount": {
+                      "type": "int",
+                      "metadata": {
+                        "description": "Always-ready HTTP instance count."
+                      }
+                    },
+                    "storageAccountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Functions storage account name."
+                      }
+                    },
+                    "fileStorageAccountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Premium file storage account name (mounted at /data)."
+                      }
+                    },
+                    "umiResourceId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "User-assigned managed identity resource id."
+                      }
+                    },
+                    "vnetName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "VNet name for VNet integration."
+                      }
+                    },
+                    "functionsSubnetName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Functions subnet name."
+                      }
+                    },
+                    "logAnalyticsId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Log Analytics workspace resource id."
+                      }
+                    },
+                    "appSettings": {
+                      "type": "array",
+                      "defaultValue": [],
+                      "metadata": {
+                        "description": "Extra application settings (name/value pairs) merged after the base settings. api/queues pass the hastegeo app config here; titiler passes none."
+                      }
+                    },
+                    "tags": {
+                      "type": "object",
+                      "defaultValue": {},
+                      "metadata": {
+                        "description": "Resource tags."
+                      }
+                    }
+                  },
+                  "variables": {
+                    "blobDataOwnerRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')]",
+                    "queueDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
+                    "blobDelegatorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')]",
+                    "deploymentContainerName": "[format('app-package-{0}', parameters('name'))]"
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+                      "apiVersion": "2023-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', variables('deploymentContainerName'))]"
+                    },
+                    {
+                      "type": "Microsoft.Insights/components",
+                      "apiVersion": "2020-02-02",
+                      "name": "[format('{0}-ai', parameters('name'))]",
+                      "location": "[parameters('location')]",
+                      "kind": "web",
+                      "tags": "[parameters('tags')]",
+                      "properties": {
+                        "Application_Type": "web",
+                        "WorkspaceResourceId": "[parameters('logAnalyticsId')]"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Web/serverfarms",
+                      "apiVersion": "2023-12-01",
+                      "name": "[parameters('planName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "sku": {
+                        "tier": "FlexConsumption",
+                        "name": "FC1"
+                      },
+                      "kind": "functionapp",
+                      "properties": {
+                        "reserved": true
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Web/sites",
+                      "apiVersion": "2023-12-01",
+                      "name": "[parameters('name')]",
+                      "location": "[parameters('location')]",
+                      "kind": "functionapp,linux",
+                      "tags": "[parameters('tags')]",
+                      "identity": {
+                        "type": "SystemAssigned, UserAssigned",
+                        "userAssignedIdentities": {
+                          "[format('{0}', parameters('umiResourceId'))]": {}
+                        }
+                      },
+                      "properties": {
+                        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]",
+                        "httpsOnly": true,
+                        "virtualNetworkSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('functionsSubnetName'))]",
+                        "functionAppConfig": {
+                          "deployment": {
+                            "storage": {
+                              "type": "blobContainer",
+                              "value": "[format('{0}{1}', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob, variables('deploymentContainerName'))]",
+                              "authentication": {
+                                "type": "SystemAssignedIdentity"
+                              }
+                            }
+                          },
+                          "scaleAndConcurrency": {
+                            "maximumInstanceCount": 100,
+                            "instanceMemoryMB": 4096,
+                            "alwaysReady": [
+                              {
+                                "name": "http",
+                                "instanceCount": "[parameters('alwaysReadyCount')]"
+                              }
+                            ]
+                          },
+                          "runtime": {
+                            "name": "python",
+                            "version": "3.11"
+                          }
+                        },
+                        "siteConfig": {
+                          "ftpsState": "Disabled",
+                          "appSettings": "[concat(createArray(createObject('name', 'AzureWebJobsStorage__accountName', 'value', parameters('storageAccountName')), createObject('name', 'AzureWebJobsStorage__blobServiceUri', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'AzureWebJobsStorage__queueServiceUri', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Insights/components', format('{0}-ai', parameters('name'))), '2020-02-02').ConnectionString)), parameters('appSettings'))]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Insights/components', format('{0}-ai', parameters('name')))]",
+                        "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Web/sites/config",
+                      "apiVersion": "2023-12-01",
+                      "name": "[format('{0}/{1}', parameters('name'), 'azurestorageaccounts')]",
+                      "properties": {
+                        "data": {
+                          "type": "AzureFiles",
+                          "accountName": "[parameters('fileStorageAccountName')]",
+                          "shareName": "data",
+                          "mountPath": "/data",
+                          "accessKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('fileStorageAccountName')), '2023-05-01').keys[0].value]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('name'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.Web/sites', parameters('name')), 'blobDataOwner')]",
+                      "properties": {
+                        "roleDefinitionId": "[variables('blobDataOwnerRoleId')]",
+                        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01', 'full').identity.principalId]",
+                        "principalType": "ServicePrincipal"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('name'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.Web/sites', parameters('name')), 'queueDataContributor')]",
+                      "properties": {
+                        "roleDefinitionId": "[variables('queueDataContributorRoleId')]",
+                        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01', 'full').identity.principalId]",
+                        "principalType": "ServicePrincipal"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('name'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.Web/sites', parameters('name')), 'blobDelegator')]",
+                      "properties": {
+                        "roleDefinitionId": "[variables('blobDelegatorRoleId')]",
+                        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01', 'full').identity.principalId]",
+                        "principalType": "ServicePrincipal"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('name'))]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "name": {
+                      "type": "string",
+                      "value": "[parameters('name')]"
+                    },
+                    "defaultHostName": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01').defaultHostName]"
+                    },
+                    "systemPrincipalId": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01', 'full').identity.principalId]"
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'fn-api')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "fn-queue",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "name": {
+                    "value": "[parameters('functionQueueName')]"
+                  },
+                  "planName": {
+                    "value": "[format('{0}-plan', parameters('functionQueueName'))]"
+                  },
+                  "alwaysReadyCount": {
+                    "value": 1
+                  },
+                  "storageAccountName": {
+                    "value": "[parameters('storageAccountName')]"
+                  },
+                  "fileStorageAccountName": {
+                    "value": "[parameters('fileStorageAccountName')]"
+                  },
+                  "umiResourceId": {
+                    "value": "[parameters('umiResourceId')]"
+                  },
+                  "vnetName": {
+                    "value": "[parameters('vnetName')]"
+                  },
+                  "functionsSubnetName": {
+                    "value": "[parameters('functionsSubnetName')]"
+                  },
+                  "logAnalyticsId": {
+                    "value": "[parameters('logAnalyticsId')]"
+                  },
+                  "appSettings": {
+                    "value": [
+                      {
+                        "name": "env",
+                        "value": "prod"
+                      },
+                      {
+                        "name": "DEVELOPMENT_MODE",
+                        "value": "[if(parameters('developmentMode'), 'true', 'false')]"
+                      },
+                      {
+                        "name": "IMAGE_QUEUE_NAME",
+                        "value": "image-layers-queue"
+                      },
+                      {
+                        "name": "INFERENCE_QUEUE_NAME",
+                        "value": "inference-queue"
+                      },
+                      {
+                        "name": "STATS_QUEUE_NAME",
+                        "value": "stats-queue"
+                      },
+                      {
+                        "name": "TRAIN_QUEUE_NAME",
+                        "value": "train-queue"
+                      },
+                      {
+                        "name": "ZIP_QUEUE_NAME",
+                        "value": "zip-queue"
+                      },
+                      {
+                        "name": "IMAGERY_STORAGE_TYPE",
+                        "value": "blob"
+                      },
+                      {
+                        "name": "METADATA_STORAGE_TYPE",
+                        "value": "blob"
+                      },
+                      {
+                        "name": "ARTIFACT_STORAGE_TYPE",
+                        "value": "blob"
+                      },
+                      {
+                        "name": "RUNNER_TYPE",
+                        "value": "azure_batch"
+                      },
+                      {
+                        "name": "TEMP_DATA_PATH",
+                        "value": "/data"
+                      },
+                      {
+                        "name": "DATA_PATH",
+                        "value": "/data"
+                      },
+                      {
+                        "name": "TITILER_ENDPOINT",
+                        "value": "/api/titiler/"
+                      },
+                      {
+                        "name": "BLOB_CONTAINER",
+                        "value": "data"
+                      },
+                      {
+                        "name": "BLOB_ACCOUNT_URL",
+                        "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob]"
+                      },
+                      {
+                        "name": "QUEUE_ACCOUNT_URL",
+                        "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue]"
+                      },
+                      {
+                        "name": "BLOB_CONNECTION_STRING",
+                        "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_ACCOUNT_NAME",
+                        "value": "[parameters('batchAccountName')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_URL",
+                        "value": "[format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_ACCOUNT_KEY",
+                        "value": "[parameters('batchAccountKey')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_DOCKER_IMAGE",
+                        "value": "[format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE",
+                        "value": "[format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_OUTPUT_CONTAINER_URL",
+                        "value": "[format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_TRAINING_POOL_ID",
+                        "value": "[parameters('batchPoolName')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_IMAGERYPREP_POOL_ID",
+                        "value": "[parameters('batchPoolName')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_REGISTRY_SERVER_URL",
+                        "value": "[format('https://{0}', parameters('acrLoginServer'))]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_REGISTRY_IMAGE",
+                        "value": "[format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID",
+                        "value": "[parameters('umiResourceId')]"
+                      },
+                      {
+                        "name": "STATIC_APP_SUBSCRIPTION_ID",
+                        "value": "[subscription().subscriptionId]"
+                      },
+                      {
+                        "name": "STATIC_APP_RESOURCE_GROUP",
+                        "value": "[resourceGroup().name]"
+                      },
+                      {
+                        "name": "STATIC_APP_NAME",
+                        "value": "[parameters('staticWebAppName')]"
+                      },
+                      {
+                        "name": "STATIC_APP_DOMAIN",
+                        "value": "[parameters('staticAppDomain')]"
+                      },
+                      {
+                        "name": "EMAIL_CONNECTION_STRING",
+                        "value": "[parameters('emailConnectionString')]"
+                      },
+                      {
+                        "name": "EMAIL_SENDER",
+                        "value": "[format('DoNotReply@{0}', parameters('emailSenderDomain'))]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_TRAINING_POOL_IDS",
+                        "value": "[parameters('trainingPoolIds')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_INFERENCE_POOL_IDS",
+                        "value": "[parameters('inferencePoolIds')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_IMAGERYPREP_POOL_IDS",
+                        "value": "[parameters('imageryprepPoolIds')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_USE_SAS",
+                        "value": "[if(parameters('useSas'), 'true', 'false')]"
+                      },
+                      {
+                        "name": "AZURE_BATCH_MANAGE_POOLS",
+                        "value": "[if(parameters('managePools'), 'true', 'false')]"
+                      }
+                    ]
+                  },
+                  "tags": {
+                    "value": "[parameters('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.43.8.12551",
+                      "templateHash": "12545021642088417436"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Azure region."
+                      }
+                    },
+                    "name": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Function app name."
+                      }
+                    },
+                    "planName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "App Service (Flex Consumption) plan name."
+                      }
+                    },
+                    "alwaysReadyCount": {
+                      "type": "int",
+                      "metadata": {
+                        "description": "Always-ready HTTP instance count."
+                      }
+                    },
+                    "storageAccountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Functions storage account name."
+                      }
+                    },
+                    "fileStorageAccountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Premium file storage account name (mounted at /data)."
+                      }
+                    },
+                    "umiResourceId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "User-assigned managed identity resource id."
+                      }
+                    },
+                    "vnetName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "VNet name for VNet integration."
+                      }
+                    },
+                    "functionsSubnetName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Functions subnet name."
+                      }
+                    },
+                    "logAnalyticsId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Log Analytics workspace resource id."
+                      }
+                    },
+                    "appSettings": {
+                      "type": "array",
+                      "defaultValue": [],
+                      "metadata": {
+                        "description": "Extra application settings (name/value pairs) merged after the base settings. api/queues pass the hastegeo app config here; titiler passes none."
+                      }
+                    },
+                    "tags": {
+                      "type": "object",
+                      "defaultValue": {},
+                      "metadata": {
+                        "description": "Resource tags."
+                      }
+                    }
+                  },
+                  "variables": {
+                    "blobDataOwnerRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')]",
+                    "queueDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
+                    "blobDelegatorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')]",
+                    "deploymentContainerName": "[format('app-package-{0}', parameters('name'))]"
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+                      "apiVersion": "2023-05-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', variables('deploymentContainerName'))]"
+                    },
+                    {
+                      "type": "Microsoft.Insights/components",
+                      "apiVersion": "2020-02-02",
+                      "name": "[format('{0}-ai', parameters('name'))]",
+                      "location": "[parameters('location')]",
+                      "kind": "web",
+                      "tags": "[parameters('tags')]",
+                      "properties": {
+                        "Application_Type": "web",
+                        "WorkspaceResourceId": "[parameters('logAnalyticsId')]"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Web/serverfarms",
+                      "apiVersion": "2023-12-01",
+                      "name": "[parameters('planName')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[parameters('tags')]",
+                      "sku": {
+                        "tier": "FlexConsumption",
+                        "name": "FC1"
+                      },
+                      "kind": "functionapp",
+                      "properties": {
+                        "reserved": true
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Web/sites",
+                      "apiVersion": "2023-12-01",
+                      "name": "[parameters('name')]",
+                      "location": "[parameters('location')]",
+                      "kind": "functionapp,linux",
+                      "tags": "[parameters('tags')]",
+                      "identity": {
+                        "type": "SystemAssigned, UserAssigned",
+                        "userAssignedIdentities": {
+                          "[format('{0}', parameters('umiResourceId'))]": {}
+                        }
+                      },
+                      "properties": {
+                        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]",
+                        "httpsOnly": true,
+                        "virtualNetworkSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('functionsSubnetName'))]",
+                        "functionAppConfig": {
+                          "deployment": {
+                            "storage": {
+                              "type": "blobContainer",
+                              "value": "[format('{0}{1}', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob, variables('deploymentContainerName'))]",
+                              "authentication": {
+                                "type": "SystemAssignedIdentity"
+                              }
+                            }
+                          },
+                          "scaleAndConcurrency": {
+                            "maximumInstanceCount": 100,
+                            "instanceMemoryMB": 4096,
+                            "alwaysReady": [
+                              {
+                                "name": "http",
+                                "instanceCount": "[parameters('alwaysReadyCount')]"
+                              }
+                            ]
+                          },
+                          "runtime": {
+                            "name": "python",
+                            "version": "3.11"
+                          }
+                        },
+                        "siteConfig": {
+                          "ftpsState": "Disabled",
+                          "appSettings": "[concat(createArray(createObject('name', 'AzureWebJobsStorage__accountName', 'value', parameters('storageAccountName')), createObject('name', 'AzureWebJobsStorage__blobServiceUri', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'AzureWebJobsStorage__queueServiceUri', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Insights/components', format('{0}-ai', parameters('name'))), '2020-02-02').ConnectionString)), parameters('appSettings'))]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Insights/components', format('{0}-ai', parameters('name')))]",
+                        "[resourceId('Microsoft.Web/serverfarms', parameters('planName'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Web/sites/config",
+                      "apiVersion": "2023-12-01",
+                      "name": "[format('{0}/{1}', parameters('name'), 'azurestorageaccounts')]",
+                      "properties": {
+                        "data": {
+                          "type": "AzureFiles",
+                          "accountName": "[parameters('fileStorageAccountName')]",
+                          "shareName": "data",
+                          "mountPath": "/data",
+                          "accessKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('fileStorageAccountName')), '2023-05-01').keys[0].value]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('name'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.Web/sites', parameters('name')), 'blobDataOwner')]",
+                      "properties": {
+                        "roleDefinitionId": "[variables('blobDataOwnerRoleId')]",
+                        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01', 'full').identity.principalId]",
+                        "principalType": "ServicePrincipal"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('name'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.Web/sites', parameters('name')), 'queueDataContributor')]",
+                      "properties": {
+                        "roleDefinitionId": "[variables('queueDataContributorRoleId')]",
+                        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01', 'full').identity.principalId]",
+                        "principalType": "ServicePrincipal"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('name'))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.Web/sites', parameters('name')), 'blobDelegator')]",
+                      "properties": {
+                        "roleDefinitionId": "[variables('blobDelegatorRoleId')]",
+                        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01', 'full').identity.principalId]",
+                        "principalType": "ServicePrincipal"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('name'))]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "name": {
+                      "type": "string",
+                      "value": "[parameters('name')]"
+                    },
+                    "defaultHostName": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01').defaultHostName]"
+                    },
+                    "systemPrincipalId": {
+                      "type": "string",
+                      "value": "[reference(resourceId('Microsoft.Web/sites', parameters('name')), '2023-12-01', 'full').identity.principalId]"
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'fn-titiler')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "apiSystemPrincipalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'fn-api'), '2025-04-01').outputs.systemPrincipalId.value]"
+            },
+            "apiName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'fn-api'), '2025-04-01').outputs.name.value]"
+            },
+            "titilerName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'fn-titiler'), '2025-04-01').outputs.name.value]"
+            },
+            "queueName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'fn-queue'), '2025-04-01').outputs.name.value]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "batchAccount",
+        "communication",
+        "frontend",
+        "identity",
+        "monitoring",
+        "network",
+        "rg",
+        "storage"
+      ]
+    },
+    "frontend": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "frontend",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "staticWebAppName": {
+            "value": "[variables('staticWebAppName')]"
+          },
+          "mapsAccountName": {
+            "value": "[variables('mapsAccountName')]"
+          },
+          "apimResourceId": {
+            "value": "[reference('apim').outputs.resourceId.value]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "15152592237032588221"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region for the Static Web App."
+              }
+            },
+            "staticWebAppName": {
+              "type": "string",
+              "metadata": {
+                "description": "Static Web App name."
+              }
+            },
+            "mapsAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure Maps account name."
+              }
+            },
+            "apimResourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "APIM resource id to link as the SWA backend."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Web/staticSites",
+              "apiVersion": "2024-04-01",
+              "name": "[parameters('staticWebAppName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Standard",
+                "tier": "Standard"
+              },
+              "properties": {}
+            },
+            {
+              "type": "Microsoft.Web/staticSites/linkedBackends",
+              "apiVersion": "2024-04-01",
+              "name": "[format('{0}/{1}', parameters('staticWebAppName'), 'apim-backend')]",
+              "properties": {
+                "backendResourceId": "[parameters('apimResourceId')]",
+                "region": "[parameters('location')]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/staticSites', parameters('staticWebAppName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Maps/accounts",
+              "apiVersion": "2023-06-01",
+              "name": "[parameters('mapsAccountName')]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "kind": "Gen2",
+              "sku": {
+                "name": "G2"
+              },
+              "properties": {}
+            }
+          ],
+          "outputs": {
+            "staticWebAppName": {
+              "type": "string",
+              "value": "[parameters('staticWebAppName')]"
+            },
+            "staticWebAppHostName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/staticSites', parameters('staticWebAppName')), '2024-04-01').defaultHostname]"
+            },
+            "mapsAccountName": {
+              "type": "string",
+              "value": "[parameters('mapsAccountName')]"
+            },
+            "mapsClientId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Maps/accounts', parameters('mapsAccountName')), '2023-06-01').uniqueId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "apim",
+        "rg"
+      ]
+    },
+    "apimApis": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "apimApis",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "apimName": {
+            "value": "[variables('apimName')]"
+          },
+          "functionApiName": {
+            "value": "[variables('functionApiName')]"
+          },
+          "functionTitilerName": {
+            "value": "[variables('functionTitilerName')]"
+          },
+          "staticWebAppHostName": {
+            "value": "[reference('frontend').outputs.staticWebAppHostName.value]"
+          },
+          "storageAccountName": {
+            "value": "[variables('storageAccountName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "6825195985756767924"
+            }
+          },
+          "parameters": {
+            "apimName": {
+              "type": "string",
+              "metadata": {
+                "description": "API Management service name."
+              }
+            },
+            "functionApiName": {
+              "type": "string",
+              "metadata": {
+                "description": "API function app name (api-id + backend)."
+              }
+            },
+            "functionTitilerName": {
+              "type": "string",
+              "metadata": {
+                "description": "TiTiler function app name (api-id + backend)."
+              }
+            },
+            "staticWebAppHostName": {
+              "type": "string",
+              "metadata": {
+                "description": "Static Web App default hostname; its first label is the generated APIM product id."
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Storage account name backing the storage-proxy operations."
+              }
+            }
+          },
+          "variables": {
+            "swaProductId": "[split(parameters('staticWebAppHostName'), '.')[0]]",
+            "subscriptionKeyParameterNames": {
+              "header": "Ocp-Apim-Subscription-Key",
+              "query": "subscription-key"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ApiManagement/service/apis",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimName'), parameters('functionApiName'))]",
+              "properties": {
+                "displayName": "[parameters('functionApiName')]",
+                "apiRevision": "1",
+                "description": "[format('Import from \"{0}\" Function App', parameters('functionApiName'))]",
+                "subscriptionRequired": true,
+                "path": "api/haste",
+                "protocols": [
+                  "https"
+                ],
+                "subscriptionKeyParameterNames": "[variables('subscriptionKeyParameterNames')]",
+                "isCurrent": true
+              }
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/backends",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimName'), parameters('functionApiName'))]",
+              "properties": {
+                "description": "[parameters('functionApiName')]",
+                "url": "[format('https://{0}.azurewebsites.net/api', parameters('functionApiName'))]",
+                "protocol": "http",
+                "resourceId": "[format('{0}{1}', environment().resourceManager, substring(resourceId('Microsoft.Web/sites', parameters('functionApiName')), 1))]"
+              }
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/products/apis",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}/{2}', parameters('apimName'), variables('swaProductId'), parameters('functionApiName'))]",
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionApiName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/policies",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}/{2}', parameters('apimName'), parameters('functionApiName'), 'policy')]",
+              "properties": {
+                "format": "xml",
+                "value": "[replace('<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__BID__', parameters('functionApiName'))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionApiName'))]",
+                "[resourceId('Microsoft.ApiManagement/service/backends', parameters('apimName'), parameters('functionApiName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimName'), parameters('functionTitilerName'))]",
+              "properties": {
+                "displayName": "[parameters('functionTitilerName')]",
+                "apiRevision": "1",
+                "description": "[format('Import from \"{0}\" Function App', parameters('functionTitilerName'))]",
+                "subscriptionRequired": true,
+                "path": "api/titiler",
+                "protocols": [
+                  "https"
+                ],
+                "subscriptionKeyParameterNames": "[variables('subscriptionKeyParameterNames')]",
+                "isCurrent": true
+              }
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/backends",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimName'), parameters('functionTitilerName'))]",
+              "properties": {
+                "description": "[parameters('functionTitilerName')]",
+                "url": "[format('https://{0}.azurewebsites.net', parameters('functionTitilerName'))]",
+                "protocol": "http",
+                "resourceId": "[format('{0}{1}', environment().resourceManager, substring(resourceId('Microsoft.Web/sites', parameters('functionTitilerName')), 1))]"
+              }
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/products/apis",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}/{2}', parameters('apimName'), variables('swaProductId'), parameters('functionTitilerName'))]",
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionTitilerName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/policies",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}/{2}', parameters('apimName'), parameters('functionTitilerName'), 'policy')]",
+              "properties": {
+                "format": "xml",
+                "value": "[replace('<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__BID__', parameters('functionTitilerName'))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionTitilerName'))]",
+                "[resourceId('Microsoft.ApiManagement/service/backends', parameters('apimName'), parameters('functionTitilerName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}/{2}', parameters('apimName'), parameters('functionTitilerName'), 'get-tiles')]",
+              "properties": {
+                "displayName": "get-tiles",
+                "method": "GET",
+                "urlTemplate": "/cog/tiles/WebMercatorQuad/{z}/{x}/{y}",
+                "templateParameters": [
+                  {
+                    "name": "z",
+                    "required": true,
+                    "type": "string"
+                  },
+                  {
+                    "name": "x",
+                    "required": true,
+                    "type": "string"
+                  },
+                  {
+                    "name": "y",
+                    "required": true,
+                    "type": "string"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionTitilerName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimName'), 'hastestorageapi')]",
+              "properties": {
+                "displayName": "hastestorageapi",
+                "apiRevision": "1",
+                "description": "Storage artifact proxy (managed identity).",
+                "subscriptionRequired": true,
+                "path": "api/haste/storage",
+                "protocols": [
+                  "https"
+                ],
+                "subscriptionKeyParameterNames": "[variables('subscriptionKeyParameterNames')]",
+                "isCurrent": true
+              }
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/products/apis",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}/{2}', parameters('apimName'), variables('swaProductId'), 'hastestorageapi')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'hastestorageapi')]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'hastestorageapi', 'get-artifacts')]",
+              "properties": {
+                "displayName": "get-artifacts",
+                "method": "GET",
+                "urlTemplate": "/get-artifacts/{container}/{projectDir}/{modelDir}/{fileName}",
+                "templateParameters": [
+                  {
+                    "name": "container",
+                    "required": true,
+                    "type": "string"
+                  },
+                  {
+                    "name": "projectDir",
+                    "required": true,
+                    "type": "string"
+                  },
+                  {
+                    "name": "modelDir",
+                    "required": true,
+                    "type": "string"
+                  },
+                  {
+                    "name": "fileName",
+                    "required": true,
+                    "type": "string"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'hastestorageapi')]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'hastestorageapi', 'get-artifacts', 'policy')]",
+              "properties": {
+                "format": "xml",
+                "value": "[replace('<policies>\r\n  <inbound>\r\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\r\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"modelDir\"]+ \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\r\n      <set-method>GET</set-method>\r\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\r\n        <value>2019-07-07</value>\r\n      </set-header>\r\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\r\n    </send-request>\r\n    <return-response response-variable-name=\"blobdata\" />\r\n    <base />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__SA__', parameters('storageAccountName'))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'hastestorageapi', 'get-artifacts')]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}/{2}', parameters('apimName'), 'hastestorageapi', 'get-project-artifacts')]",
+              "properties": {
+                "displayName": "get-project-artifacts",
+                "method": "GET",
+                "urlTemplate": "/get-project-artifacts/{container}/{projectDir}/{fileName}",
+                "templateParameters": [
+                  {
+                    "name": "container",
+                    "required": true,
+                    "type": "string"
+                  },
+                  {
+                    "name": "projectDir",
+                    "required": true,
+                    "type": "string"
+                  },
+                  {
+                    "name": "fileName",
+                    "required": true,
+                    "type": "string"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), 'hastestorageapi')]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+              "apiVersion": "2024-06-01-preview",
+              "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'hastestorageapi', 'get-project-artifacts', 'policy')]",
+              "properties": {
+                "format": "xml",
+                "value": "[replace('<policies>\r\n  <inbound>\r\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\r\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\r\n      <set-method>GET</set-method>\r\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\r\n        <value>2019-07-07</value>\r\n      </set-header>\r\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\r\n    </send-request>\r\n    <return-response response-variable-name=\"blobdata\" />\r\n    <base />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__SA__', parameters('storageAccountName'))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'hastestorageapi', 'get-project-artifacts')]"
+              ]
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "frontend",
+        "functions",
+        "rg"
+      ]
+    },
+    "roles": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "roles",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "staticWebAppName": {
+            "value": "[variables('staticWebAppName')]"
+          },
+          "mapsAccountName": {
+            "value": "[variables('mapsAccountName')]"
+          },
+          "functionSystemPrincipalId": {
+            "value": "[reference('functions').outputs.apiSystemPrincipalId.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "6001236453914961257"
+            }
+          },
+          "parameters": {
+            "staticWebAppName": {
+              "type": "string",
+              "metadata": {
+                "description": "Static Web App name to scope the assignment to."
+              }
+            },
+            "mapsAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure Maps account name to grant the API identity read access on."
+              }
+            },
+            "functionSystemPrincipalId": {
+              "type": "string",
+              "metadata": {
+                "description": "System-assigned principal id of the API function app."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleDefinitions",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(resourceGroup().id, 'HasteWebAppUserManager')]",
+              "properties": {
+                "roleName": "[format('HasteWebAppUserManager-{0}', uniqueString(resourceGroup().id))]",
+                "description": "Lets the HASTE API app manage Static Web App users (invitations).",
+                "type": "CustomRole",
+                "permissions": [
+                  {
+                    "actions": [
+                      "microsoft.web/staticSites/*"
+                    ],
+                    "notActions": [],
+                    "dataActions": [],
+                    "notDataActions": []
+                  }
+                ],
+                "assignableScopes": [
+                  "[resourceGroup().id]"
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Web/staticSites', parameters('staticWebAppName'))]",
+              "name": "[guid(resourceId('Microsoft.Web/staticSites', parameters('staticWebAppName')), parameters('functionSystemPrincipalId'), 'HasteWebAppUserManager')]",
+              "properties": {
+                "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', guid(resourceGroup().id, 'HasteWebAppUserManager'))]",
+                "principalId": "[parameters('functionSystemPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Authorization/roleDefinitions', guid(resourceGroup().id, 'HasteWebAppUserManager'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Maps/accounts', parameters('mapsAccountName'))]",
+              "name": "[guid(resourceId('Microsoft.Maps/accounts', parameters('mapsAccountName')), parameters('functionSystemPrincipalId'), 'AzureMapsDataReader')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '423170ca-a8f6-4b0f-8487-9e4eb8f49bfa')]",
+                "principalId": "[parameters('functionSystemPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ],
+          "outputs": {
+            "roleDefinitionId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Authorization/roleDefinitions', guid(resourceGroup().id, 'HasteWebAppUserManager'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "functions",
+        "rg"
+      ]
+    },
+    "batchAccount": {
+      "condition": "[variables('createBatchAccount')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "batchAccount",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "batchAccountName": {
+            "value": "[variables('createdBatchAccountName')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "16832494055114601667"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "batchAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Batch account name."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Batch/batchAccounts",
+              "apiVersion": "2024-07-01",
+              "name": "[parameters('batchAccountName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "poolAllocationMode": "BatchService"
+              }
+            }
+          ],
+          "outputs": {
+            "name": {
+              "type": "string",
+              "value": "[parameters('batchAccountName')]"
+            },
+            "id": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Batch/batchAccounts', parameters('batchAccountName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "batchPool": {
+      "condition": "[equals(parameters('batchPoolMode'), 'Create')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "batchPool",
+      "resourceGroup": "[variables('batchAccountRg')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "batchAccountName": {
+            "value": "[variables('resolvedBatchAccountName')]"
+          },
+          "poolName": {
+            "value": "[variables('createdBatchPoolName')]"
+          },
+          "vmSize": {
+            "value": "[parameters('batchPoolVmSize')]"
+          },
+          "maxNodes": {
+            "value": "[parameters('batchPoolMaxNodes')]"
+          },
+          "umiResourceId": {
+            "value": "[reference('identity').outputs.resourceId.value]"
+          },
+          "subnetId": {
+            "value": "[resourceId(subscription().subscriptionId, variables('rgName'), 'Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), parameters('batchPoolSubnetName'))]"
+          },
+          "acrName": {
+            "value": "[parameters('sharedAcrName')]"
+          },
+          "trainingImage": {
+            "value": "[parameters('trainingImage')]"
+          },
+          "imageryprepImage": {
+            "value": "[parameters('imageryprepImage')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "14366334891975298585"
+            }
+          },
+          "parameters": {
+            "batchAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Resolved Batch account name (existing or just-created)."
+              }
+            },
+            "poolName": {
+              "type": "string",
+              "metadata": {
+                "description": "Pool name."
+              }
+            },
+            "vmSize": {
+              "type": "string",
+              "metadata": {
+                "description": "Pool VM size."
+              }
+            },
+            "maxNodes": {
+              "type": "int",
+              "metadata": {
+                "description": "Max nodes (autoscale cap)."
+              }
+            },
+            "scaleMode": {
+              "type": "string",
+              "defaultValue": "Autoscale",
+              "allowedValues": [
+                "Fixed",
+                "Autoscale"
+              ],
+              "metadata": {
+                "description": "Scale mode: Fixed (dev/prod reserved) or Autoscale (shared-demo burst)."
+              }
+            },
+            "nodeType": {
+              "type": "string",
+              "defaultValue": "Dedicated",
+              "allowedValues": [
+                "Dedicated",
+                "LowPriority"
+              ],
+              "metadata": {
+                "description": "Node cost tier: Dedicated (guaranteed) or LowPriority (spot, preemptible)."
+              }
+            },
+            "fixedNodeCount": {
+              "type": "int",
+              "defaultValue": 1,
+              "metadata": {
+                "description": "Node count when scaleMode == Fixed."
+              }
+            },
+            "minNodes": {
+              "type": "int",
+              "defaultValue": 1,
+              "metadata": {
+                "description": "Autoscale floor. 0 = scale-to-zero when idle (shared-demo burst); 1 keeps the legacy always-on behavior."
+              }
+            },
+            "umiResourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "User-assigned managed identity resource id (for ACR pull)."
+              }
+            },
+            "subnetId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "VNet subnet resource id for VNet-injected pools. Empty => no VNet injection (BatchManaged public IPs). Shared-demo pools finalize their subnet + per-demo-storage firewall allowlisting before running workloads."
+              }
+            },
+            "acrName": {
+              "type": "string",
+              "metadata": {
+                "description": "Shared ACR name (without .azurecr.io)."
+              }
+            },
+            "trainingImage": {
+              "type": "string",
+              "metadata": {
+                "description": "Training container image (tag included)."
+              }
+            },
+            "imageryprepImage": {
+              "type": "string",
+              "metadata": {
+                "description": "Imageryprep container image (tag included)."
+              }
+            }
+          },
+          "variables": {
+            "registryServer": "[format('{0}.azurecr.io', parameters('acrName'))]",
+            "scaleTargetVar": "[if(equals(parameters('nodeType'), 'LowPriority'), '$TargetLowPriorityNodes', '$TargetDedicatedNodes')]",
+            "autoscaleFormula": "[format('$samples = $ActiveTasks.GetSamplePercent(TimeInterval_Minute * 15);$tasks = $samples < 70 ? max(0, $ActiveTasks.GetSample(1)) : max($ActiveTasks.GetSample(1), avg($ActiveTasks.GetSample(TimeInterval_Minute * 15)));$targetVMs = $tasks > 0 ? $tasks : {0};{1} = max({2}, min($targetVMs, {3}));$NodeDeallocationOption = taskcompletion;', parameters('minNodes'), variables('scaleTargetVar'), parameters('minNodes'), parameters('maxNodes'))]",
+            "scaleSettings": "[if(equals(parameters('scaleMode'), 'Fixed'), createObject('fixedScale', createObject('targetDedicatedNodes', if(equals(parameters('nodeType'), 'Dedicated'), parameters('fixedNodeCount'), 0), 'targetLowPriorityNodes', if(equals(parameters('nodeType'), 'LowPriority'), parameters('fixedNodeCount'), 0), 'resizeTimeout', 'PT15M')), createObject('autoScale', createObject('formula', variables('autoscaleFormula'), 'evaluationInterval', 'PT5M')))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Batch/batchAccounts/pools",
+              "apiVersion": "2024-07-01",
+              "name": "[format('{0}/{1}', parameters('batchAccountName'), parameters('poolName'))]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', parameters('umiResourceId'))]": {}
+                }
+              },
+              "properties": "[shallowMerge(createArray(createObject('vmSize', parameters('vmSize'), 'interNodeCommunication', 'Disabled', 'taskSlotsPerNode', 1, 'taskSchedulingPolicy', createObject('nodeFillType', 'Pack'), 'deploymentConfiguration', createObject('virtualMachineConfiguration', createObject('imageReference', createObject('publisher', 'microsoft-dsvm', 'offer', 'ubuntu-hpc', 'sku', '2204', 'version', 'latest'), 'nodeAgentSkuId', 'batch.node.ubuntu 22.04', 'osDisk', createObject('caching', 'None', 'diskSizeGB', 1023, 'managedDisk', createObject('storageAccountType', 'Premium_LRS')), 'containerConfiguration', createObject('type', 'DockerCompatible', 'containerImageNames', createArray(format('{0}/{1}', variables('registryServer'), parameters('trainingImage')), format('{0}/{1}', variables('registryServer'), parameters('imageryprepImage'))), 'containerRegistries', createArray(createObject('registryServer', format('https://{0}', variables('registryServer')), 'identityReference', createObject('resourceId', parameters('umiResourceId'))))), 'nodePlacementConfiguration', createObject('policy', 'Regional')))), if(empty(parameters('subnetId')), createObject(), createObject('networkConfiguration', createObject('subnetId', parameters('subnetId'), 'publicIPAddressConfiguration', createObject('provision', 'BatchManaged'), 'dynamicVnetAssignmentScope', 'none', 'enableAcceleratedNetworking', false()))), createObject('scaleSettings', variables('scaleSettings'))))]"
+            }
+          ],
+          "outputs": {
+            "poolName": {
+              "type": "string",
+              "value": "[parameters('poolName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "batchAccount",
+        "identity",
+        "network"
+      ]
+    },
+    "acrRole": {
+      "condition": "[variables('wireAcr')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "acrRole",
+      "resourceGroup": "[variables('resolvedSharedRg')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "acrName": {
+            "value": "[parameters('sharedAcrName')]"
+          },
+          "umiPrincipalId": {
+            "value": "[reference('identity').outputs.principalId.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "15881723511064074666"
+            }
+          },
+          "parameters": {
+            "acrName": {
+              "type": "string",
+              "metadata": {
+                "description": "ACR name (without .azurecr.io)."
+              }
+            },
+            "umiPrincipalId": {
+              "type": "string",
+              "metadata": {
+                "description": "Principal id of the user-assigned managed identity."
+              }
+            }
+          },
+          "variables": {
+            "acrPullRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName'))]",
+              "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), parameters('umiPrincipalId'), 'AcrPull')]",
+              "properties": {
+                "roleDefinitionId": "[variables('acrPullRoleId')]",
+                "principalId": "[parameters('umiPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "identity"
+      ]
+    },
+    "frontDoor": {
+      "condition": "[parameters('enableFrontDoor')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "frontDoor",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "frontDoorName": {
+            "value": "[variables('frontDoorName')]"
+          },
+          "wafPolicyName": {
+            "value": "[variables('wafPolicyName')]"
+          },
+          "staticWebAppName": {
+            "value": "[variables('staticWebAppName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "18374080558664767600"
+            }
+          },
+          "parameters": {
+            "frontDoorName": {
+              "type": "string",
+              "metadata": {
+                "description": "Front Door (CDN) profile name."
+              }
+            },
+            "wafPolicyName": {
+              "type": "string",
+              "metadata": {
+                "description": "WAF policy name."
+              }
+            },
+            "staticWebAppName": {
+              "type": "string",
+              "metadata": {
+                "description": "Static Web App name to use as the origin."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/FrontDoorWebApplicationFirewallPolicies",
+              "apiVersion": "2024-02-01",
+              "name": "[parameters('wafPolicyName')]",
+              "location": "global",
+              "sku": {
+                "name": "Premium_AzureFrontDoor"
+              },
+              "properties": {
+                "policySettings": {
+                  "enabledState": "Enabled",
+                  "mode": "Prevention"
+                },
+                "managedRules": {
+                  "managedRuleSets": [
+                    {
+                      "ruleSetType": "DefaultRuleSet",
+                      "ruleSetVersion": "1.0"
+                    },
+                    {
+                      "ruleSetType": "Microsoft_BotManagerRuleSet",
+                      "ruleSetVersion": "1.0"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Cdn/profiles",
+              "apiVersion": "2024-02-01",
+              "name": "[parameters('frontDoorName')]",
+              "location": "global",
+              "sku": {
+                "name": "Premium_AzureFrontDoor"
+              },
+              "identity": {
+                "type": "SystemAssigned"
+              }
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/afdEndpoints",
+              "apiVersion": "2024-02-01",
+              "name": "[format('{0}/{1}', parameters('frontDoorName'), format('{0}-endpoint', parameters('frontDoorName')))]",
+              "location": "global",
+              "properties": {
+                "enabledState": "Enabled"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles', parameters('frontDoorName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/originGroups",
+              "apiVersion": "2024-02-01",
+              "name": "[format('{0}/{1}', parameters('frontDoorName'), format('{0}-origin-group', parameters('frontDoorName')))]",
+              "properties": {
+                "loadBalancingSettings": {
+                  "sampleSize": 4,
+                  "successfulSamplesRequired": 3,
+                  "additionalLatencyInMilliseconds": 50
+                },
+                "healthProbeSettings": {
+                  "probePath": "/",
+                  "probeRequestType": "GET",
+                  "probeProtocol": "Https",
+                  "probeIntervalInSeconds": 30
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles', parameters('frontDoorName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/originGroups/origins",
+              "apiVersion": "2024-02-01",
+              "name": "[format('{0}/{1}/{2}', parameters('frontDoorName'), format('{0}-origin-group', parameters('frontDoorName')), format('{0}-origin', parameters('frontDoorName')))]",
+              "properties": {
+                "hostName": "[reference(resourceId('Microsoft.Web/staticSites', parameters('staticWebAppName')), '2024-04-01').defaultHostname]",
+                "originHostHeader": "[reference(resourceId('Microsoft.Web/staticSites', parameters('staticWebAppName')), '2024-04-01').defaultHostname]",
+                "httpPort": 80,
+                "httpsPort": 443,
+                "priority": 1,
+                "weight": 1000,
+                "enabledState": "Enabled"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles/originGroups', parameters('frontDoorName'), format('{0}-origin-group', parameters('frontDoorName')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/afdEndpoints/routes",
+              "apiVersion": "2024-02-01",
+              "name": "[format('{0}/{1}/{2}', parameters('frontDoorName'), format('{0}-endpoint', parameters('frontDoorName')), 'default-route')]",
+              "properties": {
+                "originGroup": {
+                  "id": "[resourceId('Microsoft.Cdn/profiles/originGroups', parameters('frontDoorName'), format('{0}-origin-group', parameters('frontDoorName')))]"
+                },
+                "patternsToMatch": [
+                  "/*"
+                ],
+                "forwardingProtocol": "MatchRequest",
+                "httpsRedirect": "Enabled",
+                "linkToDefaultDomain": "Enabled",
+                "supportedProtocols": [
+                  "Http",
+                  "Https"
+                ],
+                "enabledState": "Enabled"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles/afdEndpoints', parameters('frontDoorName'), format('{0}-endpoint', parameters('frontDoorName')))]",
+                "[resourceId('Microsoft.Cdn/profiles/originGroups/origins', parameters('frontDoorName'), format('{0}-origin-group', parameters('frontDoorName')), format('{0}-origin', parameters('frontDoorName')))]",
+                "[resourceId('Microsoft.Cdn/profiles/originGroups', parameters('frontDoorName'), format('{0}-origin-group', parameters('frontDoorName')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Cdn/profiles/securityPolicies",
+              "apiVersion": "2024-02-01",
+              "name": "[format('{0}/{1}', parameters('frontDoorName'), 'Security')]",
+              "properties": {
+                "parameters": {
+                  "type": "WebApplicationFirewall",
+                  "wafPolicy": {
+                    "id": "[resourceId('Microsoft.Network/FrontDoorWebApplicationFirewallPolicies', parameters('wafPolicyName'))]"
+                  },
+                  "associations": [
+                    {
+                      "domains": [
+                        {
+                          "id": "[resourceId('Microsoft.Cdn/profiles/afdEndpoints', parameters('frontDoorName'), format('{0}-endpoint', parameters('frontDoorName')))]"
+                        }
+                      ],
+                      "patternsToMatch": [
+                        "/*"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cdn/profiles/afdEndpoints', parameters('frontDoorName'), format('{0}-endpoint', parameters('frontDoorName')))]",
+                "[resourceId('Microsoft.Cdn/profiles', parameters('frontDoorName'))]",
+                "[resourceId('Microsoft.Network/FrontDoorWebApplicationFirewallPolicies', parameters('wafPolicyName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "endpointHostName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Cdn/profiles/afdEndpoints', parameters('frontDoorName'), format('{0}-endpoint', parameters('frontDoorName'))), '2024-02-01').hostName]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "frontend",
+        "rg"
+      ]
+    }
+  },
+  "outputs": {
+    "AZURE_RESOURCE_GROUP": {
+      "type": "string",
+      "value": "[variables('rgName')]"
+    },
+    "AZURE_LOCATION": {
+      "type": "string",
+      "value": "[parameters('location')]"
+    },
+    "FUNCTION_API_NAME": {
+      "type": "string",
+      "value": "[variables('functionApiName')]"
+    },
+    "FUNCTION_TITILER_NAME": {
+      "type": "string",
+      "value": "[variables('functionTitilerName')]"
+    },
+    "FUNCTION_QUEUE_NAME": {
+      "type": "string",
+      "value": "[variables('functionQueueName')]"
+    },
+    "STATIC_WEB_APP_NAME": {
+      "type": "string",
+      "value": "[variables('staticWebAppName')]"
+    },
+    "VITE_AZURE_MAPS_CLIENT_ID": {
+      "type": "string",
+      "value": "[reference('frontend').outputs.mapsClientId.value]"
+    },
+    "APIM_NAME": {
+      "type": "string",
+      "value": "[variables('apimName')]"
+    },
+    "STORAGE_ACCOUNT_NAME": {
+      "type": "string",
+      "value": "[variables('storageAccountName')]"
+    },
+    "BATCH_ACCOUNT_NAME": {
+      "type": "string",
+      "value": "[variables('resolvedBatchAccountName')]"
+    },
+    "BATCH_POOL_NAME": {
+      "type": "string",
+      "value": "[if(equals(parameters('batchPoolMode'), 'Create'), variables('createdBatchPoolName'), parameters('existingBatchPoolId'))]"
+    },
+    "ACS_CONNECTION_STRING": {
+      "type": "securestring",
+      "value": "[listOutputsWithSecureValues('communication', '2025-04-01').connectionString]"
+    },
+    "EMAIL_SENDER_DOMAIN": {
+      "type": "string",
+      "value": "[reference('communication').outputs.senderDomain.value]"
+    }
+  }
+}

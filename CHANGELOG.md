@@ -7,6 +7,18 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Shared multi-tenant GPU Batch pools** — For deployments running many environments against scarce GPU quota, HASTE can now share a small set of multi-tenant Batch pools (H100 for training, T4 for inference/imageryprep + spillover) instead of one pool per environment. Data isolation is enforced at the credential boundary: each job mints a short-lived **user-delegation SAS** scoped to its own storage container (the pool identity is used only for ACR pull and holds no storage access), so a tenant's task can never read another tenant's data. Pools autoscale on low-priority nodes and scale to zero when idle. New `hastelib` routing picks a pool from an ordered candidate list **at submit time** (first with an idle node, else the preferred pool). Provisioned by the standalone [`infra/shared-pools.bicep`](infra/shared-pools.bicep) + [`shared-pools.bicepparam`](infra/shared-pools.bicepparam); opted into per environment via `AZURE_BATCH_*_POOL_IDS`, `AZURE_BATCH_USE_SAS`, and `AZURE_BATCH_MANAGE_POOLS` (all default to the legacy single-pool behavior). Full design in [`spec/features/batch-compute-expansion/`](spec/features/batch-compute-expansion). See [docs/configuration.md](docs/configuration.md#shared-multi-tenant-gpu-pools).
+
+### Changed
+- **`infra/modules/batchPool.bicep` parameterized** — one module now serves fixed-dedicated (dev/prod) and autoscale-low-priority (shared) pools via `scaleMode` / `nodeType` / `minNodes` params, with optional VNet injection. Backward-compatible defaults.
+- **Generic-default IaC for reuse by other partners** — `HASTE_RESOURCE_PREFIX` now defaults to the neutral `haste` (overridable per deployment); the shared-pools template keeps its account/ACR as bring-your-own params. The `api`/`queues` Function App identity is granted **Storage Blob Delegator** (in `functionApp.bicep`) so it can mint user-delegation SAS.
+- **Pinned `azure-batch==14.2.0`** — the 15.x track-2 rewrite restructures the batch models this code uses; migration is tracked separately.
+
+---
+
 ## [v2.0.0] — Building labeling workflow & one-step `azd` setup
 
 ### Added

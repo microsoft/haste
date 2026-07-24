@@ -14,6 +14,7 @@ This guide documents each configuration mode. For the end-to-end workflow, see
 - [Core settings](#core-settings)
 - [Batch (create vs. bring-your-own)](#batch-create-vs-bring-your-own)
 - [Batch image tags and pool immutability](#batch-image-tags-and-pool-immutability)
+- [Shared multi-tenant GPU pools](#shared-multi-tenant-gpu-pools)
 - [Email sender domain](#email-sender-domain)
 - [Front Door](#front-door)
 - [Development mode](#development-mode)
@@ -24,7 +25,7 @@ This guide documents each configuration mode. For the end-to-end workflow, see
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `HASTE_RESOURCE_PREFIX` | `ai4gl` | Prefix for all resource names. |
+| `HASTE_RESOURCE_PREFIX` | `haste` | Prefix for all resource names. Generic default; override per deployment. |
 | `HASTE_RANDOM_SUFFIX` | `dev1` | Per-environment suffix; keeps names unique. |
 | `AZURE_LOCATION` | `westus2` | Azure region. |
 | `HASTE_APIM_PUBLISHER_EMAIL` | — | APIM publisher email (required). |
@@ -97,6 +98,82 @@ reads the existing pool's `containerImageNames` and sets `HASTE_TRAINING_IMAGE` 
 `HASTE_IMAGERYPREP_IMAGE` for you when `HASTE_BATCH_POOL_MODE=Existing`. It runs
 only in that mode and never clobbers a tag you set explicitly — set either
 variable yourself to override the auto-resolved value.
+
+## Shared multi-tenant GPU pools
+
+For deployments that run many environments against **scarce GPU quota**, HASTE
+supports a small set of **shared, multi-tenant** Batch pools (H100 for training,
+T4 for inference/imageryprep + spillover) instead of one pool per environment, so
+GPU quota is pooled and rationed centrally rather than fragmented. See
+[`spec/features/batch-compute-expansion/`](https://github.com/microsoft/haste/tree/main/spec/features/batch-compute-expansion)
+for the full design.
+
+**Creating the pools.** The shared pools are provisioned by
+[`infra/shared-pools.bicep`](https://github.com/microsoft/haste/blob/main/infra/shared-pools.bicep)
+— a standalone deployment into the shared Batch account's resource group,
+separate from `azd up` — configured by
+[`infra/shared-pools.bicepparam`](https://github.com/microsoft/haste/blob/main/infra/shared-pools.bicepparam):
+
+```bash
+az deployment group create -g <shared-rg> \
+  --parameters infra/shared-pools.bicepparam
+```
+
+Pools are named `<prefix>-shared-<group>-<tier>-pool` (e.g. the dev-group H100
+pool); `HASTE_SHARED_GROUP` selects the group (`dev`, `demo`, …). They autoscale
+on **dedicated or low-priority** nodes (configurable via `HASTE_SHARED_NODE_TYPE`)
+within a central per-pool core-quota ceiling. A scarce tier (H100) can keep a warm
+floor instead of scaling to zero — under regional GPU
+evaluation** until capacity frees, whereas a one-shot fixed resize gets stuck in
+its error state. The pool identity is used **only** for ACR pull
+(`haste-shared-acr-umi`) — it holds no storage access.
+
+Shared-pool deploy knobs (env vars read by `shared-pools.bicep`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HASTE_SHARED_GROUP` | `dev` | Pool group (`dev`, `demo`, …) — drives the pool names. |
+| `HASTE_SHARED_NODE_TYPE` | `LowPriority` | Node cost tier: `LowPriority` (spot) or `Dedicated`. |
+| `HASTE_SHARED_H100_SCALE_MODE` | `Autoscale` | `Autoscale`, or `Fixed` reserved baseline for the scarce H100 tier. |
+| `HASTE_SHARED_H100_MIN_NODES` | `0` | H100 autoscale floor (>0 keeps chasing/holding a warm node). |
+| `HASTE_SHARED_T4_MIN_NODES` / `HASTE_SHARED_T4_MAX_NODES` | `0` / `2` | T4 autoscale floor / cap. |
+| `HASTE_SHARED_BATCH_SUBNET_ID` | — | Shared hub batch-subnet to VNet-inject both pools into (see Blob↔Batch networking below). |
+
+**Data isolation.** Tenants share compute but not data: each job mints a
+time-limited **user-delegation SAS** scoped to its own storage container, so a
+tenant's task can never read another tenant's data. This requires the submitting
+Function App identity to hold **Storage Blob Delegator** on its storage account
+(granted in `functionApp.bicep`).
+
+**Blob↔Batch networking.** SAS is an *auth* boundary, not network reach — each
+tenant storage is `Deny`, so the pools must additionally be *network-allowed* to
+it or blob I/O fails with `403 AuthorizationFailure`. The shared pools are
+VNet-injected into a **shared hub batch-subnet** (`haste-hub-vnet/batch-subnet`,
+carrying the `Microsoft.Storage` service endpoint), and **each tenant's storage
+allowlists that subnet** with a VNet rule. Onboarding a new env is *just that one
+storage rule* — wired in `storage.bicep` via `HASTE_SHARED_BATCH_SUBNET_ID` so it
+lands on `azd provision`; the shared pools are never touched. Two one-time
+prerequisites per hub (not per env): create the subnet, and grant the *Microsoft
+Azure Batch* service principal `Network Contributor` on it so Batch can
+VNet-inject. `HASTE_SHARED_BATCH_SUBNET_ID` is read by **both** the shared-pools
+deploy (which subnet to inject the pools into) and each env deploy (which subnet
+its storage allowlists). Full design:
+[`networking.md`](https://github.com/microsoft/haste/blob/main/spec/features/batch-compute-expansion/networking.md).
+
+**Per-environment app settings** (set on the `api`/`queues` Function Apps to opt
+an environment into the shared pools — all default to the legacy single-pool,
+pool-identity behavior, so existing environments are unaffected until opted in):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AZURE_BATCH_TRAINING_POOL_IDS` | `AZURE_BATCH_TRAINING_POOL_ID` | Ordered candidate pools for training (preference-first, spillover-second), comma-separated. |
+| `AZURE_BATCH_INFERENCE_POOL_IDS` | training pool | Ordered candidate pools for inference/embedding (e.g. T4-first). |
+| `AZURE_BATCH_IMAGERYPREP_POOL_IDS` | `AZURE_BATCH_IMAGERYPREP_POOL_ID` | Ordered candidate pools for imageryprep/artifacts. |
+| `AZURE_BATCH_USE_SAS` | `false` | Use per-job user-delegation SAS for blob I/O instead of the pool's managed identity. Required for shared pools. |
+| `AZURE_BATCH_MANAGE_POOLS` | `true` | Whether the runner auto-creates/resizes its pool. Set `false` for pre-created autoscale pools (resize fails on an autoscale pool). |
+
+The runner picks a pool from the candidate list **at submit time** — the first
+with an idle node, otherwise the preferred (first) pool, which scales up / queues.
 
 ## Email sender domain
 

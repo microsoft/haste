@@ -37,9 +37,13 @@ def _normalize_azurite_url(url: Optional[str]) -> Optional[str]:
 class LocalRunner(BaseRunner):
     """Local runner that executes containers using Docker instead of Azure Batch."""
 
-    def __init__(self, config: Config = None, pool_id=None):
+    def __init__(
+        self, config: Config = None, pool_id=None, candidate_pool_ids=None
+    ):
         super().__init__(config)
         self.config = config or Config()
+        # candidate_pool_ids is accepted for interface parity with the Azure
+        # Batch runner (capacity-aware routing); local runs use a single pool.
         self.pool_id = pool_id or "local-pool"
         self.logger = Logger.get_logger(__name__)
         self.verbose = os.getenv("HASTE_DEBUG_VERBOSE", "0") == "1"

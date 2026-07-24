@@ -8,7 +8,7 @@ targetScope = 'subscription'
 // Core parameters (replace the positional CLI args of setup_infra.sh)
 // ---------------------------------------------------------------------------
 
-@description('Short prefix used to build every resource name (e.g. "ai4gl").')
+@description('Short prefix used to build every resource name (e.g. "haste").')
 param resourcePrefix string
 
 @description('Azure region for the environment resource group and resources.')
@@ -72,6 +72,9 @@ param batchPoolMaxNodes int = 3
 @description('Subnet name (in the env VNet) used by the Batch pool.')
 param batchPoolSubnetName string = 'batch-subnet'
 
+@description('Shared hub batch-subnet resource id where the SHARED multi-tenant pools are VNet-injected. Set for shared-pool envs (dev/demo) so this env storage allowlists that subnet; empty for single-tenant prod. See spec/features/batch-compute-expansion/networking.md.')
+param sharedBatchSubnetId string = ''
+
 @description('Training container image (tag included).')
 param trainingImage string = 'hastetraining:1.4.1'
 
@@ -101,6 +104,21 @@ param enableFrontDoor bool = false
 
 @description('Dev-only: api/queues auto-provision any authenticated user as admin and use anonymous auth. Keep false for production.')
 param developmentMode bool = false
+
+@description('Ordered candidate training pool ids (comma-separated). Empty => single training pool.')
+param trainingPoolIds string = ''
+
+@description('Ordered candidate inference/embedding pool ids (comma-separated).')
+param inferencePoolIds string = ''
+
+@description('Ordered candidate imageryprep/artifacts pool ids (comma-separated).')
+param imageryprepPoolIds string = ''
+
+@description('Use per-job user-delegation SAS for Batch blob I/O (multi-tenant shared pools).')
+param useSas bool = false
+
+@description('Runner auto-creates/resizes its pool. False for pre-created autoscale pools.')
+param managePools bool = true
 
 // ---------------------------------------------------------------------------
 // Computed names — mirror the bash naming scheme exactly.
@@ -196,6 +214,7 @@ module storage 'modules/storage.bicep' = {
     defaultSubnetName: 'default'
     functionsSubnetName: functionsSubnetName
     batchSubnetName: batchPoolSubnetName
+    sharedBatchSubnetId: sharedBatchSubnetId
     tags: tags
   }
   dependsOn: [
@@ -269,6 +288,11 @@ module functions 'modules/functions.bicep' = {
     emailConnectionString: communication.outputs.connectionString
     batchAccountKey: batchAccountRef.listKeys().primary
     developmentMode: developmentMode
+    trainingPoolIds: trainingPoolIds
+    inferencePoolIds: inferencePoolIds
+    imageryprepPoolIds: imageryprepPoolIds
+    useSas: useSas
+    managePools: managePools
     tags: tags
   }
   dependsOn: [

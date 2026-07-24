@@ -72,6 +72,23 @@ param batchAccountKey string
 @description('Dev-only: auto-provision any authenticated user as admin and drop function-key auth (anonymous). Must be false for production.')
 param developmentMode bool = false
 
+// --- v2.1.0 capacity-aware routing + per-job SAS -----------------------------
+
+@description('Ordered candidate training pool ids (comma-separated). Empty => single training pool.')
+param trainingPoolIds string = ''
+
+@description('Ordered candidate inference/embedding pool ids (comma-separated).')
+param inferencePoolIds string = ''
+
+@description('Ordered candidate imageryprep/artifacts pool ids (comma-separated).')
+param imageryprepPoolIds string = ''
+
+@description('Use per-job user-delegation SAS for Batch blob I/O (multi-tenant shared pools).')
+param useSas bool = false
+
+@description('Runner auto-creates/resizes its pool. False for pre-created autoscale pools.')
+param managePools bool = true
+
 @description('Resource tags.')
 param tags object = {}
 
@@ -125,6 +142,13 @@ var appConfigSettings = [
   { name: 'STATIC_APP_DOMAIN', value: staticAppDomain }
   { name: 'EMAIL_CONNECTION_STRING', value: emailConnectionString }
   { name: 'EMAIL_SENDER', value: 'DoNotReply@${emailSenderDomain}' }
+  // v2.1.0: capacity-aware routing candidate lists + per-job SAS toggle. Empty
+  // lists / false flags = legacy single-pool, pool-identity behavior.
+  { name: 'AZURE_BATCH_TRAINING_POOL_IDS', value: trainingPoolIds }
+  { name: 'AZURE_BATCH_INFERENCE_POOL_IDS', value: inferencePoolIds }
+  { name: 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', value: imageryprepPoolIds }
+  { name: 'AZURE_BATCH_USE_SAS', value: useSas ? 'true' : 'false' }
+  { name: 'AZURE_BATCH_MANAGE_POOLS', value: managePools ? 'true' : 'false' }
 ]
 
 module apiApp 'functionApp.bicep' = {
