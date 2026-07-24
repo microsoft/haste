@@ -11,13 +11,17 @@ function formatDate(iso) {
 }
 
 function formatGsd(gsd) {
-  if (gsd == null || gsd === "") return null;
-  return `${Number(gsd).toFixed(2)} m GSD`;
+  const n = Number(gsd);
+  if (gsd == null || gsd === "" || !Number.isFinite(n)) return null;
+  return `${n.toFixed(2)} m GSD`;
 }
 
 function formatSize(bytes) {
-  if (!bytes || !Number.isFinite(Number(bytes))) return null;
+  // Treat only null/undefined/"" as absent so a legitimate 0-byte asset
+  // still formats as "0 B" (rather than being hidden by a falsy check).
+  if (bytes == null || bytes === "") return null;
   let n = Number(bytes);
+  if (!Number.isFinite(n)) return null;
   const units = ["B", "KB", "MB", "GB", "TB"];
   let i = 0;
   while (n >= 1024 && i < units.length - 1) {

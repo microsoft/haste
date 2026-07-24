@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 ALLOWED_HOST_DESCRIPTION = (
     "Azure Blob Storage (*.blob.core.windows.net), "
     "AWS S3 (*.amazonaws.com), "
-    "or Source Cooperative (data.source.coop)"
+    "or Source Cooperative (*.source.coop)"
 )
 
 # Building-footprint URLs additionally permit the host of the configured

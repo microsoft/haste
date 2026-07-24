@@ -118,7 +118,7 @@ export function validateURL(url) {
 
 // Keep in sync with hastelib/src/hastegeo/core/utils/url_allowlist.py.
 const IMAGERY_URL_ALLOWED_HOST_DESCRIPTION =
-  "Azure Blob Storage (*.blob.core.windows.net), AWS S3 (*.amazonaws.com), or Source Cooperative (data.source.coop)";
+  "Azure Blob Storage (*.blob.core.windows.net), AWS S3 (*.amazonaws.com), or Source Cooperative (*.source.coop)";
 
 const FOOTPRINT_URL_ALLOWED_HOST_DESCRIPTION =
   "Azure Blob Storage (*.blob.core.windows.net), AWS S3 (*.amazonaws.com), or the local upload host (in development)";
