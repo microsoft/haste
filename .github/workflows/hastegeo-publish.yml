@@ -1,0 +1,327 @@
+name: Publish hastegeo wheel and images
+
+on:
+  workflow_run:
+    workflows:
+      - Build hastegeo wheel
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  prepare:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.event == 'push' ||
+       (github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      wheel_name: ${{ steps.resolve.outputs.wheel_name }}
+      channel: ${{ steps.resolve.outputs.channel }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      already_published: ${{ steps.resolve.outputs.already_published }}
+      pr_number: ${{ steps.guard.outputs.pr_number }}
+    steps:
+      - name: Checkout trusted release policy
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify PR is open and build matches current head
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event.workflow_run.event }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "pr_number=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$PR_NUMBER" ]; then
+            echo "::error::Triggering workflow has no PR number"
+            exit 1
+          fi
+          STATE=$(gh pr view "$PR_NUMBER" \
+            --repo "${{ github.repository }}" \
+            --json state \
+            --jq '.state')
+          HEAD_SHA=$(gh pr view "$PR_NUMBER" \
+            --repo "${{ github.repository }}" \
+            --json headRefOid \
+            --jq '.headRefOid')
+          if [ "$STATE" != "OPEN" ]; then
+            echo "::error::PR #$PR_NUMBER is not open"
+            exit 1
+          fi
+          if [ "$HEAD_SHA" != "$SOURCE_SHA" ]; then
+            echo "::error::PR head changed after the wheel build"
+            exit 1
+          fi
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Re-resolve expected version from trusted policy
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          CHANNEL: ${{ github.event.workflow_run.event == 'pull_request' && 'rc' || 'release' }}
+        run: |
+          python .github/scripts/resolve_hastegeo_version.py \
+            --channel "$CHANNEL" \
+            --source-sha "$SOURCE_SHA"
+
+      - name: Download wheel artifact
+        if: steps.resolve.outputs.already_published != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          gh run download "$RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name "hastegeo-wheel-${RUN_ID}" \
+            --dir release-artifact
+
+      - name: Revalidate downloaded wheel
+        if: steps.resolve.outputs.already_published != 'true'
+        run: |
+          python .github/scripts/publish_hastegeo_wheel.py \
+            --wheel "release-artifact/${{ steps.resolve.outputs.wheel_name }}" \
+            --expected-version "${{ steps.resolve.outputs.version }}" \
+            --channel "${{ steps.resolve.outputs.channel }}" \
+            --source-sha "${{ steps.resolve.outputs.source_sha }}" \
+            --validate-only
+
+  publish-rc:
+    needs: prepare
+    if: >-
+      needs.prepare.outputs.channel == 'rc' &&
+      needs.prepare.outputs.already_published != 'true' &&
+      vars.HASTEGEO_RC_PUBLISH_ENABLED != 'false'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: hastegeo-rc-publish
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+    outputs:
+      version: ${{ steps.publish.outputs.published_version }}
+      source_sha: ${{ needs.prepare.outputs.source_sha }}
+      pr_number: ${{ needs.prepare.outputs.pr_number }}
+    steps:
+      - name: Checkout trusted publisher
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Download wheel artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          gh run download "$RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name "hastegeo-wheel-${RUN_ID}" \
+            --dir release-artifact
+
+      - name: Publish immutable RC wheel
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/publish_hastegeo_wheel.py \
+            --wheel "release-artifact/${{ needs.prepare.outputs.wheel_name }}" \
+            --expected-version "${{ needs.prepare.outputs.version }}" \
+            --channel rc \
+            --source-sha "${{ needs.prepare.outputs.source_sha }}"
+
+  publish-stable:
+    needs: prepare
+    if: >-
+      needs.prepare.outputs.channel == 'release' &&
+      needs.prepare.outputs.already_published != 'true' &&
+      vars.HASTEGEO_PUBLISH_ENABLED == 'true' &&
+      vars.HASTEGEO_RELEASE_APPROVAL_CONFIGURED == 'true'
+    runs-on: ubuntu-latest
+    environment: hastegeo-release
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout trusted publisher
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Download wheel artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          gh run download "$RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name "hastegeo-wheel-${RUN_ID}" \
+            --dir release-artifact
+
+      - name: Publish immutable stable wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/publish_hastegeo_wheel.py \
+            --wheel "release-artifact/${{ needs.prepare.outputs.wheel_name }}" \
+            --expected-version "${{ needs.prepare.outputs.version }}" \
+            --channel release \
+            --source-sha "${{ needs.prepare.outputs.source_sha }}"
+
+  build-rc-images:
+    needs:
+      - prepare
+      - publish-rc
+    if: >-
+      needs.publish-rc.result == 'success' &&
+      vars.HASTEGEO_RC_ENVIRONMENT != ''
+    runs-on: ubuntu-latest
+    environment: ${{ vars.HASTEGEO_RC_ENVIRONMENT }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        include:
+          - image_dir: training
+            image_name: hastetraining
+          - image_dir: imageryprep
+            image_name: hasteimageryprep
+    steps:
+      - name: Checkout RC source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Stamp RC version into image source
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path("hastelib/src/hastegeo/__about__.py")
+          text = path.read_text(encoding="utf-8")
+          text, count = re.subn(
+              r'^__version__ = ".*"$',
+              f'__version__ = "{os.environ["VERSION"]}"',
+              text,
+              flags=re.MULTILINE,
+          )
+          if count != 1:
+              raise SystemExit("Expected exactly one __version__ assignment")
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Azure login
+        uses: azure/login@1384c340ab2dda50fed2bee3041d1d87018aa5e8 # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build, push, and lock matching RC image
+        env:
+          ACR_NAME: ${{ secrets.ACR_NAME }}
+          IMAGE_DIR: ${{ matrix.image_dir }}
+          IMAGE_NAME: ${{ matrix.image_name }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          IMAGE_REF="${IMAGE_NAME}:${VERSION}"
+          if IMAGE_JSON=$(az acr repository show \
+              --name "$ACR_NAME" \
+              --image "$IMAGE_REF" \
+              --output json 2>/dev/null); then
+            WRITE_ENABLED=$(echo "$IMAGE_JSON" | \
+              jq -r '.changeableAttributes.writeEnabled')
+            if [ "$WRITE_ENABLED" = "false" ]; then
+              echo "Reusing already locked RC image: $IMAGE_REF"
+              exit 0
+            fi
+            echo "::error::Existing RC image is not locked: $IMAGE_REF"
+            exit 1
+          fi
+          az acr build \
+            --subscription "$SUBSCRIPTION_ID" \
+            --registry "$ACR_NAME" \
+            --image "$IMAGE_REF" \
+            --file "docker/${IMAGE_DIR}/Dockerfile" \
+            .
+          az acr repository update \
+            --name "$ACR_NAME" \
+            --image "$IMAGE_REF" \
+            --write-enabled false \
+            --delete-enabled false
+
+  rc-artifact-summary:
+    needs:
+      - prepare
+      - publish-rc
+      - build-rc-images
+    if: needs.build-rc-images.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Publish matching RC deployment values
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          BODY=$(cat <<EOF
+          ### RC artifacts ready
+
+          All branch deployment references use the same RC tag:
+
+          - \`hastegeo_version\`: \`${VERSION}\`
+          - \`training_image_tag\`: \`${VERSION}\`
+          - \`imageprep_image_tag\`: \`${VERSION}\`
+          - wheel: \`hastegeo-${VERSION}-py3-none-any.whl\`
+          EOF
+          )
+          echo "$BODY" >> "$GITHUB_STEP_SUMMARY"
+          gh pr comment "$PR_NUMBER" \
+            --repo "${{ github.repository }}" \
+            --body "$BODY"

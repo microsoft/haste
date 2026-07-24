@@ -19,16 +19,23 @@ on:
           - titiler
           - swa
       training_image_tag:
-        description: "Training Docker image tag"
-        required: true
+        description: "Training image tag (blank = resolved hastegeo version)"
+        required: false
+        default: ""
         type: string
       imageprep_image_tag:
-        description: "Image prep Docker image tag"
-        required: true
+        description: "Imageryprep image tag (blank = resolved hastegeo version)"
+        required: false
+        default: ""
         type: string
       app_tag:
         description: "Application version tag"
         required: true
+        type: string
+      hastegeo_version:
+        description: "hastegeo wheel version to deploy (blank = latest stable release)"
+        required: false
+        default: ""
         type: string
 
 jobs:
@@ -40,10 +47,12 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
       - name: Install tools
@@ -55,10 +64,41 @@ jobs:
           sudo apt-get install git-lfs -y
           git lfs env
           sudo apt-get install azure-functions-core-tools-4 jq git-lfs -y
-          npm install -g @azure/static-web-apps-cli
+          npm install -g @azure/static-web-apps-cli@2.0.9
+
+      - name: Resolve hastegeo wheel URL
+        id: hastegeo
+        if: >-
+          inputs.component == 'all' ||
+          inputs.component == 'funcapi' ||
+          inputs.component == 'funcqueue'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/resolve_hastegeo_deploy.py \
+            --version "${{ inputs.hastegeo_version }}"
+
+      - name: Resolve matching image tags
+        id: artifacts
+        env:
+          VERSION: ${{ steps.hastegeo.outputs.version }}
+          TRAINING_INPUT: ${{ inputs.training_image_tag }}
+          IMAGEPREP_INPUT: ${{ inputs.imageprep_image_tag }}
+        run: |
+          TRAINING_TAG="${TRAINING_INPUT:-$VERSION}"
+          IMAGEPREP_TAG="${IMAGEPREP_INPUT:-$VERSION}"
+          if [[ "$VERSION" == *rc* ]]; then
+            if [[ "$TRAINING_TAG" != "$VERSION" || \
+                  "$IMAGEPREP_TAG" != "$VERSION" ]]; then
+              echo "::error::RC deployments require matching wheel and image tags"
+              exit 1
+            fi
+          fi
+          echo "training_tag=$TRAINING_TAG" >> "$GITHUB_OUTPUT"
+          echo "imageprep_tag=$IMAGEPREP_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Azure Login
-        uses: azure/login@v2
+        uses: azure/login@1384c340ab2dda50fed2bee3041d1d87018aa5e8 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -71,6 +111,10 @@ jobs:
           # Non-sensitive UI feature flag, baked into the Vite bundle at build time.
           # Set as a GitHub Environment variable; defaults to false when unset.
           VITE_SHOW_FOOTER: ${{ vars.VITE_SHOW_FOOTER }}
+          # hastegeo wheel pinned into the function-app requirements before
+          # `func publish` (deploy_apps.sh); the editable default can't resolve
+          # on Azure's remote build.
+          HASTEGEO_WHEEL_URL: ${{ steps.hastegeo.outputs.url }}
         run: |
           chmod +x .github/scripts/deploy_apps.sh
           .github/scripts/deploy_apps.sh \
@@ -80,8 +124,8 @@ jobs:
             "${{ secrets.LOCATION }}" \
             "${{ secrets.RESOURCE_SUFFIX }}" \
             "${{ secrets.ACR_NAME }}" \
-            "${{ inputs.training_image_tag }}" \
-            "${{ inputs.imageprep_image_tag }}" \
+            "${{ steps.artifacts.outputs.training_tag }}" \
+            "${{ steps.artifacts.outputs.imageprep_tag }}" \
             "${{ secrets.ENVIRONMENT_TYPE }}" \
             "${{ inputs.app_tag }}" \
             "${{ secrets.BATCH_ACCOUNT }}" \

@@ -1,259 +1,90 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
+"""Hatch build hook for stamping an explicitly resolved hastegeo version.
+
+Version selection and GitHub publication deliberately live outside this hook.
+Pull-request source executes the hook while building a wheel, so it must never
+receive or use repository write credentials.
+"""
+
 import os
-import re
+from pathlib import Path
+from typing import Any
 
-from azure.storage.blob import BlobServiceClient
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
-
-ACCOUNT_URL = "https://researchlabwuopendata.blob.core.windows.net"
-CONTAINER_NAME = "haste-binaries"
-# Matches the version in a wheel filename, e.g. "hastegeo-1.0.19-py3-none-any.whl"
-WHEEL_VERSION_RE = re.compile(r"^hastegeo-(\d+)\.(\d+)\.(\d+)")
 
 
 class CustomBuildHook(BuildHookInterface):
+    """Stamp the requested version before build and expose the built artifact."""
+
     PLUGIN_NAME = "haste_build"
-    """Custom build hook to bump the package version and copy the built wheel
-    to the required directories."""
 
     def get_plugin_name(self) -> str:
-        """Return the name of the plugin."""
         return self.PLUGIN_NAME
 
     def get_plugin_type(self) -> str:
-        """Return the type of the plugin."""
         return "haste_hook"
 
     def get_plugin_description(self) -> str:
-        """Return the description of the plugin."""
-        return "Custom build hook to handle special build steps."
+        return "Stamp an explicit hastegeo version before packaging."
 
     def get_plugin_author(self) -> str:
-        """Return the author of the plugin."""
-        return "Meygha Machado"
+        return "HASTE Maintainers"
 
     def get_plugin_license(self) -> str:
-        """Return the license of the plugin."""
         return "MIT"
 
-    def _get_container_client(self):
-        """Return an authenticated client for the haste-binaries container."""
-        from azure.identity import AzureCliCredential
-
-        # Use AzureCliCredential specifically to match Azure CLI behavior
-        credential = AzureCliCredential()
-        blob_service_client = BlobServiceClient(
-            account_url=ACCOUNT_URL, credential=credential
-        )
-        return blob_service_client.get_container_client(CONTAINER_NAME)
-
-    def get_latest_published_version(self):
-        """Return the highest (major, minor, patch) tuple already published to
-        blob storage, or None if nothing is found or the listing fails."""
-        try:
-            container_client = self._get_container_client()
-            versions = []
-            for blob in container_client.list_blobs(
-                name_starts_with="hastegeo-"
-            ):
-                match = WHEEL_VERSION_RE.match(blob.name)
-                if match:
-                    versions.append(tuple(int(x) for x in match.groups()))
-
-            if not versions:
-                print("No published hastegeo wheels found in blob storage.")
-                return None
-
-            latest = max(versions)
-            print(
-                "Latest published version in blob storage: "
-                f"{'.'.join(map(str, latest))}"
-            )
-            return latest
-        except Exception as e:
-            print(f"Could not list blob storage versions: {e}")
-            return None
-
-    def upload_to_blob_storage(self, file_path: str, blob_name: str) -> str:
-        """Upload file to Azure blob storage and return the URL."""
-        try:
-            container_client = self._get_container_client()
-            blob_client = container_client.get_blob_client(blob_name)
-
-            # Upload file
-            with open(file_path, "rb") as data:
-                blob_client.upload_blob(data, overwrite=True)
-
-            # Return the public URL
-            blob_url = f"{ACCOUNT_URL}/{CONTAINER_NAME}/{blob_name}"
-            print(
-                f"Successfully uploaded {blob_name} to blob storage: {blob_url}"
-            )
-            return blob_url
-
-        except Exception as e:
-            print(f"Failed to upload to blob storage: {e}")
-            print("Falling back to local file copy...")
-            return None
-
     def _write_version_file(self, version_str: str) -> None:
-        """Persist the resolved version to __about__.py so that source/Docker
-        installs (which build from this tree) report the published version."""
-        version_file_path = os.path.join(
-            self.root, "src", "hastegeo", "__about__.py"
-        )
-        with open(version_file_path, "r") as version_file:
-            lines = version_file.readlines()
-        for i, line in enumerate(lines):
+        version_path = Path(self.root) / "src" / "hastegeo" / "__about__.py"
+        lines = version_path.read_text(encoding="utf-8").splitlines()
+        for index, line in enumerate(lines):
             if line.startswith("__version__"):
-                lines[i] = f'__version__ = "{version_str}"\n'
+                lines[index] = f'__version__ = "{version_str}"'
                 break
-        with open(version_file_path, "w") as version_file:
-            version_file.writelines(lines)
-        print(f"Wrote version {version_str} to {version_file_path}")
-
-    def initialize(self, version, build_data):
-        """Pre build activities"""
-        if version == "editable":
-            print("Editable build detected. Skipping version bump.")
-            return
-        if os.getenv("HASTE_SKIP_VERSION_BUMP"):
-            print("HASTE_SKIP_VERSION_BUMP set, skipping auto-increment.")
-            return
-
-        # Explicit version override always wins, e.g. HASTE_SET_VERSION=2.0.0
-        explicit = os.getenv("HASTE_SET_VERSION")
-        if explicit:
-            self.metadata._version = explicit.strip()
-            self._write_version_file(self.metadata.version)
-            print(
-                f"Set package version to: {self.metadata.version} "
-                "(HASTE_SET_VERSION)"
-            )
-            return
-
-        # Base the next version on the highest version already published to
-        # blob storage so we never overwrite an existing wheel. Fall back to
-        # the local __about__.py version if the listing is unavailable.
-        base = self.get_latest_published_version()
-        if base is None:
-            base = tuple(map(int, self.metadata.version.split(".")))
-            print(f"Falling back to local version: {'.'.join(map(str, base))}")
-        major, minor, patch = base
-
-        bump = os.getenv("HASTE_BUMP", "patch").strip().lower()
-        if bump == "major":
-            new_version = (major + 1, 0, 0)
-        elif bump == "minor":
-            new_version = (major, minor + 1, 0)
-        elif bump == "patch":
-            new_version = (major, minor, patch + 1)
         else:
-            raise ValueError(
-                f"Invalid HASTE_BUMP value: {bump!r} "
-                "(expected 'major', 'minor', or 'patch')"
-            )
+            raise RuntimeError(f"__version__ not found in {version_path}")
+        version_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"Wrote version {version_str} to {version_path}")
 
-        self.metadata._version = ".".join(map(str, new_version))
-        # Persist before the wheel is assembled so the bundled __about__.py
-        # matches the wheel metadata and any source/Docker install agrees.
-        self._write_version_file(self.metadata.version)
-        print(
-            f"Bumped package version to: {self.metadata.version} "
-            f"(bump={bump})"
-        )
+    @staticmethod
+    def _emit_output(key: str, value: str) -> None:
+        print(f"{key}={value}")
+        output_path = os.getenv("GITHUB_OUTPUT")
+        if output_path:
+            with open(output_path, "a", encoding="utf-8") as handle:
+                handle.write(f"{key}={value}\n")
 
-    def finalize(self, version, build_data, artifact):
-        """Perform actions after the build process."""
+    def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         if version == "editable":
-            print("Editable build detected. Skipping wheel file updates.")
+            print("Editable build detected; keeping the local source version.")
             return
-        if os.getenv("HASTE_SKIP_VERSION_BUMP"):
+
+        explicit_version = os.getenv("HASTE_SET_VERSION")
+        if not explicit_version:
             print(
-                "HASTE_SKIP_VERSION_BUMP set, skipping wheel publish and "
-                "requirements rewrite."
+                "HASTE_SET_VERSION is not set; building the committed local "
+                f"version {self.metadata.version}."
             )
             return
 
-        # __about__.py was already updated to the resolved version in
-        # initialize() (before the wheel was assembled), so nothing to do here.
+        explicit_version = explicit_version.strip()
+        self.metadata._version = explicit_version
+        self._write_version_file(self.metadata.version)
+        print(f"Set package version to {self.metadata.version}.")
 
-        build_dir = "dist"
-        wheel_file = None
-
-        # Find the built wheel file
-        for file_name in os.listdir(build_dir):
-            if file_name.endswith(".whl") and file_name.startswith(
-                "hastegeo-"
-            ):
-                wheel_file = file_name
-                break
-
-        if not wheel_file:
-            print("No haste wheel file found in build directory!")
+    def finalize(
+        self,
+        version: str,
+        build_data: dict[str, Any],
+        artifact: str,
+    ) -> None:
+        if version == "editable":
             return
 
-        wheel_path = os.path.join(build_dir, wheel_file)
+        artifact_path = Path(artifact)
+        if not artifact_path.is_file():
+            raise RuntimeError(f"Built wheel not found: {artifact_path}")
 
-        # Try to upload to blob storage first
-        blob_url = self.upload_to_blob_storage(wheel_path, wheel_file)
-
-        # Update the associated requirements.txt files to use the new version.
-        # If upload fails, keep existing references unchanged to avoid invalid paths.
-        wheel_reference = f"hastegeo @ {blob_url}" if blob_url else None
-
-        if wheel_reference is None:
-            print(
-                "Blob upload failed; skipping requirements.txt haste reference updates."
-            )
-            return
-
-        requirements_files = [
-            "../api/hastefuncapi/requirements.txt",
-            "../api/hastefuncqueues/requirements.txt",
-            "../docker/imageryprep/requirements.txt",
-        ]
-
-        for requirements_file in requirements_files:
-            if not os.path.exists(requirements_file):
-                print(f"Requirements file not found: {requirements_file}")
-                continue
-
-            with open(requirements_file, "r") as file:
-                lines = file.readlines()
-
-            with open(requirements_file, "w") as file:
-                for line in lines:
-                    if line.strip().startswith("haste") and (
-                        "@" in line or "haste-" in line
-                    ):
-                        # Replace existing haste reference with new blob URL
-                        file.write(f"{wheel_reference}\n")
-                        print(
-                            f"Updated haste reference in {requirements_file}"
-                        )
-                    else:
-                        file.write(line)
-
-        # Update env.yml to also use blob URL for consistency
-        env_yml_path = "../env.yml"
-        if os.path.exists(env_yml_path):
-            with open(env_yml_path, "r") as file:
-                lines = file.readlines()
-
-            with open(env_yml_path, "w") as file:
-                for line in lines:
-                    if "haste" in line and (
-                        "@" in line or "haste-" in line and ".whl" in line
-                    ):
-                        # Use blob URL for env.yml as well for consistency
-                        yaml_line = f"    - {wheel_reference}\n"
-                        file.write(yaml_line)
-                        print(f"Updated haste reference in {env_yml_path}")
-                    else:
-                        file.write(line)
-
-        print("Cleaning up the build directory")
-        os.remove(wheel_path)
-        print(f"Removed {wheel_file} from {build_dir}")
+        self._emit_output("built_version", self.metadata.version)
+        self._emit_output("wheel_name", artifact_path.name)
+        self._emit_output("wheel_path", str(artifact_path.resolve()))
