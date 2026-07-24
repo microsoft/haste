@@ -57,9 +57,9 @@ attached to the pool** — so this model is inherently one-tenant.
 
 The submitting Function App knows the tenant. For **every** job (all pools) it
 mints a **user-delegation SAS** (signed by the env identity via
-`get_user_delegation_key`, no account key) scoped to that tenant's container and
-prefix, with a short TTL, read for inputs / write for outputs. It embeds the SAS
-in the blob URL and passes it to Batch:
+`get_user_delegation_key`, no account key) scoped to that tenant's storage
+container, with an expiry long enough to cover the Batch job duration. It embeds
+the SAS in the blob URL and passes it to Batch:
 
 - `ResourceFile(storage_container_url="https://<sa>.blob.core.windows.net/<c>?<sas>", …)` — **no** `identity_reference`.
 - `OutputFileBlobContainerDestination(container_url="https://<sa>…<c>?<sas>", …)` — **no** `identity_reference`.
