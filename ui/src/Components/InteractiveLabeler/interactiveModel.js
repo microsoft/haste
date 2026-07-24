@@ -321,7 +321,7 @@ export function computeClassMetrics(preds, labels) {
 // since AUC is undefined without at least one of each class.
 export function binaryAUC(scores, labels01) {
   const n = scores.length;
-  if (n === 0) return null;
+  if (n === 0 || labels01.length !== n) return null;
   let nPos = 0;
   let nNeg = 0;
   for (let i = 0; i < n; i++) {

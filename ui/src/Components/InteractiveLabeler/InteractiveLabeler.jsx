@@ -1404,8 +1404,8 @@ const InteractiveLabeler = () => {
           preMap.layers.add(
             new window.atlas.layer.PolygonLayer("buildings", "swipeFill", {
               sourceLayer: PMTILES_SOURCE_LAYER,
-              fillColor: fillColorExpr("label"),
-              fillOpacity: fillOpacityExpr("label"),
+              fillColor: UNLABELED_COLOR,
+              fillOpacity: 0.15,
             })
           );
           preMap.layers.add(
