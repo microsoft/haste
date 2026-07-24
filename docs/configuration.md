@@ -217,6 +217,10 @@ production setting), Functions are key-protected (the postdeploy hook injects th
 host key into the APIM backends) and unknown users are rejected until an admin
 adds them.
 
+The Docker Compose UI image pre-fills `administrators` in the SWA emulator's
+mock-login form. The source `staticwebapp.config.json` used for production is
+unchanged.
+
 ## First-admin bootstrap
 
 Production uses `DEVELOPMENT_MODE=false`, so users are managed explicitly and are

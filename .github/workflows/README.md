@@ -2,6 +2,31 @@
 
 This directory contains GitHub Actions workflows for the HASTE project, focused on building and pushing Docker images to Azure Container Registry (ACR) using OpenID Connect (OIDC) authentication and semantic versioning.
 
+## hastegeo Wheel and Versioned Images
+
+`hastegeo-build.yml` handles changes under `hastelib/`:
+
+1. A trusted read-only resolver chooses the next RC or stable version.
+2. An untrusted-source build job runs without write credentials and uploads the
+   validated wheel as an Actions artifact.
+3. `hastegeo-publish.yml`, loaded from `main` through `workflow_run`, validates
+   the artifact again and automatically publishes same-repository PR RCs.
+4. ACR Tasks builds `hastetraining` and `hasteimageryprep` once, in parallel,
+   with the exact same tag as the wheel (`X.Y.ZrcN`).
+5. The workflow comments the matching `hastegeo_version`,
+   `training_image_tag`, and `imageprep_image_tag` on the PR.
+
+Stable releases create `hastegeo-vX.Y.Z` tags, making reruns of the same source
+commit a no-op. Stable publication additionally requires repository variables
+`HASTEGEO_PUBLISH_ENABLED=true` and
+`HASTEGEO_RELEASE_APPROVAL_CONFIGURED=true`.
+
+RC publication is automatic unless `HASTEGEO_RC_PUBLISH_ENABLED=false`.
+Fork PRs remain build-only. The RC image environment is selected through
+`HASTEGEO_RC_ENVIRONMENT`, keeping environment names out of the workflow.
+Before enabling stable publication, repository administrators must configure a
+protected release environment with required reviewers and self-review disabled.
+
 ## Docker Build and Push Workflow
 
 ### Overview
@@ -27,10 +52,11 @@ on:
       - main
 ```
 
-**When**: Automatically triggered when PRs are opened, updated, or synchronized against the `main` branch.
+**When**: Automatically triggered for Docker-only changes. If `hastelib/`
+changes, `hastegeo-build.yml` owns the coherent wheel and image build instead.
 
 **Default Behavior**:
-- **Image Directory**: `all` (builds both images)
+- **Image Directory**: only the changed Docker image
 - **Tag**: `{TAG_PREFIX}-rc{PR_NUMBER}` (e.g., `1.0.1-rc123`)
 
 #### 2. Manual Workflow Dispatch
@@ -332,4 +358,8 @@ These workflows run automatically and require no manual configuration beyond the
 | **Deploy Documentation** | `docs-deploy.yml` | Push to `main`, plus manual dispatch | Builds the Jupyter Book docs and deploys them to GitHub Pages |
 | **Secret Scan** | `secret-scan.yml` | Push and PR to `main`, plus manual dispatch | Runs Gitleaks to detect accidentally committed secrets |
 
-> **Note on the Docker build workflow:** the `detect-changes` job uses [`dorny/paths-filter`](https://github.com/dorny/paths-filter) so that a PR only rebuilds the images whose source actually changed (`docker/training/**` or `hastelib/**` for training, `docker/imageryprep/**` for imagery prep). Manual dispatch always builds the requested image(s).
+> **Note on the Docker build workflow:** the `detect-changes` job uses
+> [`dorny/paths-filter`](https://github.com/dorny/paths-filter) for Docker-only
+> changes. `hastelib/**` changes are intentionally excluded because
+> `hastegeo-publish.yml` builds both final ACR images once with the matching RC
+> wheel tag. Manual dispatch always builds the requested image(s).

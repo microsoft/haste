@@ -1,0 +1,131 @@
+name: Build hastegeo wheel
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "hastelib/**"
+      - ".github/scripts/resolve_hastegeo_version.py"
+      - ".github/scripts/publish_hastegeo_wheel.py"
+      - ".github/workflows/hastegeo-build.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "hastelib/**"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Build channel"
+        required: true
+        default: "rc"
+        type: choice
+        options:
+          - rc
+          - release
+      bump:
+        description: "Version bump when set_version is blank"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      set_version:
+        description: "Optional exact X.Y.Z or (for RC) X.Y.ZrcN"
+        required: false
+        default: ""
+        type: string
+
+# This workflow is intentionally credential-free. The trusted
+# workflow_run publisher lives in hastegeo-publish.yml on the default branch.
+permissions:
+  contents: read
+
+jobs:
+  resolve-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      wheel_name: ${{ steps.resolve.outputs.wheel_name }}
+      channel: ${{ steps.resolve.outputs.channel }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      already_published: ${{ steps.resolve.outputs.already_published }}
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve version
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          CHANNEL: ${{ github.event.inputs.channel || (github.event_name == 'pull_request' && 'rc' || 'release') }}
+          BUMP: ${{ github.event.inputs.bump || 'patch' }}
+          SET_VERSION: ${{ github.event.inputs.set_version || '' }}
+        run: |
+          python .github/scripts/resolve_hastegeo_version.py \
+            --channel "$CHANNEL" \
+            --source-sha "$SOURCE_SHA" \
+            --bump "$BUMP" \
+            --set-version "$SET_VERSION"
+
+  build-wheel:
+    needs: resolve-version
+    if: needs.resolve-version.outputs.already_published != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-version.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pinned build frontend
+        run: python -m pip install "build==1.3.0"
+
+      - name: Run release-policy unit tests
+        run: python -m unittest discover -s hastelib/tests/build -v
+
+      - name: Build wheel
+        working-directory: hastelib
+        env:
+          HASTE_SET_VERSION: ${{ needs.resolve-version.outputs.version }}
+        run: python -m build --wheel
+
+      - name: Validate wheel without GitHub credentials
+        run: |
+          python .github/scripts/publish_hastegeo_wheel.py \
+            --wheel "hastelib/dist/${{ needs.resolve-version.outputs.wheel_name }}" \
+            --expected-version "${{ needs.resolve-version.outputs.version }}" \
+            --channel "${{ needs.resolve-version.outputs.channel }}" \
+            --source-sha "${{ needs.resolve-version.outputs.source_sha }}" \
+            --validate-only
+
+      - name: Upload validated wheel artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hastegeo-wheel-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
+          path: hastelib/dist/${{ needs.resolve-version.outputs.wheel_name }}

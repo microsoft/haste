@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling", "azure-storage-blob==12.23.0", "azure-identity==1.18.0"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.hooks.custom]

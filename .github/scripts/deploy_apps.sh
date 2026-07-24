@@ -119,15 +119,26 @@ deploy_function() {
 
     az functionapp restart --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP"
 
-    echo "Deploying function code..."
-    # Deploy and handle health check failures gracefully
-    if (cd "$FUNCTION_DIR" && func azure functionapp publish "$FUNCTION_NAME" --python --build remote --verbose); then
-        echo "✅ Function deployment completed successfully"
-    else
-        echo "⚠️  WARNING: Function deployment completed but health check failed."
-        echo "   This is often normal for cold starts and doesn't indicate a real problem."
-        echo "   The function app is likely working correctly. Check the Azure portal to verify."
+    # Function apps publish via `func` -> remote pip install on Azure, so the
+    # editable hastegeo default in requirements.txt (used by docker-compose)
+    # must be swapped for the published wheel. Apps without a hastegeo line
+    # (e.g. titiler) are left untouched.
+    if [ -n "${HASTEGEO_WHEEL_URL:-}" ] && grep -qE '^[[:space:]]*#?[[:space:]]*(-e[[:space:]]+[^[:space:]]*hastelib|hastegeo[[:space:]]*@)' "$FUNCTION_DIR/requirements.txt" 2>/dev/null; then
+        echo "Pinning hastegeo wheel for $FUNCTION_NAME: $HASTEGEO_WHEEL_URL"
+        python3 "$(dirname "$0")/set_hastegeo_source.py" --mode wheel --url "$HASTEGEO_WHEEL_URL" "$FUNCTION_DIR/requirements.txt"
     fi
+
+    echo "Deploying function code..."
+    # A non-zero exit can represent a package/build/deployment failure. Do not
+    # convert it into a success-shaped warning: set -e propagates the failure.
+    (
+        cd "$FUNCTION_DIR"
+        func azure functionapp publish "$FUNCTION_NAME" \
+            --python \
+            --build remote \
+            --verbose
+    )
+    echo "Function deployment completed successfully."
 
     echo "Setting tags for Function App $FUNCTION_NAME ..."
     az functionapp update --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --set $AZ_FUNCTIONAPP_TAGS
