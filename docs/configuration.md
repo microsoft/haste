@@ -121,9 +121,9 @@ az deployment group create -g <shared-rg> \
 
 Pools are named `<prefix>-shared-<group>-<tier>-pool` (e.g. the dev-group H100
 pool); `HASTE_SHARED_GROUP` selects the group (`dev`, `demo`, …). They autoscale
-on **dedicated** nodes within a central per-pool core-quota ceiling. A scarce tier
-(H100) can keep a warm floor instead of scaling to zero — under regional GPU
-contention an autoscale floor (or `Fixed` target) **auto-retries allocation each
+on **dedicated or low-priority** nodes (configurable via `HASTE_SHARED_NODE_TYPE`)
+within a central per-pool core-quota ceiling. A scarce tier (H100) can keep a warm
+floor instead of scaling to zero — under regional GPU
 evaluation** until capacity frees, whereas a one-shot fixed resize gets stuck in
 its error state. The pool identity is used **only** for ACR pull
 (`haste-shared-acr-umi`) — it holds no storage access.
