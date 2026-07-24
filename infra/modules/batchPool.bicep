@@ -56,7 +56,8 @@ var registryServer = '${acrName}.azurecr.io'
 // Autoscale targets the node bucket matching nodeType; minNodes=0 => scale-to-zero
 // when idle (shared-demo burst preserves scarce GPU quota).
 var scaleTargetVar = nodeType == 'LowPriority' ? '$TargetLowPriorityNodes' : '$TargetDedicatedNodes'
-var autoscaleFormula = '$samples = $ActiveTasks.GetSamplePercent(TimeInterval_Minute * 15);$tasks = $samples < 70 ? max(0, $ActiveTasks.GetSample(1)) : max($ActiveTasks.GetSample(1), avg($ActiveTasks.GetSample(TimeInterval_Minute * 15)));$targetVMs = $tasks > 0 ? $tasks : ${minNodes};${scaleTargetVar} = max(${minNodes}, min($targetVMs, ${maxNodes}));$NodeDeallocationOption = taskcompletion;'
+var otherScaleTargetVar = nodeType == 'LowPriority' ? '$TargetDedicatedNodes' : '$TargetLowPriorityNodes'
+var autoscaleFormula = '$samples = $ActiveTasks.GetSamplePercent(TimeInterval_Minute * 15);$tasks = $samples < 70 ? max(0, $ActiveTasks.GetSample(1)) : max($ActiveTasks.GetSample(1), avg($ActiveTasks.GetSample(TimeInterval_Minute * 15)));$targetVMs = $tasks > 0 ? $tasks : ${minNodes};${scaleTargetVar} = max(${minNodes}, min($targetVMs, ${maxNodes}));${otherScaleTargetVar} = 0;$NodeDeallocationOption = taskcompletion;'
 
 // Fixed (reserved dev/prod) vs Autoscale (shared-demo burst), targeting the
 // Dedicated or LowPriority bucket per nodeType.
