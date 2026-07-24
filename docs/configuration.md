@@ -139,7 +139,7 @@ Shared-pool deploy knobs (env vars read by `shared-pools.bicep`):
 | `HASTE_SHARED_BATCH_SUBNET_ID` | — | Shared hub batch-subnet to VNet-inject both pools into (see Blob↔Batch networking below). |
 
 **Data isolation.** Tenants share compute but not data: each job mints a
-short-lived **user-delegation SAS** scoped to its own storage container, so a
+time-limited **user-delegation SAS** scoped to its own storage container, so a
 tenant's task can never read another tenant's data. This requires the submitting
 Function App identity to hold **Storage Blob Delegator** on its storage account
 (granted in `functionApp.bicep`).
