@@ -1,0 +1,85 @@
+name: Report or prune RC wheels
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Monday 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Delete the reported assets after approval"
+        type: boolean
+        default: false
+      keep:
+        description: "RC wheels to keep per unreleased version"
+        default: "5"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event.inputs.apply != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Report stale RC wheels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: ${{ github.event.inputs.keep || '5' }}
+        run: |
+          python .github/scripts/cleanup_rc_releases.py \
+            --keep "$KEEP" \
+            --retain-file .github/rc-retain.txt \
+            | tee rc-cleanup-report.txt
+          {
+            echo "### RC cleanup report"
+            echo ""
+            echo '```text'
+            cat rc-cleanup-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  delete:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.apply == 'true' &&
+      vars.HASTEGEO_PUBLISH_ENABLED == 'true' &&
+      vars.HASTEGEO_RELEASE_APPROVAL_CONFIGURED == 'true'
+    runs-on: ubuntu-latest
+    environment: hastegeo-release
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout trusted cleanup policy
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Delete approved stale RC wheels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: ${{ github.event.inputs.keep || '5' }}
+        run: |
+          python .github/scripts/cleanup_rc_releases.py \
+            --keep "$KEEP" \
+            --retain-file .github/rc-retain.txt \
+            --apply
