@@ -44,7 +44,11 @@ function titilerBase() {
 
 export function titilerTileUrl(cogUrl) {
   if (!cogUrl) return null;
-  return `${titilerBase()}/cog/tiles/{z}/{x}/{y}.png?url=${encodeURIComponent(
+  // Use the same canonical tile path the rest of HASTE uses (labels.py /
+  // function_app.py): the WebMercatorQuad TileMatrixSet segment is required by
+  // the deployed TiTiler/APIM route. The plain /cog/tiles/{z}/{x}/{y} alias
+  // works on the local titiler but 404s in production.
+  return `${titilerBase()}/cog/tiles/WebMercatorQuad/{z}/{x}/{y}?scale=1&url=${encodeURIComponent(
     cogUrl
   )}`;
 }
