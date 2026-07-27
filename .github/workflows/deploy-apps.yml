@@ -116,15 +116,16 @@ jobs:
           # on Azure's remote build.
           HASTEGEO_WHEEL_URL: ${{ steps.hastegeo.outputs.url }}
           # Batch pool wiring. All optional: unset reproduces the legacy
-          # single-pool behavior. Set these as GitHub Environment variables to
-          # point an environment at pre-created shared pools.
-          BATCH_TRAINING_POOL_ID: ${{ vars.BATCH_TRAINING_POOL_ID }}
-          BATCH_IMAGERYPREP_POOL_ID: ${{ vars.BATCH_IMAGERYPREP_POOL_ID }}
-          BATCH_TRAINING_POOL_IDS: ${{ vars.BATCH_TRAINING_POOL_IDS }}
-          BATCH_INFERENCE_POOL_IDS: ${{ vars.BATCH_INFERENCE_POOL_IDS }}
-          BATCH_IMAGERYPREP_POOL_IDS: ${{ vars.BATCH_IMAGERYPREP_POOL_IDS }}
-          BATCH_USE_SAS: ${{ vars.BATCH_USE_SAS }}
-          BATCH_MANAGE_POOLS: ${{ vars.BATCH_MANAGE_POOLS }}
+          # single-pool behavior. Stored as environment *secrets* (not
+          # variables) so the values are masked in this repo's public
+          # Actions logs, matching the other infra-naming config.
+          BATCH_TRAINING_POOL_ID: ${{ secrets.BATCH_TRAINING_POOL_ID }}
+          BATCH_IMAGERYPREP_POOL_ID: ${{ secrets.BATCH_IMAGERYPREP_POOL_ID }}
+          BATCH_TRAINING_POOL_IDS: ${{ secrets.BATCH_TRAINING_POOL_IDS }}
+          BATCH_INFERENCE_POOL_IDS: ${{ secrets.BATCH_INFERENCE_POOL_IDS }}
+          BATCH_IMAGERYPREP_POOL_IDS: ${{ secrets.BATCH_IMAGERYPREP_POOL_IDS }}
+          BATCH_USE_SAS: ${{ secrets.BATCH_USE_SAS }}
+          BATCH_MANAGE_POOLS: ${{ secrets.BATCH_MANAGE_POOLS }}
         run: |
           chmod +x .github/scripts/deploy_apps.sh
           .github/scripts/deploy_apps.sh \
