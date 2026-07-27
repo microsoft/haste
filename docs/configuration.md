@@ -176,11 +176,16 @@ The runner picks a pool from the candidate list **at submit time** — the first
 with an idle node, otherwise the preferred (first) pool, which scales up / queues.
 
 These are emitted by both deploy paths: set them as GitHub Environment
-variables (`BATCH_TRAINING_POOL_IDS`, `BATCH_INFERENCE_POOL_IDS`,
+**secrets** (`BATCH_TRAINING_POOL_IDS`, `BATCH_INFERENCE_POOL_IDS`,
 `BATCH_IMAGERYPREP_POOL_IDS`, `BATCH_USE_SAS`, `BATCH_MANAGE_POOLS`,
 `BATCH_TRAINING_POOL_ID`, `BATCH_IMAGERYPREP_POOL_ID`) for
 [`deploy-apps.yml`](../.github/workflows/deploy-apps.yml), or as the
 corresponding `infra/main.bicepparam` values for the Bicep path.
+
+> **Secrets, not variables.** Resource naming is treated as sensitive in this
+> repo (as `RESOURCE_PREFIX`, `LOCATION` and friends already are). GitHub masks
+> secret values in Actions logs but does **not** mask variables, and this repo's
+> workflow logs are public.
 
 > **`*_POOL_ID` (singular) also names the Batch job.** `TRAINING_BATCH_JOB_ID`
 > and friends default to the matching pool id, so the value must be **identical
