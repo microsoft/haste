@@ -3,6 +3,8 @@
 
 import io
 import time
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 from azure.batch import BatchServiceClient
 from azure.batch.batch_auth import SharedKeyCredentials
@@ -20,6 +22,7 @@ from azure.batch.models import (
     EnvironmentSetting,
     ImageReference,
     JobAddParameter,
+    JobPatchParameter,
     JobState,
     OSDisk,
     OutputFile,
@@ -39,7 +42,16 @@ from azure.batch.models import (
     VirtualMachineConfiguration,
 )
 from azure.identity import DefaultAzureCredential
+from azure.storage.blob import (
+    BlobServiceClient,
+    ContainerSasPermissions,
+    generate_container_sas,
+)
 from hastegeo.core.config import Config
+from hastegeo.core.utils.batch_config import (
+    BatchJobPoolMismatchError,
+    validate_batch_config,
+)
 from hastegeo.core.utils.logs import Logger
 from tenacity import (
     retry,
@@ -52,11 +64,18 @@ from .base import BaseRunner
 
 
 class AzureBatchRunner(BaseRunner):
-    def __init__(self, config: Config = None, pool_id=None):
+    def __init__(
+        self, config: Config = None, pool_id=None, candidate_pool_ids=None
+    ):
         super().__init__(config)
         config = config or Config()
         self.batch_config = config.get_azure_batch_config()
+        # Ordered candidate pools for capacity-aware routing (v2.1.0): the runner
+        # binds the actual pool at submit time (see add_task). Falls back to the
+        # single pool_id (or the training pool) for backward compatibility.
         self.pool_id = pool_id or self.batch_config["training_pool_id"]
+        self.candidate_pool_ids = candidate_pool_ids or [self.pool_id]
+        self.manage_pools = self.batch_config.get("manage_pools", True)
         self.batch_cluster = AzureBatchJob(
             account_name=self.batch_config["account_name"],
             account_key=self.batch_config["account_key"],
@@ -65,6 +84,8 @@ class AzureBatchRunner(BaseRunner):
             user_assigned_identity_resource_id=self.batch_config[
                 "user_assigned_identity_resource_id"
             ],
+            use_sas=self.batch_config.get("use_sas", False),
+            manage_pools=self.manage_pools,
         )
         self.logger = Logger.get_logger(__name__)
 
@@ -125,21 +146,51 @@ class AzureBatchRunner(BaseRunner):
         # NOTE: test workdir option to eliminate the cd into /app here
         command = command
 
+        # Validate before the first Batch call so a missing application
+        # setting is reported as itself, rather than as an opaque Azure error
+        # raised from deep inside pool creation.
+        validate_batch_config(self.batch_config, self.manage_pools)
+
+        # Capacity-aware routing (v2.1.0): pick the pool at submit time from the
+        # ordered candidates (preference-first, spillover-second), then bind the
+        # job to it.
+        selected_pool = self.batch_cluster.select_pool(self.candidate_pool_ids)
+        self.batch_cluster.pool_id = selected_pool
         self.logger.info(
-            "Creating pool for job_id: %s and task_id: %s", job_id, task_id
+            "Selected pool %s for job_id: %s task_id: %s",
+            selected_pool,
+            job_id,
+            task_id,
         )
-        self.batch_cluster.create_pool_if_not_exists(
-            self.batch_config["vm_size"],
-            self.batch_config["vm_publisher"],
-            self.batch_config["vm_offer"],
-            self.batch_config["vm_sku"],
-            self.batch_config["vm_version"],
-            self.batch_config["target_dedicated_nodes"],
-            self.batch_config["target_low_priority_nodes"],
-            self.batch_config["registry_server"],
-            [self.batch_config["registry_image"]],
-            self.batch_config["node_agent_sku_id"],
-        )
+
+        # Pre-created IaC/autoscale pools manage their own lifecycle; only
+        # auto-create/resize for legacy single-pool envs (manage_pools=True).
+        if self.manage_pools:
+            self.logger.info(
+                "Creating pool for job_id: %s and task_id: %s", job_id, task_id
+            )
+            # Both workload images must be whitelisted on the pool, matching
+            # infra/modules/batchPool.bicep; a pool created with only the
+            # training image cannot start imageryprep tasks.
+            registry_images = []
+            for candidate in (
+                self.batch_config["registry_image"],
+                self.batch_config["imageprep_docker_image"],
+            ):
+                if candidate and candidate not in registry_images:
+                    registry_images.append(candidate)
+            self.batch_cluster.create_pool_if_not_exists(
+                self.batch_config["vm_size"],
+                self.batch_config["vm_publisher"],
+                self.batch_config["vm_offer"],
+                self.batch_config["vm_sku"],
+                self.batch_config["vm_version"],
+                self.batch_config["target_dedicated_nodes"],
+                self.batch_config["target_low_priority_nodes"],
+                self.batch_config["registry_server"],
+                registry_images,
+                self.batch_config["node_agent_sku_id"],
+            )
         self.logger.info(
             "Creating job for job_id: %s and task_id: %s", job_id, task_id
         )
@@ -201,6 +252,8 @@ class AzureBatchJob:
         batch_url: str,
         pool_id: str,
         user_assigned_identity_resource_id: str,
+        use_sas: bool = False,
+        manage_pools: bool = True,
     ):
         self.logger = Logger.get_logger(__name__)
         if account_name and account_key:
@@ -212,6 +265,95 @@ class AzureBatchJob:
         )
         self.pool_id = pool_id
         self.user_assigned_identity = user_assigned_identity_resource_id
+        # v2.1.0: per-job user-delegation SAS for blob I/O on multi-tenant shared
+        # pools (instead of the pool's managed identity); and whether the runner
+        # manages (creates/resizes) its own pool.
+        self.use_sas = use_sas
+        self.manage_pools = manage_pools
+        self._sas_credential = None
+        # Cache user-delegation keys per storage account (valid for hours).
+        self._udk_cache = {}
+
+    def select_pool(self, candidate_pool_ids):
+        # Capacity-aware routing (v2.1.0): return the first candidate with an
+        # idle node (spillover to a free tier). If none has an idle node, return
+        # the preferred (first) candidate and let it scale up / queue. A single
+        # candidate is returned as-is (no API calls).
+        if not candidate_pool_ids:
+            return self.pool_id
+        if len(candidate_pool_ids) == 1:
+            return candidate_pool_ids[0]
+        for pid in candidate_pool_ids:
+            try:
+                if self._pool_has_idle_node(pid):
+                    return pid
+            except BatchErrorException as e:
+                self.logger.warning(
+                    "Capacity check failed for pool %s (%s); trying next.",
+                    pid,
+                    getattr(e.error, "code", e),
+                )
+        return candidate_pool_ids[0]
+
+    def _pool_has_idle_node(self, pool_id):
+        pool = self.batch_client.pool.get(pool_id)
+        if (pool.current_dedicated_nodes or 0) + (
+            pool.current_low_priority_nodes or 0
+        ) == 0:
+            return False
+        nodes = self.batch_client.compute_node.list(pool_id)
+        return any(n.state == ComputeNodeState.idle for n in nodes)
+
+    def _sas_url(self, url, permissions):
+        # Append a user-delegation SAS scoped to the URL's container so a Batch
+        # ResourceFile/OutputFile can read/write WITHOUT the pool holding any
+        # standing data access — the isolation boundary for multi-tenant shared
+        # pools. The submitting identity needs `Storage Blob Delegator` on the
+        # account. User-delegation keys are cached per account.
+        parsed = urlparse(url)
+        account_url = f"{parsed.scheme}://{parsed.netloc}"
+        account_name = parsed.netloc.split(".")[0]
+        container = parsed.path.lstrip("/").split("/", 1)[0]
+        if self._sas_credential is None:
+            self._sas_credential = DefaultAzureCredential()
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(minutes=5)
+        entry = self._udk_cache.get(account_url)
+        if entry is None or entry[1] <= now + timedelta(hours=1):
+            expiry = now + timedelta(hours=24)
+            bsc = BlobServiceClient(
+                account_url, credential=self._sas_credential
+            )
+            udk = bsc.get_user_delegation_key(start, expiry)
+            entry = (udk, expiry)
+            self._udk_cache[account_url] = entry
+        udk, expiry = entry
+        sas = generate_container_sas(
+            account_name=account_name,
+            container_name=container,
+            user_delegation_key=udk,
+            permission=ContainerSasPermissions.from_string(permissions),
+            expiry=expiry,
+            start=start,
+        )
+        sep = "&" if "?" in url else "?"
+        return f"{url}{sep}{sas}"
+
+    def _maybe_sas(self, url, permissions):
+        # SAS-augment the URL when per-job SAS is enabled; else return as-is
+        # (paired with identity_reference from _blob_identity()).
+        if url and self.use_sas:
+            return self._sas_url(url, permissions)
+        return url
+
+    def _blob_identity(self):
+        # No pool identity on the blob transfer when using SAS (the SAS IS the
+        # credential); otherwise the pool's user-assigned identity.
+        if self.use_sas:
+            return None
+        return ComputeNodeIdentityReference(
+            resource_id=self.user_assigned_identity
+        )
 
     def create_pool_if_not_exists(
         self,
@@ -309,9 +451,14 @@ class AzureBatchJob:
                 raise
 
     def create_job(self, job_id):
-        self.wait_for_pool_to_be_ready()
+        # Fixed pools we manage need a ready node before the job is created;
+        # autoscale / pre-created pools scale up in response to queued tasks, so
+        # waiting here would deadlock (0 nodes until tasks exist).
+        if self.manage_pools:
+            self.wait_for_pool_to_be_ready()
         try:
             job = self.batch_client.job.get(job_id)
+            self._rebind_job_pool(job)
             if job.state != JobState.active:
                 self.batch_client.job.enable(job_id)
                 self.logger.info(f"Job {job_id} activated.")
@@ -322,6 +469,37 @@ class AzureBatchJob:
                 )
                 self.batch_client.job.add(job)
                 self.logger.info(f"Job {job_id} created.")
+
+    def _rebind_job_pool(self, job):
+        # A job keeps the pool it was first created against, so reusing a job id
+        # would pin every later task to that original pool -- defeating
+        # capacity-aware routing, and failing outright once that pool is renamed
+        # or deleted. Re-point the job at the pool selected for this submission.
+        bound_pool = getattr(job.pool_info, "pool_id", None)
+        if not bound_pool or bound_pool == self.pool_id:
+            return
+        self.logger.info(
+            "Job %s is bound to pool %s; rebinding to selected pool %s.",
+            job.id,
+            bound_pool,
+            self.pool_id,
+        )
+        try:
+            self.batch_client.job.patch(
+                job.id,
+                JobPatchParameter(
+                    pool_info=PoolInformation(pool_id=self.pool_id)
+                ),
+            )
+        except BatchErrorException as e:
+            # Batch refuses the change while tasks are active. Surface it rather
+            # than silently submitting into a job on the wrong pool.
+            raise BatchJobPoolMismatchError(
+                f"Job {job.id} is bound to pool {bound_pool} but this task "
+                f"targets pool {self.pool_id}, and rebinding failed "
+                f"({getattr(e.error, 'code', e)}). Delete or drain the job, "
+                "or set a distinct *_BATCH_JOB_ID."
+            ) from e
 
     def add_task(
         self,
@@ -355,15 +533,15 @@ class AzureBatchJob:
         if resource_files_for_upload is not None:
             resource_files = [
                 ResourceFile(
-                    http_url=resource_file.get("http_url"),
-                    storage_container_url=resource_file.get(
-                        "storage_container_url"
+                    http_url=self._maybe_sas(
+                        resource_file.get("http_url"), "rl"
+                    ),
+                    storage_container_url=self._maybe_sas(
+                        resource_file.get("storage_container_url"), "rl"
                     ),
                     blob_prefix=resource_file.get("blob_prefix"),
                     file_path=resource_file.get("file_path"),
-                    identity_reference=ComputeNodeIdentityReference(
-                        resource_id=self.user_assigned_identity
-                    ),
+                    identity_reference=self._blob_identity(),
                 )
                 for resource_file in resource_files_for_upload.values()
             ]
@@ -379,6 +557,11 @@ class AzureBatchJob:
         task_constraints = TaskConstraints(
             retention_time=retention_time,
         )
+
+        # Blob transfer credential: per-job SAS (multi-tenant shared pools) or
+        # the pool's managed identity (legacy). Output needs write/create/list.
+        output_sas_url = self._maybe_sas(output_container_url, "racwl")
+        output_identity = self._blob_identity()
 
         task = TaskAddParameter(
             id=task_id,
@@ -399,11 +582,9 @@ class AzureBatchJob:
                     file_pattern=file_pattern,
                     destination=OutputFileDestination(
                         container=OutputFileBlobContainerDestination(
-                            container_url=output_container_url,
+                            container_url=output_sas_url,
                             path=output_prefix,
-                            identity_reference=ComputeNodeIdentityReference(
-                                resource_id=self.user_assigned_identity
-                            ),
+                            identity_reference=output_identity,
                         )
                     ),
                     upload_options=OutputFileUploadOptions(
@@ -415,11 +596,9 @@ class AzureBatchJob:
                     file_pattern="../*.txt",
                     destination=OutputFileDestination(
                         container=OutputFileBlobContainerDestination(
-                            container_url=output_container_url,
+                            container_url=output_sas_url,
                             path=output_prefix,
-                            identity_reference=ComputeNodeIdentityReference(
-                                resource_id=self.user_assigned_identity
-                            ),
+                            identity_reference=output_identity,
                         )
                     ),
                     upload_options=OutputFileUploadOptions(

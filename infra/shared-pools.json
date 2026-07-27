@@ -1,0 +1,495 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "16520244299666787717"
+    }
+  },
+  "parameters": {
+    "sharedPrefix": {
+      "type": "string",
+      "defaultValue": "haste",
+      "metadata": {
+        "description": "Resource-name prefix. Generic default; override per deployment."
+      }
+    },
+    "sharedGroup": {
+      "type": "string",
+      "metadata": {
+        "description": "Shared group these pools serve (e.g. dev, demo)."
+      }
+    },
+    "batchAccountName": {
+      "type": "string",
+      "metadata": {
+        "description": "Existing shared Batch account name (BYO — no generic default)."
+      }
+    },
+    "umiResourceId": {
+      "type": "string",
+      "metadata": {
+        "description": "Shared ACR-pull UMI resource id."
+      }
+    },
+    "acrName": {
+      "type": "string",
+      "metadata": {
+        "description": "Existing shared ACR name, without .azurecr.io (BYO — no generic default)."
+      }
+    },
+    "trainingImage": {
+      "type": "string",
+      "defaultValue": "hastetraining:2.0.0",
+      "metadata": {
+        "description": "Training image (H100 tier + spillover)."
+      }
+    },
+    "imageryprepImage": {
+      "type": "string",
+      "defaultValue": "hasteimageryprep:2.0.0",
+      "metadata": {
+        "description": "Imageryprep image (T4 tier + spillover)."
+      }
+    },
+    "h100MaxNodes": {
+      "type": "int",
+      "defaultValue": 2,
+      "metadata": {
+        "description": "H100 autoscale max nodes (formula cap)."
+      }
+    },
+    "t4MaxNodes": {
+      "type": "int",
+      "defaultValue": 2,
+      "metadata": {
+        "description": "T4 autoscale max nodes (formula cap)."
+      }
+    },
+    "t4MinNodes": {
+      "type": "int",
+      "defaultValue": 0,
+      "metadata": {
+        "description": "T4 autoscale floor. 0 = scale-to-zero when idle; >0 keeps a warm baseline of always-on nodes."
+      }
+    },
+    "sharedNodeType": {
+      "type": "string",
+      "defaultValue": "Dedicated",
+      "allowedValues": [
+        "Dedicated",
+        "LowPriority"
+      ],
+      "metadata": {
+        "description": "Node cost tier. Dedicated (draws from the account dedicated-core quota). Set LowPriority only where low-priority GPU quota is available (cheaper, preemptible)."
+      }
+    },
+    "h100ScaleMode": {
+      "type": "string",
+      "defaultValue": "Autoscale",
+      "allowedValues": [
+        "Fixed",
+        "Autoscale"
+      ],
+      "metadata": {
+        "description": "H100 pool scale mode. Fixed reserves a baseline for the scarce GPU tier (recommended for contended regions where scale-to-zero can never reacquire a node); Autoscale scales-to-zero when idle."
+      }
+    },
+    "h100FixedNodeCount": {
+      "type": "int",
+      "defaultValue": 1,
+      "metadata": {
+        "description": "H100 reserved node count when h100ScaleMode == Fixed."
+      }
+    },
+    "h100MinNodes": {
+      "type": "int",
+      "defaultValue": 0,
+      "metadata": {
+        "description": "H100 autoscale floor (when h100ScaleMode == Autoscale). 0 = scale-to-zero; >0 keeps chasing a warm baseline (auto-retries allocation each eval under GPU contention)."
+      }
+    },
+    "sharedBatchSubnetId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "VNet subnet resource id to inject BOTH shared pools into (blob<->batch reach via Microsoft.Storage service endpoint + per-tenant storage VNet rule). Empty => no VNet injection (BatchManaged public IPs). See spec/features/batch-compute-expansion/networking.md."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('shared-{0}-h100', parameters('sharedGroup'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "batchAccountName": {
+            "value": "[parameters('batchAccountName')]"
+          },
+          "poolName": {
+            "value": "[format('{0}-shared-{1}-h100-pool', parameters('sharedPrefix'), parameters('sharedGroup'))]"
+          },
+          "vmSize": {
+            "value": "Standard_NC40ads_H100_v5"
+          },
+          "scaleMode": {
+            "value": "[parameters('h100ScaleMode')]"
+          },
+          "fixedNodeCount": {
+            "value": "[parameters('h100FixedNodeCount')]"
+          },
+          "nodeType": {
+            "value": "[parameters('sharedNodeType')]"
+          },
+          "minNodes": {
+            "value": "[parameters('h100MinNodes')]"
+          },
+          "maxNodes": {
+            "value": "[parameters('h100MaxNodes')]"
+          },
+          "umiResourceId": {
+            "value": "[parameters('umiResourceId')]"
+          },
+          "acrName": {
+            "value": "[parameters('acrName')]"
+          },
+          "trainingImage": {
+            "value": "[parameters('trainingImage')]"
+          },
+          "imageryprepImage": {
+            "value": "[parameters('imageryprepImage')]"
+          },
+          "subnetId": {
+            "value": "[parameters('sharedBatchSubnetId')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "14366334891975298585"
+            }
+          },
+          "parameters": {
+            "batchAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Resolved Batch account name (existing or just-created)."
+              }
+            },
+            "poolName": {
+              "type": "string",
+              "metadata": {
+                "description": "Pool name."
+              }
+            },
+            "vmSize": {
+              "type": "string",
+              "metadata": {
+                "description": "Pool VM size."
+              }
+            },
+            "maxNodes": {
+              "type": "int",
+              "metadata": {
+                "description": "Max nodes (autoscale cap)."
+              }
+            },
+            "scaleMode": {
+              "type": "string",
+              "defaultValue": "Autoscale",
+              "allowedValues": [
+                "Fixed",
+                "Autoscale"
+              ],
+              "metadata": {
+                "description": "Scale mode: Fixed (dev/prod reserved) or Autoscale (shared-demo burst)."
+              }
+            },
+            "nodeType": {
+              "type": "string",
+              "defaultValue": "Dedicated",
+              "allowedValues": [
+                "Dedicated",
+                "LowPriority"
+              ],
+              "metadata": {
+                "description": "Node cost tier: Dedicated (guaranteed) or LowPriority (spot, preemptible)."
+              }
+            },
+            "fixedNodeCount": {
+              "type": "int",
+              "defaultValue": 1,
+              "metadata": {
+                "description": "Node count when scaleMode == Fixed."
+              }
+            },
+            "minNodes": {
+              "type": "int",
+              "defaultValue": 1,
+              "metadata": {
+                "description": "Autoscale floor. 0 = scale-to-zero when idle (shared-demo burst); 1 keeps the legacy always-on behavior."
+              }
+            },
+            "umiResourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "User-assigned managed identity resource id (for ACR pull)."
+              }
+            },
+            "subnetId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "VNet subnet resource id for VNet-injected pools. Empty => no VNet injection (BatchManaged public IPs). Shared-demo pools finalize their subnet + per-demo-storage firewall allowlisting before running workloads."
+              }
+            },
+            "acrName": {
+              "type": "string",
+              "metadata": {
+                "description": "Shared ACR name (without .azurecr.io)."
+              }
+            },
+            "trainingImage": {
+              "type": "string",
+              "metadata": {
+                "description": "Training container image (tag included)."
+              }
+            },
+            "imageryprepImage": {
+              "type": "string",
+              "metadata": {
+                "description": "Imageryprep container image (tag included)."
+              }
+            }
+          },
+          "variables": {
+            "registryServer": "[format('{0}.azurecr.io', parameters('acrName'))]",
+            "scaleTargetVar": "[if(equals(parameters('nodeType'), 'LowPriority'), '$TargetLowPriorityNodes', '$TargetDedicatedNodes')]",
+            "autoscaleFormula": "[format('$samples = $ActiveTasks.GetSamplePercent(TimeInterval_Minute * 15);$tasks = $samples < 70 ? max(0, $ActiveTasks.GetSample(1)) : max($ActiveTasks.GetSample(1), avg($ActiveTasks.GetSample(TimeInterval_Minute * 15)));$targetVMs = $tasks > 0 ? $tasks : {0};{1} = max({2}, min($targetVMs, {3}));$NodeDeallocationOption = taskcompletion;', parameters('minNodes'), variables('scaleTargetVar'), parameters('minNodes'), parameters('maxNodes'))]",
+            "scaleSettings": "[if(equals(parameters('scaleMode'), 'Fixed'), createObject('fixedScale', createObject('targetDedicatedNodes', if(equals(parameters('nodeType'), 'Dedicated'), parameters('fixedNodeCount'), 0), 'targetLowPriorityNodes', if(equals(parameters('nodeType'), 'LowPriority'), parameters('fixedNodeCount'), 0), 'resizeTimeout', 'PT15M')), createObject('autoScale', createObject('formula', variables('autoscaleFormula'), 'evaluationInterval', 'PT5M')))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Batch/batchAccounts/pools",
+              "apiVersion": "2024-07-01",
+              "name": "[format('{0}/{1}', parameters('batchAccountName'), parameters('poolName'))]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', parameters('umiResourceId'))]": {}
+                }
+              },
+              "properties": "[shallowMerge(createArray(createObject('vmSize', parameters('vmSize'), 'interNodeCommunication', 'Disabled', 'taskSlotsPerNode', 1, 'taskSchedulingPolicy', createObject('nodeFillType', 'Pack'), 'deploymentConfiguration', createObject('virtualMachineConfiguration', createObject('imageReference', createObject('publisher', 'microsoft-dsvm', 'offer', 'ubuntu-hpc', 'sku', '2204', 'version', 'latest'), 'nodeAgentSkuId', 'batch.node.ubuntu 22.04', 'osDisk', createObject('caching', 'None', 'diskSizeGB', 1023, 'managedDisk', createObject('storageAccountType', 'Premium_LRS')), 'containerConfiguration', createObject('type', 'DockerCompatible', 'containerImageNames', createArray(format('{0}/{1}', variables('registryServer'), parameters('trainingImage')), format('{0}/{1}', variables('registryServer'), parameters('imageryprepImage'))), 'containerRegistries', createArray(createObject('registryServer', format('https://{0}', variables('registryServer')), 'identityReference', createObject('resourceId', parameters('umiResourceId'))))), 'nodePlacementConfiguration', createObject('policy', 'Regional')))), if(empty(parameters('subnetId')), createObject(), createObject('networkConfiguration', createObject('subnetId', parameters('subnetId'), 'publicIPAddressConfiguration', createObject('provision', 'BatchManaged'), 'dynamicVnetAssignmentScope', 'none', 'enableAcceleratedNetworking', false()))), createObject('scaleSettings', variables('scaleSettings'))))]"
+            }
+          ],
+          "outputs": {
+            "poolName": {
+              "type": "string",
+              "value": "[parameters('poolName')]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('shared-{0}-t4', parameters('sharedGroup'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "batchAccountName": {
+            "value": "[parameters('batchAccountName')]"
+          },
+          "poolName": {
+            "value": "[format('{0}-shared-{1}-t4-pool', parameters('sharedPrefix'), parameters('sharedGroup'))]"
+          },
+          "vmSize": {
+            "value": "Standard_NC16as_T4_v3"
+          },
+          "scaleMode": {
+            "value": "Autoscale"
+          },
+          "nodeType": {
+            "value": "[parameters('sharedNodeType')]"
+          },
+          "minNodes": {
+            "value": "[parameters('t4MinNodes')]"
+          },
+          "maxNodes": {
+            "value": "[parameters('t4MaxNodes')]"
+          },
+          "umiResourceId": {
+            "value": "[parameters('umiResourceId')]"
+          },
+          "acrName": {
+            "value": "[parameters('acrName')]"
+          },
+          "trainingImage": {
+            "value": "[parameters('trainingImage')]"
+          },
+          "imageryprepImage": {
+            "value": "[parameters('imageryprepImage')]"
+          },
+          "subnetId": {
+            "value": "[parameters('sharedBatchSubnetId')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "14366334891975298585"
+            }
+          },
+          "parameters": {
+            "batchAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Resolved Batch account name (existing or just-created)."
+              }
+            },
+            "poolName": {
+              "type": "string",
+              "metadata": {
+                "description": "Pool name."
+              }
+            },
+            "vmSize": {
+              "type": "string",
+              "metadata": {
+                "description": "Pool VM size."
+              }
+            },
+            "maxNodes": {
+              "type": "int",
+              "metadata": {
+                "description": "Max nodes (autoscale cap)."
+              }
+            },
+            "scaleMode": {
+              "type": "string",
+              "defaultValue": "Autoscale",
+              "allowedValues": [
+                "Fixed",
+                "Autoscale"
+              ],
+              "metadata": {
+                "description": "Scale mode: Fixed (dev/prod reserved) or Autoscale (shared-demo burst)."
+              }
+            },
+            "nodeType": {
+              "type": "string",
+              "defaultValue": "Dedicated",
+              "allowedValues": [
+                "Dedicated",
+                "LowPriority"
+              ],
+              "metadata": {
+                "description": "Node cost tier: Dedicated (guaranteed) or LowPriority (spot, preemptible)."
+              }
+            },
+            "fixedNodeCount": {
+              "type": "int",
+              "defaultValue": 1,
+              "metadata": {
+                "description": "Node count when scaleMode == Fixed."
+              }
+            },
+            "minNodes": {
+              "type": "int",
+              "defaultValue": 1,
+              "metadata": {
+                "description": "Autoscale floor. 0 = scale-to-zero when idle (shared-demo burst); 1 keeps the legacy always-on behavior."
+              }
+            },
+            "umiResourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "User-assigned managed identity resource id (for ACR pull)."
+              }
+            },
+            "subnetId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "VNet subnet resource id for VNet-injected pools. Empty => no VNet injection (BatchManaged public IPs). Shared-demo pools finalize their subnet + per-demo-storage firewall allowlisting before running workloads."
+              }
+            },
+            "acrName": {
+              "type": "string",
+              "metadata": {
+                "description": "Shared ACR name (without .azurecr.io)."
+              }
+            },
+            "trainingImage": {
+              "type": "string",
+              "metadata": {
+                "description": "Training container image (tag included)."
+              }
+            },
+            "imageryprepImage": {
+              "type": "string",
+              "metadata": {
+                "description": "Imageryprep container image (tag included)."
+              }
+            }
+          },
+          "variables": {
+            "registryServer": "[format('{0}.azurecr.io', parameters('acrName'))]",
+            "scaleTargetVar": "[if(equals(parameters('nodeType'), 'LowPriority'), '$TargetLowPriorityNodes', '$TargetDedicatedNodes')]",
+            "autoscaleFormula": "[format('$samples = $ActiveTasks.GetSamplePercent(TimeInterval_Minute * 15);$tasks = $samples < 70 ? max(0, $ActiveTasks.GetSample(1)) : max($ActiveTasks.GetSample(1), avg($ActiveTasks.GetSample(TimeInterval_Minute * 15)));$targetVMs = $tasks > 0 ? $tasks : {0};{1} = max({2}, min($targetVMs, {3}));$NodeDeallocationOption = taskcompletion;', parameters('minNodes'), variables('scaleTargetVar'), parameters('minNodes'), parameters('maxNodes'))]",
+            "scaleSettings": "[if(equals(parameters('scaleMode'), 'Fixed'), createObject('fixedScale', createObject('targetDedicatedNodes', if(equals(parameters('nodeType'), 'Dedicated'), parameters('fixedNodeCount'), 0), 'targetLowPriorityNodes', if(equals(parameters('nodeType'), 'LowPriority'), parameters('fixedNodeCount'), 0), 'resizeTimeout', 'PT15M')), createObject('autoScale', createObject('formula', variables('autoscaleFormula'), 'evaluationInterval', 'PT5M')))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Batch/batchAccounts/pools",
+              "apiVersion": "2024-07-01",
+              "name": "[format('{0}/{1}', parameters('batchAccountName'), parameters('poolName'))]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', parameters('umiResourceId'))]": {}
+                }
+              },
+              "properties": "[shallowMerge(createArray(createObject('vmSize', parameters('vmSize'), 'interNodeCommunication', 'Disabled', 'taskSlotsPerNode', 1, 'taskSchedulingPolicy', createObject('nodeFillType', 'Pack'), 'deploymentConfiguration', createObject('virtualMachineConfiguration', createObject('imageReference', createObject('publisher', 'microsoft-dsvm', 'offer', 'ubuntu-hpc', 'sku', '2204', 'version', 'latest'), 'nodeAgentSkuId', 'batch.node.ubuntu 22.04', 'osDisk', createObject('caching', 'None', 'diskSizeGB', 1023, 'managedDisk', createObject('storageAccountType', 'Premium_LRS')), 'containerConfiguration', createObject('type', 'DockerCompatible', 'containerImageNames', createArray(format('{0}/{1}', variables('registryServer'), parameters('trainingImage')), format('{0}/{1}', variables('registryServer'), parameters('imageryprepImage'))), 'containerRegistries', createArray(createObject('registryServer', format('https://{0}', variables('registryServer')), 'identityReference', createObject('resourceId', parameters('umiResourceId'))))), 'nodePlacementConfiguration', createObject('policy', 'Regional')))), if(empty(parameters('subnetId')), createObject(), createObject('networkConfiguration', createObject('subnetId', parameters('subnetId'), 'publicIPAddressConfiguration', createObject('provision', 'BatchManaged'), 'dynamicVnetAssignmentScope', 'none', 'enableAcceleratedNetworking', false()))), createObject('scaleSettings', variables('scaleSettings'))))]"
+            }
+          ],
+          "outputs": {
+            "poolName": {
+              "type": "string",
+              "value": "[parameters('poolName')]"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "h100PoolName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('shared-{0}-h100', parameters('sharedGroup'))), '2025-04-01').outputs.poolName.value]"
+    },
+    "t4PoolName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', format('shared-{0}-t4', parameters('sharedGroup'))), '2025-04-01').outputs.poolName.value]"
+    }
+  }
+}

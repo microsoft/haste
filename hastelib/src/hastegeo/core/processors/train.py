@@ -51,6 +51,9 @@ class BaseTrainProcessor:
             runner_type=config.runner_type,
             config=self.config,
             pool_id=self.config.get_azure_batch_config()["training_pool_id"],
+            candidate_pool_ids=self.config.get_azure_batch_config()[
+                "training_pool_ids"
+            ],
         )
 
 

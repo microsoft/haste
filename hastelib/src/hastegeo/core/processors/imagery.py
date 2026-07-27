@@ -181,6 +181,9 @@ class ImageryPostProcessor:
             runner_type=config.runner_type,
             config=self.config,
             pool_id=self.config.get_azure_batch_config()["imageprep_pool_id"],
+            candidate_pool_ids=self.config.get_azure_batch_config()[
+                "imageryprep_pool_ids"
+            ],
         )
         self.queue = AzureQueueHandler(
             config.queue_config["queue_connection_string"],
