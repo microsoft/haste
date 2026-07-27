@@ -22,6 +22,7 @@ from azure.batch.models import (
     EnvironmentSetting,
     ImageReference,
     JobAddParameter,
+    JobPatchParameter,
     JobState,
     OSDisk,
     OutputFile,
@@ -47,6 +48,10 @@ from azure.storage.blob import (
     generate_container_sas,
 )
 from hastegeo.core.config import Config
+from hastegeo.core.utils.batch_config import (
+    BatchJobPoolMismatchError,
+    validate_batch_config,
+)
 from hastegeo.core.utils.logs import Logger
 from tenacity import (
     retry,
@@ -141,6 +146,11 @@ class AzureBatchRunner(BaseRunner):
         # NOTE: test workdir option to eliminate the cd into /app here
         command = command
 
+        # Validate before the first Batch call so a missing application
+        # setting is reported as itself, rather than as an opaque Azure error
+        # raised from deep inside pool creation.
+        validate_batch_config(self.batch_config, self.manage_pools)
+
         # Capacity-aware routing (v2.1.0): pick the pool at submit time from the
         # ordered candidates (preference-first, spillover-second), then bind the
         # job to it.
@@ -159,6 +169,16 @@ class AzureBatchRunner(BaseRunner):
             self.logger.info(
                 "Creating pool for job_id: %s and task_id: %s", job_id, task_id
             )
+            # Both workload images must be whitelisted on the pool, matching
+            # infra/modules/batchPool.bicep; a pool created with only the
+            # training image cannot start imageryprep tasks.
+            registry_images = []
+            for candidate in (
+                self.batch_config["registry_image"],
+                self.batch_config["imageprep_docker_image"],
+            ):
+                if candidate and candidate not in registry_images:
+                    registry_images.append(candidate)
             self.batch_cluster.create_pool_if_not_exists(
                 self.batch_config["vm_size"],
                 self.batch_config["vm_publisher"],
@@ -168,7 +188,7 @@ class AzureBatchRunner(BaseRunner):
                 self.batch_config["target_dedicated_nodes"],
                 self.batch_config["target_low_priority_nodes"],
                 self.batch_config["registry_server"],
-                [self.batch_config["registry_image"]],
+                registry_images,
                 self.batch_config["node_agent_sku_id"],
             )
         self.logger.info(
@@ -438,6 +458,7 @@ class AzureBatchJob:
             self.wait_for_pool_to_be_ready()
         try:
             job = self.batch_client.job.get(job_id)
+            self._rebind_job_pool(job)
             if job.state != JobState.active:
                 self.batch_client.job.enable(job_id)
                 self.logger.info(f"Job {job_id} activated.")
@@ -448,6 +469,37 @@ class AzureBatchJob:
                 )
                 self.batch_client.job.add(job)
                 self.logger.info(f"Job {job_id} created.")
+
+    def _rebind_job_pool(self, job):
+        # A job keeps the pool it was first created against, so reusing a job id
+        # would pin every later task to that original pool -- defeating
+        # capacity-aware routing, and failing outright once that pool is renamed
+        # or deleted. Re-point the job at the pool selected for this submission.
+        bound_pool = getattr(job.pool_info, "pool_id", None)
+        if not bound_pool or bound_pool == self.pool_id:
+            return
+        self.logger.info(
+            "Job %s is bound to pool %s; rebinding to selected pool %s.",
+            job.id,
+            bound_pool,
+            self.pool_id,
+        )
+        try:
+            self.batch_client.job.patch(
+                job.id,
+                JobPatchParameter(
+                    pool_info=PoolInformation(pool_id=self.pool_id)
+                ),
+            )
+        except BatchErrorException as e:
+            # Batch refuses the change while tasks are active. Surface it rather
+            # than silently submitting into a job on the wrong pool.
+            raise BatchJobPoolMismatchError(
+                f"Job {job.id} is bound to pool {bound_pool} but this task "
+                f"targets pool {self.pool_id}, and rebinding failed "
+                f"({getattr(e.error, 'code', e)}). Delete or drain the job, "
+                "or set a distinct *_BATCH_JOB_ID."
+            ) from e
 
     def add_task(
         self,

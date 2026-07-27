@@ -1,0 +1,43 @@
+name: Config drift
+
+# A variable renamed in code but not in every deploy path leaves the setting
+# silently unset in Azure, and the app falls back to a <placeholder> default
+# that only fails once Azure rejects it. Catch that here instead of in an
+# environment.
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "hastelib/src/**"
+      - "api/**"
+      - "infra/modules/functions.bicep"
+      - ".github/scripts/deploy_apps.sh"
+      - ".github/scripts/check_env_drift.py"
+      - ".github/workflows/config-drift.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "hastelib/src/**"
+      - "api/**"
+      - "infra/modules/functions.bicep"
+      - ".github/scripts/deploy_apps.sh"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Check application-setting drift
+        run: python .github/scripts/check_env_drift.py
