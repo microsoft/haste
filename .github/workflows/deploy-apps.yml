@@ -115,6 +115,16 @@ jobs:
           # `func publish` (deploy_apps.sh); the editable default can't resolve
           # on Azure's remote build.
           HASTEGEO_WHEEL_URL: ${{ steps.hastegeo.outputs.url }}
+          # Batch pool wiring. All optional: unset reproduces the legacy
+          # single-pool behavior. Set these as GitHub Environment variables to
+          # point an environment at pre-created shared pools.
+          BATCH_TRAINING_POOL_ID: ${{ vars.BATCH_TRAINING_POOL_ID }}
+          BATCH_IMAGERYPREP_POOL_ID: ${{ vars.BATCH_IMAGERYPREP_POOL_ID }}
+          BATCH_TRAINING_POOL_IDS: ${{ vars.BATCH_TRAINING_POOL_IDS }}
+          BATCH_INFERENCE_POOL_IDS: ${{ vars.BATCH_INFERENCE_POOL_IDS }}
+          BATCH_IMAGERYPREP_POOL_IDS: ${{ vars.BATCH_IMAGERYPREP_POOL_IDS }}
+          BATCH_USE_SAS: ${{ vars.BATCH_USE_SAS }}
+          BATCH_MANAGE_POOLS: ${{ vars.BATCH_MANAGE_POOLS }}
         run: |
           chmod +x .github/scripts/deploy_apps.sh
           .github/scripts/deploy_apps.sh \

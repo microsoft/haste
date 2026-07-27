@@ -175,6 +175,34 @@ pool-identity behavior, so existing environments are unaffected until opted in):
 The runner picks a pool from the candidate list **at submit time** — the first
 with an idle node, otherwise the preferred (first) pool, which scales up / queues.
 
+These are emitted by both deploy paths: set them as GitHub Environment
+variables (`BATCH_TRAINING_POOL_IDS`, `BATCH_INFERENCE_POOL_IDS`,
+`BATCH_IMAGERYPREP_POOL_IDS`, `BATCH_USE_SAS`, `BATCH_MANAGE_POOLS`,
+`BATCH_TRAINING_POOL_ID`, `BATCH_IMAGERYPREP_POOL_ID`) for
+[`deploy-apps.yml`](../.github/workflows/deploy-apps.yml), or as the
+corresponding `infra/main.bicepparam` values for the Bicep path.
+
+> **`*_POOL_ID` (singular) also names the Batch job.** `TRAINING_BATCH_JOB_ID`
+> and friends default to the matching pool id, so the value must be **identical
+> on the api and queues apps** — the queues app submits under that job id and
+> the api app reads status back from it. Pointing it at a pool that no longer
+> exists leaves a job permanently bound to a deleted pool; the runner now
+> rebinds such a job to the pool it selected, but the setting should still be
+> corrected.
+
+### Keeping settings in sync
+
+`AZURE_BATCH_REGISTRY_SERVER` was previously emitted as
+`AZURE_BATCH_REGISTRY_SERVER_URL`. The legacy name is still read as a fallback
+(and any `https://` prefix is stripped), so environments provisioned before the
+rename keep working — but operators should rename the application setting.
+
+Any variable the code requires must be emitted by **both**
+[`deploy_apps.sh`](../.github/scripts/deploy_apps.sh) and
+[`functions.bicep`](../infra/modules/functions.bicep).
+[`check_env_drift.py`](../.github/scripts/check_env_drift.py) enforces this on
+every PR via the `Config drift` workflow.
+
 ## Email sender domain
 
 The email backend (Azure Communication Services) is provisioned in-IaC, so its

@@ -111,6 +111,7 @@ var appConfigSettings = [
   { name: 'STATS_QUEUE_NAME', value: 'stats-queue' }
   { name: 'TRAIN_QUEUE_NAME', value: 'train-queue' }
   { name: 'ZIP_QUEUE_NAME', value: 'zip-queue' }
+  { name: 'EMBEDDING_QUEUE_NAME', value: 'embedding-queue' }
   { name: 'IMAGERY_STORAGE_TYPE', value: 'blob' }
   { name: 'METADATA_STORAGE_TYPE', value: 'blob' }
   { name: 'ARTIFACT_STORAGE_TYPE', value: 'blob' }
@@ -133,7 +134,7 @@ var appConfigSettings = [
   { name: 'AZURE_BATCH_OUTPUT_CONTAINER_URL', value: '${storageAccount.properties.primaryEndpoints.blob}data' }
   { name: 'AZURE_BATCH_TRAINING_POOL_ID', value: batchPoolName }
   { name: 'AZURE_BATCH_IMAGERYPREP_POOL_ID', value: batchPoolName }
-  { name: 'AZURE_BATCH_REGISTRY_SERVER_URL', value: 'https://${acrLoginServer}' }
+  { name: 'AZURE_BATCH_REGISTRY_SERVER', value: acrLoginServer }
   { name: 'AZURE_BATCH_REGISTRY_IMAGE', value: '${acrLoginServer}/${trainingImage}' }
   { name: 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', value: umiResourceId }
   { name: 'STATIC_APP_SUBSCRIPTION_ID', value: subscription().subscriptionId }

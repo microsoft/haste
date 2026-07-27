@@ -1,10 +1,48 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
+import logging
 import os
+import re
 import tempfile
 from enum import Enum
 from string import Template
 from typing import NamedTuple
+
+_logger = logging.getLogger(__name__)
+
+REGISTRY_SERVER_PLACEHOLDER = "<registry-name>.azurecr.io"
+
+_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
+
+
+def _strip_scheme(value):
+    """Reduce a registry URL to the bare login server.
+
+    Azure Batch's ``ContainerRegistry.registry_server`` expects
+    ``myacr.azurecr.io``, but the app setting is frequently supplied as a URL.
+    """
+    return _SCHEME_RE.sub("", value.strip()).rstrip("/")
+
+
+def _resolve_registry_server():
+    """Resolve the ACR login server used for Batch pool creation.
+
+    ``AZURE_BATCH_REGISTRY_SERVER`` is canonical. Environments provisioned
+    before the rename set ``AZURE_BATCH_REGISTRY_SERVER_URL`` instead, so it is
+    still honored to keep those deployments working across the upgrade.
+    """
+    server = os.getenv("AZURE_BATCH_REGISTRY_SERVER")
+    if not server:
+        legacy = os.getenv("AZURE_BATCH_REGISTRY_SERVER_URL")
+        if not legacy:
+            return REGISTRY_SERVER_PLACEHOLDER
+        _logger.warning(
+            "AZURE_BATCH_REGISTRY_SERVER_URL is deprecated and will be "
+            "removed in a future release; rename this application setting "
+            "to AZURE_BATCH_REGISTRY_SERVER."
+        )
+        server = legacy
+    return _strip_scheme(server)
 
 
 class StorageType(Enum):
@@ -472,10 +510,7 @@ class Config:
                 "AZURE_BATCH_MANAGE_POOLS", "true"
             ).lower()
             == "true",
-            "registry_server": os.getenv(
-                "AZURE_BATCH_REGISTRY_SERVER",
-                "<registry-name>.azurecr.io",
-            ),
+            "registry_server": _resolve_registry_server(),
             "registry_image": os.getenv(
                 "AZURE_BATCH_REGISTRY_IMAGE",
                 "<registry-name>.azurecr.io/<training-image>:latest",

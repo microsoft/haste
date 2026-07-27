@@ -27,6 +27,17 @@
     "AZURE_BATCH_TRAINING_POOL_ID": "<REPLACE_WITH_POOL_ID>",
     "AZURE_BATCH_IMAGERYPREP_POOL_ID": "<REPLACE_WITH_POOL_ID>",
 
+    // ===== OPTIONAL: shared multi-tenant pools (see docs/configuration.md) =====
+    // Ordered candidate pools for capacity-aware routing. Leave unset to use
+    // the single *_POOL_ID above. Set AZURE_BATCH_MANAGE_POOLS to false for
+    // pre-created autoscale pools, and AZURE_BATCH_USE_SAS to true so blob I/O
+    // uses a per-job SAS instead of the pool's managed identity.
+    // "AZURE_BATCH_TRAINING_POOL_IDS": "<H100_POOL>,<T4_POOL>",
+    // "AZURE_BATCH_INFERENCE_POOL_IDS": "<T4_POOL>,<H100_POOL>",
+    // "AZURE_BATCH_IMAGERYPREP_POOL_IDS": "<T4_POOL>,<H100_POOL>",
+    // "AZURE_BATCH_USE_SAS": "false",
+    // "AZURE_BATCH_MANAGE_POOLS": "true",
+
     // ===== REQUIRED: Queue Names =====
     // Use unique names for local development to avoid conflicts
     "IMAGE_QUEUE_NAME": "my-local-image-queue",
@@ -34,11 +45,12 @@
     "INFERENCE_QUEUE_NAME": "my-local-inference-queue",
     "STATS_QUEUE_NAME": "my-local-stats-queue",
     "ZIP_QUEUE_NAME": "my-local-zip-queue",
+    "EMBEDDING_QUEUE_NAME": "my-local-embedding-queue",
 
     // ===== REQUIRED: Docker Images =====
     "AZURE_BATCH_DOCKER_IMAGE": "<ACR_NAME>.azurecr.io/hastetraining:<TAG>",
     "AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE": "<ACR_NAME>.azurecr.io/hasteimageryprep:<TAG>",
-    "AZURE_BATCH_REGISTRY_SERVER_URL": "https://<ACR_NAME>.azurecr.io",
+    "AZURE_BATCH_REGISTRY_SERVER": "<ACR_NAME>.azurecr.io",
 
     // ===== REQUIRED: Local Development Paths =====
     "DATA_PATH": "/absolute/path/to/haste/localtmp/data",
