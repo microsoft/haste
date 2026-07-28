@@ -341,7 +341,7 @@ class ImageryPostProcessor:
         imagery_output_prefix = (
             f"{MetadataUtils.hash_string(self.image_data.projectId)}/{task_id}"
         )
-        self.runner.add_task(
+        job_id, task_id = self.runner.add_task(
             job_id=job_id,
             task_id=task_id,
             output_prefix=imagery_output_prefix,

@@ -190,10 +190,15 @@ corresponding `infra/main.bicepparam` values for the Bicep path.
 > **`*_POOL_ID` (singular) also names the Batch job.** `TRAINING_BATCH_JOB_ID`
 > and friends default to the matching pool id, so the value must be **identical
 > on the api and queues apps** — the queues app submits under that job id and
-> the api app reads status back from it. Pointing it at a pool that no longer
-> exists leaves a job permanently bound to a deleted pool; the runner now
-> rebinds such a job to the pool it selected, but the setting should still be
-> corrected.
+> the api app reads status back from it.
+
+**Job ids are scoped to the selected pool.** A Batch job is permanently bound to
+the pool it was created against and can only be re-pointed while it has no
+active tasks, so one static job id cannot span pools. When routing across
+multiple candidates, the runner derives the job id from the pool the task was
+routed to — one job per pool. Environments with a single candidate pool keep
+their existing job id unchanged. This is why a task that spills over to a
+second pool no longer collides with the job created on the preferred pool.
 
 ### Keeping settings in sync
 

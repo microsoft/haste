@@ -49,7 +49,7 @@ from azure.storage.blob import (
 )
 from hastegeo.core.config import Config
 from hastegeo.core.utils.batch_config import (
-    BatchJobPoolMismatchError,
+    resolve_job_id,
     validate_batch_config,
 )
 from hastegeo.core.utils.logs import Logger
@@ -163,6 +163,11 @@ class AzureBatchRunner(BaseRunner):
             task_id,
         )
 
+        # A Batch job is pinned to one pool, so the job id has to follow the
+        # pool this task was routed to; otherwise a second task that spills over
+        # to another pool collides with the job the first one created.
+        job_id = resolve_job_id(job_id, selected_pool, self.candidate_pool_ids)
+
         # Pre-created IaC/autoscale pools manage their own lifecycle; only
         # auto-create/resize for legacy single-pool envs (manage_pools=True).
         if self.manage_pools:
@@ -194,7 +199,7 @@ class AzureBatchRunner(BaseRunner):
         self.logger.info(
             "Creating job for job_id: %s and task_id: %s", job_id, task_id
         )
-        self.batch_cluster.create_job(job_id)
+        job_id = self.batch_cluster.create_job(job_id)
 
         self.batch_cluster.add_task(
             job_id=job_id,
@@ -451,6 +456,12 @@ class AzureBatchJob:
                 raise
 
     def create_job(self, job_id):
+        """Ensure an active job bound to ``self.pool_id``.
+
+        Returns the job id that was actually used, which may differ from the
+        requested one when an existing job is pinned to another pool and cannot
+        be re-pointed.
+        """
         # Fixed pools we manage need a ready node before the job is created;
         # autoscale / pre-created pools scale up in response to queued tasks, so
         # waiting here would deadlock (0 nodes until tasks exist).
@@ -458,48 +469,70 @@ class AzureBatchJob:
             self.wait_for_pool_to_be_ready()
         try:
             job = self.batch_client.job.get(job_id)
-            self._rebind_job_pool(job)
+        except BatchErrorException as e:
+            if e.error.code == "JobNotFound":
+                self._add_job(job_id)
+                return job_id
+            raise
+
+        bound_pool = getattr(job.pool_info, "pool_id", None)
+        if not bound_pool or bound_pool == self.pool_id:
             if job.state != JobState.active:
                 self.batch_client.job.enable(job_id)
                 self.logger.info(f"Job {job_id} activated.")
-        except BatchErrorException as e:
-            if e.error.code == "JobNotFound":
-                job = JobAddParameter(
-                    id=job_id, pool_info=PoolInformation(pool_id=self.pool_id)
-                )
-                self.batch_client.job.add(job)
-                self.logger.info(f"Job {job_id} created.")
+            return job_id
 
-    def _rebind_job_pool(self, job):
-        # A job keeps the pool it was first created against, so reusing a job id
-        # would pin every later task to that original pool -- defeating
-        # capacity-aware routing, and failing outright once that pool is renamed
-        # or deleted. Re-point the job at the pool selected for this submission.
-        bound_pool = getattr(job.pool_info, "pool_id", None)
-        if not bound_pool or bound_pool == self.pool_id:
-            return
+        # The job belongs to a different pool. Re-pointing it only works while
+        # it has no active tasks, so fall back to a pool-scoped job rather than
+        # failing the submission.
         self.logger.info(
             "Job %s is bound to pool %s; rebinding to selected pool %s.",
-            job.id,
+            job_id,
             bound_pool,
             self.pool_id,
         )
         try:
             self.batch_client.job.patch(
-                job.id,
+                job_id,
                 JobPatchParameter(
                     pool_info=PoolInformation(pool_id=self.pool_id)
                 ),
             )
+            if job.state != JobState.active:
+                self.batch_client.job.enable(job_id)
+            return job_id
         except BatchErrorException as e:
-            # Batch refuses the change while tasks are active. Surface it rather
-            # than silently submitting into a job on the wrong pool.
-            raise BatchJobPoolMismatchError(
-                f"Job {job.id} is bound to pool {bound_pool} but this task "
-                f"targets pool {self.pool_id}, and rebinding failed "
-                f"({getattr(e.error, 'code', e)}). Delete or drain the job, "
-                "or set a distinct *_BATCH_JOB_ID."
-            ) from e
+            fallback_id = resolve_job_id(
+                job_id, self.pool_id, [job_id, self.pool_id]
+            )
+            self.logger.info(
+                "Rebinding job %s failed (%s); using pool-scoped job %s.",
+                job_id,
+                getattr(e.error, "code", e),
+                fallback_id,
+            )
+            return self._ensure_job_on_pool(fallback_id)
+
+    def _ensure_job_on_pool(self, job_id):
+        # Last step of the fallback: the id is derived from the pool, so it can
+        # only be missing or already bound to that same pool.
+        try:
+            job = self.batch_client.job.get(job_id)
+        except BatchErrorException as e:
+            if e.error.code == "JobNotFound":
+                self._add_job(job_id)
+                return job_id
+            raise
+        if job.state != JobState.active:
+            self.batch_client.job.enable(job_id)
+        return job_id
+
+    def _add_job(self, job_id):
+        job = JobAddParameter(
+            id=job_id, pool_info=PoolInformation(pool_id=self.pool_id)
+        )
+        self.batch_client.job.add(job)
+        self.logger.info(f"Job {job_id} created on pool {self.pool_id}.")
 
     def add_task(
         self,

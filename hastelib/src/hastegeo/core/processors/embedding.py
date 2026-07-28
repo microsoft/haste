@@ -169,7 +169,7 @@ class EmbeddingPostprocessor:
                 f"{MetadataUtils.hash_string(self.model_data.projectId)}"
                 f"/{task_id}"
             )
-            self.runner.add_task(
+            job_id, task_id = self.runner.add_task(
                 job_id=job_id,
                 task_id=task_id,
                 output_prefix=output_prefix,

@@ -310,7 +310,7 @@ class ArtifactProcessor:
             task_id = f"{ZIP_PREFIX}-{MetadataUtils.generate_id()}"
             zip_output_prefix = f"{MetadataUtils.hash_string(self.model_artifacts.projectId)}/{task_id}"
 
-            self.runner.add_task(
+            job_id, task_id = self.runner.add_task(
                 job_id=job_id,
                 task_id=task_id,
                 output_prefix=zip_output_prefix,
