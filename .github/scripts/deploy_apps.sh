@@ -134,7 +134,8 @@ deploy_function() {
             "STATIC_APP_NAME=$STATIC_WEB_APP" \
             "STATIC_APP_DOMAIN=${STATIC_APP_DOMAIN}" \
             "EMAIL_CONNECTION_STRING=${EMAIL_CONNECTION_STRING}" \
-            "EMAIL_SENDER=${EMAIL_SENDER}"
+            "EMAIL_SENDER=${EMAIL_SENDER}" \
+            --output none
     fi
 
     az functionapp restart --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP"

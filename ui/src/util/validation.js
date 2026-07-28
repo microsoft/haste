@@ -118,7 +118,7 @@ export function validateURL(url) {
 
 // Keep in sync with hastelib/src/hastegeo/core/utils/url_allowlist.py.
 const IMAGERY_URL_ALLOWED_HOST_DESCRIPTION =
-  "Azure Blob Storage (*.blob.core.windows.net) or AWS S3 (*.amazonaws.com)";
+  "Azure Blob Storage (*.blob.core.windows.net), AWS S3 (*.amazonaws.com), or Source Cooperative (*.source.coop)";
 
 const FOOTPRINT_URL_ALLOWED_HOST_DESCRIPTION =
   "Azure Blob Storage (*.blob.core.windows.net), AWS S3 (*.amazonaws.com), or the local upload host (in development)";
@@ -152,6 +152,12 @@ export function validateImageryUrlHost(url) {
     host.endsWith(".s3.amazonaws.com") ||
     host.endsWith(".amazonaws.com")
   ) {
+    return [true, ""];
+  }
+
+  // Source Cooperative — the Planet Open Data STAC catalogs and COGs
+  // surfaced by the Open Data Catalog explorer are served from here.
+  if (host === "data.source.coop" || host.endsWith(".source.coop")) {
     return [true, ""];
   }
 

@@ -456,12 +456,17 @@ class ImageryUtils:
         tif_files: List[str],
         output_file_path: str = None,
         gdal_warp_params: str = "",
+        clip_bbox: List[float] = None,
     ) -> str:
         """
         Parameters:
             tif_files (List[str]): List of paths to the input TIFF files.
             output_file_path (str, optional): Path to the output COG file. If not provided, a default path is generated.
             gdal_warp_params (str): GDAL warp parameters as a string.
+            clip_bbox (List[float], optional): [west, south, east, north] in
+                EPSG:4326. When provided, the output mosaic is clipped to this
+                box via gdalwarp ``-te``/``-te_srs`` (GDAL reprojects the bounds
+                to the mosaic's CRS), so only the drawn AOI is produced.
 
         Returns:
             str: Path to the output COG file.
@@ -549,9 +554,22 @@ class ImageryUtils:
                     raise RuntimeError("VRT file does not exist on disk")
 
                 # Use gdal.Warp to convert the VRT to a COG (Cloud Optimized GeoTIFF)
-                warp_options = gdal.WarpOptions(
-                    options=gdal_warp_params.split()
-                )
+                warp_option_list = gdal_warp_params.split()
+                if clip_bbox:
+                    west, south, east, north = (float(v) for v in clip_bbox)
+                    # -te bounds are given in EPSG:4326 (-te_srs); GDAL
+                    # reprojects them to the mosaic's CRS before clipping.
+                    warp_option_list += [
+                        "-te",
+                        str(west),
+                        str(south),
+                        str(east),
+                        str(north),
+                        "-te_srs",
+                        "EPSG:4326",
+                    ]
+                    logger.info(f"Clipping mosaic to AOI bbox {clip_bbox}")
+                warp_options = gdal.WarpOptions(options=warp_option_list)
                 result = gdal.Warp(
                     output_file_path, str(vrt_path), options=warp_options
                 )

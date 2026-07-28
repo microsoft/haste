@@ -48,6 +48,7 @@ from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
 from hastegeo.core.utils.url_allowlist import (
+    validate_clip_bbox,
     validate_image_layer_imagery_urls,
     validate_image_layer_user_footprints_url,
 )
@@ -818,6 +819,10 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
         )
         if footprint_url_error:
             return func.HttpResponse(footprint_url_error, status_code=400)
+
+        clip_bbox_error = validate_clip_bbox(image_data)
+        if clip_bbox_error:
+            return func.HttpResponse(clip_bbox_error, status_code=400)
 
         if image_data.imageLayerId is None:
             image_data.imageLayerId = MetadataUtils.generate_id()

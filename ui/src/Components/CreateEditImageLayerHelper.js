@@ -73,6 +73,8 @@ export async function createComponentDefaultState(imageLayerId, projectId) {
                     : [],
                 currentUserBuildingFootprintsControl: imageryOriginOptions[0].key,
                 currentUserBuildingFootprintsControlError: "",
+                // Server-side clip AOI [w, s, e, n] EPSG:4326 (Open Data Catalog).
+                clipBbox: imageLayerToEdit.clipBbox || null,
             }
             : {
                 imageLayerId: "",
@@ -109,6 +111,8 @@ export async function createComponentDefaultState(imageLayerId, projectId) {
                 userBuildingFootprintsUrls: [],
                 currentUserBuildingFootprintsControl: imageryOriginOptions[0].key,
                 currentUserBuildingFootprintsControlError: "",
+                // Server-side clip AOI [w, s, e, n] EPSG:4326 (Open Data Catalog).
+                clipBbox: null,
             }
 
         return tempState;
@@ -222,6 +226,65 @@ export const addUrlToFootprintArray = (setComponentState, componentState, URL, f
     return true;
 };
 
+
+// Add a scene picked from the Open Data Catalog explorer to a pre/post
+// imagery array. Appends the COG URL AND (v1 auto-fill) sets the matching
+// source-type dropdown and imagery capture date — but only when those fields
+// are still empty/default, so a user's own entries are never clobbered.
+//
+// `field` is "preEventImageryUrls" | "postEventImageryUrls"; the sibling
+// source-type / capture-date field names are derived from it. Returns a
+// { ok, error } result so the caller can surface a message inline.
+export const addSceneToEventImagery = (setComponentState, componentState, scene, field) => {
+    const url = (scene?.cogUrl || "").trim();
+    if (!url) {
+        return { ok: false, error: "This scene has no downloadable COG yet." };
+    }
+
+    const urlIsValid = validateURL(url);
+    if (!urlIsValid[0]) {
+        return { ok: false, error: urlIsValid[1] };
+    }
+
+    const hostIsValid = validateImageryUrlHost(url);
+    if (!hostIsValid[0]) {
+        return { ok: false, error: hostIsValid[1] };
+    }
+
+    if (componentState[field].some((item) => item.value === url)) {
+        return { ok: false, error: "This scene is already added." };
+    }
+
+    const isPre = field === "preEventImageryUrls";
+    const sourceTypeField = isPre ? "sourceTypePreEvent" : "sourceTypePostEvent";
+    const captureDateField = isPre
+        ? "imageryCaptureDatePreEvent"
+        : "imageryCaptureDatePostEvent";
+
+    const patch = {
+        ...componentState,
+        [field]: [
+            ...componentState[field],
+            { id: uuidv4(), type: "url", value: url, name: scene.title || "" },
+        ],
+    };
+
+    // Only auto-fill source type when still at the "Unknown" default.
+    if (scene.sourceTypeKey && (componentState[sourceTypeField] === "n/a" || !componentState[sourceTypeField])) {
+        patch[sourceTypeField] = scene.sourceTypeKey;
+    }
+
+    // Only auto-fill capture date when the user hasn't set one.
+    if (scene.datetime && !componentState[captureDateField]) {
+        const parsed = new Date(scene.datetime);
+        if (!isNaN(parsed.getTime())) {
+            patch[captureDateField] = parsed;
+        }
+    }
+
+    setComponentState(patch);
+    return { ok: true, error: "" };
+};
 
 export const addFileToEventImageryArray = (files, acceptedFileTypes, componentState, setComponentState, field, errorField) => {
 
