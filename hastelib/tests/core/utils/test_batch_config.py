@@ -15,11 +15,11 @@ from unittest.mock import MagicMock
 import pytest
 from azure.batch.models import BatchErrorException, JobState
 from hastegeo.core.config import REGISTRY_SERVER_PLACEHOLDER, Config
-from hastegeo.core.runners.azure_batch import AzureBatchJob
+from hastegeo.core.runners.azure_batch import AzureBatchJob, AzureBatchRunner
 from hastegeo.core.utils.batch_config import (
     BatchConfigurationError,
-    BatchJobPoolMismatchError,
     has_placeholder,
+    resolve_job_id,
     validate_batch_config,
 )
 
@@ -144,7 +144,7 @@ def test_create_job_rebinds_a_job_pinned_to_a_stale_pool():
     job = _job(pool_id="selected-pool")
     job.batch_client.job.get.return_value = _existing_job("deleted-pool")
 
-    job.create_job("job-1")
+    assert job.create_job("job-1") == "job-1"
 
     job.batch_client.job.patch.assert_called_once()
     patched = job.batch_client.job.patch.call_args[0][1]
@@ -155,17 +155,118 @@ def test_create_job_does_not_rebind_when_pool_already_matches():
     job = _job(pool_id="selected-pool")
     job.batch_client.job.get.return_value = _existing_job("selected-pool")
 
-    job.create_job("job-1")
+    assert job.create_job("job-1") == "job-1"
 
     job.batch_client.job.patch.assert_not_called()
 
 
-def test_create_job_raises_when_rebinding_is_refused():
-    job = _job(pool_id="selected-pool")
-    job.batch_client.job.get.return_value = _existing_job("deleted-pool")
+def test_create_job_falls_back_to_pool_scoped_job_when_rebinding_refused():
+    # Batch refuses to re-point a job that still has active tasks. Rather than
+    # failing the submission, fall back to a job scoped to the selected pool.
+    job = _job(pool_id="t4-pool")
     error = BatchErrorException(lambda *a, **k: None, MagicMock())
-    error.error = MagicMock(code="JobStateInvalid")
+    error.error = MagicMock(code="OperationInvalidForCurrentState")
     job.batch_client.job.patch.side_effect = error
 
-    with pytest.raises(BatchJobPoolMismatchError):
-        job.create_job("job-1")
+    not_found = BatchErrorException(lambda *a, **k: None, MagicMock())
+    not_found.error = MagicMock(code="JobNotFound")
+    job.batch_client.job.get.side_effect = [
+        _existing_job("h100-pool"),
+        not_found,
+    ]
+
+    used = job.create_job("h100-pool")
+
+    assert used == "t4-pool"
+    added = job.batch_client.job.add.call_args[0][0]
+    assert added.id == "t4-pool"
+    assert added.pool_info.pool_id == "t4-pool"
+
+
+def test_create_job_reuses_existing_pool_scoped_job_on_fallback():
+    job = _job(pool_id="t4-pool")
+    error = BatchErrorException(lambda *a, **k: None, MagicMock())
+    error.error = MagicMock(code="OperationInvalidForCurrentState")
+    job.batch_client.job.patch.side_effect = error
+    job.batch_client.job.get.side_effect = [
+        _existing_job("h100-pool"),
+        _existing_job("t4-pool"),
+    ]
+
+    assert job.create_job("h100-pool") == "t4-pool"
+    job.batch_client.job.add.assert_not_called()
+
+
+def test_resolve_job_id_follows_selected_pool_by_default_convention():
+    # Job ids default to the pool id, so track whichever pool was selected
+    # rather than doubling the pool id up.
+    assert (
+        resolve_job_id("h100-pool", "t4-pool", ["h100-pool", "t4-pool"])
+        == "t4-pool"
+    )
+
+
+def test_resolve_job_id_leaves_single_pool_environments_untouched():
+    # No spillover is possible, so an existing custom job id is not renamed.
+    assert resolve_job_id("my-job", "only-pool", ["only-pool"]) == "my-job"
+    assert resolve_job_id("my-job", "only-pool", []) == "my-job"
+
+
+def test_resolve_job_id_scopes_custom_job_ids_when_routing():
+    assert (
+        resolve_job_id("my-job", "t4-pool", ["h100-pool", "t4-pool"])
+        == "my-job-t4-pool"
+    )
+
+
+def test_resolve_job_id_respects_the_64_character_batch_limit():
+    base = "b" * 60
+    pool = "p" * 20
+    resolved = resolve_job_id(base, pool, ["other-pool", pool])
+    assert len(resolved) <= 64
+    assert resolved.endswith(pool)
+
+
+def test_resolve_job_id_keeps_different_pools_distinct_when_truncating():
+    # Truncating the base rather than the pool is what keeps two pools from
+    # collapsing onto the same job id.
+    base = "b" * 60
+    a = resolve_job_id(base, "pool-aaaaaaaaaaaaaaaaaaaa", ["x", "y"])
+    b = resolve_job_id(base, "pool-bbbbbbbbbbbbbbbbbbbb", ["x", "y"])
+    assert a != b
+    assert len(a) <= 64 and len(b) <= 64
+
+
+def test_spillover_to_a_second_pool_uses_a_separate_job(monkeypatch):
+    # Regression: a task that spills over to another pool must not collide with
+    # the job the first task created on the preferred pool.
+    monkeypatch.setenv("AZURE_BATCH_ACCOUNT_NAME", "acct")
+    monkeypatch.setenv("AZURE_BATCH_ACCOUNT_KEY", "key")
+    monkeypatch.setenv(
+        "AZURE_BATCH_URL", "https://acct.westus2.batch.azure.com"
+    )
+    monkeypatch.setenv(
+        "AZURE_BATCH_OUTPUT_CONTAINER_URL",
+        "https://sa.blob.core.windows.net/data",
+    )
+    monkeypatch.setenv("AZURE_BATCH_MANAGE_POOLS", "false")
+    monkeypatch.setenv("AZURE_BATCH_IMAGERYPREP_POOL_ID", "h100-pool")
+
+    runner = AzureBatchRunner(
+        pool_id="h100-pool", candidate_pool_ids=["h100-pool", "t4-pool"]
+    )
+    runner.batch_cluster = MagicMock()
+    runner.batch_cluster.select_pool.return_value = "t4-pool"
+    runner.batch_cluster.create_job.side_effect = lambda jid: jid
+
+    job_id, _ = runner.add_task(
+        job_id="h100-pool",
+        task_id="img-1",
+        image_name="acr.azurecr.io/img:1",
+        command="run",
+        arguments=[],
+        output_container_url="https://sa.blob.core.windows.net/data",
+    )
+
+    assert job_id == "t4-pool"
+    runner.batch_cluster.create_job.assert_called_once_with("t4-pool")

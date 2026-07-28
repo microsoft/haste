@@ -55,8 +55,12 @@ That silently defeats capacity-aware routing (the job stays on whichever pool
 created it, ignoring `select_pool`) and hard-fails once the original pool is
 renamed or deleted — tasks queue into a job bound to a pool that no longer
 exists. `_rebind_job_pool` now patches `pool_info` when the existing binding
-differs from the selected pool, and raises `BatchJobPoolMismatchError` when
-Batch refuses (e.g. active tasks) rather than submitting to the wrong pool.
+differs from the selected pool, and falls back to a pool-scoped job id when
+Batch refuses (which it does whenever the job still has active tasks).
+
+> Superseded by [`../batch-pool-job-binding/`](../batch-pool-job-binding/):
+> rebinding cannot work while a job is running, so job ids are now scoped to
+> the selected pool instead.
 
 ## 4. Deploy-path parity
 

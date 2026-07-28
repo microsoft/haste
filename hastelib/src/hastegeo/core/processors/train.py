@@ -265,7 +265,7 @@ class TrainPostprocessor(BaseTrainProcessor):
             job_id = job_id[:64]
             task_id = f"{TRAINING_PREFIX}-{MetadataUtils.generate_id()}"
             training_output_prefix = f"{MetadataUtils.hash_string(self.model_data.projectId)}/{task_id}"
-            self.runner.add_task(
+            job_id, task_id = self.runner.add_task(
                 job_id=job_id,
                 task_id=task_id,
                 output_prefix=training_output_prefix,
