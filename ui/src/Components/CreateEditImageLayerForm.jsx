@@ -231,6 +231,12 @@ const CreateEditImageLayerModal = () => {
   }
 
   const headerPath = componentState.sectionHeaderProperties?.path;
+  const currentCrumbLabel = componentState.name?.trim() || "New Image Layer";
+  const displayHeaderPath = headerPath
+    ? headerPath.map((crumb, i, arr) =>
+        i === arr.length - 1 ? { ...crumb, name: currentCrumbLabel } : crumb
+      )
+    : headerPath;
 
   return (
     <div className="d-flex flex-column w-100">
@@ -239,7 +245,7 @@ const CreateEditImageLayerModal = () => {
         <div className="pgrid-header">
           <div>
             <h1 className="pgrid-title">
-              {imageLayerId ? "Edit Image Layer" : "Create Image Layer"}
+              {imageLayerId ? "Edit Image Layer" : "New Image Layer"}
               <Tooltip
                 content="Define imagery sources, capture dates, and building footprints for this image layer."
                 relationship="label"
@@ -255,7 +261,7 @@ const CreateEditImageLayerModal = () => {
             </div>
             {headerPath && (
               <nav className="pgrid-breadcrumb" aria-label="Breadcrumb">
-                {headerPath.map((crumb, i, arr) => (
+                {displayHeaderPath.map((crumb, i, arr) => (
                   <span key={i} className="pgrid-breadcrumb-item">
                     {crumb.link ? (
                       <button

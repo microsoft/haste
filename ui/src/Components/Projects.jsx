@@ -76,7 +76,7 @@ const Projects = () => {
   const [searchText, setSearchText] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(
-    appParams.userSettings.itemsPerPage ?? 10
+    appParams.userSettings.itemsPerPageProjects ?? 20
   );
   const [sort, setSort] = useState({ key: "creationDate", dir: "desc" });
   const [groupBy, setGroupBy] = useState("none");
@@ -217,12 +217,12 @@ const Projects = () => {
     resetPage();
     setIsLoading(true, "Updating Items Per Page...");
     const response = await apiGet("GetUserById?userId=" + appParams.userId);
-    await updateUserSettings(response, [{ itemsPerPage: newSize }]);
+    await updateUserSettings(response, [{ itemsPerPageProjects: newSize }]);
     setAppParams((prevParams) => ({
       ...prevParams,
       userSettings: {
         ...prevParams.userSettings,
-        itemsPerPage: newSize,
+        itemsPerPageProjects: newSize,
       },
     }));
     setIsLoading(false);

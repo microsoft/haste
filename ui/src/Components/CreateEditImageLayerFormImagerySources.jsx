@@ -44,7 +44,7 @@ const CreateEditImageLayerFormImagerySources = ({
     <React.Fragment>
       <div className="row mb-2">
         <div className="col-12 d-flex flex-column mb-3">
-          <div className="col-12 d-flex">
+          <div className="col-12 d-flex imagery-source-row">
             <Dropdown
               className="me-2"
               selectedOptions={[

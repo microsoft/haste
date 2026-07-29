@@ -10,13 +10,30 @@ import PropTypes from "prop-types";
 import { limitTextLength } from "../util/conversion";
 import { FluentIcon } from "../util/icons";
 import { useTheme } from "../util/ThemeContext";
+import { apiGet } from "../util/api";
+import { updateUserSettings } from "../AppHelper";
 
 const useHeaderStyles = makeStyles({
   iconButton: {
-    color: "white",
+    color: "#ffffff",
     minWidth: "32px",
-    ":hover": { backgroundColor: "transparent", color: "white" },
-    ":hover:active": { backgroundColor: "transparent", color: "white" },
+    maxWidth: "32px",
+    width: "32px",
+    height: "32px",
+    paddingLeft: 0,
+    paddingRight: 0,
+    "& svg": { color: "#ffffff" },
+    ":hover": {
+      backgroundColor: "rgba(255, 255, 255, 0.14)",
+      color: "#ffffff",
+    },
+    ":hover svg": { color: "#ffffff" },
+    ":hover:active": {
+      backgroundColor: "rgba(255, 255, 255, 0.22)",
+      color: "#ffffff",
+    },
+    ":hover:active svg": { color: "#ffffff" },
+    ":focus svg": { color: "#ffffff" },
   },
 });
 
@@ -26,7 +43,7 @@ const AppHeader = ({ setModalComponent, onToggleNav }) => {
     onToggleNav: PropTypes.func,
   };
 
-  const { appParams } = useContext(AppContext);
+  const { appParams, setAppParams, setIsLoading } = useContext(AppContext);
   const location = useLocation();
   const navigate = useNavigate();
   const { isDark, toggle } = useTheme();
@@ -34,6 +51,26 @@ const AppHeader = ({ setModalComponent, onToggleNav }) => {
 
   const hideSettingsMenu = location.pathname.includes("/help-docs");
   const hideHamburgerMenu = location.pathname.includes("/help-docs");
+
+  // Toggle light/dark and persist the choice to the user's profile so it
+  // syncs across devices. localStorage (via toggle) is the fallback.
+  const handleThemeToggle = async () => {
+    const next = isDark ? "light" : "dark";
+    toggle();
+    setAppParams((prev) => ({
+      ...prev,
+      userSettings: { ...prev.userSettings, theme: next },
+    }));
+    setIsLoading(true, "Updating Theme...");
+    try {
+      const response = await apiGet("GetUserById?userId=" + appParams.userId);
+      await updateUserSettings(response, [{ theme: next }]);
+    } catch (error) {
+      console.error("Error saving theme preference:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
     document.title = appParams.appTitle;
@@ -82,7 +119,7 @@ const AppHeader = ({ setModalComponent, onToggleNav }) => {
           icon={<FluentIcon name={isDark ? "Sunny" : "ClearNight"} />}
           title={isDark ? "Switch to light mode" : "Switch to dark mode"}
           aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-          onClick={toggle}
+          onClick={handleThemeToggle}
         />
 
         {appParams.appHeaderRightButtons.map((button, index) => (

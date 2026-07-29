@@ -231,7 +231,6 @@ const LayerCard = ({
     setModalComponent(
       <StatusIndicatorModal
         statusMessages={buildStatusMessages(item.statusMessage)}
-        contextLabel={`Image Layer: ${item.name}`}
         onClose={() => setModalComponent(null)}
       />
     );

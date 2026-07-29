@@ -125,7 +125,7 @@ function getSectionHeaderProperties(projectName, projectId, imageLayerId) {
             { name: "Projects", link: "/projects" },
             { name: projectName, link: "/project/" + projectId },
             {
-                name: imageLayerId ? "Edit Image Layer" : "Create Image Layer",
+                name: imageLayerId ? "Edit Image Layer" : "New Image Layer",
                 link: "",
             },
         ],

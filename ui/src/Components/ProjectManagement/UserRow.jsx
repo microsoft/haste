@@ -30,11 +30,13 @@ function getUserStatusBadge(status) {
   return { label: status || "—", tone: "inactive" };
 }
 
-const UserRow = ({ item, index, setModalComponent }) => {
+const UserRow = ({ item, index, setModalComponent, moreInfoVisibleId, setMoreInfoVisibleId }) => {
   UserRow.propTypes = {
     item: PropTypes.object.isRequired,
     index: PropTypes.number.isRequired,
     setModalComponent: PropTypes.func.isRequired,
+    moreInfoVisibleId: PropTypes.string,
+    setMoreInfoVisibleId: PropTypes.func.isRequired,
   };
 
   const { setDialog, setIsLoading } = useContext(AppContext);
@@ -83,6 +85,19 @@ const UserRow = ({ item, index, setModalComponent }) => {
 
   const moreMenuOptions = {
     items: [
+      {
+        key: "info",
+        className: "d-block d-lg-none",
+        text: moreInfoVisibleId === item.email ? "Hide Info" : "View Info",
+        icon: <FluentIcon name={moreInfoVisibleId === item.email ? "Cancel" : "Info"} />,
+        onClick: () => {
+          if (moreInfoVisibleId === item.email) {
+            setMoreInfoVisibleId(null);
+          } else {
+            setMoreInfoVisibleId(item.email);
+          }
+        },
+      },
       {
         key: "re-send-invitation",
         text: "Re-send Invitation",
@@ -134,7 +149,7 @@ const UserRow = ({ item, index, setModalComponent }) => {
   return (
     <React.Fragment key={index}>
       <tr className={item.status === "Inactive" ? "table-row-inactive" : ""} >
-        <td className="custom-text-no-wrap" data-label="Name">
+        <td className="custom-text-no-wrap d-none d-xl-table-cell">
           <Text className="pe-4 ellipsis">
             <Tooltip content={item.name === "" ? "--" : item.name} relationship="label">
               <span>{item.name === "" ? "--" : item.name}</span>
@@ -142,28 +157,69 @@ const UserRow = ({ item, index, setModalComponent }) => {
           </Text>
 
         </td>
-        <td className="ellipsis" data-label="E-mail">
+        <td className="ellipsis">
           <Text className="pe-4 ellipsis">
             <Tooltip content={item.email} relationship="label">
               <span>{limitTextLength(item.email, 50, 55)}</span>
             </Tooltip>
           </Text>
+
+          {moreInfoVisibleId == item.email && (<>
+            <Text size={200}>
+              <table className="col-12 dashboard-inner-table p-3 mt-2">
+                <tbody>
+                  <tr>
+                    <td>
+                      <div className="pb-2">
+                        <Text
+                          size={200}
+                          className="me-4 fw-semibold custom-text-color"
+                        >
+                          User Info:
+                        </Text>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <span className="fw-semibold">Name: </span>{item.name === "" ? "--" : item.name}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <span className="fw-semibold">User Roles: </span> {item.userRoles.join(", ")}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <span className="fw-semibold">Status: </span>
+                      <span
+                        className={`pgrid-pill pgrid-pill--${statusBadge.tone}`}
+                      >
+                        <span className="pgrid-pill-dot" />
+                        {statusBadge.label}
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </Text>
+          </>
+          )}
+
         </td>
-        <td className="custom-text-no-wrap" data-label="User Roles">
+        <td className="custom-text-no-wrap d-none d-xl-table-cell">
           <Text className="pe-4">
             {item.userRoles.join(", ")}
           </Text>
         </td>
-        <td className="custom-text-no-wrap" data-label="Status">
+        <td className="custom-text-no-wrap d-none d-xl-table-cell">
           <span className={`pgrid-pill pgrid-pill--${statusBadge.tone}`}>
             <span className="pgrid-pill-dot" />
             {statusBadge.label}
           </span>
         </td>
-        <td
-          className="custom-text-no-wrap d-flex align-items-start align-items-md-center justify-content-end"
-          data-label="Actions"
-        >
+        <td className="custom-text-no-wrap d-flex align-items-start align-items-md-center justify-content-end">
           {item.status != "Inactive" &&
             <Menu positioning="below-end">
               <MenuTrigger disableButtonEnhancement>

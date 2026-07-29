@@ -27,7 +27,7 @@ const ModelCatalog = () => {
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(
-    appParams.userSettings.itemsPerPage ?? 10
+    appParams.userSettings.itemsPerPageModelCatalog ?? 20
   );
 
   // Search state
@@ -36,8 +36,8 @@ const ModelCatalog = () => {
 
   useEffect(() => {
     setCurrentPage(1);
-    setPageSize(appParams.userSettings.itemsPerPage ?? 10);
-  }, [appParams.userSettings.itemsPerPage]);
+    setPageSize(appParams.userSettings.itemsPerPageModelCatalog ?? 20);
+  }, [appParams.userSettings.itemsPerPageModelCatalog]);
 
   useEffect(() => {
     initComponent();
@@ -133,12 +133,12 @@ const ModelCatalog = () => {
     setCurrentPage(1);
     setIsLoading(true, "Updating Items Per Page...");
     const response = await apiGet("GetUserById?userId=" + appParams.userId);
-    await updateUserSettings(response, [{ itemsPerPage: newSize }]);
+    await updateUserSettings(response, [{ itemsPerPageModelCatalog: newSize }]);
     setAppParams((prevParams) => ({
       ...prevParams,
       userSettings: {
         ...prevParams.userSettings,
-        itemsPerPage: newSize,
+        itemsPerPageModelCatalog: newSize,
       },
     }));
     setIsLoading(false);

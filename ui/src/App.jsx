@@ -32,7 +32,7 @@ import Loading from "./Components/OtherComponents/Loading";
 function App() {
   const { appParams, setDialog, setIsLoading, setAppParams } =
     useContext(AppContext);
-  const { palette, setPalette } = useTheme();
+  const { palette, setPalette, mode, setTheme } = useTheme();
   const location = useLocation();
   const isHome = location.pathname === '/' || location.pathname === '/home';
 
@@ -77,6 +77,19 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appParams.userSettings?.colorPalette]);
+
+  // Apply the user's saved light/dark theme once preferences load. Anything
+  // other than "dark" falls back to light. localStorage (main.jsx) is the
+  // anti-flash cache; the backend value wins here.
+  useEffect(() => {
+    if (!appParams.userSettings) return;
+    const resolved =
+      appParams.userSettings.theme === "dark" ? "dark" : "light";
+    if (resolved !== mode) {
+      setTheme(resolved);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appParams.userSettings?.theme, appParams.userSettings]);
 
   useEffect(() => {
     if (isMobileNav) {

@@ -592,6 +592,98 @@ body {
   transform: translate(-50%, -50%);
 }
 
+/* Spotlight style tour: dim everything except the highlighted
+   target, with a coach card anchored beside it. */
+.tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  pointer-events: none;
+}
+
+.tour-hole {
+  position: fixed;
+  border-radius: 10px;
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.55);
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+  transition: top 0.18s ease, left 0.18s ease, width 0.18s ease,
+    height 0.18s ease;
+  pointer-events: none;
+}
+
+.tour-card {
+  pointer-events: auto;
+  background: #ffffff;
+  border: 1px solid #e1dfdd;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  padding: 16px;
+  z-index: 100001;
+}
+
+.tour-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.tour-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--primary-color);
+}
+
+.tour-card-title {
+  display: block;
+  font-weight: 600;
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.tour-card-body {
+  font-size: 13px;
+  color: #323130;
+  line-height: 1.5;
+}
+
+.tour-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.tour-step {
+  font-size: 12px;
+  color: #605e5c;
+}
+
+html[data-theme="dark"] .tour-hole {
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.66);
+}
+
+html[data-theme="dark"] .tour-card {
+  background: #292827;
+  border-color: #3b3a39;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+}
+
+html[data-theme="dark"] .tour-card-title {
+  color: #f3f2f1;
+}
+
+html[data-theme="dark"] .tour-card-body {
+  color: #e1dfdd;
+}
+
+html[data-theme="dark"] .tour-step {
+  color: #a19f9d;
+}
+
 /* HOME */
 
 .start-project-btn {
@@ -1715,6 +1807,41 @@ tr.model-mobile-row:not(:last-child) td {
 
 .pgrid-form-body {
   padding: 24px 32px 48px 32px;
+}
+
+/* Align the form content's left edge with the header/listings (32px).
+   Bootstrap's .container adds its own gutter padding on top of the body
+   padding; neutralize it and let the column stretch left-aligned. */
+.pgrid-form-body > .container {
+  padding-left: 0;
+  padding-right: 0;
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+/* Imagery source picker (source-type dropdown + URL input/file + Add).
+   Stacks vertically on small screens so it doesn't overflow. */
+.imagery-source-row {
+  align-items: flex-start;
+}
+
+@media (max-width: 768px) {
+  .pgrid-form-body {
+    padding: 16px 16px 40px 16px;
+  }
+
+  .imagery-source-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .imagery-source-row > * {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-right: 0 !important;
+  }
 }
 
 /* Full-page scroll variant: the whole page (header included) scrolls

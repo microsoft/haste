@@ -78,7 +78,7 @@ const Project = ({ setModalComponent }) => {
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(
-    appParams?.userSettings?.itemsPerPage ?? 10
+    appParams?.userSettings?.itemsPerPageLayers ?? 20
   );
 
   function resetPage() {
@@ -92,12 +92,12 @@ const Project = ({ setModalComponent }) => {
     resetPage();
     setIsLoading(true, "Updating Items Per Page...");
     const response = await apiGet("GetUserById?userId=" + appParams.userId);
-    await updateUserSettings(response, [{ itemsPerPage: newSize }]);
+    await updateUserSettings(response, [{ itemsPerPageLayers: newSize }]);
     setAppParams((prevParams) => ({
       ...prevParams,
       userSettings: {
         ...prevParams.userSettings,
-        itemsPerPage: newSize,
+        itemsPerPageLayers: newSize,
       },
     }));
     setIsLoading(false);
@@ -144,7 +144,7 @@ const Project = ({ setModalComponent }) => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [appParams.userSettings.itemsPerPage]);
+  }, [appParams.userSettings.itemsPerPageLayers]);
 
   const DEFAULT_COMPONENT_STATE = {
     project: null,
@@ -217,9 +217,9 @@ const Project = ({ setModalComponent }) => {
           visibleModelId:
             prevState.visibleModelId !== "-1"
               ? prevState.visibleModelId
-              : response.imageLayer && response.imageLayer.length > 0 && response.imageLayer[0].models && response.imageLayer[0].models.length > 0
-                ? response.imageLayer[0].imageLayerId
-                : "-1",
+              : (response.imageLayer || []).find(
+                  (layer) => layer.models && layer.models.length > 0
+                )?.imageLayerId ?? "-1",
           sectionHeaderProperties: {
             iconName: "OpenFolderHorizontal",
             path: [

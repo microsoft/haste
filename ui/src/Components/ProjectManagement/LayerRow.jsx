@@ -14,7 +14,7 @@ import {
 import { FluentIcon } from "../../util/icons";
 import PropTypes from "prop-types";
 import ModelRow from "./ModelRow";
-import React, { useContext, useState } from "react";
+import React, { useContext, useState, useEffect } from "react";
 import { apiDelete } from "../../util/api";
 import { limitTextLength } from "../../util/conversion";
 import { satellitePlaceholder } from "../../util/satellitePlaceholders";
@@ -74,7 +74,19 @@ const LayerRow = ({
   const embeddingModels =
     (item.models || []).filter((m) => m.modelType === "embedding") || [];
   const hasModels = !!(item.models && item.models.length > 0);
-  const [isExpanded, setIsExpanded] = useState(false);
+  // Auto-expand when this layer is the "visible" one chosen by the parent:
+  // the layer referenced by the URL's imageLayerId, or (when the URL has
+  // none) the first layer that has models.
+  const [isExpanded, setIsExpanded] = useState(
+    hasModels && visibleModelId === item.imageLayerId
+  );
+
+  useEffect(() => {
+    if (hasModels && visibleModelId === item.imageLayerId) {
+      setIsExpanded(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleModelId, item.imageLayerId]);
 
   function toggleExpanded() {
     if (hasModels) {

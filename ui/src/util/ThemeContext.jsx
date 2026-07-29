@@ -15,6 +15,7 @@ const ThemeContext = createContext({
   mode: "light",
   isDark: false,
   toggle: () => {},
+  setTheme: () => {},
   palette: "navy",
   setPalette: () => {},
 });
@@ -36,6 +37,13 @@ export function ThemeProvider({ children }) {
     });
   }, []);
 
+  // Apply an explicit theme. Anything other than "dark" falls back to light.
+  const setTheme = useCallback((theme) => {
+    const resolved = theme === "dark" ? "dark" : "light";
+    applyTheme(resolved);
+    setMode(resolved);
+  }, []);
+
   const setPalette = useCallback((key) => {
     const resolved = applyPalette(key); // persists + updates CSS vars
     setPaletteState(resolved);
@@ -46,7 +54,7 @@ export function ThemeProvider({ children }) {
   const { light, dark } = useMemo(() => buildThemes(palette), [palette]);
 
   return (
-    <ThemeContext.Provider value={{ mode, isDark, toggle, palette, setPalette }}>
+    <ThemeContext.Provider value={{ mode, isDark, toggle, setTheme, palette, setPalette }}>
       <FluentProvider
         theme={isDark ? dark : light}
         style={{ height: "100%", background: "transparent" }}

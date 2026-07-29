@@ -3,8 +3,6 @@
 import { useContext } from "react";
 import {
   Checkbox,
-  Dropdown,
-  Option,
   Field,
   Text,
 } from "@fluentui/react-components";
@@ -35,21 +33,6 @@ const SettingsModal = ({ onClose }) => {
       userSettings: {
         ...prevParams.userSettings,
         disableGuidedTour: !prevParams.userSettings.disableGuidedTour,
-      },
-    }));
-    setIsLoading(false);
-  }
-
-  async function handleItemsPerPageChange(_event, data) {
-    const itemsPerPage = parseInt(data.optionValue, 10);
-    setIsLoading(true, "Updating Items Per Page...");
-    var response = await apiGet("GetUserById?userId=" + appParams.userId);
-    await updateUserSettings(response, [{ itemsPerPage: itemsPerPage }]);
-    setAppParams((prevParams) => ({
-      ...prevParams,
-      userSettings: {
-        ...prevParams.userSettings,
-        itemsPerPage: itemsPerPage,
       },
     }));
     setIsLoading(false);
@@ -103,26 +86,6 @@ const SettingsModal = ({ onClose }) => {
               </Text>
             </div>
             <hr />
-            <div className="col-12 d-flex flex-column">
-              <Field label="Items per page in tables">
-                <Dropdown
-                  selectedOptions={[String(appParams.userSettings.itemsPerPage ?? 10)]}
-                  value={String(appParams.userSettings.itemsPerPage ?? 10)}
-                  onOptionSelect={handleItemsPerPageChange}
-                  style={{ width: "fit-content" }}
-                >
-                  <Option value="5">5</Option>
-                  <Option value="8">8</Option>
-                  <Option value="10">10</Option>
-                  <Option value="20">20</Option>
-                  <Option value="50">50</Option>
-                </Dropdown>
-              </Field>
-              <Text className="pt-2" size={200}>
-                Defines how many items are displayed per page in tables throughout the application.
-              </Text>
-            </div>
-            <hr className="mt-3" />
             <div className="col-12 d-flex flex-column">
               <Field label="Color palette">
                 <div className="settings-palette-swatches">
