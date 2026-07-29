@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { ActionButton } from "@fluentui/react";
+import { Button } from "@fluentui/react-components";
+import { FluentIcon } from "../util/icons";
 
 import CreateEditProjectModal from "./CreateEditProjectModal";
 import proptypes from "prop-types";
@@ -13,15 +14,12 @@ const StartProjectButton = ({ setModalComponent, id }) => {
 
   return (
     <>
-      <ActionButton
+      <Button
         id={id}
-        iconProps={{
-          iconName: "FabricNewFolder",
-          styles: { root: { fontSize: 24, fontWeight: "500" } },
-        }}
-        styles={{
-          root: { fontSize: 23, fontWeight: "500", color: "#0066b4" },
-        }}
+        appearance="transparent"
+        icon={<FluentIcon name="FabricNewFolder" />}
+        className="start-project-btn"
+        style={{ fontSize: 23, fontWeight: "500" }}
         onClick={() =>
           setModalComponent(
             <CreateEditProjectModal onClose={() => setModalComponent(null)} />
@@ -29,7 +27,7 @@ const StartProjectButton = ({ setModalComponent, id }) => {
         }
       >
         Start a Project
-      </ActionButton>
+      </Button>
     </>
   );
 };

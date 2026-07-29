@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { Checkbox, TextField, PrimaryButton } from "@fluentui/react";
+import { Button, Checkbox, Textarea } from "@fluentui/react-components";
 
 import { useState, useEffect, useContext } from "react";
 import { createComponentDefaultState } from "./AdminLabelingTollHelper";
@@ -84,23 +84,23 @@ const AdminLabelingTool = () => {
                 label="Polygon"
                 className="me-5"
                 checked={componentState.drawingTools.polygon}
-                onChange={(e) =>
-                  onFormChange(e.target.checked, "drawingTools", "polygon")
+                onChange={(e, data) =>
+                  onFormChange(data.checked, "drawingTools", "polygon")
                 }
               />
               <Checkbox
                 label="Rectangle"
                 checked={componentState.drawingTools.rectangle}
                 className="me-5"
-                onChange={(e) =>
-                  onFormChange(e.target.checked, "drawingTools", "rectangle")
+                onChange={(e, data) =>
+                  onFormChange(data.checked, "drawingTools", "rectangle")
                 }
               />
               <Checkbox
                 label="Circle"
                 checked={componentState.drawingTools.circle}
-                onChange={(e) =>
-                  onFormChange(e.target.checked, "drawingTools", "circle")
+                onChange={(e, data) =>
+                  onFormChange(data.checked, "drawingTools", "circle")
                 }
               />
             </div>
@@ -169,9 +169,8 @@ const AdminLabelingTool = () => {
             style={{ borderBottom: "1px solid #CCCCCC" }}
           >
             <div className="col-12 d-flex">
-              <TextField
+              <Textarea
                 className="w-100"
-                multiline
                 value={componentState.tileServerSettings}
               />
             </div>
@@ -179,7 +178,7 @@ const AdminLabelingTool = () => {
 
           <div className="row m-0 p-0 pt-5">
             <div className="col-12 d-flex justify-content-end">
-              <PrimaryButton text="Save" />
+              <Button appearance="primary">Save</Button>
             </div>
           </div>
         </div>

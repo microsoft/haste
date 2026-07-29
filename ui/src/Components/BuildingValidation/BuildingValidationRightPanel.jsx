@@ -1,7 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import PropTypes from "prop-types";
-import { DefaultButton, Dropdown, PrimaryButton, Toggle } from "@fluentui/react";
+import {
+  Button,
+  Dropdown,
+  Option,
+  Switch,
+  Field,
+} from "@fluentui/react-components";
 
 const LABEL_OPTIONS = [
   { value: "Damaged", label: "Damaged (1)", color: "#C50F1F" },
@@ -17,29 +23,15 @@ const FILTER_LABELS = {
   Unknown: "Unknown only",
 };
 
-const coloredButtonStyles = (color, selected) => ({
-  root: {
-    backgroundColor: color,
-    borderColor: color,
-    color: "#fff",
-    width: "100%",
-    opacity: selected ? 1 : 0.85,
-    outline: selected ? `2px solid ${color}` : "none",
-    outlineOffset: 2,
-  },
-  rootHovered: {
-    backgroundColor: color,
-    borderColor: color,
-    color: "#fff",
-    opacity: 1,
-  },
-  rootPressed: {
-    backgroundColor: color,
-    borderColor: color,
-    color: "#fff",
-    opacity: 0.9,
-  },
-  label: { fontWeight: 600 },
+const coloredButtonStyle = (color, selected) => ({
+  backgroundColor: color,
+  borderColor: color,
+  color: "#fff",
+  width: "100%",
+  opacity: selected ? 1 : 0.85,
+  outline: selected ? `2px solid ${color}` : "none",
+  outlineOffset: 2,
+  fontWeight: 600,
 });
 
 const BuildingValidationRightPanel = ({
@@ -107,10 +99,6 @@ const BuildingValidationRightPanel = ({
       : `(no buildings match filter)`;
 
   const remainingUnlabeled = total - labeledCount;
-  const filterOptions = filterValues.map((v) => ({
-    key: v,
-    text: FILTER_LABELS[v] || v,
-  }));
 
   return (
     <div
@@ -164,46 +152,35 @@ const BuildingValidationRightPanel = ({
           padding: "6px 0",
         }}
       >
-        <Toggle
+        <Switch
           label="Show building fill"
           checked={showFill}
-          onChange={(_e, checked) => setShowFill(!!checked)}
-          onText="On"
-          offText="Off"
-          styles={{
-            root: { marginBottom: 0 },
-            label: { fontSize: 11, fontWeight: 600, color: "#555" },
-            text: { fontSize: 11 },
-          }}
+          onChange={(_e, data) => setShowFill(!!data.checked)}
         />
-        <Toggle
+        <Switch
           label="Show post-event imagery"
           checked={showPostImagery}
-          onChange={(_e, checked) => setShowPostImagery(!!checked)}
-          onText="On"
-          offText="Off"
+          onChange={(_e, data) => setShowPostImagery(!!data.checked)}
           disabled={!hasPostImagery}
-          styles={{
-            root: { marginBottom: 0 },
-            label: { fontSize: 11, fontWeight: 600, color: "#555" },
-            text: { fontSize: 11 },
-          }}
         />
       </div>
 
       {/* Filter */}
-      <Dropdown
-        label="Show / review"
-        selectedKey={filter}
-        options={filterOptions}
-        onChange={(_e, opt) => opt && setFilter(opt.key)}
-        styles={{
-          root: { marginTop: 4 },
-          label: { fontSize: 11, fontWeight: 600, color: "#555", padding: 0 },
-          dropdown: { fontSize: 12 },
-          title: { height: 28, lineHeight: "26px", fontSize: 12 },
-        }}
-      />
+      <Field label="Show / review" style={{ marginTop: 4 }}>
+        <Dropdown
+          selectedOptions={[filter]}
+          value={FILTER_LABELS[filter] || filter}
+          onOptionSelect={(_e, data) =>
+            data.optionValue && setFilter(data.optionValue)
+          }
+        >
+          {filterValues.map((v) => (
+            <Option key={v} value={v}>
+              {FILTER_LABELS[v] || v}
+            </Option>
+          ))}
+        </Dropdown>
+      </Field>
 
       {/* Building info */}
       <div style={{ background: "#f8f9fa", borderRadius: 4, padding: "6px 8px", fontSize: 11 }}>
@@ -226,40 +203,43 @@ const BuildingValidationRightPanel = ({
           Label this building:
         </div>
         {LABEL_OPTIONS.map((opt) => (
-          <PrimaryButton
+          <Button
             key={opt.value}
-            text={opt.label}
+            appearance="primary"
             onClick={() => onLabel(opt.value)}
-            styles={coloredButtonStyles(opt.color, currentLabel === opt.value)}
-          />
+            style={coloredButtonStyle(opt.color, currentLabel === opt.value)}
+          >
+            {opt.label}
+          </Button>
         ))}
       </div>
 
       {/* Navigation */}
       <div style={{ display: "flex", gap: 6 }}>
-        <DefaultButton
-          text="Prev"
+        <Button
           onClick={onPrev}
           disabled={filteredIndices.length <= 1}
-          styles={{ root: { flex: 1 } }}
-        />
-        <DefaultButton
-          text="Next"
+          style={{ flex: 1 }}
+        >
+          Prev
+        </Button>
+        <Button
           onClick={onNext}
           disabled={filteredIndices.length <= 1}
-          styles={{ root: { flex: 1 } }}
-        />
+          style={{ flex: 1 }}
+        >
+          Next
+        </Button>
       </div>
-      <DefaultButton
-        text={
-          remainingUnlabeled > 0
-            ? `Skip to next unlabeled (${remainingUnlabeled} left)`
-            : "All buildings labeled"
-        }
+      <Button
         onClick={onSkipToNextUnlabeled}
         disabled={remainingUnlabeled === 0}
-        styles={{ root: { width: "100%" } }}
-      />
+        style={{ width: "100%" }}
+      >
+        {remainingUnlabeled > 0
+          ? `Skip to next unlabeled (${remainingUnlabeled} left)`
+          : "All buildings labeled"}
+      </Button>
 
       {/* Legend */}
       <div style={{ fontSize: 10, color: "#888", lineHeight: 1.7 }}>
@@ -272,17 +252,20 @@ const BuildingValidationRightPanel = ({
 
       {/* Actions */}
       <div style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: "1px solid #eee", paddingTop: 8 }}>
-        <PrimaryButton
-          text={isSaving ? "Saving…" : "Save Labels"}
+        <Button
+          appearance="primary"
           onClick={onSave}
           disabled={isSaving}
-          styles={{ root: { width: "100%" } }}
-        />
-        <DefaultButton
-          text="Download GeoJSON"
+          style={{ width: "100%" }}
+        >
+          {isSaving ? "Saving…" : "Save Labels"}
+        </Button>
+        <Button
           onClick={onDownload}
-          styles={{ root: { width: "100%" } }}
-        />
+          style={{ width: "100%" }}
+        >
+          Download GeoJSON
+        </Button>
       </div>
     </div>
   );

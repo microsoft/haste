@@ -1,10 +1,11 @@
 import {
-  ActionButton,
-  DefaultButton,
+  Button,
   Slider,
-  Toggle,
+  Switch,
   Label,
-} from "@fluentui/react";
+  Field,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import { useState, useEffect } from "react";
 import { saveLabels } from "./LabelingToolHelper";
 
@@ -235,14 +236,15 @@ const LeftPanel = ({
         id="leftPanel"
       >
         <div style={{ width: "150px" }}>
-          <ActionButton
+          <Button
+            appearance="transparent"
             id="backButton"
-            iconProps={{ iconName: "ChevronLeft" }}
+            icon={<FluentIcon name="ChevronLeft" />}
             className="w-100"
             onClick={handleBackNavigation}
           >
             Back
-          </ActionButton>
+          </Button>
 
           <div
             style={{
@@ -251,62 +253,57 @@ const LeftPanel = ({
               marginTop: "5px",
             }}
           >
-            <Slider
-              label="Opacity"
-              min={0}
-              max={1}
-              step={0.01}
-              defaultValue={100}
-              showValue={false}
-              onChange={(value) => updateValues("opacity", value)}
-              value={imageryValues.opacity}
-            />
+            <Field label="Opacity">
+              <Slider
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={(e, data) => updateValues("opacity", data.value)}
+                value={imageryValues.opacity}
+              />
+            </Field>
 
-            <Slider
-              label="Contrast"
-              min={-1}
-              max={1}
-              step={0.01}
-              defaultValue={0}
-              showValue={false}
-              onChange={(value) => updateValues("contrast", value)}
-              value={imageryValues.contrast}
-            />
+            <Field label="Contrast">
+              <Slider
+                min={-1}
+                max={1}
+                step={0.01}
+                onChange={(e, data) => updateValues("contrast", data.value)}
+                value={imageryValues.contrast}
+              />
+            </Field>
 
-            <Slider
-              label="Hue Rotation"
-              min={-180}
-              max={180}
-              step={1}
-              defaultValue={0}
-              showValue={false}
-              onChange={(value) => updateValues("hueRotation", value)}
-              value={imageryValues.hueRotation}
-            />
+            <Field label="Hue Rotation">
+              <Slider
+                min={-180}
+                max={180}
+                step={1}
+                onChange={(e, data) => updateValues("hueRotation", data.value)}
+                value={imageryValues.hueRotation}
+              />
+            </Field>
 
-            <Slider
-              label="Saturation"
-              min={-1}
-              max={1}
-              step={0.01}
-              defaultValue={0}
-              showValue={false}
-              onChange={(value) => updateValues("saturation", value)}
-              value={imageryValues.saturation}
-            />
+            <Field label="Saturation">
+              <Slider
+                min={-1}
+                max={1}
+                step={0.01}
+                onChange={(e, data) => updateValues("saturation", data.value)}
+                value={imageryValues.saturation}
+              />
+            </Field>
 
-            <DefaultButton onClick={resetControls} className="w-100 mb-2 mt-2">
+            <Button appearance="transparent" onClick={resetControls} className="w-100 mb-2 mt-2">
               Reset Controls
-            </DefaultButton>
+            </Button>
 
             <div id="postEventImagery">
               <Label className="mt-2 mb-2">Imagery</Label>
-              <Toggle
-                onText="Post Event"
-                offText={ labelingToolDataRef.current.imagery.preEventTileUrl ? "Pre Event" : "Basemap"}
+              <Switch
+                label={eventImageryVisibilityState ? "Post Event" : (labelingToolDataRef.current.imagery.preEventTileUrl ? "Pre Event" : "Basemap")}
                 checked={eventImageryVisibilityState}
-                onChange={(e, checked) =>
-                  setEventImageryVisibilityState(checked)
+                onChange={(e, data) =>
+                  setEventImageryVisibilityState(data.checked)
                 }
               />
             </div>

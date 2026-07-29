@@ -1,13 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import {
-  PrimaryButton,
-  TextField,
-  Link,
-  FontIcon,
-  DefaultButton,
-} from "@fluentui/react";
+import { Button, Input, Link } from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 
 import { useNavigate } from "react-router-dom";
 import { limitTextLength } from "../../util/conversion";
@@ -34,8 +29,8 @@ const SectionHeader = ({ properties, searchText, setSearchText, setCurrentPage }
           {/* Breadcrumb */}
           <div className="col-auto flex-grow-1 p-0 header-breadcrumb">
             <div className="d-flex align-items-top">
-              <FontIcon
-                iconName={properties.iconName}
+              <FluentIcon
+                name={properties.iconName}
                 className="me-2 section-header-icon"
               />
               <h5>
@@ -55,15 +50,16 @@ const SectionHeader = ({ properties, searchText, setSearchText, setCurrentPage }
             </div>
             {properties.links.map((link, index) =>
               link.type === "function" ? (
-                <PrimaryButton
+                <Button
                   key={index}
                   onClick={link.link}
                   id={link.id}
+                  appearance="primary"
                   className="mt-3"
 
                 >
                   {link.name}
-                </PrimaryButton>
+                </Button>
               ) : (
                 <Link
                   key={index}
@@ -81,20 +77,20 @@ const SectionHeader = ({ properties, searchText, setSearchText, setCurrentPage }
           {properties.filter && (
             <div className="col-auto p-0 mt-4 mt-lg-0 d-flex align-items-center">
               <div className="col-12 d-flex flex-column flex-lg-row justify-content-end" >
-                <TextField
+                <Input
                   className="mb-1 mb-lg-0"
                   placeholder="Filter by any field"
                   aria-labelledby="sectionHeaderFilterLabel"
                   value={searchText}
-                  onChange={(_, v) => {
-                    setSearchText(v || "");
+                  onChange={(_, data) => {
+                    setSearchText(data.value || "");
                     setCurrentPage(1);
                   }}
                 />
-                <DefaultButton disabled={!searchText} className="ms-lg-2" onClick={() => {
+                <Button disabled={!searchText} className="ms-lg-2" onClick={() => {
                   setSearchText("");
                   setCurrentPage(1);
-                }}>Clear</DefaultButton>
+                }}>Clear</Button>
               </div>
             </div>
           )}

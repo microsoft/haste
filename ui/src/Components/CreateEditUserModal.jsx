@@ -3,19 +3,18 @@
 
 import { useEffect, useState, useContext } from "react";
 import {
-  getTheme,
-  mergeStyleSets,
-  FontWeights,
-  Modal,
-  TextField,
-  FontIcon,
-  Dropdown
-} from "@fluentui/react";
-import {
-  DefaultButton,
-  IconButton,
-  PrimaryButton,
-} from "@fluentui/react/lib/Button";
+  Button,
+  Field,
+  Input,
+  Dropdown,
+  Option,
+  OverlayDrawer,
+  DrawerHeader,
+  DrawerHeaderTitle,
+  DrawerBody,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../util/icons";
+import { useDrawerAnimation } from "../util/useDrawerAnimation";
 
 
 import { apiPut } from "../util/api";
@@ -24,6 +23,11 @@ import { AppContext } from "../AppContext";
 import { createComponentDefaultState, onFormChange } from "./CreateEditUserModalHelper"
 import { validateEmpty, validateEmail, validateAtLeastSomeNumber } from "../util/validation";
 import proptypes from "prop-types";
+
+const USER_ROLE_LABELS = {
+  administrators: "Administrator",
+  contributors: "Contributor",
+};
 
 const CreateEditUserModal = ({ onClose, userToEdit }) => {
   CreateEditUserModal.propTypes = {
@@ -34,6 +38,7 @@ const CreateEditUserModal = ({ onClose, userToEdit }) => {
   const { setDialog, setIsLoading, appParams } = useContext(AppContext);
   const navigate = useNavigate();
   const [componentState, setComponentState] = useState(null);
+  const { open, requestClose } = useDrawerAnimation(onClose);
 
   useEffect(() => {
     async function initComponent() {
@@ -94,12 +99,12 @@ const CreateEditUserModal = ({ onClose, userToEdit }) => {
       if (userToEdit) {
         await apiPut("PutUser", { user: apiBody, action: "update" });
         setIsLoading(false);
-        onClose();
+        requestClose();
         setDialog("Success", "User successfully updated.", buttons);
       } else {
         await apiPut("PutUser", { user: apiBody, action: "add" });
         setIsLoading(false);
-        onClose();
+        requestClose();
         setDialog("Success", "User successfully created.", buttons);
       }
     } catch (error) {
@@ -116,127 +121,80 @@ const CreateEditUserModal = ({ onClose, userToEdit }) => {
     return <> </>;
   }
 
+  const selectedRole = componentState.userRoles[0];
+
   return (
-    <Modal
-      titleAriaId={"Modal"}
-      isOpen={true}
-      onDismiss={onClose}
-      isBlocking={true}
-      containerClassName={contentStyles.container}
+    <OverlayDrawer
+      position="end"
+      open={open}
+      onOpenChange={(_, d) => {
+        if (!d.open) requestClose();
+      }}
+      className="section-panel-drawer"
     >
-      <div className={contentStyles.header}>
-        <div className="d-flex align-items-center">
-          <FontIcon iconName={"UserEvent"} className="me-2 modal-icon" />
-          <p className={contentStyles.heading} id={"Modal"}>
-            New User
-          </p>
-        </div>
-        <IconButton
-          styles={iconButtonStyles}
-          iconProps={cancelIcon}
-          ariaLabel="Close popup modal"
-          onClick={onClose}
-        />
-      </div>
-      <div className={`${contentStyles.body} modal-form-body`}>
+      <DrawerHeader className="section-panel-header">
+        <DrawerHeaderTitle
+          action={
+            <Button
+              appearance="subtle"
+              icon={<FluentIcon name="Cancel" />}
+              aria-label="Close"
+              onClick={requestClose}
+            />
+          }
+        >
+          <span className="section-panel-title">
+            <FluentIcon name="UserEvent" className="modal-icon" />
+            {userToEdit ? "Edit User" : "New User"}
+          </span>
+        </DrawerHeaderTitle>
+      </DrawerHeader>
+      <DrawerBody>
         <div className="row mb-2">
           <div className="col-12">
-            <TextField label="Name"
-              required
-              value={componentState.name}
-              onChange={(e, value) => onFormChange("name", value, setComponentState, componentState)}
-              errorMessage={componentState.nameError}
-            />
+            <Field label="Name" required validationMessage={componentState.nameError}>
+              <Input
+                value={componentState.name}
+                onChange={(e, data) => onFormChange("name", data.value, setComponentState, componentState)}
+              />
+            </Field>
           </div>
         </div>
         <div className="row mb-2">
           <div className="col-12">
-            <TextField label="E-mail"
-              required
-              value={componentState.email}
-              onChange={(e, value) => onFormChange("email", value, setComponentState, componentState)}
-              errorMessage={componentState.emailError}
-              disabled={userToEdit !== undefined}
-            />
+            <Field label="E-mail" required validationMessage={componentState.emailError}>
+              <Input
+                value={componentState.email}
+                onChange={(e, data) => onFormChange("email", data.value, setComponentState, componentState)}
+                disabled={userToEdit !== undefined}
+              />
+            </Field>
           </div>
         </div>
         <div className="row mb-4">
           <div className="col-12">
-            <Dropdown
-              required
-              label="Type"
-              placeholder="Select a type"
-              value={componentState.userRoles[0]}
-              defaultSelectedKey={componentState.userRoles[0]}
-              onChange={(e, value) => onFormChange("userRoles", value.key, setComponentState, componentState)}
-              errorMessage={componentState.userRolesError}
-              options={[
-                { key: "administrators", text: "Administrator" },
-                { key: "contributors", text: "Contributor" },
-              ]}
-            />
+            <Field label="Type" required validationMessage={componentState.userRolesError}>
+              <Dropdown
+                placeholder="Select a type"
+                selectedOptions={selectedRole ? [String(selectedRole)] : []}
+                value={USER_ROLE_LABELS[selectedRole] || ""}
+                onOptionSelect={(e, data) => onFormChange("userRoles", data.optionValue, setComponentState, componentState)}
+              >
+                <Option value="administrators">Administrator</Option>
+                <Option value="contributors">Contributor</Option>
+              </Dropdown>
+            </Field>
           </div>
         </div>
         <div className="row">
           <div className="col-12 d-flex justify-content-end">
-            <PrimaryButton className="me-2" onClick={validateBeforeSubmit}>Submit</PrimaryButton>
-            <DefaultButton onClick={onClose}>Cancel</DefaultButton>
+            <Button appearance="primary" className="me-2" onClick={validateBeforeSubmit}>Submit</Button>
+            <Button onClick={requestClose}>Cancel</Button>
           </div>
         </div>
-      </div>
-    </Modal>
+      </DrawerBody>
+    </OverlayDrawer>
   );
-};
-
-const cancelIcon = { iconName: "Cancel" };
-
-const theme = getTheme();
-const contentStyles = mergeStyleSets({
-  container: {
-    display: "flex",
-    flexFlow: "column nowrap",
-    alignItems: "stretch",
-  },
-  header: [
-    theme.fonts.xLargePlus,
-    {
-      flex: "1 1 auto",
-      borderTop: `4px solid ${theme.palette.themePrimary}`,
-      color: theme.palette.neutralPrimary,
-      display: "flex",
-      alignItems: "center",
-      fontWeight: FontWeights.semibold,
-      padding: "12px 12px 14px 24px",
-    },
-  ],
-  heading: {
-    color: theme.palette.neutralPrimary,
-    fontWeight: FontWeights.semibold,
-    fontSize: "20px",
-    margin: "0",
-  },
-  body: {
-    flex: "4 4 auto",
-    padding: "0 24px 24px 24px",
-    overflowY: "hidden",
-    selectors: {
-      p: { margin: "14px 0" },
-      "p:first-child": { marginTop: 0 },
-      "p:last-child": { marginBottom: 0 },
-    },
-  },
-});
-
-const iconButtonStyles = {
-  root: {
-    color: theme.palette.neutralPrimary,
-    marginLeft: "auto",
-    marginTop: "4px",
-    marginRight: "2px",
-  },
-  rootHovered: {
-    color: theme.palette.neutralDark,
-  },
 };
 
 export default CreateEditUserModal;

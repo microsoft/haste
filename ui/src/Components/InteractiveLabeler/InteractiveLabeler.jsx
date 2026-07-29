@@ -21,14 +21,15 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  ActionButton,
-  ChoiceGroup,
-  DefaultButton,
-  PrimaryButton,
-  ProgressIndicator,
+  Button,
+  Field,
+  ProgressBar,
+  Radio,
+  RadioGroup,
+  Switch,
   Text,
-  Toggle,
-} from "@fluentui/react";
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import { PMTiles, Protocol } from "pmtiles";
 import { apiGet, apiPut, buildUrl } from "../../util/api";
 import {
@@ -1349,13 +1350,14 @@ const InteractiveLabeler = () => {
           borderRadius: "5px",
         }}
       >
-        <ActionButton
+        <Button
           id="backButton"
-          iconProps={{ iconName: "ChevronLeft" }}
+          appearance="transparent"
+          icon={<FluentIcon name="ChevronLeft" />}
           onClick={() => navigate(`/project/${projectId}`)}
         >
           Back
-        </ActionButton>
+        </Button>
       </div>
 
       <div
@@ -1374,7 +1376,7 @@ const InteractiveLabeler = () => {
             overflowY: "auto",
           }}
         >
-          <Text variant="large" block style={{ marginBottom: 2 }}>
+          <Text size={500} block style={{ marginBottom: 2 }}>
             Interactive Labeler
           </Text>
           {backend && (
@@ -1389,12 +1391,16 @@ const InteractiveLabeler = () => {
             </div>
           )}
 
-          <ChoiceGroup
-            label="Set class"
-            selectedKey={String(selectedClass)}
-            options={CLASS_OPTIONS}
-            onChange={(e, o) => setSelectedClass(parseInt(o.key, 10))}
-          />
+          <Field label="Set class">
+            <RadioGroup
+              value={String(selectedClass)}
+              onChange={(_e, data) => setSelectedClass(parseInt(data.value, 10))}
+            >
+              {CLASS_OPTIONS.map((o) => (
+                <Radio key={o.key} value={o.key} label={o.text} />
+              ))}
+            </RadioGroup>
+          </Field>
 
           <div style={{ marginTop: 8, fontSize: 13 }}>
             <div style={{ color: CLASS_COLORS[CLASS_INTACT] }}>
@@ -1408,23 +1414,19 @@ const InteractiveLabeler = () => {
             </div>
           </div>
 
-          <Toggle
-            label="View"
-            onText="Predicted"
-            offText="Labeled"
+          <Switch
+            label="View: Predicted / Labeled"
             checked={viewMode === "predict"}
-            onChange={(e, checked) =>
-              setViewMode(checked ? "predict" : "label")
+            onChange={(_e, data) =>
+              setViewMode(data.checked ? "predict" : "label")
             }
             style={{ marginTop: 12 }}
           />
 
-          <Toggle
+          <Switch
             label="Footprints"
-            onText="Visible"
-            offText="Hidden"
             checked={showFootprints}
-            onChange={(e, checked) => setShowFootprints(!!checked)}
+            onChange={(_e, data) => setShowFootprints(!!data.checked)}
           />
 
           {metrics && (
@@ -1471,25 +1473,29 @@ const InteractiveLabeler = () => {
             {totalLabeled} labeled · {viewportPredicted} predicted in viewport
           </div>
 
-          <PrimaryButton
-            text={isSaving ? "Saving…" : "Save labels"}
+          <Button
+            appearance="primary"
             disabled={isSaving || totalLabeled === 0}
             onClick={handleSaveLabels}
             style={{ marginTop: 16, width: "100%" }}
-          />
-          <DefaultButton
-            text="Predict all buildings"
+          >
+            {isSaving ? "Saving…" : "Save labels"}
+          </Button>
+          <Button
             disabled={!!fullPredict || totalLabeled === 0}
             onClick={handlePredictAll}
             style={{ marginTop: 8, width: "100%" }}
             title="Run the trained model across every building in the layer (not just the viewport) and persist the predictions for the Validation / Assessment reports."
-          />
-          <DefaultButton
-            text="Clear labels"
+          >
+            Predict all buildings
+          </Button>
+          <Button
             onClick={handleClearLabels}
             style={{ marginTop: 8, width: "100%", color: "#a4262c" }}
             title="Remove every label for this model — both in-session and in the saved store."
-          />
+          >
+            Clear labels
+          </Button>
 
           <div style={{ marginTop: 12, fontSize: 11, color: "#999" }}>
             Click a building to label it · right-click to clear ·{" "}
@@ -1536,14 +1542,14 @@ const InteractiveLabeler = () => {
               boxShadow: "0 4px 18px rgba(0,0,0,0.3)",
             }}
           >
-            <Text variant="large" block style={{ marginBottom: 8 }}>
+            <Text size={500} block style={{ marginBottom: 8 }}>
               Predict all buildings
             </Text>
             <div style={{ fontSize: 13, color: "#444", marginBottom: 12 }}>
               {fullPredict.message}
             </div>
-            <ProgressIndicator
-              percentComplete={
+            <ProgressBar
+              value={
                 fullPredict.phase === "predict" && fullPredict.total
                   ? fullPredict.current / fullPredict.total
                   : undefined
@@ -1552,11 +1558,12 @@ const InteractiveLabeler = () => {
             <div
               style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}
             >
-              <DefaultButton
-                text="Cancel"
+              <Button
                 onClick={cancelPredictAll}
                 disabled={fullPredict.phase === "save"}
-              />
+              >
+                Cancel
+              </Button>
             </div>
           </div>
         </div>

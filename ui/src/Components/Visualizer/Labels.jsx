@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Dependencies 
-import { ActionButton, Text, Link, Toggle } from "@fluentui/react";
+import { Button, Text, Link } from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import { useNavigate } from "react-router-dom";
 import { convertDateToString } from "../../util/conversion";
 import { sourceTypeOptions } from "../CreateEditImageLayerHelper";
@@ -74,26 +75,27 @@ const Labels = ({
           {/* PRE DISASTER */}
 
           <div className="absolute-labels pre-disaster d-flex flex-column labels-back-button">
-            <ActionButton
+            <Button
+              appearance="transparent"
               id="visualizerBackButton"
-              iconProps={{ iconName: "ChevronLeft" }}
+              icon={<FluentIcon name="ChevronLeft" />}
               className="w-100 p-0 m-0"
               onClick={handleBackNavigation}
             >
               Back
-            </ActionButton>
+            </Button>
           </div>
 
           <div className="absolute-labels pre-disaster d-flex flex-column d-none d-lg-flex">
-            <Text variant="large" className="fw-semibold">
+            <Text className="fw-semibold">
               Pre disaster imagery
             </Text>
-            <Text variant="medium">
+            <Text>
               {convertPreOrPostEventImageryDate(
                 visualizerResults.imageryCaptureDatePreEvent
               )}
             </Text>
-            <Text variant="small">
+            <Text size={200}>
             {convertPreOrPostEventImagerySource(
                 visualizerResults.preDisasterImagery.url, visualizerResults.sourceTypePreEvent
               )}
@@ -103,15 +105,15 @@ const Labels = ({
           {/* POST DISASTER */}
 
           <div className="absolute-labels post-disaster d-flex flex-column d-none d-lg-flex">
-            <Text variant="large" className="fw-semibold">
+            <Text className="fw-semibold">
               Post disaster imagery
             </Text>
-            <Text variant="medium">
+            <Text>
               {convertPreOrPostEventImageryDate(
                 visualizerResults.imageryCaptureDatePostEvent
               )}
             </Text>
-            <Text variant="small">
+            <Text size={200}>
               {convertPreOrPostEventImagerySource(
                 visualizerResults.postDisasterImagery.url, visualizerResults.sourceTypePostEvent
               )}

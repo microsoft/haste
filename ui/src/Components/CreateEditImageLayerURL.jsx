@@ -3,7 +3,8 @@
 import React from "react";
 import propTypes from "prop-types";
 
-import { IconButton, Link } from "@fluentui/react";
+import { Link, Button } from "@fluentui/react-components";
+import { FluentIcon } from "../util/icons";
 
 import { removeUrlFromEventImageryArray } from "./CreateEditImageLayerHelper";
 import { safeHref } from "../util/validation";
@@ -38,8 +39,10 @@ const CreateEditImageLayerURL = ({
           </Link>
         </div>
         <div className="col-auto d-flex align-items-center">
-          <IconButton
-            iconProps={{ iconName: "Delete" }}
+          <Button
+            appearance="subtle"
+            icon={<FluentIcon name="Delete" />}
+            aria-label="Delete"
             onClick={() =>
               removeUrlFromEventImageryArray(
                 url.id,

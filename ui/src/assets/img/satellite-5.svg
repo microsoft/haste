@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-label="Satellite imagery placeholder">
+  <defs>
+    <linearGradient id="h5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/><stop offset="1" stop-color="#000000" stop-opacity="0.12"/></linearGradient>
+    <filter id="g5"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch" result="n"/><feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.07 0"/></filter>
+  </defs>
+  <!-- arid / desert -->
+  <rect width="400" height="300" fill="#b08a5b"/>
+  <polygon points="0,0 200,0 160,120 0,150" fill="#bd9865"/>
+  <polygon points="200,0 400,0 400,130 230,150 160,120" fill="#a67f50"/>
+  <polygon points="0,150 160,120 210,220 60,250 0,220" fill="#c2a06e"/>
+  <polygon points="160,120 230,150 300,240 210,220" fill="#9c7647"/>
+  <polygon points="230,150 400,130 400,240 300,240" fill="#b5915e"/>
+  <polygon points="0,220 60,250 110,300 0,300" fill="#8f6d40"/>
+  <polygon points="60,250 210,220 300,240 250,300 110,300" fill="#aa8552"/>
+  <polygon points="300,240 400,240 400,300 250,300" fill="#c4a170"/>
+  <!-- dry riverbed -->
+  <path d="M-10,70 C 90,110 100,180 210,190 C 300,198 330,260 410,250" fill="none" stroke="#8a6c44" stroke-width="12" stroke-linecap="round" opacity="0.7"/>
+  <path d="M-10,70 C 90,110 100,180 210,190 C 300,198 330,260 410,250" fill="none" stroke="#d9c199" stroke-width="4" stroke-linecap="round" opacity="0.6"/>
+  <!-- sparse scrub -->
+  <g fill="#6f6237" opacity="0.7">
+    <circle cx="70" cy="60" r="7"/><circle cx="120" cy="90" r="5"/><circle cx="300" cy="70" r="8"/>
+    <circle cx="250" cy="120" r="6"/><circle cx="90" cy="200" r="7"/><circle cx="330" cy="200" r="6"/>
+    <circle cx="180" cy="260" r="7"/><circle cx="40" cy="260" r="5"/>
+  </g>
+  <!-- track / road -->
+  <line x1="20" y1="10" x2="360" y2="290" stroke="#8f7a56" stroke-width="3" opacity="0.6"/>
+  <rect width="400" height="300" fill="url(#h5)"/>
+  <rect width="400" height="300" filter="url(#g5)"/>
+</svg>

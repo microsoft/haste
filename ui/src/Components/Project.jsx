@@ -1,24 +1,68 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import React, { useContext, useRef } from "react";
-import { PrimaryButton, IconButton, Text } from "@fluentui/react"; // <-- Added IconButton, Text
+import React, { useContext, useRef, useMemo, Fragment } from "react";
+import {
+  Button,
+  SearchBox,
+  Tooltip,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItemRadio,
+  MenuItemCheckbox,
+  Dropdown,
+  Option,
+} from "@fluentui/react-components";
 import { useParams } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { apiGet } from "../util/api";
 import { useNavigate } from "react-router-dom";
 
 import LayerRow from "./ProjectManagement/LayerRow";
-import SectionHeader from "./Section/SectionHeader";
-import ProjectHeader from "./ProjectManagement/ProjectHeader";
-import PaginationControls from "./OtherComponents/PaginationControls";
+import LayerCard from "./ProjectManagement/LayerCard";
+import { FluentIcon } from "../util/icons";
+import NoResultsMessage from "./NoResultsMessage";
 
 import { setGuidedTourState, initGuidedTourState } from "./GuidedTourHelper";
 
-import NoResults from "./ProjectManagement/NoResults";
 import { AppContext } from "../AppContext";
+import { updateUserSettings } from "../AppHelper";
 
 import PropType from "prop-types";
+
+const LAYER_COLUMNS = [
+  { key: "name", label: "Name", sortable: true, sortKey: "name", always: true },
+  { key: "status", label: "Status", sortable: true, sortKey: "status" },
+  { key: "labeling", label: "Labeling", sortable: false },
+  { key: "training", label: "Model Training", sortable: false },
+  { key: "validation", label: "Building Validation", sortable: false },
+  { key: "creator", label: "Creator", sortable: true, sortKey: "userId" },
+  {
+    key: "creationDate",
+    label: "Creation Date",
+    sortable: true,
+    sortKey: "creationDate",
+  },
+];
+
+const GROUP_OPTIONS = [
+  { key: "none", label: "None" },
+  { key: "status", label: "Status" },
+  { key: "creator", label: "Creator" },
+  { key: "source", label: "Source" },
+];
+
+const PAGE_SIZE_OPTIONS = [5, 8, 10, 20, 50];
+
+/** Resolve the group bucket label for an image layer given the grouping. */
+function getLayerGroupLabel(item, mode) {
+  if (mode === "status") return item.status || "Unknown";
+  if (mode === "creator") return item.userId || "Unknown";
+  if (mode === "source") return item.sourceTypePostEvent || "Unspecified";
+  return "";
+}
 
 const Project = ({ setModalComponent }) => {
   Project.propTypes = {
@@ -29,13 +73,74 @@ const Project = ({ setModalComponent }) => {
   const projectId = useParams().projectId;
   const imageLayerId = useParams().imageLayerId;
 
+  const { setIsLoading, initCurrentTour, setAppHeaderRightButtons, appParams, setAppParams } = useContext(AppContext);
+
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(
+    appParams?.userSettings?.itemsPerPage ?? 10
+  );
+
+  function resetPage() {
+    setCurrentPage(1);
+  }
+
+  // Update the local page size and persist it to the global user setting so
+  // the choice is reflected everywhere (mirrors the Settings modal).
+  async function handlePageSizeChange(newSize) {
+    setPageSize(newSize);
+    resetPage();
+    setIsLoading(true, "Updating Items Per Page...");
+    const response = await apiGet("GetUserById?userId=" + appParams.userId);
+    await updateUserSettings(response, [{ itemsPerPage: newSize }]);
+    setAppParams((prevParams) => ({
+      ...prevParams,
+      userSettings: {
+        ...prevParams.userSettings,
+        itemsPerPage: newSize,
+      },
+    }));
+    setIsLoading(false);
+  }
 
   const [searchText, setSearchText] = useState("");
+  const [sort, setSort] = useState({ key: "creationDate", dir: "desc" });
+  const [groupBy, setGroupBy] = useState("none");
+  const [visibleColumns, setVisibleColumns] = useState(
+    LAYER_COLUMNS.map((c) => c.key)
+  );
+  const [viewMode, setViewMode] = useState(
+    () => localStorage.getItem("haste-project-view") || "list"
+  );
+  const isMobileLayout = Number(appParams.bootstrapBreakpoint) <= 2;
+  const effectiveViewMode = viewMode;
+  const effectiveGroupBy =
+    effectiveViewMode === "cards" ? "none" : groupBy;
 
-  const { setIsLoading, initCurrentTour, setAppHeaderRightButtons, appParams } = useContext(AppContext);
+  const changeView = (mode) => {
+    setViewMode(mode);
+    localStorage.setItem("haste-project-view", mode);
+    if (isMobileLayout) {
+      localStorage.setItem("haste-project-view-mobile", mode);
+    }
+  };
+
+  useEffect(() => {
+    if (!isMobileLayout) {
+      return;
+    }
+    const mobileStored = localStorage.getItem("haste-project-view-mobile");
+    if (mobileStored && mobileStored !== viewMode) {
+      setViewMode(mobileStored);
+      return;
+    }
+    if (!mobileStored && viewMode !== "cards") {
+      setViewMode("cards");
+    }
+  }, [isMobileLayout, viewMode]);
+
   const defaultProjectDetailsRef = useRef(null);
+
 
   useEffect(() => {
     setCurrentPage(1);
@@ -121,20 +226,8 @@ const Project = ({ setModalComponent }) => {
               { name: "Projects", link: "/projects" },
               { name: response.name, link: "" },
             ],
-            links:
-              response.imageLayer.length > 0
-                ? [
-                  {
-                    name: "Create Image Layer",
-                    id: "singleProjectCreateImageLayer",
-                    type: "function",
-                    link: () => {
-                      navigate("/create-imageLayer/" + projectId);
-                    },
-                  },
-                ]
-                : [],
-            filter: true,
+            links: [],
+            filter: false,
           },
         }));
       })
@@ -175,82 +268,454 @@ const Project = ({ setModalComponent }) => {
 
 
   function onComponentChange(value, key) {
-    // To close the model list for a given layer if it is already open
-    if (key === "visibleModelId") {
-      if (componentState.visibleModelId === value) {
-        value = "-1";
+    setComponentState((prevState) => {
+      let nextValue = value;
+      // Toggle the open model list for a given layer.
+      if (key === "visibleModelId" && prevState.visibleModelId === value) {
+        nextValue = "-1";
       }
-    }
-
-    setComponentState({ ...componentState, [key]: value });
+      return { ...prevState, [key]: nextValue };
+    });
   }
+
+  function toggleSort(key) {
+    setSort((prev) =>
+      prev.key === key
+        ? { key, dir: prev.dir === "asc" ? "desc" : "asc" }
+        : { key, dir: "asc" }
+    );
+  }
+
+  // Filter + sort + group the image layers (memoised so pagination is cheap).
+  const imageLayers = componentState.project?.imageLayer || [];
+  const processed = useMemo(() => {
+    const search = searchText.toLowerCase();
+    const filtered = imageLayers.filter(
+      (layer) =>
+        !search ||
+        (layer.name && layer.name.toLowerCase().includes(search))
+    );
+    const dir = sort.dir === "asc" ? 1 : -1;
+    const sorted = [...filtered].sort((a, b) => {
+      // Keep group buckets contiguous when grouping is active.
+      if (effectiveGroupBy !== "none") {
+        const ga = getLayerGroupLabel(a, effectiveGroupBy);
+        const gb = getLayerGroupLabel(b, effectiveGroupBy);
+        if (ga !== gb) {
+          return String(ga).localeCompare(String(gb));
+        }
+      }
+      const col = LAYER_COLUMNS.find((c) => c.key === sort.key);
+      const sortKey = col?.sortKey || sort.key;
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      return String(av ?? "").localeCompare(String(bv ?? "")) * dir;
+    });
+    return sorted;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageLayers, searchText, sort, effectiveGroupBy]);
 
   if (!componentState.project) {
     return null;
   }
 
-  // PAGINATION LOGIC
-  const imageLayers = componentState.project?.imageLayer || [];
-  const filteredImageLayers = imageLayers.filter(
-    (layer) =>
-      !searchText ||
-      (layer.name && layer.name.toLowerCase().includes(searchText.toLowerCase()))
+  // Pagination
+  const total = processed.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(currentPage, totalPages);
+  const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, total);
+  const paginated = processed.slice((page - 1) * pageSize, page * pageSize);
+  const isEmpty = componentState.project.imageLayer.length === 0;
+  const hasNoResults = !isEmpty && paginated.length === 0;
+
+  const activeColumns = LAYER_COLUMNS.filter((c) =>
+    visibleColumns.includes(c.key)
   );
-  const totalPages = Math.ceil(filteredImageLayers.length / (appParams.userSettings.itemsPerPage ?? 10)) || 1;
-  const pagedImageLayers = filteredImageLayers.slice(
-    (currentPage - 1) * (appParams.userSettings.itemsPerPage ?? 10),
-    currentPage * (appParams.userSettings.itemsPerPage ?? 10)
-  );
+  const optionalColumnKeys = activeColumns
+    .filter((c) => c.key !== "name")
+    .map((c) => c.key);
+
+  const eventTypes = defaultProjectDetailsRef.current?.eventTypes
+    ? defaultProjectDetailsRef.current.eventTypes
+    : [];
 
   return (
     <React.Fragment key={projectId}>
-      <div className="d-flex flex-column w-100 mb-5">
-        <SectionHeader properties={componentState.sectionHeaderProperties} searchText={searchText} setSearchText={setSearchText} setCurrentPage={setCurrentPage} />
-        <div className="container p-md-0">
-          <div className="row m-0 p-0 pt-5">
-            <div className="col-12" style={{ overflowX: "auto" }}>
-              <table className="col-12 dashboard-table">
-                <ProjectHeader />
-                <tbody>
-                  {pagedImageLayers.map((item, index) => (
-                    <LayerRow
-                      key={index + (currentPage - 1) * (appParams.userSettings.itemsPerPage ?? 10)}
-                      item={item}
-                      index={index + (currentPage - 1) * (appParams.userSettings.itemsPerPage ?? 10)}
-                      visibleModelId={componentState.visibleModelId}
-                      projectId={componentState.project.projectId}
-                      onComponentChange={onComponentChange}
-                      setModalComponent={setModalComponent}
-                      fetchProjectDetails={fetchProjectDetails}
-                      setComponentState={setComponentState}
-                      eventTypes={defaultProjectDetailsRef.current.eventTypes ? defaultProjectDetailsRef.current.eventTypes : []}
-                    />
-                  ))}
-                </tbody>
-              </table>
+      <div className="d-flex flex-column w-100">
+        <div className="pgrid-page pgrid-page--layers">
+          {/* Header */}
+          <div className="pgrid-header">
+            <div>
+              <h1 className="pgrid-title">
+                Image Layers
+                <Tooltip
+                  content="Manage imagery, labeling, training, and validation for this project."
+                  relationship="label"
+                >
+                  <span>
+                    <FluentIcon name="Info" className="pgrid-title-info" />
+                  </span>
+                </Tooltip>
+              </h1>
+              <div className="pgrid-subtitle">
+                Manage imagery, labeling, training, and validation for this
+                project.
+              </div>
+              {componentState.sectionHeaderProperties?.path && (
+                <nav className="pgrid-breadcrumb" aria-label="Breadcrumb">
+                  {componentState.sectionHeaderProperties.path.map(
+                    (crumb, i, arr) => (
+                      <span key={i} className="pgrid-breadcrumb-item">
+                        {crumb.link ? (
+                          <button
+                            type="button"
+                            className="pgrid-breadcrumb-link"
+                            onClick={() => navigate(crumb.link)}
+                          >
+                            {crumb.name}
+                          </button>
+                        ) : (
+                          <span className="pgrid-breadcrumb-current">
+                            {crumb.name}
+                          </span>
+                        )}
+                        {i < arr.length - 1 && (
+                          <span
+                            className="pgrid-breadcrumb-sep"
+                            aria-hidden="true"
+                          >
+                            /
+                          </span>
+                        )}
+                      </span>
+                    )
+                  )}
+                </nav>
+              )}
             </div>
-          </div>
-          <NoResults
-            items={pagedImageLayers}
-            text={"No image layers found"}
-          />
-
-          {componentState.project.imageLayer.length === 0 && (
-            <div className="col-12 d-flex justify-content-center align-items-center mt-3">
-              <PrimaryButton
+            {!isEmpty && (
+              <Button
                 id="singleProjectCreateImageLayer"
-                text="Create Image Layer"
-                onClick={() => {
-                  navigate("/create-imageLayer/" + projectId);
-                }}
-                className="btn-primary"
-              />
+                className="pgrid-new-btn"
+                appearance="primary"
+                icon={<FluentIcon name="FileImage" />}
+                onClick={() => navigate("/create-imageLayer/" + projectId)}
+              >
+                New Image Layer
+              </Button>
+            )}
+          </div>
+
+          {isEmpty ? (
+            <div className="pgrid-empty">
+              <FluentIcon name="FileImage" style={{ fontSize: 32 }} />
+              <div>
+                No image layers yet. Add imagery to start labeling and training.
+              </div>
+              <Button
+                appearance="primary"
+                icon={<FluentIcon name="FileImage" />}
+                onClick={() => navigate("/create-imageLayer/" + projectId)}
+              >
+                New Image Layer
+              </Button>
             </div>
+          ) : (
+            <>
+              {/* Toolbar */}
+              <div className="pgrid-toolbar">
+                <SearchBox
+                  className="pgrid-search"
+                  placeholder="Search"
+                  value={searchText}
+                  onChange={(_, data) => {
+                    setSearchText(data.value || "");
+                    setCurrentPage(1);
+                  }}
+                />
+                {effectiveViewMode === "list" && (
+                  <Menu
+                    checkedValues={{ group: [groupBy] }}
+                    onCheckedValueChange={(_, { checkedItems }) =>
+                      setGroupBy(checkedItems[0])
+                    }
+                  >
+                    <MenuTrigger disableButtonEnhancement>
+                      <Button icon={<FluentIcon name="GroupList" />}>
+                        {`Group by: ${
+                          (
+                            GROUP_OPTIONS.find((o) => o.key === groupBy) ||
+                            GROUP_OPTIONS[0]
+                          ).label
+                        }`}
+                      </Button>
+                    </MenuTrigger>
+                    <MenuPopover>
+                      <MenuList>
+                        {GROUP_OPTIONS.map((opt) => (
+                          <MenuItemRadio
+                            key={opt.key}
+                            name="group"
+                            value={opt.key}
+                          >
+                            {opt.label}
+                          </MenuItemRadio>
+                        ))}
+                      </MenuList>
+                    </MenuPopover>
+                  </Menu>
+                )}
+                <div className="pgrid-toolbar-spacer" />
+                <div
+                  className={`pgrid-toolbar-controls ${
+                    effectiveViewMode === "list"
+                      ? "pgrid-toolbar-controls--list"
+                      : ""
+                  }`}
+                >
+                  <div className="pgrid-view-toggle">
+                    <Button
+                      appearance="subtle"
+                      className={effectiveViewMode === "list" ? "pgrid-view-active" : ""}
+                      icon={<FluentIcon name="BulletedList" />}
+                      title="List view"
+                      aria-label="List view"
+                      onClick={() => changeView("list")}
+                    />
+                    <Button
+                      appearance="subtle"
+                      className={effectiveViewMode === "cards" ? "pgrid-view-active" : ""}
+                      icon={<FluentIcon name="GridViewSmall" />}
+                      title="Grid view"
+                      aria-label="Grid view"
+                      onClick={() => changeView("cards")}
+                    />
+                  </div>
+                  {effectiveViewMode === "list" && (
+                    <Menu
+                      checkedValues={{ columns: visibleColumns }}
+                      onCheckedValueChange={(_, { checkedItems }) =>
+                        setVisibleColumns(
+                          LAYER_COLUMNS.filter(
+                            (c) => c.always || checkedItems.includes(c.key)
+                          ).map((c) => c.key)
+                        )
+                      }
+                    >
+                      <MenuTrigger disableButtonEnhancement>
+                        <Button
+                          className="pgrid-customize-btn"
+                          icon={<FluentIcon name="ColumnOptions" />}
+                        >
+                          Customize Columns
+                        </Button>
+                      </MenuTrigger>
+                      <MenuPopover>
+                        <MenuList>
+                          {LAYER_COLUMNS.map((col) => (
+                            <MenuItemCheckbox
+                              key={col.key}
+                              name="columns"
+                              value={col.key}
+                              disabled={col.always}
+                            >
+                              {col.label}
+                            </MenuItemCheckbox>
+                          ))}
+                        </MenuList>
+                      </MenuPopover>
+                    </Menu>
+                  )}
+                </div>
+              </div>
+
+              {effectiveViewMode === "list" ? (
+                <div className="pgrid-table-wrap">
+                  {hasNoResults ? (
+                    <NoResultsMessage
+                      title="No image layers found"
+                      fallbackMessage="No image layers match your filters."
+                      searchText={searchText}
+                      onClear={() => {
+                        setSearchText("");
+                        resetPage();
+                      }}
+                    />
+                  ) : (
+                    <table className="pgrid-table">
+                      <thead id="singleProjectTable">
+                        <tr>
+                          <th className="pgrid-th-actions" />
+                          {activeColumns.map((col) => (
+                            <th key={col.key}>
+                              <span
+                                className={`pgrid-th-inner ${
+                                  col.sortable ? "pgrid-th-sortable" : ""
+                                }`}
+                                onClick={() =>
+                                  col.sortable && toggleSort(col.key)
+                                }
+                                role={col.sortable ? "button" : undefined}
+                                tabIndex={col.sortable ? 0 : undefined}
+                                onKeyDown={(e) => {
+                                  if (
+                                    col.sortable &&
+                                    (e.key === "Enter" || e.key === " ")
+                                  ) {
+                                    toggleSort(col.key);
+                                  }
+                                }}
+                              >
+                                {col.label}
+                                {sort.key === col.key && (
+                                  <FluentIcon
+                                    name={
+                                      sort.dir === "asc" ? "SortUp" : "SortDown"
+                                    }
+                                    className="pgrid-sort-icon"
+                                  />
+                                )}
+                              </span>
+                            </th>
+                          ))}
+                          <th className="pgrid-th-actions" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginated.map((item, idx) => {
+                          const absoluteIndex = (page - 1) * pageSize + idx;
+                          const groupVal =
+                            effectiveGroupBy !== "none"
+                              ? getLayerGroupLabel(item, effectiveGroupBy)
+                              : null;
+                          const prevGroupVal =
+                            effectiveGroupBy !== "none" && idx > 0
+                              ? getLayerGroupLabel(
+                                paginated[idx - 1],
+                                effectiveGroupBy
+                              )
+                              : null;
+                          const showGroupHeader =
+                            effectiveGroupBy !== "none" &&
+                            groupVal !== prevGroupVal;
+                          return (
+                            <Fragment key={item.imageLayerId || absoluteIndex}>
+                              {showGroupHeader && (
+                                <tr className="pgrid-group-row">
+                                  <td colSpan={activeColumns.length + 2}>
+                                    {groupVal}
+                                  </td>
+                                </tr>
+                              )}
+                              <LayerRow
+                                item={item}
+                                index={absoluteIndex}
+                                columns={optionalColumnKeys}
+                                visibleModelId={componentState.visibleModelId}
+                                projectId={componentState.project.projectId}
+                                onComponentChange={onComponentChange}
+                                setModalComponent={setModalComponent}
+                                fetchProjectDetails={fetchProjectDetails}
+                                setComponentState={setComponentState}
+                                eventTypes={eventTypes}
+                              />
+                            </Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              ) : (
+                <div className="pcard-grid-wrap">
+                  {hasNoResults ? (
+                    <NoResultsMessage
+                      title="No image layers found"
+                      fallbackMessage="No image layers match your filters."
+                      searchText={searchText}
+                      onClear={() => {
+                        setSearchText("");
+                        resetPage();
+                      }}
+                    />
+                  ) : (
+                    <div className="pcard-grid">
+                      {paginated.map((item, idx) => (
+                        <LayerCard
+                          key={item.imageLayerId || idx}
+                          item={item}
+                          index={(page - 1) * pageSize + idx}
+                          projectId={componentState.project.projectId}
+                          setModalComponent={setModalComponent}
+                          fetchProjectDetails={fetchProjectDetails}
+                          setComponentState={setComponentState}
+                          eventTypes={eventTypes}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Footer */}
+              <div className="pgrid-footer">
+                <div>
+                  Showing {start}–{end} of {total}
+                </div>
+                <div className="pgrid-footer-pagination">
+                  <button
+                    type="button"
+                    className="pgrid-page-btn"
+                    disabled={page <= 1}
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  >
+                    <FluentIcon
+                      name="ArrowLeft"
+                      className="pgrid-page-btn-icon"
+                    />
+                    Previous
+                  </button>
+                  <span className="pgrid-footer-page">
+                    Page <b>{page}</b> of {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    className="pgrid-page-btn"
+                    disabled={page >= totalPages}
+                    onClick={() =>
+                      setCurrentPage((p) => Math.min(totalPages, p + 1))
+                    }
+                  >
+                    Next
+                    <FluentIcon
+                      name="ArrowRight"
+                      className="pgrid-page-btn-icon"
+                    />
+                  </button>
+                </div>
+                <div className="pgrid-footer-rows">
+                  <span>Rows per page:</span>
+                  <Dropdown
+                    className="pgrid-rows-dropdown"
+                    style={{ minWidth: "72px" }}
+                    size="small"
+                    value={String(pageSize)}
+                    selectedOptions={[String(pageSize)]}
+                    onOptionSelect={(_, data) => {
+                      handlePageSizeChange(Number(data.optionValue));
+                    }}
+                  >
+                    {PAGE_SIZE_OPTIONS.map((size) => (
+                      <Option key={size} value={String(size)}>
+                        {String(size)}
+                      </Option>
+                    ))}
+                  </Dropdown>
+                </div>
+              </div>
+            </>
           )}
-
-          {/* Pagination Controls */}
-          <PaginationControls totalPages={totalPages} currentPage={currentPage} setCurrentPage={setCurrentPage} />
-
         </div>
       </div>
     </React.Fragment>
@@ -258,3 +723,4 @@ const Project = ({ setModalComponent }) => {
 };
 
 export default Project;
+

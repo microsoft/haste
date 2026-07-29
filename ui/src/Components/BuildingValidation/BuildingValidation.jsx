@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { ActionButton } from "@fluentui/react";
+import { Button } from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import { useEffect, useMemo, useRef, useState, useContext } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { apiGet, apiPut } from "../../util/api";
@@ -533,14 +534,15 @@ const BuildingValidation = () => {
     <div style={{ display: "flex", flexGrow: 1, position: "relative", overflow: "hidden" }}>
       {/* Back button — matches Visualizer styling */}
       <div className="absolute-labels pre-disaster d-flex flex-column labels-back-button">
-        <ActionButton
+        <Button
           id="backButton"
-          iconProps={{ iconName: "ChevronLeft" }}
+          appearance="transparent"
+          icon={<FluentIcon name="ChevronLeft" />}
           className="w-100 p-0 m-0"
           onClick={() => navigate(`/project/${projectId}`)}
         >
           Back
-        </ActionButton>
+        </Button>
       </div>
 
       {/* Map container */}

@@ -4,22 +4,33 @@ import { useEffect, useContext } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { AppContext } from "../AppContext";
 
-import { IconButton } from "@fluentui/react/lib/Button";
-import AppPanel from "./AppPanel";
+import { Button, Tooltip, makeStyles } from "@fluentui/react-components";
 import SettingsModal from "./SettingsModal";
 import PropTypes from "prop-types";
 import { limitTextLength } from "../util/conversion";
-import { TooltipHost } from "@fluentui/react";
+import { FluentIcon } from "../util/icons";
+import { useTheme } from "../util/ThemeContext";
 
+const useHeaderStyles = makeStyles({
+  iconButton: {
+    color: "white",
+    minWidth: "32px",
+    ":hover": { backgroundColor: "transparent", color: "white" },
+    ":hover:active": { backgroundColor: "transparent", color: "white" },
+  },
+});
 
-const AppHeader = ({ setModalComponent }) => {
+const AppHeader = ({ setModalComponent, onToggleNav }) => {
   AppHeader.propTypes = {
     setModalComponent: PropTypes.func.isRequired,
+    onToggleNav: PropTypes.func,
   };
 
   const { appParams } = useContext(AppContext);
   const location = useLocation();
   const navigate = useNavigate();
+  const { isDark, toggle } = useTheme();
+  const styles = useHeaderStyles();
 
   const hideSettingsMenu = location.pathname.includes("/help-docs");
   const hideHamburgerMenu = location.pathname.includes("/help-docs");
@@ -32,7 +43,16 @@ const AppHeader = ({ setModalComponent }) => {
   return (
     <div className="app-header d-flex align-items-center ps-2 pe-3">
       <div className="col flex-grow-1 d-flex align-items-center">
-        <AppPanel setModalComponent={setModalComponent} hideHamburgerMenu={hideHamburgerMenu} />
+        {!hideHamburgerMenu && (
+          <Button
+            appearance="subtle"
+            aria-label="Toggle navigation"
+            title="Toggle navigation"
+            onClick={onToggleNav}
+            icon={<FluentIcon name="GlobalNavButton" />}
+            className={styles.iconButton}
+          />
+        )}
         <div className="app-title fw-semibold pe-3">
           <a
             onClick={() => navigate("/")}
@@ -46,12 +66,9 @@ const AppHeader = ({ setModalComponent }) => {
       {appParams.bootstrapBreakpoint >= 3 && appParams.visualizerTitle !== "" && (
         <div className="col position-absolute text-center flex-grow-1 d-flex align-items-center justify-content-center visualizer-title">
           <div className="app-title fw-semibold pe-3">
-            <TooltipHost
-              content={appParams.visualizerTitle}
-
-            >
-              {limitTextLength(appParams.visualizerTitle, 50, 90)}
-            </TooltipHost>
+            <Tooltip content={appParams.visualizerTitle} relationship="label">
+              <span>{limitTextLength(appParams.visualizerTitle, 50, 90)}</span>
+            </Tooltip>
           </div>
         </div>
       )}
@@ -59,50 +76,35 @@ const AppHeader = ({ setModalComponent }) => {
       {/* Desktop */}
       <div className="col d-flex justify-content-end align-items-center">
 
+        <Button
+          appearance="subtle"
+          className={styles.iconButton}
+          icon={<FluentIcon name={isDark ? "Sunny" : "ClearNight"} />}
+          title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+          aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+          onClick={toggle}
+        />
+
         {appParams.appHeaderRightButtons.map((button, index) => (
-          <IconButton
+          <Button
             key={index}
             id={button.id}
-            className="d-flex no-dropdown-icon"
-            iconProps={{ iconName: button.iconName }}
+            appearance="subtle"
+            className={styles.iconButton}
+            icon={<FluentIcon name={button.iconName} />}
             title={button.title}
             onClick={button.onClick}
-            styles={{
-              root: {
-                color: "white",
-              },
-              rootHovered: {
-                backgroundColor: "transparent!important",
-                color: "white",
-              },
-              rootExpanded: {
-                backgroundColor: "transparent!important",
-                color: "white",
-              },
-            }}
-            ariaLabel={button.title}
+            aria-label={button.title}
           />
         ))}
 
         {!hideSettingsMenu && (
-          <IconButton
-            className="d-flex no-dropdown-icon"
-            iconProps={{ iconName: "settings" }}
+          <Button
+            appearance="subtle"
+            className={styles.iconButton}
+            icon={<FluentIcon name="settings" />}
             title="Menu"
-            styles={{
-              root: {
-                color: "white",
-              },
-              rootHovered: {
-                backgroundColor: "transparent!important",
-                color: "white",
-              },
-              rootExpanded: {
-                backgroundColor: "transparent!important",
-                color: "white",
-              },
-            }}
-            ariaLabel="Menu"
+            aria-label="Menu"
             onClick={() => setModalComponent(<SettingsModal onClose={() => setModalComponent(null)} />)}
           />
         )}

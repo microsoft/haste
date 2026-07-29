@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { FontIcon } from "@fluentui/react/lib/Icon";
+import { FluentIcon } from "../../util/icons";
 import "../../assets/css/drawingToolbar.css";
 
 const DrawingToolbar = ({ drawingManager, setDrawingManager, undo, redo }) => {
@@ -18,47 +18,47 @@ const DrawingToolbar = ({ drawingManager, setDrawingManager, undo, redo }) => {
   const buttons = [
     {
       mode: "none",
-      label: <FontIcon iconName="HandsFree" />,
+      label: <FluentIcon name="HandsFree" />,
       disabled: false,
       title: "Pointer",
       id: "pointer",
     },
     {
       mode: "draw-polygon",
-      label: <FontIcon iconName="WebAppBuilderModule" />,
+      label: <FluentIcon name="WebAppBuilderModule" />,
       disabled: false,
       title: "Draw Polygon",
       id: "draw-polygon",
     },
     {
       mode: "edit-geometry",
-      label: <FontIcon iconName="Edit" />,
+      label: <FluentIcon name="Edit" />,
       disabled: false,
       title: "Edit Geometry",
       id: "edit-geometry",
     },
     {
-      label: <FontIcon iconName="Undo" />,
+      label: <FluentIcon name="Undo" />,
       disabled: false,
       title: "Undo",
       id: "undo",
     },
     {
-      label: <FontIcon iconName="Redo" />,
+      label: <FluentIcon name="Redo" />,
       disabled: false,
       title: "Redo",
       id: "redo",
     },
     {
       mode: "draw-line",      
-      label: <FontIcon iconName="Cut" />,
+      label: <FluentIcon name="Cut" />,
       disabled: false,
       title: "Cut",
       id: "cut",
     },
     {
       mode: "erase-geometry",
-      label: <FontIcon iconName="Delete" />,
+      label: <FluentIcon name="Delete" />,
       disabled: false,
       title: "Erase Geometry",
       id: "erase-geometry",

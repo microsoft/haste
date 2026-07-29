@@ -1,7 +1,18 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import { useEffect, useState } from "react";
-import { ChoiceGroup, PrimaryButton, Slider } from "@fluentui/react";
+import {
+  RadioGroup,
+  Radio,
+  Button,
+  Field,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import CreateEditModelTrainingModal from "../CreateEditModelTrainingModal";
 import { saveLabels, checkLabelsState } from "./LabelingToolHelper";
 import DrawingToolbar from "./DrawingToolbar";
@@ -339,25 +350,52 @@ const LabelingToolRightPanel = ({
         id="rightPanel"
       >
         <div className="col-12 d-flex">
-          <ChoiceGroup
-            options={
-              primaryClasses && primaryClasses.length > 0 ? primaryClasses : []
-            }
-            selectedKey={selectedPrimaryClass}
-            label="Primary Class"
-            onChange={(e, option) => {
-              handlePrimaryClassChange(option.key);
-            }}
-          />
+          <Field label="Primary Class">
+            <RadioGroup
+              value={selectedPrimaryClass != null ? String(selectedPrimaryClass) : ""}
+              onChange={(e, data) => {
+                handlePrimaryClassChange(data.value);
+              }}
+            >
+              {(primaryClasses && primaryClasses.length > 0
+                ? primaryClasses
+                : []
+              ).map((option) => (
+                <Radio
+                  key={String(option.key)}
+                  value={String(option.key)}
+                  label={option.text}
+                />
+              ))}
+            </RadioGroup>
+          </Field>
         </div>
         <div className="col-12 d-flex mt-2 flex-column pt-2 pb-2">
-          <PrimaryButton
-            id="saveAndTrainButton"
-            split
-            menuProps={labelSavingMenuOptions()}
-            className="w-100"
-            text="Actions"
-          />
+          <Menu positioning="below-end">
+            <MenuTrigger disableButtonEnhancement>
+              <Button
+                appearance="primary"
+                id="saveAndTrainButton"
+                className="w-100"
+              >
+                Actions
+              </Button>
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                {labelSavingMenuOptions().items.map((item) => (
+                  <MenuItem
+                    key={item.key}
+                    icon={<FluentIcon name={item.iconProps.iconName} />}
+                    disabled={item.disabled}
+                    onClick={item.onClick}
+                  >
+                    {item.text}
+                  </MenuItem>
+                ))}
+              </MenuList>
+            </MenuPopover>
+          </Menu>
         </div>
       </div>
       <input type="file" id="importGeoJSON" className="d-none" accept=".geojson" />

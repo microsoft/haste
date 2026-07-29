@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import PropTypes from "prop-types";
-import { Icon, PrimaryButton } from "@fluentui/react";
+import { FluentIcon } from "../../util/icons";
 
 const HelpDocsOverviewBubble = ({ iconName, title, text, link }) => {
   HelpDocsOverviewBubble.propTypes = {
@@ -14,7 +14,7 @@ const HelpDocsOverviewBubble = ({ iconName, title, text, link }) => {
   return (
     <div className='col d-flex flex-column p-3' style={{ border: '1px solid #ccc', borderRadius: '8px', padding: '10px' }}>
       <div className='d-flex align-items-center'>
-        <Icon iconName={iconName} className="pe-2" style={{ fontSize: '20px' }} />
+        <FluentIcon name={iconName} className="pe-2" style={{ fontSize: '20px' }} />
         <h2 className='p-0 m-0'>{title}</h2>
       </div>
       <hr className='' />

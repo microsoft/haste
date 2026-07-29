@@ -2,14 +2,68 @@
  * Licensed under the MIT License.
  */
 :root {
-  --primary-color: #0066b4;
+  --primary-color: #1f4e79;
   --secondry-color: #FFFFFF;
-  --tertiary-color: #CCCCCC;
-  --quaternary-color: #EAEAEA;
-  --quinary-color: #666666;
-  --table-td-border-color: #DDDDDD;
+  --tertiary-color: #8F8F8F;
+  --quaternary-color: #CFCFCF;
+  --quinary-color: #333333;
+  --table-td-border-color: #ABABAB;
   --home-box-background-color: #FFFFFF;  
-  --box-background-color: #F5F5F5;
-  --box-background-color-light: #BBBBBB;
-  --box-border-color-dark: #0078d4;
+  --box-background-color: #E8E8E8;
+  --box-background-color-light: #8A8A8A;
+  --box-border-color-dark: #3a6ea0;
+
+  /* Brand ramp defaults (navy). Overridden at runtime by the selected
+     palette via applyPaletteCssVars(). Keeps first paint correct. */
+  --brand-10: #050a10;
+  --brand-20: #0a141f;
+  --brand-30: #0f1f2f;
+  --brand-40: #14293f;
+  --brand-50: #193450;
+  --brand-60: #1e4062;
+  --brand-70: #1f4970;
+  --brand-80: #1f4e79;
+  --brand-90: #2c5f8c;
+  --brand-100: #3a6ea0;
+  --brand-110: #5486b3;
+  --brand-120: #7ba3c6;
+  --brand-130: #9db8d2;
+  --brand-140: #c0d3e5;
+  --brand-150: #dbe6f1;
+  --brand-160: #eef3f8;
+}
+
+/* Global thin scrollbars without up/down arrow buttons */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--quaternary-color) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--quaternary-color);
+  border-radius: 8px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--tertiary-color);
+}
+
+/* Remove the up/down (and left/right) arrow buttons */
+*::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }

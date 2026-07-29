@@ -1,7 +1,17 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { IconButton, on, Text, TooltipHost } from "@fluentui/react";
+import {
+  Text,
+  Tooltip,
+  Button,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import React, { useContext } from "react";
 
 import { apiDelete } from "../../util/api";
@@ -11,16 +21,24 @@ import CreateEditUserModal from "../CreateEditUserModal";
 import { limitTextLength } from "../../util/conversion";
 import { apiPut } from "../../util/api";
 
-const UserRow = ({ item, index, setModalComponent, moreInfoVisibleId, setMoreInfoVisibleId }) => {
+/** Map a user status to a pill badge label + tone. */
+function getUserStatusBadge(status) {
+  if (status === "Active") return { label: "Active", tone: "active" };
+  if (status === "PendingAcceptance")
+    return { label: "Pending", tone: "pending" };
+  if (status === "Inactive") return { label: "Inactive", tone: "inactive" };
+  return { label: status || "—", tone: "inactive" };
+}
+
+const UserRow = ({ item, index, setModalComponent }) => {
   UserRow.propTypes = {
     item: PropTypes.object.isRequired,
     index: PropTypes.number.isRequired,
     setModalComponent: PropTypes.func.isRequired,
-    moreInfoVisibleId: PropTypes.string,
-    setMoreInfoVisibleId: PropTypes.func.isRequired,
   };
 
   const { setDialog, setIsLoading } = useContext(AppContext);
+  const statusBadge = getUserStatusBadge(item.status);
 
   async function handleDeletion() {
     setIsLoading(true);
@@ -66,29 +84,16 @@ const UserRow = ({ item, index, setModalComponent, moreInfoVisibleId, setMoreInf
   const moreMenuOptions = {
     items: [
       {
-        key: "info",
-        className: "d-block d-lg-none",
-        text: moreInfoVisibleId === item.email ? "Hide Info" : "View Info",
-        iconProps: { iconName: moreInfoVisibleId === item.email ? "Cancel" : "Info" },
-        onClick: () => {
-          if (moreInfoVisibleId === item.email) {
-            setMoreInfoVisibleId(null);
-          } else {
-            setMoreInfoVisibleId(item.email);
-          }
-        },
-      },
-      {
         key: "re-send-invitation",
         text: "Re-send Invitation",
-        iconProps: { iconName: "MailForward" },
+        icon: <FluentIcon name="MailForward" />,
         disabled: item.status !== "PendingAcceptance",
         onClick: () => reSendInvitation(item),
       },
       {
         key: "edit",
         text: "Edit",
-        iconProps: { iconName: "Edit" },
+        icon: <FluentIcon name="Edit" />,
         onClick: () => {
           setModalComponent(
             <CreateEditUserModal
@@ -101,7 +106,7 @@ const UserRow = ({ item, index, setModalComponent, moreInfoVisibleId, setMoreInf
       {
         key: "remove",
         text: "Remove",
-        iconProps: { iconName: "Delete" },
+        icon: <FluentIcon name="Delete" />,
         onClick: () => {
           setDialog(
             "Important",
@@ -129,78 +134,63 @@ const UserRow = ({ item, index, setModalComponent, moreInfoVisibleId, setMoreInf
   return (
     <React.Fragment key={index}>
       <tr className={item.status === "Inactive" ? "table-row-inactive" : ""} >
-        <td className="custom-text-no-wrap d-none d-xl-table-cell">
-          <Text variant="medium" className="pe-4 ellipsis">
-            <TooltipHost content={item.name === "" ? "--" : item.name} delay={200}>
-              {item.name === "" ? "--" : item.name}
-            </TooltipHost>
+        <td className="custom-text-no-wrap" data-label="Name">
+          <Text className="pe-4 ellipsis">
+            <Tooltip content={item.name === "" ? "--" : item.name} relationship="label">
+              <span>{item.name === "" ? "--" : item.name}</span>
+            </Tooltip>
           </Text>
 
         </td>
-        <td className="ellipsis">
-          <Text variant="medium" className="pe-4 ellipsis">
-            <TooltipHost content={item.email} delay={200}>
-              {limitTextLength(item.email, 50, 55)}
-            </TooltipHost>
+        <td className="ellipsis" data-label="E-mail">
+          <Text className="pe-4 ellipsis">
+            <Tooltip content={item.email} relationship="label">
+              <span>{limitTextLength(item.email, 50, 55)}</span>
+            </Tooltip>
           </Text>
-
-          {moreInfoVisibleId == item.email && (<>
-            <Text variant="small">
-              <table className="col-12 dashboard-inner-table p-3 mt-2">
-                <tbody>
-                  <tr>
-                    <td>
-                      <div className="pb-2">
-                        <Text
-                          variant="small"
-                          className="me-4 fw-semibold custom-text-color"
-                        >
-                          User Info:
-                        </Text>
-                      </div>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td>
-                      <span className="fw-semibold">Name: </span>{item.name === "" ? "--" : item.name}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td>
-                      <span className="fw-semibold">User Roles: </span> {item.userRoles.join(", ")}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td>
-                      <span className="fw-semibold">Status: </span> {item.status}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </Text>
-          </>
-          )}
-
         </td>
-        <td className="custom-text-no-wrap d-none d-xl-table-cell">
-          <Text variant="medium" className="pe-4">
+        <td className="custom-text-no-wrap" data-label="User Roles">
+          <Text className="pe-4">
             {item.userRoles.join(", ")}
           </Text>
         </td>
-        <td className="custom-text-no-wrap d-none d-xl-table-cell">
-          <Text variant="medium" className="pe-4">
-            {item.status}
-          </Text>
+        <td className="custom-text-no-wrap" data-label="Status">
+          <span className={`pgrid-pill pgrid-pill--${statusBadge.tone}`}>
+            <span className="pgrid-pill-dot" />
+            {statusBadge.label}
+          </span>
         </td>
-        <td className="custom-text-no-wrap d-flex align-items-start align-items-md-center justify-content-end">
+        <td
+          className="custom-text-no-wrap d-flex align-items-start align-items-md-center justify-content-end"
+          data-label="Actions"
+        >
           {item.status != "Inactive" &&
-            <IconButton
-              className="no-dropdown-icon"
-              menuProps={moreMenuOptions}
-              iconProps={{ iconName: "more" }}
-              title="Menu"
-              ariaLabel="Menu"
-            />
+            <Menu positioning="below-end">
+              <MenuTrigger disableButtonEnhancement>
+                <Button
+                  appearance="subtle"
+                  className="no-dropdown-icon"
+                  icon={<FluentIcon name="More" />}
+                  title="Menu"
+                  aria-label="Menu"
+                />
+              </MenuTrigger>
+              <MenuPopover>
+                <MenuList>
+                  {moreMenuOptions.items.map((mi) => (
+                    <MenuItem
+                      key={mi.key}
+                      className={mi.className}
+                      icon={mi.icon}
+                      disabled={mi.disabled}
+                      onClick={mi.onClick}
+                    >
+                      {mi.text}
+                    </MenuItem>
+                  ))}
+                </MenuList>
+              </MenuPopover>
+            </Menu>
           }
 
         </td>

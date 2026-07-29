@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { IconButton } from "@fluentui/react";
+import { Button } from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import React, { useContext } from "react";
 import PropTypes from "prop-types";
 import "../../assets/css/progress-bar.css";
@@ -40,7 +41,7 @@ const ModelCancelButton = ({ model, projectId, imageLayerId, fetchProjectDetails
   return (
     <React.Fragment>
       {model.status == "InProgress" || model.status == "Queued" || model.inferenceStatus == "InProgress" || model.inferenceStatus == "Queued" ? (
-        <IconButton className="cancel-model-process-button" iconProps={{ iconName: "cancel" }} title={cancelLabel} onClick={handleCancel} />
+        <Button appearance="subtle" className="cancel-model-process-button" icon={<FluentIcon name="cancel" />} title={cancelLabel} aria-label={cancelLabel} onClick={handleCancel} />
       ) : null}
     </React.Fragment>
   );

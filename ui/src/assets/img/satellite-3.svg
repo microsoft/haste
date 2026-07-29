@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-label="Satellite imagery placeholder">
+  <defs>
+    <linearGradient id="h3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.09"/><stop offset="1" stop-color="#000000" stop-opacity="0.13"/></linearGradient>
+    <filter id="g3"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/><feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.06 0"/></filter>
+  </defs>
+  <!-- coastal -->
+  <rect width="400" height="300" fill="#2e6382"/>
+  <!-- deep to shallow water -->
+  <rect width="400" height="300" fill="#2e6382"/>
+  <path d="M400,0 L400,300 L150,300 C 170,230 120,180 180,120 C 220,80 200,30 260,0 Z" fill="#3d7ea0"/>
+  <!-- land mass -->
+  <path d="M400,0 L400,300 L180,300 C 200,230 150,190 210,130 C 250,90 235,35 300,0 Z" fill="#7c8a58"/>
+  <!-- beach edge -->
+  <path d="M400,0 L400,300 L180,300 C 200,230 150,190 210,130 C 250,90 235,35 300,0 Z" fill="none" stroke="#d8cfa8" stroke-width="8" opacity="0.7"/>
+  <!-- vegetation on land -->
+  <g fill="#4b5a35" opacity="0.85">
+    <ellipse cx="330" cy="70" rx="30" ry="22"/><ellipse cx="360" cy="120" rx="24" ry="18"/>
+    <ellipse cx="300" cy="180" rx="34" ry="24"/><ellipse cx="350" cy="230" rx="26" ry="20"/>
+  </g>
+  <!-- coastal road -->
+  <path d="M300,-5 C 250,60 285,120 250,175 C 220,220 260,270 250,305" fill="none" stroke="#cfc9b2" stroke-width="4" opacity="0.7"/>
+  <!-- built-up near coast -->
+  <g fill="#b6ad98" opacity="0.9">
+    <rect x="315" y="95" width="14" height="11"/><rect x="332" y="99" width="10" height="9"/>
+    <rect x="300" y="205" width="13" height="11"/><rect x="318" y="209" width="9" height="9"/>
+  </g>
+  <!-- boats/wake -->
+  <g stroke="#dfe8ee" stroke-width="2" opacity="0.5"><line x1="60" y1="90" x2="95" y2="110"/><line x1="90" y1="200" x2="130" y2="215"/></g>
+  <rect width="400" height="300" fill="url(#h3)"/>
+  <rect width="400" height="300" filter="url(#g3)"/>
+</svg>

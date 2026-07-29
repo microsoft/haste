@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { Text } from "@fluentui/react";
+import { Text } from "@fluentui/react-components";
 import React from "react";
 import PropTypes from "prop-types";
 import "../../assets/css/progress-bar.css";
@@ -25,7 +25,7 @@ const ProgressBar = ({ progress }) => {
             color: "black",
           }}
         >
-          <Text variant="medium" className="text-light">
+          <Text className="text-light">
             {isNaN(progress) ? progress : `${progress}%`}
           </Text>
         </span>

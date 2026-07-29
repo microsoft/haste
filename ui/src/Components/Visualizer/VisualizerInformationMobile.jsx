@@ -2,10 +2,11 @@
 // Licensed under the MIT License.
 import {
   Checkbox,
-  ActionButton,
+  Button,
   Text,
-  Toggle,
-} from "@fluentui/react";
+  Switch,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 
 
 import { useState } from "react";
@@ -42,26 +43,26 @@ const VisualizerInformationMobile = ({
       <div
         className="absolute-labels post-disaster visualizer-information-mobile d-block d-lg-none"
       >
-        <ActionButton
-          iconProps={{ iconName: panelVisibility === "" ? "cancel" : "info" }}
+        <Button
+          appearance="transparent"
+          icon={<FluentIcon name={panelVisibility === "" ? "cancel" : "info"} />}
           onClick={() => {
             togglePanelVisibility();
           }}
         >
           <span className="ms-2 fw-semibold">Info</span>
-        </ActionButton>
+        </Button>
 
         <div className={panelVisibility + " p-3 pt-0 d-flex flex-column"}>
-          <Text variant="medium" className="mt-2 fw-semibold">
+          <Text className="mt-2 fw-semibold">
             {visualizerResults.projectName}
           </Text>
 
-          <Toggle
-            onText="Post Event"
-            offText="Pre Event"
+          <Switch
+            label={swipeStateMobile === "post" ? "Post Event" : "Pre Event"}
             checked={swipeStateMobile === "post"}
-            onChange={(e, checked) =>
-              setSwipeStateMobile(checked ? "post" : "pre")
+            onChange={(e, data) =>
+              setSwipeStateMobile(data.checked ? "post" : "pre")
             }
             className="mt-2"
           />
@@ -69,15 +70,15 @@ const VisualizerInformationMobile = ({
           <hr />
           {swipeStateMobile === "pre" ? (
             <>
-              <Text variant="medium" className="fw-semibold">
+              <Text className="fw-semibold">
                 Pre disaster imagery
               </Text>
-              <Text variant="medium">
+              <Text>
                 {convertPreOrPostEventImageryDate(
                   visualizerResults.imageryCaptureDatePreEvent
                 )}
               </Text>
-              <Text variant="small">
+              <Text size={200}>
                 {convertPreOrPostEventImagerySource(
                   visualizerResults.preDisasterImagery.url, visualizerResults.sourceTypePreEvent
                 )}
@@ -85,15 +86,15 @@ const VisualizerInformationMobile = ({
             </>
           ) : (
             <>
-              <Text variant="medium" className="fw-semibold">
+              <Text className="fw-semibold">
                 Post disaster imagery
               </Text>
-              <Text variant="medium">
+              <Text>
                 {convertPreOrPostEventImageryDate(
                   visualizerResults.imageryCaptureDatePostEvent
                 )}
               </Text>
-              <Text variant="small">
+              <Text size={200}>
                 {convertPreOrPostEventImagerySource(
                   visualizerResults.postDisasterImagery.url, visualizerResults.sourceTypePostEvent
                 )}
@@ -106,20 +107,20 @@ const VisualizerInformationMobile = ({
             <Checkbox
               defaultChecked={true}
               label="Predicted damage layer"
-              onChange={(e, checked) =>
+              onChange={(e, data) =>
                 togglePredictedDamageLayerVisibility(
                   "predictedDamageLayer",
-                  checked
+                  data.checked
                 )
               }
             />
             <Checkbox
               defaultChecked={false}
               label="Predictions layer (raw)"
-              onChange={(e, checked) =>
+              onChange={(e, data) =>
                 togglePredictedDamageLayerVisibility(
                   "predictionsLayer",
-                  checked
+                  data.checked
                 )
               }
             />

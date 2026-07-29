@@ -6,11 +6,20 @@ import App from './App';
 import 'bootstrap/dist/css/bootstrap.min.css';
 
 import { AppProvider } from "./AppContext.jsx";
+import { ThemeProvider } from "./util/ThemeContext.jsx";
+import { getInitialTheme, applyTheme } from "./util/theme";
+import { getInitialPalette, applyPaletteCssVars } from "./util/theme";
+
+// Apply the persisted theme + palette before first render to avoid a flash.
+applyTheme(getInitialTheme());
+applyPaletteCssVars(getInitialPalette());
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <BrowserRouter>
-    <AppProvider>
-      <App />
-    </AppProvider>
+    <ThemeProvider>
+      <AppProvider>
+        <App />
+      </AppProvider>
+    </ThemeProvider>
   </BrowserRouter>
 );

@@ -6,11 +6,14 @@ import StatusIndicatorModal from "./StatusIndicatorModal";
 import { validateTimestamp } from "../../util/validation";
 
 import PropTypes from "prop-types";
-import { IconButton } from "@fluentui/react";
+import { Button } from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 
-const ModelResultsStatusIndicator = ({ statusMessage }) => {
+const ModelResultsStatusIndicator = ({ statusMessage, contextLabel }) => {
   ModelResultsStatusIndicator.propTypes = {
     statusMessage: PropTypes.string.isRequired,
+    // Optional label identifying the model these result messages belong to.
+    contextLabel: PropTypes.string,
   };
   
   const [statusMessageList, setStatusMessageList] = React.useState([]);
@@ -70,10 +73,11 @@ const ModelResultsStatusIndicator = ({ statusMessage }) => {
     <React.Fragment>
       {statusMessageList.length > 0 && (
         <div className="d-flex flex-row align-items-center">
-          <IconButton
-            iconProps={{ iconName: "Info" }}
+          <Button
+            appearance="subtle"
+            icon={<FluentIcon name="Info" />}
             title="Show status messages"
-            ariaLabel="Show status messages"
+            aria-label="Show status messages"
             className="ms-1"
             onClick={() => {
               setIsModalVisible(true);
@@ -86,6 +90,7 @@ const ModelResultsStatusIndicator = ({ statusMessage }) => {
       {isModalVisible && (
         <StatusIndicatorModal
           statusMessages={statusMessageList}
+          contextLabel={contextLabel}
           onClose={() => {
             setIsModalVisible(false);
           }}

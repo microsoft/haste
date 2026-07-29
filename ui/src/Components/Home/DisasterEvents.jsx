@@ -21,6 +21,12 @@ const DisasterEvents = ({dashboardData,  width, height }) => {
 
     const affectedCountries = dashboardData.flatMap((project) => project.affectedCountries);
 
+    // Follow the active color palette (updated via the CSS custom property)
+    // instead of a hardcoded brand blue.
+    const primaryColor =
+      getComputedStyle(document.documentElement)
+        .getPropertyValue("--primary-color")
+        .trim() || "#1f4e79";
 
     const svg = d3.select(svgRef.current).attr('width', width).attr('height', height);
 
@@ -49,7 +55,7 @@ const DisasterEvents = ({dashboardData,  width, height }) => {
         .on('click', (event, d) => {
           alert(`${d.properties.name}`);
         })
-        .attr('fill', (d) => (d.properties.affected ? '#0078D4' : 'transparent'));
+        .attr('fill', (d) => (d.properties.affected ? primaryColor : 'transparent'));
     });
   }, []);
 

@@ -1,7 +1,15 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { PrimaryButton } from "@fluentui/react";
+import {
+  Button,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import React, { useContext, useState } from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
@@ -82,7 +90,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
         disabled: model.inferenceStatus !== "Processed",
         key: "viewResults",
         text: "View",
-        iconProps: { iconName: "Forward" },
+        icon: <FluentIcon name="Forward" />,
         onClick: () => {
           navigate(
             "/visualizer/" +
@@ -97,7 +105,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
       {
         key: "downloadGeopackage",
         text: "Download Geopackage (.gpkg)",
-        iconProps: { iconName: "download" },
+        icon: <FluentIcon name="download" />,
         onClick: () => {
           handleDownload(model.gpkgUrl);
         },
@@ -106,7 +114,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
       {
         key: "downloadTrainingArtifacts",
         text: trainingZipLabel,
-        iconProps: { iconName: "download" },
+        icon: <FluentIcon name="download" />,
         onClick: () => {
           handleDownload(model.artifacts.trainingZipUrl);
         },
@@ -115,7 +123,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
       {
         key: "downloadInferenceArtifacts",
         text: inferenceZipLabel,
-        iconProps: { iconName: "download" },
+        icon: <FluentIcon name="download" />,
         onClick: () => {
           handleDownload(model.artifacts.inferenceZipUrl);
         },
@@ -124,14 +132,14 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
       {
         key: "validationReport",
         text: "Validation Report",
-        iconProps: { iconName: "ReportDocument" },
+        icon: <FluentIcon name="ReportDocument" />,
         disabled: model.inferenceStatus !== "Processed" || !(validationLabelCount > 0),
         onClick: () => setShowValidationReport(true),
       },
       {
         key: "assessmentReport",
         text: "Assessment Report",
-        iconProps: { iconName: "AnalyticsReport" },
+        icon: <FluentIcon name="AnalyticsReport" />,
         // Predictions alone (+ cached footprints) are enough for the
         // damage-count estimate; labels are optional and just unlock the
         // precision/recall section inside the modal.
@@ -145,17 +153,36 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
     return (
       <React.Fragment key={"models_" + projectId + "_" + imageLayerId}>
         <div className="d-flex align-items-center pt-1 pb-1">
-          <PrimaryButton
-            id={"singleModelResults" + index}
-            text="Results"
-            menuProps={resultsMenuOptions(model)}
-            allowDisabledFocus
-            className="dashboard-button"
-            disabled={evaluateViewResultsButtonState(model)}
-          />
+          <Menu positioning="below-end">
+            <MenuTrigger disableButtonEnhancement>
+              <Button
+                appearance="primary"
+                id={"singleModelResults" + index}
+                className="dashboard-button dashboard-button-light"
+                disabled={evaluateViewResultsButtonState(model)}
+              >
+                Results
+              </Button>
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                {resultsMenuOptions(model).items.map((mi) => (
+                  <MenuItem
+                    key={mi.key}
+                    icon={mi.icon}
+                    disabled={mi.disabled}
+                    onClick={mi.onClick}
+                  >
+                    {mi.text}
+                  </MenuItem>
+                ))}
+              </MenuList>
+            </MenuPopover>
+          </Menu>
           {model.artifacts && model.artifacts.zipStatusMessage && (
             <ModelResultsStatusIndicator
               statusMessage={model.artifacts.zipStatusMessage}
+              contextLabel={`Model: ${model.name} \u00b7 Results`}
             />
           )}
         </div>

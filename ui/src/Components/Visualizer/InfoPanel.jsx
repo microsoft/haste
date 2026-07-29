@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 import {
   Checkbox,
-  ActionButton,
+  Button,
   Text,
-} from "@fluentui/react";
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 
 import { useState, useContext } from "react";
 import PropType from "prop-types";
@@ -37,20 +38,21 @@ const InfoPanel = ({
       <div
         className="absolute-labels info-panel col-12"
       >
-        <ActionButton
-          iconProps={{ iconName: panelVisibility === "" ? "chevronDown" : "chevronUp" }}
+        <Button
+          appearance="transparent"
+          icon={<FluentIcon name={panelVisibility === "" ? "chevronDown" : "chevronUp"} />}
           onClick={() => {
             togglePanelVisibility();
           }}
         >
           <span className="ms-2 fw-semibold">{appParams.bootstrapBreakpoint > 0 ? "Map Settings" : "Legend"}</span>
-        </ActionButton>
+        </Button>
 
         <div className={panelVisibility + " ps-3 pe-3"}>
 
 
           <div className="d-flex flex-column">
-            <Text variant="small" className="fw-bold mt-3 mb-3 d-none">
+            <Text size={200} className="fw-bold mt-3 mb-3 d-none">
               Select Imagery Layers
             </Text>
             <div
@@ -59,10 +61,10 @@ const InfoPanel = ({
               <Checkbox
                 defaultChecked={true}
                 label="Predicted building damage layer"
-                onChange={(e, checked) =>
+                onChange={(e, data) =>
                   togglePredictedDamageLayerVisibility(
                     "predictedDamageLayer",
-                    checked
+                    data.checked
                   )
                 }
               />
@@ -70,17 +72,17 @@ const InfoPanel = ({
                 className="mt-2"
                 defaultChecked={false}
                 label="Predictions layer (raw)"
-                onChange={(e, checked) =>
+                onChange={(e, data) =>
                   togglePredictedDamageLayerVisibility(
                     "predictionsLayer",
-                    checked
+                    data.checked
                   )
                 }
               />
             </div>
           </div>
           <div className="d-flex flex-column">
-            <Text variant="small" className="fw-bold mt-2 d-none d-xl-block">
+            <Text size={200} className="fw-bold mt-2 d-none d-xl-block">
               Legend
             </Text>
 
@@ -90,15 +92,16 @@ const InfoPanel = ({
               className="map-legend mb-3 mt-3"
             />
 
-            <ActionButton
-              iconProps={{ iconName: "MapPin" }}
+            <Button
+              appearance="transparent"
+              icon={<FluentIcon name="MapPin" />}
               className="d-none d-xl-block"
               onClick={() => {
                 resetMapPosition(visualizerResults.studyArea);
               }}
             >
               Reset map position
-            </ActionButton>
+            </Button>
 
           </div>
         </div>

@@ -1,7 +1,16 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { IconButton, Text, TooltipHost } from "@fluentui/react";
+import {
+  Tooltip,
+  Button,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import { useContext } from "react";
 import PropTypes from "prop-types";
 import { apiDelete, apiPut } from "../../util/api";
@@ -57,7 +66,7 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
           disabled: model.inferenceStatus !== "Processed",
           key: "AddModelTrainingToCatalog",
           text: "Add Model to Catalog",
-          iconProps: { iconName: "ProductCatalog" },
+          icon: <FluentIcon name="ProductCatalog" />,
           onClick: () => {
             setModalComponent(
               <CreateEditModelCheckpoint
@@ -76,7 +85,7 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
         {
           key: "ExportLabelsToGeoJson",
           text: "Export Labels to GeoJSON",
-          iconProps: { iconName: "Download" },
+          icon: <FluentIcon name="Download" />,
           disabled: !model || model.labelsUrl === null,
           onClick: () => {
             if (model && model.labelsUrl) {
@@ -95,7 +104,7 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
         {
           key: "remove",
           text: "Remove",
-          iconProps: { iconName: "Delete" },
+          icon: <FluentIcon name="Delete" />,
           onClick: () => {
             setDialog("Important", `Do you want to remove the model?`, [
               {
@@ -143,39 +152,37 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
         const isInference = !!model.inferenceStatus;
 
         return (
-          <tr key={index}>
-            <td className="pe-3 custom-text-no-wrap">
-              <TooltipHost
-                content={model.name}
-                delay={2}
-                id={`modelNameTooltip${index}`}
-              >
-                <Text variant="small">
-                  <span>{limitTextLength(model.name, false, 59)}</span>
-                </Text>
-              </TooltipHost>
-            </td>
-            <td className="pe-3 custom-text-no-wrap d-none d-xxl-table-cell">
-              <Text variant="small">
-                <span className="fw-semibold">Trained:</span> {trainDate}
-              </Text>
-            </td>
-            <td className="pe-3 custom-text-no-wrap d-none d-xxl-table-cell">
-              <TooltipHost
-                content={model.userId}
-                delay={2}
-                id={`modelUserIdTooltip${index}`}
-              >
-                <Text variant="small">
-                  <span className="fw-semibold">User: </span>
-                  {userId}
-                </Text>
-              </TooltipHost>
-            </td>
-            <td className="pe-3 custom-text-no-wrap">
-              <Text variant="medium">{labelsText}</Text>
-            </td>
-            <td className="pe-3 custom-text-no-wrap d-flex align-items-center">
+          <div className="lmodel" key={index}>
+            <div className="lmodel-info">
+              <div className="lmodel-name-row">
+                <Tooltip content={model.name} relationship="label">
+                  <span className="lmodel-name" id={`modelNameTooltip${index}`}>
+                    {limitTextLength(model.name, false, 59)}
+                  </span>
+                </Tooltip>
+                {labelsText && (
+                  <span className="lmodel-chip">{labelsText}</span>
+                )}
+              </div>
+              <div className="lmodel-meta">
+                {trainDate && (
+                  <span>
+                    <b>Trained:</b> {trainDate}
+                  </span>
+                )}
+                {trainDate && model.userId && (
+                  <span className="lmodel-meta-sep">&middot;</span>
+                )}
+                {model.userId && (
+                  <Tooltip content={model.userId} relationship="label">
+                    <span id={`modelUserIdTooltip${index}`}>
+                      <b>User:</b> {userId}
+                    </span>
+                  </Tooltip>
+                )}
+              </div>
+            </div>
+            <div className="lmodel-status">
               <StatusIndicator
                 currentStep={isInference ? model.inferenceCurrentStep : model.currentStep}
                 totalSteps={isInference ? model.inferenceTotalSteps : model.totalSteps}
@@ -184,16 +191,16 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
                 statusMessage={statusMessage}
                 id={isInference ? `singleModelInferenceStatus${index}` : `singleModelTrainStatus${index}`}
                 prefix={isInference ? "Inference" : "Training"}
+                contextLabel={`Model: ${model.name} \u00b7 ${isInference ? "Inference" : "Training"}`}
               />
-
               <ModelCancelButton
                 model={model}
                 projectId={projectId}
                 imageLayerId={imageLayerId}
                 fetchProjectDetails={fetchProjectDetails}
               />
-            </td>
-            <td className="pe-3 custom-text-no-wrap">
+            </div>
+            <div className="lmodel-actions">
               <ModelResultsButton
                 model={model}
                 projectId={projectId}
@@ -201,18 +208,35 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
                 index={index}
                 validationLabelCount={validationLabelCount}
               />
-            </td>
-            <td>
-              <IconButton
-                id={`singleModelMoreOptions${index}`}
-                className="no-dropdown-icon"
-                menuProps={moreMenuOptions(model.modelId)}
-                iconProps={{ iconName: "more" }}
-                title="Menu"
-                ariaLabel="Menu"
-              />
-            </td>
-          </tr>
+              <Menu positioning="below-end">
+                <MenuTrigger disableButtonEnhancement>
+                  <Button
+                    id={`singleModelMoreOptions${index}`}
+                    appearance="subtle"
+                    className="no-dropdown-icon"
+                    icon={<FluentIcon name="More" />}
+                    title="Menu"
+                    aria-label="Menu"
+                  />
+                </MenuTrigger>
+                <MenuPopover>
+                  <MenuList>
+                    {moreMenuOptions(model.modelId).items.map((mi) => (
+                      <MenuItem
+                        key={mi.key}
+                        className={mi.className}
+                        icon={mi.icon}
+                        disabled={mi.disabled}
+                        onClick={mi.onClick}
+                      >
+                        {mi.text}
+                      </MenuItem>
+                    ))}
+                  </MenuList>
+                </MenuPopover>
+              </Menu>
+            </div>
+          </div>
         );
       })}
     </>

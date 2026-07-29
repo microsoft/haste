@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 // Components
 import PropTypes from "prop-types";
-import { Text, Link, TooltipHost } from "@fluentui/react";
+import { Text, Link, Tooltip } from "@fluentui/react-components";
 import ProjectInsightsBubble from "./ProjectInsightsBuble";
 import { useNavigate } from "react-router-dom";
 import { limitTextLength } from "../../util/conversion";
@@ -27,23 +27,22 @@ const OpenProject = ({ openProject, index }) => {
       >
         <div className="col pe-md-4 pe-lg-5">
           <h6 className="mb-2 custom-text-color">
-            <TooltipHost
+            <Tooltip
               content={openProject.name}
-              delay={2}
+              relationship="label"
             >
-            {limitTextLength(openProject.name,30,100)}
-            </TooltipHost>
+              <span>{limitTextLength(openProject.name,30,100)}</span>
+            </Tooltip>
           </h6>
           <Text
-            variant="mediumPlus"
             className="home-project-description mb-3 mb-md-0"
           >
-            <TooltipHost
+            <Tooltip
               content={openProject.description}
-              delay={2}
+              relationship="label"
             >
-            {limitTextLength(openProject.description,200,500)}
-            </TooltipHost>
+              <span>{limitTextLength(openProject.description,200,500)}</span>
+            </Tooltip>
           </Text>
         </div>
         <div className="col-auto mt-2 md-lg-0 d-none d-lg-block">

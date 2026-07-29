@@ -5,10 +5,8 @@ import { useEffect, useState } from "react";
 
 import {
   Checkbox,
-  DefaultButton,
-  PrimaryButton,
-  Text
-} from "@fluentui/react";
+  Button,
+} from "@fluentui/react-components";
 
 
 import SectionModal from "../SectionModal";
@@ -163,7 +161,7 @@ const ImportLabelsModal = ({ onClose, geojsonData, labelingToolDataRef, drawingM
 
 
             {invalidLabels.length > 0 &&
-                  <li><Checkbox boxSide="end" onChange={(e) => setIncludeInvalidLabels(e.target.checked)} label={`${invalidLabels.length} label(s) found in study area with missing primary class. Include in import?`} /></li> 
+                  <li><Checkbox labelPosition="before" onChange={(e, data) => setIncludeInvalidLabels(data.checked)} label={`${invalidLabels.length} label(s) found in study area with missing primary class. Include in import?`} /></li> 
             }
 
 
@@ -183,10 +181,10 @@ const ImportLabelsModal = ({ onClose, geojsonData, labelingToolDataRef, drawingM
 
             <div className="row">
               <div className="col-12 d-flex justify-content-end pt-2">
-                <PrimaryButton onClick={importLabels} className="me-2" id="createEditProjectSubmit" disabled={validLabels.length === 0 && invalidLabels.length === 0}>
+                <Button appearance="primary" onClick={importLabels} className="me-2" id="createEditProjectSubmit" disabled={validLabels.length === 0 && invalidLabels.length === 0}>
                   Import
-                </PrimaryButton>
-                <DefaultButton onClick={onClose}>Cancel</DefaultButton>
+                </Button>
+                <Button onClick={onClose}>Cancel</Button>
               </div>
             </div>
           </div>

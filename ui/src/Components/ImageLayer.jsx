@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { DefaultButton, ActionButton, IconButton } from "@fluentui/react";
+import { Button } from "@fluentui/react-components";
+import { FluentIcon } from "../util/icons";
 import { useEffect, useState, useContext } from "react";
 import { useParams } from "react-router-dom";
 
@@ -79,28 +80,30 @@ const ImageLayer = () => {
             >
               <h5 style={{ color: "#FFFFFF" }}>Imagery Preview</h5>
               <div className="d-flex justify-content-between">
-                <IconButton
-                  iconProps={{ iconName: "ChevronLeft" }}
+                <Button
+                  appearance="subtle"
+                  icon={<FluentIcon name="ChevronLeft" />}
+                  aria-label="Previous"
                   style={{ color: "#FFFFFF" }}
                   className="mt-auto"
                 />
-                <IconButton
-                  iconProps={{ iconName: "ChevronRight" }}
+                <Button
+                  appearance="subtle"
+                  icon={<FluentIcon name="ChevronRight" />}
+                  aria-label="Next"
                   style={{ color: "#FFFFFF" }}
                   className="mt-auto"
                 />
               </div>
               <div className="d-flex flex-row justify-content-end">
-                <ActionButton
+                <Button
+                  appearance="transparent"
                   style={{ color: "#FFFFFF" }}
-                  iconProps={{
-                    iconName: "ScaleVolume",
-                    style: { color: "#ffffff" },
-                  }}
+                  icon={<FluentIcon name="ScaleVolume" style={{ color: "#ffffff" }} />}
                   className="mt-auto"
                 >
                   View More
-                </ActionButton>
+                </Button>
               </div>
             </div>
 
@@ -121,7 +124,7 @@ const ImageLayer = () => {
             <div
               className="col p-3 d-flex flex-column"
               style={{
-                backgroundColor: "#0078d4",
+                backgroundColor: "var(--primary-color)",
                 borderRadius: "5px",
                 aspectRatio: "1 / 1",
                 justifyContent: "space-between",
@@ -142,9 +145,9 @@ const ImageLayer = () => {
                 </div>
               </div>
               <div className="d-flex flex-row justify-content-end">
-                <DefaultButton className="mt-auto" disabled={selectedImageLayer.status !== "Processed"}>
+                <Button className="mt-auto" disabled={selectedImageLayer.status !== "Processed"}>
                   Launch Labeling Tool
-                </DefaultButton>
+                </Button>
               </div>
             </div>
           </div>
@@ -175,14 +178,14 @@ const ImageLayer = () => {
 
                         <tr>
                           <td className="pt-3">
-                            <DefaultButton
+                            <Button
                               className="dashboard-button d-none"
                               disabled={
                                 selectedImageLayer.status !== "Processed"
                               }
                             >
                               Train a Model
-                            </DefaultButton>
+                            </Button>
                           </td>
                         </tr>
                       </table>

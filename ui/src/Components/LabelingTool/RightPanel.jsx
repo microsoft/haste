@@ -1,5 +1,16 @@
 import { useEffect, useState } from "react";
-import { ChoiceGroup, PrimaryButton } from "@fluentui/react";
+import {
+  RadioGroup,
+  Radio,
+  Field,
+  SplitButton,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import CreateEditModelTrainingModal from "../CreateEditModelTrainingModal";
 import { saveLabels } from "./LabelingToolHelper";
 import DrawingToolbar from "./DrawingToolbar";
@@ -172,29 +183,61 @@ const RightPanel = ({
         id="rightPanel"
       >
         <div className="col-12 d-flex">
-          <ChoiceGroup
-            options={
-              primaryClasses && primaryClasses.length > 0 ? primaryClasses : []
-            }
-            selectedKey={selectedPrimaryClass}
-            label="Primary Class"
-            onChange={(e, option) => {
-              handlePrimaryClassChange(option.key);
-            }}
-          />
+          <Field label="Primary Class">
+            <RadioGroup
+              value={selectedPrimaryClass != null ? String(selectedPrimaryClass) : ""}
+              onChange={(e, data) => {
+                handlePrimaryClassChange(data.value);
+              }}
+            >
+              {(primaryClasses && primaryClasses.length > 0
+                ? primaryClasses
+                : []
+              ).map((option) => (
+                <Radio
+                  key={String(option.key)}
+                  value={String(option.key)}
+                  label={option.text}
+                />
+              ))}
+            </RadioGroup>
+          </Field>
         </div>
         <div className="col-12 d-flex mt-2 flex-column pt-2 pb-2">
-          <PrimaryButton
-            id="saveAndTrainButton"
-            split
-            iconProps={{ iconName: "Save" }}
-            menuProps={labelSavingMenuOptions()}
-            className="w-100"
-            text="Save"
-            onClick={async () => {
-              await handleSave();
-            }}
-          />
+          <Menu positioning="below-end">
+            <MenuTrigger disableButtonEnhancement>
+              {(triggerProps) => (
+                <SplitButton
+                  id="saveAndTrainButton"
+                  appearance="primary"
+                  className="w-100"
+                  icon={<FluentIcon name="Save" />}
+                  menuButton={triggerProps}
+                  primaryActionButton={{
+                    onClick: async () => {
+                      await handleSave();
+                    },
+                  }}
+                >
+                  Save
+                </SplitButton>
+              )}
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                {labelSavingMenuOptions().items.map((item) => (
+                  <MenuItem
+                    key={item.key}
+                    icon={<FluentIcon name={item.iconProps.iconName} />}
+                    disabled={item.disabled}
+                    onClick={item.onClick}
+                  >
+                    {item.text}
+                  </MenuItem>
+                ))}
+              </MenuList>
+            </MenuPopover>
+          </Menu>
         </div>
       </div>
     </>

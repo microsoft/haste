@@ -7,9 +7,10 @@ import StatusIndicatorModal from "./StatusIndicatorModal";
 import { validateTimestamp } from "../../util/validation";
 
 import PropTypes from "prop-types";
-import { IconButton } from "@fluentui/react";
+import { Button } from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 
-const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusMessage, id, prefix = "Status", infoMetadata }) => {
+const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusMessage, id, prefix = "Status", infoMetadata, contextLabel }) => {
   StatusIndicator.propTypes = {
     currentStep: PropTypes.number.isRequired,
     totalSteps: PropTypes.number.isRequired,
@@ -26,6 +27,9 @@ const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusM
         value: PropTypes.node.isRequired,
       })
     ),
+    // Optional label identifying the element these messages belong to
+    // (e.g. "Image Layer: Pre-event"). Passed through to the info panel.
+    contextLabel: PropTypes.string,
   };
   
 
@@ -118,11 +122,12 @@ const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusM
             />
           )}
 
-          <IconButton
+          <Button
             id={id}
-            iconProps={{ iconName: "Info" }}
+            appearance="subtle"
+            icon={<FluentIcon name="Info" />}
             title="Show status messages"
-            ariaLabel="Show status messages"
+            aria-label="Show status messages"
             className="ms-1"
             onClick={() => {
               setIsModalVisible(true);
@@ -136,6 +141,7 @@ const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusM
         <StatusIndicatorModal
           statusMessages={statusMessageList}
           infoMetadata={infoMetadata}
+          contextLabel={contextLabel}
           onClose={() => {
             setIsModalVisible(false);
           }}

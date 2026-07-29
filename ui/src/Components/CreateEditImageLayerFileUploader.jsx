@@ -2,7 +2,9 @@
 // Licensed under the MIT License.
 import React, { useState, useEffect } from "react";
 import propTypes from "prop-types";
-import { Text, IconButton } from "@fluentui/react";
+import { Text } from "@fluentui/react-components";
+import { FluentIcon } from "../util/icons";
+import { Button } from "@fluentui/react-components";
 import { convertFileIntoUrl, removeUrlFromEventImageryArray } from "./CreateEditImageLayerHelper";
 import { apiPost } from "../util/api";
 
@@ -93,14 +95,16 @@ const CreateEditImageLayerFileUploader = ({
     <React.Fragment>
       <div className="col-12 d-flex flex-column flex-lg-row align-items-start- align-items-lg-center">
         <div className="col flex-grow-1 me-2">
-          <Text variant="medium">{file.value.name}</Text>
+          <Text>{file.value.name}</Text>
         </div>
         <div className="col-auto d-flex align-items-center mt-2 mt-lg-0">
           <ProgressBar
             progress={progress}
           />
-          <IconButton
-            iconProps={{ iconName: "Delete" }}
+          <Button
+            appearance="subtle"
+            icon={<FluentIcon name="Delete" />}
+            aria-label="Delete"
             onClick={() =>
               removeUrlFromEventImageryArray(
                 file.id,

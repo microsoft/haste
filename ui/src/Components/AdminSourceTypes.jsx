@@ -1,12 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { PrimaryButton, Text } from "@fluentui/react";
+import { Button, Text } from "@fluentui/react-components";
 
 import { useState, useEffect, useContext } from "react";
 import { apiGet } from "../util/api";
 import SourceTypeRow from "./ProjectManagement/SourceTypeRow";
 import SectionHeader from "./Section/SectionHeader";
+import { FluentIcon } from "../util/icons";
 
 import { AppContext } from "../AppContext";
 
@@ -18,6 +19,15 @@ const AdminSourceTypes = () => {
   const [modalComponent, setModalComponent] = useState(null);
   const { setIsLoading, appParams } = useContext(AppContext);
   const [moreInfoVisibleId, setMoreInfoVisibleId] = useState(null);
+  const [sort, setSort] = useState({ key: "creationDate", dir: "desc" });
+
+  function toggleSort(key) {
+    setSort((prev) =>
+      prev.key === key
+        ? { key, dir: prev.dir === "asc" ? "desc" : "asc" }
+        : { key, dir: "asc" }
+    );
+  }
 
 
   useEffect(() => {
@@ -85,6 +95,11 @@ const AdminSourceTypes = () => {
     return null;
   }
 
+  const sortedSourceTypes = [...componentState].sort((a, b) => {
+    const dir = sort.dir === "asc" ? 1 : -1;
+    return String(a[sort.key] ?? "").localeCompare(String(b[sort.key] ?? "")) * dir;
+  });
+
   return (
     <>
       <div className="d-flex flex-column w-100">
@@ -93,8 +108,9 @@ const AdminSourceTypes = () => {
         <div className="container p-0">
           <div className="row m-0 mt-5 p-0">
             <div className="col-12 d-flex justify-content-startr">
-              <PrimaryButton
-                text="Add Source Type"
+              <Button
+                appearance="primary"
+                icon={<FluentIcon name="FabricNewFolder" />}
                 onClick={() =>
                   setModalComponent(
                     <CreateEditSourceTypeModal
@@ -102,7 +118,9 @@ const AdminSourceTypes = () => {
                     />
                   )
                 }
-              />
+              >
+                Add Source Type
+              </Button>
             </div>
           </div>
           <div className="row m-0 p-0 pt-5">
@@ -111,21 +129,75 @@ const AdminSourceTypes = () => {
                 <thead>
                   <tr>
                     <th className="pb-3 pe-4">
-                      <Text className="fw-semibold">Name</Text>
+                      <span
+                        className="pgrid-th-inner pgrid-th-sortable"
+                        onClick={() => toggleSort("name")}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            toggleSort("name");
+                          }
+                        }}
+                      >
+                        <Text className="fw-semibold">Name</Text>
+                        {sort.key === "name" && (
+                          <FluentIcon
+                            name={sort.dir === "asc" ? "SortUp" : "SortDown"}
+                            className="pgrid-sort-icon"
+                          />
+                        )}
+                      </span>
                     </th>
                     <th className="pb-3 pe-4 custom-text-no-wrap d-none d-xl-table-cell">
-                      <Text className="fw-semibold">Base URL</Text>
+                      <span
+                        className="pgrid-th-inner pgrid-th-sortable"
+                        onClick={() => toggleSort("baseURL")}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            toggleSort("baseURL");
+                          }
+                        }}
+                      >
+                        <Text className="fw-semibold">Base URL</Text>
+                        {sort.key === "baseURL" && (
+                          <FluentIcon
+                            name={sort.dir === "asc" ? "SortUp" : "SortDown"}
+                            className="pgrid-sort-icon"
+                          />
+                        )}
+                      </span>
                     </th>
                     <th className="pb-3 pe-4">
-                      <Text className="fw-semibold custom-text-no-wrap d-none d-xl-table-cell">Creation Date</Text>
+                      <span
+                        className="pgrid-th-inner pgrid-th-sortable custom-text-no-wrap d-none d-xl-inline-flex"
+                        onClick={() => toggleSort("creationDate")}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            toggleSort("creationDate");
+                          }
+                        }}
+                      >
+                        <Text className="fw-semibold">Creation Date</Text>
+                        {sort.key === "creationDate" && (
+                          <FluentIcon
+                            name={sort.dir === "asc" ? "SortUp" : "SortDown"}
+                            className="pgrid-sort-icon"
+                          />
+                        )}
+                      </span>
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {componentState.map((item) => (
+                  {sortedSourceTypes.map((item, index) => (
                     <SourceTypeRow
                       item={item}
-                      key={item.key}
+                      key={item.sourceTypeId || item.name || index}
                       moreInfoVisibleId={moreInfoVisibleId}
                       setMoreInfoVisibleId={setMoreInfoVisibleId}
                     />

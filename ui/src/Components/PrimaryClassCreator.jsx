@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import React from "react";
-import { TextField, IconButton } from "@fluentui/react";
+import { Input, Field, Button } from "@fluentui/react-components";
+import { FluentIcon } from "../util/icons";
 
 import {
   onChangePrimaryClass,
@@ -31,23 +32,23 @@ const PrimaryClassCreator = ({
   return (
     <React.Fragment key={"primaryClass" + index}>
       <div className="col-12 flex-column flex-md-row d-flex pt-1 mb-1">
-        <TextField
-          disabled={projectId !== undefined}
-          label="Name"
-          className="me-2 flex-grow-1"
-          value={primaryClass.name}
-          maxLength={25}
-          onChange={(e) => {
-            const filteredValue = e.target.value.replace(/[^A-Za-z0-9\-_\s]/g, "");
-            onChangePrimaryClass(
-              index,
-              "name",
-              filteredValue,
-              setComponentState,
-              componentState
-            );
-          }}
-        />
+        <Field label="Name" className="me-2 flex-grow-1">
+          <Input
+            disabled={projectId !== undefined}
+            value={primaryClass.name}
+            maxLength={25}
+            onChange={(e, data) => {
+              const filteredValue = data.value.replace(/[^A-Za-z0-9\-_\s]/g, "");
+              onChangePrimaryClass(
+                index,
+                "name",
+                filteredValue,
+                setComponentState,
+                componentState
+              );
+            }}
+          />
+        </Field>
         <div className="d-flex align-items-end">
           <CustomColorPicker
             disabled={projectId !== undefined}
@@ -67,9 +68,10 @@ const PrimaryClassCreator = ({
           />
 
           {projectId === undefined && (
-            <IconButton
+            <Button
+              appearance="subtle"
               aria-label="RemovePrimaryClass"
-              iconProps={{ iconName: "Delete" }}
+              icon={<FluentIcon name="Delete" />}
               onClick={() =>
                 removePrimaryClass(
                   index,

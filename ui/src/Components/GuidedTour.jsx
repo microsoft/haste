@@ -1,16 +1,16 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { TeachingBubble } from "@fluentui/react/lib/TeachingBubble";
 import { useContext, useEffect, useState } from "react";
 import { AppContext } from "../AppContext.jsx";
-import { Text } from "@fluentui/react/lib/Text";
-import parse from "html-react-parser";
 import {
-  PrimaryButton,
-  DefaultButton,
-  IconButton,
-} from "@fluentui/react/lib/Button";
-import { Checkbox } from "@fluentui/react";
+  Text,
+  Button,
+  Checkbox,
+  Popover,
+  PopoverSurface,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../util/icons";
+import parse from "html-react-parser";
 import {
   setGuidedTourState,
   validateIsGuidedTourDisabled,
@@ -56,18 +56,77 @@ const GuidedTour = () => {
     }
   };
 
-  const primaryButtonProps = {
-    children: "Previous",
-    onClick: () => {
-      handleStepChange(-1);
-    },
-  };
+  const renderTeachingBubble = () => {
+    const step = filteedTourSteps[appParams.currentTourStep - 1];
+    const anchor = document.querySelector(step.target);
+    if (!anchor) {
+      return null;
+    }
 
-  const secondaryButtonProps = {
-    children: "Next",
-    onClick: () => {
-      handleStepChange(1);
-    },
+    return (
+      <Popover open positioning={{ target: anchor }}>
+        <PopoverSurface>
+          <div className="d-flex flex-column" style={{ maxWidth: "320px" }}>
+            <div className="d-flex mb-2 justify-content-between align-items-center">
+              <Text className="fw-semibold">{step.title}</Text>
+              <Button
+                appearance="subtle"
+                icon={<FluentIcon name="Cancel" />}
+                aria-label="Close"
+                onClick={() => {
+                  initCurrentTour(null);
+                  setFilteredTourSteps([]);
+                }}
+              />
+            </div>
+            <Text>
+              {/*
+                SECURITY: parse() renders HTML from tour-step `content`. This
+                is safe ONLY because tour definitions are static,
+                maintainer-authored config bundled with the app (see
+                GuidedTourHelper / guidedTourProperties) — never user input or
+                API-sourced data. If tour content ever becomes user-editable or
+                fetched at runtime, this becomes an XSS sink: switch to a safe
+                renderer (e.g. react-markdown) or sanitize before parsing.
+              */}
+              {parse(step.content)}
+            </Text>
+
+            <Checkbox
+              label="Don’t show again. Click “?” at the top to re-enable."
+              className="mt-4 mb-4"
+              onChange={(ev, data) => {
+                setGuidedTourState(
+                  data.checked,
+                  initCurrentTour,
+                  appParams.currentTour.name,
+                  appParams.guidedTourProperties
+                );
+              }}
+            />
+
+            <div className="d-flex justify-content-between align-items-center">
+              <Text>{`${appParams.currentTourStep} of ${filteedTourSteps.length}`}</Text>
+              <div>
+                {appParams.currentTourStep > 1 && (
+                  <Button className="me-2" onClick={() => handleStepChange(-1)}>
+                    Previous
+                  </Button>
+                )}
+                {appParams.currentTourStep < filteedTourSteps.length && (
+                  <Button
+                    appearance="primary"
+                    onClick={() => handleStepChange(1)}
+                  >
+                    Next
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </PopoverSurface>
+      </Popover>
+    );
   };
 
   return (
@@ -90,9 +149,11 @@ const GuidedTour = () => {
                       .title
                   }
                 </Text>
-                <IconButton
+                <Button
+                  appearance="subtle"
                   style={{ color: "#FFFFFF" }}
-                  iconProps={{ iconName: "Cancel" }}
+                  icon={<FluentIcon name="Cancel" />}
+                  aria-label="Close"
                   onClick={() => {initCurrentTour(null); setFilteredTourSteps([]);}}
                 />
               </div>
@@ -114,14 +175,10 @@ const GuidedTour = () => {
 
               <Checkbox
                 label="Don’t show again. Click “?” at the top to re-enable."
-                styles={{
-                  checkbox: { borderColor: "#FFFFFF" },
-                  text: { color: "#FFFFFF", fontSize: "12.5px" },
-                }}
                 className="mt-4 mb-4"
-                onChange={(ev, checked) => {
+                onChange={(ev, data) => {
                   setGuidedTourState(
-                    checked,
+                    data.checked,
                     initCurrentTour,
                     appParams.currentTour.name,
                     appParams.guidedTourProperties
@@ -134,23 +191,24 @@ const GuidedTour = () => {
                   <Text className="text-light">{`${appParams.currentTourStep} of ${filteedTourSteps.length}`}</Text>
                 </div>
                 <div>
-                  <DefaultButton
-                    style={{ border: "1px solid", color: "#0078D4" }}
+                  <Button
+                    style={{ border: "1px solid", color: "var(--primary-color)" }}
                     className="me-2"
                     onClick={() => {
                       handleStepChange(-1);
                     }}
                   >
                     Previous
-                  </DefaultButton>
-                  <PrimaryButton
+                  </Button>
+                  <Button
+                    appearance="primary"
                     style={{ border: "1px solid #FFFFFF" }}
                     onClick={() => {
                       handleStepChange(1);
                     }}
                   >
                     Next
-                  </PrimaryButton>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -161,60 +219,8 @@ const GuidedTour = () => {
         filteedTourSteps &&
         appParams.currentTourStep <= filteedTourSteps.length &&
         filteedTourSteps[appParams.currentTourStep - 1].type ===
-          "teachingBubble" && isVisible &&(
-          <TeachingBubble
-            focusTrapZoneProps={{
-              forceFocusInsideTrap: false,
-            }}
-            target={
-              filteedTourSteps[appParams.currentTourStep - 1].target
-            }
-            hasCondensedHeadline={true}
-            footerContent={`${appParams.currentTourStep} of ${filteedTourSteps.length}`}
-            headline={
-              filteedTourSteps[appParams.currentTourStep - 1].title
-            }
-            primaryButtonProps={
-              appParams.currentTourStep > 1 ? primaryButtonProps : null
-            }
-            secondaryButtonProps={
-              appParams.currentTourStep < filteedTourSteps.length
-                ? secondaryButtonProps
-                : null
-            }
-            onPrimaryClick={() => {
-              handleStepChange(-1);
-            }}
-            onSecondaryClick={() => {
-              handleStepChange(1);
-            }}
-            hasCloseButton={true}
-            closeButtonAriaLabel="Close"
-            onDismiss={() => {
-              initCurrentTour(null);
-              setFilteredTourSteps([]);
-            }}
-          >
-            {filteedTourSteps[appParams.currentTourStep - 1].content}
-
-            <Checkbox
-              label="Don’t show again. Click “?” at the top to re-enable."
-              styles={{
-                checkbox: { borderColor: "#FFFFFF" },
-                text: { color: "#FFFFFF", fontSize: "12.5px" },
-              }}
-              className="mt-4 mb-4"
-              onChange={(ev, checked) => {
-                setGuidedTourState(
-                  checked,
-                  initCurrentTour,
-                  appParams.currentTour.name,
-                  appParams.guidedTourProperties
-                );
-              }}
-            />
-          </TeachingBubble>
-        )}
+          "teachingBubble" && isVisible &&
+        renderTeachingBubble()}
     </>
   );
 };

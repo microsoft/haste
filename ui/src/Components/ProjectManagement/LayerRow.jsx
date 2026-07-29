@@ -1,19 +1,28 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Imports
-import { DefaultButton, IconButton, Text, TooltipHost } from "@fluentui/react";
+import {
+  Text,
+  Tooltip,
+  Button,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import PropTypes from "prop-types";
 import ModelRow from "./ModelRow";
-import ModelRowMobile from "./ModelRowMobile";
-import React, { useContext } from "react";
+import React, { useContext, useState } from "react";
 import { apiDelete } from "../../util/api";
 import { limitTextLength } from "../../util/conversion";
+import { satellitePlaceholder } from "../../util/satellitePlaceholders";
 import { AppContext } from "../../AppContext";
 import CreateEditModelTrainingModal from "../CreateEditModelTrainingModal";
 import CreateEditEmbeddingModal from "../CreateEditEmbeddingModal";
 import { useNavigate } from "react-router-dom";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
-import ImageLayerInfoMobile from "./ImageLayerInfoMobile";
 import { fileDownload } from "../../util/file";
 
 const LayerRow = ({
@@ -21,6 +30,7 @@ const LayerRow = ({
   index,
   visibleModelId,
   projectId,
+  columns,
   onComponentChange,
   setModalComponent,
   fetchProjectDetails,
@@ -32,6 +42,7 @@ const LayerRow = ({
     index: PropTypes.number.isRequired,
     visibleModelId: PropTypes.string.isRequired,
     projectId: PropTypes.string.isRequired,
+    columns: PropTypes.array,
     onComponentChange: PropTypes.func.isRequired,
     setModalComponent: PropTypes.func.isRequired,
     fetchProjectDetails: PropTypes.func.isRequired,
@@ -40,6 +51,20 @@ const LayerRow = ({
   };
   const navigate = useNavigate();
   const { setIsLoading, appParams } = useContext(AppContext);
+  const isCompactLayout = appParams.bootstrapBreakpoint < 4;
+
+  // Optional columns controlled by the Customize-Columns menu. When no
+  // `columns` prop is supplied every optional column is shown.
+  const activeColumns = columns || [
+    "status",
+    "labeling",
+    "training",
+    "validation",
+    "creator",
+    "creationDate",
+  ];
+  const showColumn = (key) => activeColumns.includes(key);
+
 
   // Building labeling workflow: layers created with workflowType "building"
   // get an Embed button (kicks off a MOSAIKS embedding job) instead of the
@@ -48,6 +73,14 @@ const LayerRow = ({
   const isBuildingWorkflow = item.workflowType === "building";
   const embeddingModels =
     (item.models || []).filter((m) => m.modelType === "embedding") || [];
+  const hasModels = !!(item.models && item.models.length > 0);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  function toggleExpanded() {
+    if (hasModels) {
+      setIsExpanded((prev) => !prev);
+    }
+  }
 
   function handleEmbed() {
     setModalComponent(
@@ -82,7 +115,7 @@ const LayerRow = ({
       {
         key: "ExportLabelsToGeoJSON",
         text: "Export Labels to GeoJSON",
-        iconProps: { iconName: "Download" },
+        icon: <FluentIcon name="Download" />,
         disabled: item.labelsUrl === null,
         onClick: () => {
           if (item.labelsUrl) {
@@ -101,7 +134,7 @@ const LayerRow = ({
       {
         key: "DownloadBuildingFootprints",
         text: "Download Building Footprints",
-        iconProps: { iconName: "Download" },
+        icon: <FluentIcon name="Download" />,
         disabled: !item.buildingFootprintsUrl,
         onClick: () => {
           if (item.buildingFootprintsUrl) {
@@ -121,7 +154,7 @@ const LayerRow = ({
       {
         key: "DownloadValidAreaMask",
         text: "Download Valid Area Mask",
-        iconProps: { iconName: "Download" },
+        icon: <FluentIcon name="Download" />,
         disabled: !item.validAreaMaskUrl,
         onClick: () => {
           if (item.validAreaMaskUrl) {
@@ -141,7 +174,7 @@ const LayerRow = ({
       {
         key: "edit",
         text: "Edit",
-        iconProps: { iconName: "Edit" },
+        icon: <FluentIcon name="Edit" />,
         onClick: () => {
           setModalComponent(
             navigate("/edit-imageLayer/" + projectId + "/" + item.imageLayerId)
@@ -151,7 +184,7 @@ const LayerRow = ({
       {
         key: "remove",
         text: "Remove",
-        iconProps: { iconName: "Delete" },
+        icon: <FluentIcon name="Delete" />,
         onClick: () => {
           setDialog(
             "Important",
@@ -180,225 +213,275 @@ const LayerRow = ({
 
   return (
     <React.Fragment>
-      <tr>
+      {/** keep row metadata explicit so mobile CSS can match Projects-style cards */}
+      <tr
+        className={
+          "lrow-main " +
+          (hasModels ? "lrow-has-models " : "") +
+          (
+            isExpanded && hasModels
+              ? "lrow-expanded"
+              : ""
+          )
+        }
+      >
         <td
           id={"singleProjectExpandCollapseImageLayerModels" + index}
-          style={{ width: '43px' }}
-          className="align-items-center"
+          style={{ width: "32px" }}
+          className="align-items-center pgrid-expand-cell"
+          data-label=""
         >
-          {((item.models && item.models.length > 0) || appParams.bootstrapBreakpoint < 4) && (
-            <IconButton
-              onClick={() =>
-                onComponentChange(item.imageLayerId, "visibleModelId")
-              }
-              className="me-2"
+          {!isCompactLayout && hasModels && (
+            <Button
+              appearance="subtle"
+              onClick={toggleExpanded}
               aria-label="expand-collapse"
-              iconProps={{
-                iconName:
-                  visibleModelId == item.imageLayerId
-                    ? "ChevronDown"
-                    : "ChevronRight",
-                styles: {
-                  root: {
-                    fontSize: 12,
-                  },
-                },
-              }}
+              icon={
+                <FluentIcon
+                  name={
+                    isExpanded
+                      ? "ChevronDown"
+                      : "ChevronRight"
+                  }
+                />
+              }
             />
           )}
         </td>
-        <td className="custom-text-no-wrap">
-          <Text
-            variant="medium"
-            className="me-4"
-            id={"singleProjectName" + index}
-          >
-            {
-              <TooltipHost content={item.name} delay={2}>
-                {limitTextLength(item.name, false, 45)}
-              </TooltipHost>
-            }
-          </Text>
-        </td>
-        <td className="custom-text-no-wrap d-none d-xl-table-cell">
-          <StatusIndicator
-            id={"singleProjectImageLayerStatus" + index}
-            currentStep={item.currentStep}
-            totalSteps={item.totalSteps}
-            progressPct={item.progressPct}
-            status={item.status}
-            statusMessage={item.statusMessage}
-            prefix="Imagery"
-          />
-        </td>
-        <td className="custom-text-no-wrap d-none d-xl-table-cell">
-          {isBuildingWorkflow ? (
-            <>
-              <DefaultButton
-                id={"singleProjectEmbed" + index}
-                className="dashboard-button"
-                onClick={handleEmbed}
-                disabled={
-                  item.status !== "Processed" || !item.buildingFootprintsUrl
-                }
-              >
-                Embed
-              </DefaultButton>{" "}
-              <Text className="pe-4" variant="small">
-                ({embeddingModels.length})
-              </Text>
-            </>
-          ) : (
-            <>
-              <DefaultButton
-                id={"singleProjectLabelingToolLaunch" + index}
-                className="dashboard-button"
-                onClick={() =>
-                  navigate(`/labeling-tool/${projectId}/${item.imageLayerId}`)
-                }
-                disabled={item.status !== "Processed"}
-              >
-                Launch
-              </DefaultButton>{" "}
-              <Text className="pe-4" variant="small">
-                ({item.labelProjectCount})
-              </Text>
-            </>
-          )}
-        </td>
-        <td className="custom-text-no-wrap d-none d-xl-table-cell">
-          {isBuildingWorkflow ? (
-            <Text className="pe-4" variant="small">
-              &mdash;
-            </Text>
-          ) : (
-            <>
-              <DefaultButton
-                id={"singleProjectModelTraining" + index}
-                className="dashboard-button"
-                onClick={() =>
-                  setModalComponent(
-                    <CreateEditModelTrainingModal
-                      onClose={() => setModalComponent(null)}
-                      projectId={projectId}
-                      imageLayer={item}
-                      fetchProjectDetails={fetchProjectDetails}
-                      setImageLayerComponentState={setComponentState}
-                      guidedTour="createEditModelTrainingModalGuide"
-                      autoLaunchGuidedTour={true}
-                      eventTypes={eventTypes}
-                    />
-                  )
-                }
-                disabled={
-                  item.status !== "Processed" || item.labelProjectCount < 1
-                }
-              >
-                Train
-              </DefaultButton>{" "}
-              <Text className="pe-4" variant="small">
-                (
-                {item.models && item.models.length > 0
-                  ? item.models.length
-                  : 0}
-                )
-              </Text>
-            </>
-          )}
-        </td>
-        <td className="custom-text-no-wrap d-none d-xl-table-cell">
-          <DefaultButton
-            id={"singleProjectBuildingValidation" + index}
-            className="dashboard-button"
-            onClick={() => navigate(`/validation/${projectId}/${item.imageLayerId}`)}
-            disabled={!item.buildingFootprintsUrl}
-          >
-            Launch
-          </DefaultButton>{" "}
-          <Text className="pe-4" variant="small">
-            ({item.validationLabelCount || 0})
-          </Text>
-        </td>
-        <td className=" custom-text-no-wrap d-none d-xxl-table-cell">
-          <TooltipHost
-            content={item.userId}
-            delay={2}
-          >
-            <Text
-              variant="medium"
+        <td
+          className={
+            "custom-text-no-wrap " +
+            (hasModels ? "lrow-name-expandable" : "")
+          }
+          data-label="Name"
+        >
+          <div className="lrow-name-cell">
+            {/* AOI post-event thumbnail placeholder (imagery wiring pending) */}
+            <span
+              className="lrow-thumb lrow-thumb--empty"
+              aria-hidden="true"
+              style={{
+                backgroundImage:
+                  'url("' +
+                  satellitePlaceholder(item.imageLayerId, index) +
+                  '")',
+              }}
+            />
+            <span
               className="me-4"
-              id={"singleProjectCreator" + index}
+              id={"singleProjectName" + index}
             >
-              {item.userId !== null ? limitTextLength(item.userId, false, 30) : "User"}
+              {isCompactLayout ? (
+                <span>{limitTextLength(item.name, false, 45)}</span>
+              ) : (
+                <Tooltip content={item.name} relationship="label">
+                  <span>{limitTextLength(item.name, false, 45)}</span>
+                </Tooltip>
+              )}
+            </span>
+          </div>
+        </td>
+        {showColumn("status") && (
+          <td className="custom-text-no-wrap" data-label="Status">
+            <StatusIndicator
+              id={"singleProjectImageLayerStatus" + index}
+              currentStep={item.currentStep}
+              totalSteps={item.totalSteps}
+              progressPct={item.progressPct}
+              status={item.status}
+              statusMessage={item.statusMessage}
+              prefix="Imagery"
+              contextLabel={`Image Layer: ${item.name}`}
+            />
+          </td>
+        )}
+        {showColumn("labeling") && (
+          <td className="pgrid-action-cell" data-label="Labeling">
+            {isBuildingWorkflow ? (
+              <>
+                <Button
+                  id={"singleProjectEmbed" + index}
+                  className="dashboard-button dashboard-button-light"
+                  onClick={handleEmbed}
+                  disabled={
+                    item.status !== "Processed" || !item.buildingFootprintsUrl
+                  }
+                >
+                  Embed
+                </Button>{" "}
+                <Text className="pgrid-action-count" size={200}>
+                  ({embeddingModels.length})
+                </Text>
+              </>
+            ) : (
+              <>
+                <Button
+                  id={"singleProjectLabelingToolLaunch" + index}
+                  className="dashboard-button dashboard-button-light"
+                  onClick={() =>
+                    navigate(`/labeling-tool/${projectId}/${item.imageLayerId}`)
+                  }
+                  disabled={item.status !== "Processed"}
+                >
+                  Launch
+                </Button>{" "}
+                <Text className="pgrid-action-count" size={200}>
+                  ({item.labelProjectCount})
+                </Text>
+              </>
+            )}
+          </td>
+        )}
+        {showColumn("training") && (
+          <td className="pgrid-action-cell" data-label="Model Training">
+            {isBuildingWorkflow ? (
+              <Text className="pgrid-action-count" size={200}>
+                &mdash;
+              </Text>
+            ) : (
+              <>
+                <Button
+                  id={"singleProjectModelTraining" + index}
+                  className="dashboard-button dashboard-button-light"
+                  onClick={() =>
+                    setModalComponent(
+                      <CreateEditModelTrainingModal
+                        onClose={() => setModalComponent(null)}
+                        projectId={projectId}
+                        imageLayer={item}
+                        fetchProjectDetails={fetchProjectDetails}
+                        setImageLayerComponentState={setComponentState}
+                        guidedTour="createEditModelTrainingModalGuide"
+                        autoLaunchGuidedTour={true}
+                        eventTypes={eventTypes}
+                      />
+                    )
+                  }
+                  disabled={
+                    item.status !== "Processed" || item.labelProjectCount < 1
+                  }
+                >
+                  Train
+                </Button>{" "}
+                <Text className="pgrid-action-count" size={200}>
+                  (
+                  {item.models && item.models.length > 0
+                    ? item.models.length
+                    : 0}
+                  )
+                </Text>
+              </>
+            )}
+          </td>
+        )}
+        {showColumn("validation") && (
+          <td className="pgrid-action-cell" data-label="Building Validation">
+            <Button
+              id={"singleProjectBuildingValidation" + index}
+              className="dashboard-button dashboard-button-light"
+              onClick={() => navigate(`/validation/${projectId}/${item.imageLayerId}`)}
+              disabled={!item.buildingFootprintsUrl}
+            >
+              Launch
+            </Button>{" "}
+            <Text className="pgrid-action-count" size={200}>
+              ({item.validationLabelCount || 0})
             </Text>
-          </TooltipHost>
-        </td>
-        <td className="custom-text-no-wrap d-none d-xxl-table-cell">
-          <Text
-            variant="medium"
-            className="pe-4"
-            id={"singleProjectCreationDate" + index}
-          >
-            {item.creationDate.substring(0, 10) +
-              " " +
-              item.creationDate.substring(11, 19)}
-          </Text>
-        </td>
-        <td className=" d-flex align-items-start align-items-md-center justify-content-end ">
-          <IconButton
-            id={"singleProjectMoreOptions" + index}
-            className="no-dropdown-icon"
-            menuProps={moreMenuOptions}
-            iconProps={{ iconName: "more" }}
-            title="Menu"
-            ariaLabel="Menu"
-          />
+          </td>
+        )}
+        {showColumn("creator") && (
+          <td className="custom-text-no-wrap" data-label="Creator">
+            <Tooltip
+              content={item.userId}
+              relationship="label"
+            >
+              <span
+                className="me-4"
+                id={"singleProjectCreator" + index}
+              >
+                {item.userId !== null ? limitTextLength(item.userId, false, 30) : "User"}
+              </span>
+            </Tooltip>
+          </td>
+        )}
+        {showColumn("creationDate") && (
+          <td className="custom-text-no-wrap" data-label="Creation Date">
+            <span
+              className="pe-4"
+              id={"singleProjectCreationDate" + index}
+            >
+              {item.creationDate.substring(0, 10) +
+                " " +
+                item.creationDate.substring(11, 19)}
+            </span>
+          </td>
+        )}
+        {isCompactLayout && (
+          <td className="pgrid-action-cell" data-label="Models">
+            <Button
+              id={"singleProjectViewModels" + index}
+              className="dashboard-button dashboard-button-light"
+              onClick={toggleExpanded}
+              disabled={!hasModels}
+            >
+              {isExpanded ? "Hide models" : "View models"}
+            </Button>{" "}
+            <Text className="pgrid-action-count" size={200}>
+              ({hasModels ? item.models.length : 0})
+            </Text>
+          </td>
+        )}
+        <td className="pgrid-td-numeric" data-label="">
+          <Menu positioning="below-end">
+            <MenuTrigger disableButtonEnhancement>
+              <Button
+                id={"singleProjectMoreOptions" + index}
+                appearance="subtle"
+                className="no-dropdown-icon"
+                icon={<FluentIcon name="More" />}
+                title="Menu"
+                aria-label="Menu"
+              />
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                {moreMenuOptions.items.map((mi) => (
+                  <MenuItem
+                    key={mi.key}
+                    className={mi.className}
+                    icon={mi.icon}
+                    disabled={mi.disabled}
+                    onClick={mi.onClick}
+                  >
+                    {mi.text}
+                  </MenuItem>
+                ))}
+              </MenuList>
+            </MenuPopover>
+          </Menu>
         </td>
       </tr>
 
-      {visibleModelId == item.imageLayerId && item.models && item.models.length > 0 && (
-        <tr>
+      {isExpanded && hasModels && (
+        <tr className="lrow-models-row">
           <td
-            colSpan={9}
-            className="dashboard-table-for-inner-table-td custom-text-no-wrap"
+            colSpan={activeColumns.length + 3}
+            className="custom-text-no-wrap pgrid-nested-td"
           >
-            <table className="col-12 dashboard-inner-table p-3 pb-2 pt-2">
-              <tbody>
-                {appParams.bootstrapBreakpoint >= 4 ? (
-                  <ModelRow
-                    models={item.models}
-                    imageLayerId={item.imageLayerId}
-                    imagerySource={item.sourceTypePostEvent}
-                    eventTypes={eventTypes}
-                    projectId={projectId}
-                    fetchProjectDetails={fetchProjectDetails}
-                    setModalComponent={setModalComponent}
-                    validationLabelCount={item.validationLabelCount || 0}
-                  />
-                ) : (
-                  <>
-                    <ImageLayerInfoMobile
-                      item={item}
-                      setModalComponent={setModalComponent}
-                      fetchProjectDetails={fetchProjectDetails}
-                      setComponentState={setComponentState}
-                      eventTypes={eventTypes}
-                    />
-                    <ModelRowMobile
-                      models={item.models}
-                      imageLayerId={item.imageLayerId}
-                      imagerySource={item.sourceTypePostEvent}
-                      eventTypes={eventTypes}
-                      projectId={projectId}
-                      fetchProjectDetails={fetchProjectDetails}
-                      setComponentState={setComponentState}
-                      setModalComponent={setModalComponent}
-                      validationLabelCount={item.validationLabelCount || 0}
-                    />
-                  </>
-                )}
-              </tbody>
-            </table>
+            <div className="lmodels">
+              <div className="lmodels-list">
+                <ModelRow
+                  models={item.models}
+                  imageLayerId={item.imageLayerId}
+                  imagerySource={item.sourceTypePostEvent}
+                  eventTypes={eventTypes}
+                  projectId={projectId}
+                  fetchProjectDetails={fetchProjectDetails}
+                  setModalComponent={setModalComponent}
+                  validationLabelCount={item.validationLabelCount || 0}
+                />
+              </div>
+            </div>
           </td>
         </tr>
       )}

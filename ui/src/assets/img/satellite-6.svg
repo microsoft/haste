@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-label="Satellite imagery placeholder">
+  <defs>
+    <linearGradient id="h6" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.09"/><stop offset="1" stop-color="#000000" stop-opacity="0.13"/></linearGradient>
+    <filter id="g6"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/><feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.06 0"/></filter>
+  </defs>
+  <!-- suburban with cul-de-sacs -->
+  <rect width="400" height="300" fill="#6a7549"/>
+  <rect width="400" height="300" fill="#71804f"/>
+  <!-- lawns/greens -->
+  <g fill="#5d6c3d" opacity="0.7">
+    <rect x="0" y="0" width="400" height="80"/><rect x="0" y="230" width="400" height="70"/>
+  </g>
+  <!-- curved streets -->
+  <g fill="none" stroke="#d3ccb5" stroke-width="6" opacity="0.8">
+    <path d="M-5,150 C 80,150 100,110 180,110 C 260,110 280,150 405,150"/>
+    <path d="M60,300 C 70,230 40,200 120,175"/>
+    <path d="M330,300 C 320,235 360,205 280,175"/>
+  </g>
+  <!-- cul-de-sac circles -->
+  <g fill="none" stroke="#d3ccb5" stroke-width="6" opacity="0.8">
+    <circle cx="120" cy="170" r="14"/><circle cx="280" cy="170" r="14"/>
+  </g>
+  <!-- houses along streets -->
+  <g fill="#c3b9a1">
+    <rect x="70" y="118" width="12" height="10"/><rect x="95" y="120" width="12" height="10"/>
+    <rect x="120" y="120" width="12" height="10"/><rect x="150" y="118" width="12" height="10"/>
+    <rect x="210" y="118" width="12" height="10"/><rect x="240" y="120" width="12" height="10"/>
+    <rect x="270" y="120" width="12" height="10"/><rect x="300" y="118" width="12" height="10"/>
+    <rect x="90" y="210" width="12" height="10"/><rect x="115" y="205" width="12" height="10"/>
+    <rect x="285" y="210" width="12" height="10"/><rect x="305" y="205" width="12" height="10"/>
+  </g>
+  <!-- trees -->
+  <g fill="#43522f" opacity="0.85">
+    <circle cx="40" cy="120" r="10"/><circle cx="360" cy="125" r="11"/>
+    <circle cx="200" cy="200" r="12"/><circle cx="170" cy="215" r="9"/><circle cx="230" cy="210" r="9"/>
+  </g>
+  <rect width="400" height="300" fill="url(#h6)"/>
+  <rect width="400" height="300" filter="url(#g6)"/>
+</svg>

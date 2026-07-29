@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import React, { useEffect } from "react";
-import { Dropdown } from "@fluentui/react";
+import { Dropdown, Option } from "@fluentui/react-components";
 
 import CreateEditImageLayerFormFile from "./CreateEditImageLayerFormFile";
 import CreateEditImageLayerFileUploader from "./CreateEditImageLayerFileUploader";
@@ -46,22 +46,31 @@ const CreateEditImageLayerFormImagerySources = ({
         <div className="col-12 d-flex flex-column mb-3">
           <div className="col-12 d-flex">
             <Dropdown
-              options={componentState.imageryOriginOptions}
-              onChange={(e, item) =>
+              className="me-2"
+              selectedOptions={[
+                String(componentState[currentEventImageryUrlControl] ?? ""),
+              ]}
+              value={
+                componentState.imageryOriginOptions.find(
+                  (o) => o.key === componentState[currentEventImageryUrlControl]
+                )?.text || ""
+              }
+              onOptionSelect={(e, data) =>
                 onFormChange(
-                  item.key,
+                  data.optionValue,
                   currentEventImageryUrlControl,
                   setComponentState,
                   componentState
                 )
               }
-              selectedKey={componentState[currentEventImageryUrlControl]}
-              className="me-2"
-              defaultSelectedKey={
-                componentState[currentEventImageryUrlControl]
-              }
               disabled={imageLayerId ? true : false}
-            />
+            >
+              {componentState.imageryOriginOptions.map((o) => (
+                <Option key={o.key} value={String(o.key)}>
+                  {o.text}
+                </Option>
+              ))}
+            </Dropdown>
             {componentState[currentEventImageryUrlControl] === "url" ||
             componentState[currentEventImageryUrlControl] === "" ? (
               <CreateEditImageLayerFormURL
