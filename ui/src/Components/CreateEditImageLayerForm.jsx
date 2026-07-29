@@ -289,7 +289,7 @@ const CreateEditImageLayerModal = () => {
         </div>
         <div className="pgrid-form-body">
           <div className="container d-flex justify-content-center">
-            <div className="col-12 col-md-9 col-lg-8 col-xl-6">
+            <div className="col-12 col-xl-9 col-xxl-7">
           <div className="row mb-2">
             <div className="col-12">
               <Field label="Name" required validationMessage={componentState.nameError}>
@@ -406,29 +406,32 @@ const CreateEditImageLayerModal = () => {
               />
             </div>
 
-            <div className="col-12 p-4 pt-0 d-flex flex-column flex-md-row  box-highlight">
-              <DatePicker
-                label="Imagery capture date"
-                id="createEditImageLayerImageryCapturePostEventDate"
-                placeholder="Select a date..."
-                aria-label="Select a date"
-                className="flex-grow-1 me-0 me-md-2"
-                onSelectDate={(e) =>
-                  onFormChange(
-                    e,
-                    "imageryCaptureDatePostEvent",
-                    setComponentState,
-                    componentState
-                  )
-                }
+            <div className="col-12 p-4 pt-0 d-flex flex-column flex-md-row align-items-md-start box-highlight imagery-metadata-row">
+              <Field
+                label="Date"
                 required
-                value={
-                  componentState.imageryCaptureDatePostEvent !== ""
-                    ? new Date(componentState.imageryCaptureDatePostEvent)
-                    : null
-                }
-                disabled={imageLayerId ? true : false}
-              />
+                className="flex-grow-1 me-0 me-md-2"
+              >
+                <DatePicker
+                  id="createEditImageLayerImageryCapturePostEventDate"
+                  placeholder="Select a date..."
+                  aria-label="Date"
+                  onSelectDate={(e) =>
+                    onFormChange(
+                      e,
+                      "imageryCaptureDatePostEvent",
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  value={
+                    componentState.imageryCaptureDatePostEvent !== ""
+                      ? new Date(componentState.imageryCaptureDatePostEvent)
+                      : null
+                  }
+                  disabled={imageLayerId ? true : false}
+                />
+              </Field>
               <Field
                 label="Source type"
                 className="flex-grow-1 me-0 me-md-2"
@@ -508,28 +511,28 @@ const CreateEditImageLayerModal = () => {
               />
             </div>
 
-            <div className="col-12 p-4 pt-0 d-flex flex-column flex-md-row box-highlight">
-              <DatePicker
-                label="Imagery capture date  "
-                id="createEditImageLayerImageryCapturePretEventDate"
-                placeholder="Select a date..."
-                aria-label="Select a date"
-                className="flex-grow-1 me-0 me-md-2"
-                onSelectDate={(e) =>
-                  onFormChange(
-                    e,
-                    "imageryCaptureDatePreEvent",
-                    setComponentState,
-                    componentState
-                  )
-                }
-                value={
-                  componentState.imageryCaptureDatePreEvent !== ""
-                    ? new Date(componentState.imageryCaptureDatePreEvent)
-                    : null
-                }
-                disabled={imageLayerId ? true : false}
-              />
+            <div className="col-12 p-4 pt-0 d-flex flex-column flex-md-row align-items-md-start box-highlight imagery-metadata-row">
+              <Field label="Date" className="flex-grow-1 me-0 me-md-2">
+                <DatePicker
+                  id="createEditImageLayerImageryCapturePretEventDate"
+                  placeholder="Select a date..."
+                  aria-label="Date"
+                  onSelectDate={(e) =>
+                    onFormChange(
+                      e,
+                      "imageryCaptureDatePreEvent",
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  value={
+                    componentState.imageryCaptureDatePreEvent !== ""
+                      ? new Date(componentState.imageryCaptureDatePreEvent)
+                      : null
+                  }
+                  disabled={imageLayerId ? true : false}
+                />
+              </Field>
               <Field
                 label="Source type"
                 className="flex-grow-1 me-0 me-md-2"

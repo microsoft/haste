@@ -130,10 +130,10 @@ export const AppProvider = ({ children }) => {
       steps: [
         {
           type: "teachingBubble",
-          target: `#leftPanel`,
+          target: `#imageryControlsButton`,
           title: "Imagery properties",
           content:
-            "Adjust the imagery properties to help you identify elements.",
+            "Open the imagery controls to adjust image properties and switch imagery layers.",
         },
         {
           type: "teachingBubble",
@@ -151,7 +151,7 @@ export const AppProvider = ({ children }) => {
         },          
         {
           type: "teachingBubble",
-          target: `#rightPanel`,
+          target: `.labeling-class-trigger`,
           title: "Primary Classes",
           content:
             "Switch between label classes here. You must select a tool as well as a class to draw a label. ",

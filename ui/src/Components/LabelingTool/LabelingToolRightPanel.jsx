@@ -2,15 +2,13 @@
 // Licensed under the MIT License.
 import { useEffect, useState } from "react";
 import {
-  RadioGroup,
-  Radio,
   Button,
-  Field,
   Menu,
   MenuTrigger,
   MenuPopover,
   MenuList,
   MenuItem,
+  MenuItemRadio,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 import CreateEditModelTrainingModal from "../CreateEditModelTrainingModal";
@@ -336,47 +334,73 @@ const LabelingToolRightPanel = ({
 
   return (
     <>
-      <DrawingToolbar drawingManager={drawingManager} setDrawingManager={setDrawingManager} undo={undo} redo={redo} />
       <div
-        style={{
-          position: "absolute",
-          right: 10,
-          top: 70,
-          backgroundColor: "rgba(255, 255, 255, 1)",
-          padding: "5px 10px",
-          borderRadius: "5px",
-          zIndex: 1000,
-        }}
+        className="labeling-tool-surface labeling-tool-dock"
         id="rightPanel"
       >
-        <div className="col-12 d-flex">
-          <Field label="Primary Class">
-            <RadioGroup
-              value={selectedPrimaryClass != null ? String(selectedPrimaryClass) : ""}
-              onChange={(e, data) => {
-                handlePrimaryClassChange(data.value);
-              }}
-            >
-              {(primaryClasses && primaryClasses.length > 0
-                ? primaryClasses
-                : []
-              ).map((option) => (
-                <Radio
-                  key={String(option.key)}
-                  value={String(option.key)}
-                  label={option.text}
+        <DrawingToolbar
+          drawingManager={drawingManager}
+          setDrawingManager={setDrawingManager}
+          undo={undo}
+          redo={redo}
+        />
+        <div className="labeling-tool-dock-divider" />
+        <Menu
+          checkedValues={{ primaryClass: [String(selectedPrimaryClass ?? "")] }}
+          onCheckedValueChange={(_, data) =>
+            handlePrimaryClassChange(data.checkedItems[0])
+          }
+          positioning="below-end"
+        >
+          <MenuTrigger disableButtonEnhancement>
+            <Button
+              className="labeling-class-trigger"
+              aria-label={`Primary class: ${selectedPrimaryClass}`}
+              icon={
+                <span
+                  className="primary-class-color-swatch"
+                  style={{
+                    backgroundColor: primaryClasses.find(
+                      (option) => option.key === selectedPrimaryClass
+                    )?.color,
+                  }}
+                  aria-hidden="true"
                 />
+              }
+            >
+              <span className="labeling-class-trigger-text">
+                {selectedPrimaryClass || "Select class"}
+              </span>
+            </Button>
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              {primaryClasses.map((option) => (
+                <MenuItemRadio
+                  key={String(option.key)}
+                  name="primaryClass"
+                  value={String(option.key)}
+                >
+                  <span className="primary-class-radio-label">
+                    <span
+                      className="primary-class-color-swatch"
+                      style={{ backgroundColor: option.color }}
+                      aria-hidden="true"
+                    />
+                    {option.text}
+                  </span>
+                </MenuItemRadio>
               ))}
-            </RadioGroup>
-          </Field>
-        </div>
-        <div className="col-12 d-flex mt-2 flex-column pt-2 pb-2">
+            </MenuList>
+          </MenuPopover>
+        </Menu>
+        <div className="labeling-tool-dock-divider" />
+        <div className="labeling-actions-menu">
           <Menu positioning="below-end">
             <MenuTrigger disableButtonEnhancement>
               <Button
                 appearance="primary"
                 id="saveAndTrainButton"
-                className="w-100"
               >
                 Actions
               </Button>

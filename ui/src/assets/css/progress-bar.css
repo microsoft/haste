@@ -78,4 +78,37 @@
   .progress-text {
       font-size: 12px;
     }
+
+  /* Fluid progress pill: prefers a comfortable 250px but shrinks to fit
+     narrow rows/cells; the label truncates with an ellipsis. */
+  .message-progress {
+    position: relative;
+    width: 250px;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .message-progress-meter {
+    border-radius: 5px;
+  }
+
+  .message-progress-text {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 10px;
+    color: black;
+    pointer-events: none;
+  }
+
+  .message-progress-text .progress-text {
+    max-width: 100%;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   

@@ -16,35 +16,20 @@ const MessageProgressBar = ({ progress, message, stepText }) => {
 
   return (
     <React.Fragment>
-      <div>
-        <span
-          style={{
-            position: "absolute",
-            minWidth: "250px",
-            zIndex: "1",
-            textAlign: "center",
-            color: "black",
-          }}
-        >
+      <div className="message-progress">
+        <div className="meter p-0 message-progress-meter">
+          <span
+            style={{ width: isNaN(progress) ? "0%" : progress + "%" }}
+          ></span>
+        </div>
+
+        <span className="message-progress-text">
           <Text className="text-light progress-text">
             {isNaN(progress) ? progress : `${message} : ${stepText}`.length > 31 
               ? `${message} : ${stepText}`.substring(0, 31) + '...' 
               : `${message} : ${stepText}`}
           </Text>
         </span>
-
-        <div
-          className="meter p-0"
-          style={{
-            minWidth: "250px",
-            position: "relative",
-            borderRadius: "5px",
-          }}
-        >
-          <span
-            style={{ width: isNaN(progress) ? "0%" : progress + "%", position: "absolute", top: "0px" }}
-          ></span>
-        </div>
       </div>
     </React.Fragment>
   );

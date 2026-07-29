@@ -26,7 +26,6 @@ const LabelingToolLeftPanel = ({
   imageLayerId,
   labelingToolDataRef,
   setHasUnsavedChanges,
-  appParams
 }) => {
   LabelingToolLeftPanel.propTypes = {
     mapRef: PropType.object.isRequired,
@@ -40,11 +39,11 @@ const LabelingToolLeftPanel = ({
     imageLayerId: PropType.string.isRequired,
     labelingToolDataRef: PropType.object.isRequired,
     setHasUnsavedChanges: PropType.func.isRequired,
-    appParams: PropType.object.isRequired,
   };
 
   const [eventImageryVisibilityState, setEventImageryVisibilityState] =
     useState(true);
+  const [isImageryControlsOpen, setIsImageryControlsOpen] = useState(false);
 
   const [imageryValues, setImageryValues] = useState({
     opacity: 1,
@@ -183,6 +182,17 @@ const LabelingToolLeftPanel = ({
     };
   }, [eventImageryVisibilityState]);
 
+  // Close the imagery settings panel when the user clicks on the map.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.events) return;
+    const closeImageryControls = () => setIsImageryControlsOpen(false);
+    map.events.add("click", closeImageryControls);
+    return () => {
+      map.events.remove("click", closeImageryControls);
+    };
+  }, [mapRef]);
+
   const navigate = useNavigate();
 
   const handleBackNavigation = () => {
@@ -241,38 +251,44 @@ const LabelingToolLeftPanel = ({
   return (
     <>
       <div
-        style={{
-          position: "absolute",
-          left: 10,
-          top: 10,
-          backgroundColor: "rgba(255, 255, 255, 1)",
-          padding: "5px 10px",
-          borderRadius: "5px",
-          zIndex: 1000,
-        }}
-        className=""
+        className="labeling-tool-surface labeling-navigation-controls"
       >
-        <div>
-          <Button
-            appearance="transparent"
-            id="backButton"
-            icon={<FluentIcon name="ChevronLeft" />}
-            onClick={handleBackNavigation}
-          >
-            Back
-          </Button>
+        <Button
+          appearance="transparent"
+          id="backButton"
+          icon={<FluentIcon name="ChevronLeft" />}
+          onClick={handleBackNavigation}
+        >
+          Back
+        </Button>
+        <Button
+          appearance="subtle"
+          id="imageryControlsButton"
+          icon={<FluentIcon name="Slider" />}
+          aria-expanded={isImageryControlsOpen}
+          aria-controls="leftPanel"
+          onClick={() => setIsImageryControlsOpen((isOpen) => !isOpen)}
+        >
+          Imagery
+        </Button>
+      </div>
 
-          {appParams.bootstrapBreakpoint >= 3 && (
-            <div
-              style={{
-                borderTop: "1px solid rgba(0, 0, 0, 0.1)",
-                paddingTop: "12px",
-                marginTop: "5px",
-              }}
-              id="leftPanel"
-            >
-              <Field label="Opacity">
+      {isImageryControlsOpen && (
+        <div
+          className="labeling-tool-surface labeling-imagery-controls"
+          id="leftPanel"
+        >
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Opacity</span>
+                    <output>{Math.round(imageryValues.opacity * 100)}%</output>
+                  </span>
+                }
+              >
                 <Slider
+                  className="labeling-imagery-slider"
                   min={0}
                   max={1}
                   step={0.01}
@@ -281,8 +297,17 @@ const LabelingToolLeftPanel = ({
                 />
               </Field>
 
-              <Field label="Contrast">
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Contrast</span>
+                    <output>{imageryValues.contrast.toFixed(2)}</output>
+                  </span>
+                }
+              >
                 <Slider
+                  className="labeling-imagery-slider"
                   min={-1}
                   max={1}
                   step={0.01}
@@ -291,8 +316,17 @@ const LabelingToolLeftPanel = ({
                 />
               </Field>
 
-              <Field label="Hue Rotation">
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Hue Rotation</span>
+                    <output>{imageryValues.hueRotation}&deg;</output>
+                  </span>
+                }
+              >
                 <Slider
+                  className="labeling-imagery-slider"
                   min={-180}
                   max={180}
                   step={1}
@@ -301,8 +335,17 @@ const LabelingToolLeftPanel = ({
                 />
               </Field>
 
-              <Field label="Saturation">
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Saturation</span>
+                    <output>{imageryValues.saturation.toFixed(2)}</output>
+                  </span>
+                }
+              >
                 <Slider
+                  className="labeling-imagery-slider"
                   min={-1}
                   max={1}
                   step={0.01}
@@ -331,21 +374,11 @@ const LabelingToolLeftPanel = ({
                   }
                 />
               </div>
-            </div>
-          )}
         </div>
-      </div>
+      )}
 
       <div
-        style={{
-          position: "absolute",
-          left: 55,
-          bottom: 38,
-          backgroundColor: "rgba(255, 255, 255, 1)",
-          padding: "5px 10px",
-          borderRadius: "5px",
-          zIndex: 1000,
-        }}
+        className="labeling-tool-surface labeling-count-badge"
         id="numberOfLabels"
       >
         Number of labels: {drawingCount}

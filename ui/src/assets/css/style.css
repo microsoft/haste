@@ -612,6 +612,14 @@ body {
   pointer-events: none;
 }
 
+.tour-overlay-fixed::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  pointer-events: auto;
+}
+
 .tour-card {
   pointer-events: auto;
   background: #ffffff;
@@ -620,6 +628,22 @@ body {
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
   padding: 16px;
   z-index: 100001;
+}
+
+.tour-card-fixed {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: min(380px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.tour-card-fixed .tour-card-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-top: 12px;
 }
 
 .tour-card-head {
@@ -666,6 +690,10 @@ html[data-theme="dark"] .tour-hole {
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.66);
 }
 
+html[data-theme="dark"] .tour-overlay-fixed::before {
+  background: rgba(0, 0, 0, 0.66);
+}
+
 html[data-theme="dark"] .tour-card {
   background: #292827;
   border-color: #3b3a39;
@@ -682,6 +710,14 @@ html[data-theme="dark"] .tour-card-body {
 
 html[data-theme="dark"] .tour-step {
   color: #a19f9d;
+}
+
+@media (max-width: 576px) {
+  .tour-card-fixed {
+    right: 16px;
+    bottom: 16px;
+    max-height: calc(100vh - 32px);
+  }
 }
 
 /* HOME */
@@ -812,6 +848,44 @@ html[data-theme="dark"] .tour-step {
   border: 1px solid #edebe9;
   border-radius: 14px;
   padding: 24px !important;
+}
+
+/* Dark "Geographic Coverage" panel — background matches the Start button
+   (var(--primary-color)); text and bars flip to light for contrast. */
+.home-box.dash-widget--dark {
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.dash-widget--dark .home-title,
+.dash-widget--dark .dash-bar-label,
+.dash-widget--dark .dash-bar-value {
+  color: #ffffff;
+}
+
+.dash-widget--dark .dash-widget-subtitle {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.dash-widget--dark .dash-bar-track {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.dash-widget--dark .dash-bar-fill {
+  background-color: #ffffff;
+}
+
+/* Empty-state text and action button read on the dark surface. */
+.dash-widget--dark .fui-Text {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.dash-widget--dark .dash-widget-action .fui-Button {
+  color: #ffffff;
+}
+
+.dash-widget--dark .dash-widget-action .fui-Button:hover {
+  background-color: rgba(255, 255, 255, 0.14);
 }
 
 .dash-widget-header {
@@ -1740,6 +1814,32 @@ tr.model-mobile-row:not(:last-child) td {
   color: #605e5c;
 }
 
+/* Small pencil action appended to the breadcrumb to edit project properties. */
+.pgrid-breadcrumb-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--primary-color);
+  cursor: pointer;
+  transition: background-color 0.1s ease, color 0.1s ease;
+}
+
+.pgrid-breadcrumb-edit:hover {
+  background-color: var(--brand-150);
+}
+
+.pgrid-breadcrumb-edit:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 1px;
+}
+
 .pgrid-toolbar {
   display: flex;
   align-items: center;
@@ -1824,6 +1924,21 @@ tr.model-mobile-row:not(:last-child) td {
    Stacks vertically on small screens so it doesn't overflow. */
 .imagery-source-row {
   align-items: flex-start;
+}
+
+.imagery-origin-dropdown {
+  flex: 0 0 auto;
+  width: max-content !important;
+  min-width: 0 !important;
+}
+
+.imagery-metadata-row > .fui-Field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.imagery-metadata-row .fui-Dropdown {
+  min-width: 0;
 }
 
 @media (max-width: 768px) {
@@ -3342,9 +3457,9 @@ tr.model-mobile-row:not(:last-child) td {
   background-color: var(--brand-150);
 }
 
-/* Right-side models panel opened from the image-layer cards view */
+/* Right-side models panel opened from the image-layer cards view.
+   Width is set inline on the drawer via --fui-Drawer--size. */
 .lcard-models-drawer {
-  width: 460px;
   max-width: 90vw;
 }
 

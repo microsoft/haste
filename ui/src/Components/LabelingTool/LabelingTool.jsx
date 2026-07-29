@@ -286,7 +286,6 @@ const LabelingTool = ({ setModalComponent }) => {
               labelingToolDataRef={labelingToolDataRef}
               setHasUnsavedChanges={setHasUnsavedChanges}
               primaryClasses={primaryClasses}
-              appParams={appParams}
             />
 
             <LabelingToolRightPanel

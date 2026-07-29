@@ -428,6 +428,7 @@ const LayerCard = ({
         open={modelsOpen}
         onOpenChange={(_, { open }) => setModelsOpen(open)}
         className="lcard-models-drawer"
+        style={{ "--fui-Drawer--size": "480px", maxWidth: "90vw" }}
       >
         <DrawerHeader>
           <DrawerHeaderTitle

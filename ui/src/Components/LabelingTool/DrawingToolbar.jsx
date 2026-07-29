@@ -76,18 +76,9 @@ const DrawingToolbar = ({ drawingManager, setDrawingManager, undo, redo }) => {
 
   return (
     <div
-      style={{
-        position: "absolute",
-        right: 10,
-        top: 10,
-        backgroundColor: "rgba(255, 255, 255, 1)",
-        padding: "10px 10px",
-        borderRadius: "5px",
-        zIndex: 1000,
-        display: "flex",
-        gap: "5px",
-      }}
       id="drawingToolbar"
+      role="toolbar"
+      aria-label="Drawing tools"
     >
       {buttons.map((btn) => {
         const classNames = ["drawing-button"];

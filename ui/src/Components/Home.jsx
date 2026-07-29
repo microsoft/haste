@@ -74,8 +74,8 @@ StatCard.propTypes = {
   onClick: PropTypes.func,
 };
 
-const WidgetShell = ({ title, subtitle, icon, action, children }) => (
-  <section className="home-box dash-widget p-4 h-100">
+const WidgetShell = ({ title, subtitle, icon, action, className, children }) => (
+  <section className={`home-box dash-widget p-4 h-100${className ? ` ${className}` : ""}`}>
     <div className="dash-widget-header mb-3">
       <div className="dash-widget-header-main">
         <h5 className="home-title mb-1 d-flex align-items-center gap-2">
@@ -95,6 +95,7 @@ WidgetShell.propTypes = {
   subtitle: PropTypes.string,
   icon: PropTypes.string,
   action: PropTypes.node,
+  className: PropTypes.string,
   children: PropTypes.node.isRequired,
 };
 
@@ -476,6 +477,7 @@ const Home = () => {
                 title="Geographic Coverage"
                 subtitle="Most represented countries across active projects"
                 icon="globe"
+                className="dash-widget--dark"
               >
                 {topCountries.length > 0 ? (
                   <div className="dash-bars">

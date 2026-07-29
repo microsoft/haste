@@ -22,6 +22,7 @@ import { useNavigate } from "react-router-dom";
 
 import LayerRow from "./ProjectManagement/LayerRow";
 import LayerCard from "./ProjectManagement/LayerCard";
+import CreateEditProjectModal from "./CreateEditProjectModal";
 import { FluentIcon } from "../util/icons";
 import NoResultsMessage from "./NoResultsMessage";
 
@@ -391,6 +392,29 @@ const Project = ({ setModalComponent }) => {
                       </span>
                     )
                   )}
+                  <Tooltip
+                    content="Edit project properties"
+                    relationship="label"
+                  >
+                    <button
+                      type="button"
+                      className="pgrid-breadcrumb-edit"
+                      aria-label="Edit project properties"
+                      onClick={() =>
+                        setModalComponent(
+                          <CreateEditProjectModal
+                            onClose={() => {
+                              setModalComponent(null);
+                              fetchProjectDetails(false);
+                            }}
+                            projectId={projectId}
+                          />
+                        )
+                      }
+                    >
+                      <FluentIcon name="Edit" />
+                    </button>
+                  </Tooltip>
                 </nav>
               )}
             </div>

@@ -205,91 +205,73 @@ const GuidedTour = () => {
     );
   };
 
+  const renderFixedCard = () => {
+    const step = filteedTourSteps[appParams.currentTourStep - 1];
+    if (!step) {
+      return null;
+    }
+
+    const totalSteps = filteedTourSteps.length;
+
+    return (
+      <div className="tour-overlay tour-overlay-fixed">
+        <div className="tour-card tour-card-fixed">
+          <div className="tour-card-head">
+            <span className="tour-eyebrow">Quick tour</span>
+            <Button
+              appearance="subtle"
+              icon={<FluentIcon name="Cancel" />}
+              aria-label="Close"
+              onClick={closeTour}
+            />
+          </div>
+          <Text className="tour-card-title">{step.title}</Text>
+          <div className="tour-card-body">{parse(step.content)}</div>
+
+          <Checkbox
+            label="Don’t show again. Click “?” at the top to re-enable."
+            className="mt-3 mb-2"
+            onChange={(ev, data) => {
+              setGuidedTourState(
+                data.checked,
+                initCurrentTour,
+                appParams.currentTour.name,
+                appParams.guidedTourProperties
+              );
+            }}
+          />
+
+          <div className="tour-card-footer">
+            <Text className="tour-step">
+              {`Step ${appParams.currentTourStep} of ${totalSteps}`}
+            </Text>
+            <div>
+              <Button className="me-2" onClick={() => handleStepChange(-1)}>
+                Back
+              </Button>
+              {appParams.currentTourStep < totalSteps ? (
+                <Button appearance="primary" onClick={() => handleStepChange(1)}>
+                  Next
+                </Button>
+              ) : (
+                <Button appearance="primary" onClick={closeTour}>
+                  Done
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <>
       {appParams.currentTour && isVisible &&
         filteedTourSteps &&
         appParams.currentTourStep <= filteedTourSteps.length &&
         filteedTourSteps[appParams.currentTourStep - 1].type ===
-          "fixed" && (
-          <div
-            className={`fixed-guided-tour fixed-guided-tour-${
-              filteedTourSteps[appParams.currentTourStep - 1].target
-            }`}
-          >
-            <div className="d-flex flex-column" style={{ padding: "15px" }}>
-              <div className="d-flex mb-2 justify-content-between align-items-center">
-                <Text className="fw-semibold text-light">
-                  {
-                    filteedTourSteps[appParams.currentTourStep - 1]
-                      .title
-                  }
-                </Text>
-                <Button
-                  appearance="subtle"
-                  style={{ color: "#FFFFFF" }}
-                  icon={<FluentIcon name="Cancel" />}
-                  aria-label="Close"
-                  onClick={() => {initCurrentTour(null); setFilteredTourSteps([]);}}
-                />
-              </div>
-              <Text className="text-light">
-                {/*
-                  SECURITY: parse() renders HTML from tour-step `content`. This
-                  is safe ONLY because tour definitions are static,
-                  maintainer-authored config bundled with the app (see
-                  GuidedTourHelper / guidedTourProperties) — never user input or
-                  API-sourced data. If tour content ever becomes user-editable or
-                  fetched at runtime, this becomes an XSS sink: switch to a safe
-                  renderer (e.g. react-markdown) or sanitize before parsing.
-                */}
-                {parse(
-                  filteedTourSteps[appParams.currentTourStep - 1]
-                    .content
-                )}
-              </Text>
-
-              <Checkbox
-                label="Don’t show again. Click “?” at the top to re-enable."
-                className="mt-4 mb-4"
-                onChange={(ev, data) => {
-                  setGuidedTourState(
-                    data.checked,
-                    initCurrentTour,
-                    appParams.currentTour.name,
-                    appParams.guidedTourProperties
-                  );
-                }}
-              />
-
-              <div className="d-flex justify-content-between">
-                <div>
-                  <Text className="text-light">{`${appParams.currentTourStep} of ${filteedTourSteps.length}`}</Text>
-                </div>
-                <div>
-                  <Button
-                    style={{ border: "1px solid", color: "var(--primary-color)" }}
-                    className="me-2"
-                    onClick={() => {
-                      handleStepChange(-1);
-                    }}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    appearance="primary"
-                    style={{ border: "1px solid #FFFFFF" }}
-                    onClick={() => {
-                      handleStepChange(1);
-                    }}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+          "fixed" && renderFixedCard()}
 
       {appParams.currentTour &&
         filteedTourSteps &&

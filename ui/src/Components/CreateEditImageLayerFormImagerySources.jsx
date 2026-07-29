@@ -46,7 +46,7 @@ const CreateEditImageLayerFormImagerySources = ({
         <div className="col-12 d-flex flex-column mb-3">
           <div className="col-12 d-flex imagery-source-row">
             <Dropdown
-              className="me-2"
+              className="imagery-origin-dropdown me-2"
               selectedOptions={[
                 String(componentState[currentEventImageryUrlControl] ?? ""),
               ]}
