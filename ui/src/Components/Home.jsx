@@ -2,18 +2,8 @@
 // Licensed under the MIT License.
 import { Button, Text, Tooltip } from "@fluentui/react-components";
 import OpenProject from "./Home/OpenProject";
+import OngoingJobs from "./Home/OngoingJobs";
 import { useState, useEffect, useContext } from "react";
-import { Doughnut, Line } from "react-chartjs-2";
-import {
-  Chart as ChartJS,
-  ArcElement,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Tooltip as ChartTooltip,
-  Legend,
-} from "chart.js";
 
 import { AppContext } from "../AppContext";
 import { useNavigate } from "react-router-dom";
@@ -23,29 +13,8 @@ import { FluentIcon } from "../util/icons";
 import PropTypes from "prop-types";
 import { formatProjectDate } from "./ProjectManagement/projectStatus";
 import CreateEditProjectModal from "./CreateEditProjectModal";
-import { useTheme } from "../util/ThemeContext";
-import { getPalette } from "../util/theme";
 
 import StartProjectButton from "./StartProjectButton";
-
-/** Convert a #rrggbb hex to an rgba() string with the given alpha. */
-function hexToRgba(hex, alpha) {
-  const value = hex.replace("#", "");
-  const r = parseInt(value.substring(0, 2), 16);
-  const g = parseInt(value.substring(2, 4), 16);
-  const b = parseInt(value.substring(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-ChartJS.register(
-  ArcElement,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  ChartTooltip,
-  Legend
-);
 
 const StatCard = ({ icon, value, label, onClick }) => (
   <div
@@ -64,6 +33,13 @@ const StatCard = ({ icon, value, label, onClick }) => (
       <span className="dash-kpi-value">{value}</span>
       <span className="dash-kpi-label">{label}</span>
     </span>
+    {onClick && (
+      <FluentIcon
+        name="chevronright"
+        className="dash-kpi-go"
+        aria-hidden="true"
+      />
+    )}
   </div>
 );
 
@@ -104,12 +80,6 @@ const Home = () => {
   const navigate = useNavigate();
   const { setIsLoading, initCurrentTour, setAppHeaderRightButtons, appParams, setAppParams } =
     useContext(AppContext);
-  const { palette } = useTheme();
-  const dashPalette = {
-    primary: getPalette(palette).ramp[80],
-    accent: getPalette(palette).ramp[100],
-    neutral: "#8F8F8F",
-  };
   const [dashboardData, setDashboardData] = useState(null);
   const [catalog, setCatalog] = useState([]);
   const [modalComponent, setModalComponent] = useState(null);
@@ -197,63 +167,6 @@ const Home = () => {
     return !Number.isNaN(created) && nowMs - created <= 30 * 86400000;
   }).length;
 
-  const operationsMixData = {
-    labels: ["Image Layers", "Models", "Labels"],
-    datasets: [
-      {
-        data: [totals.layers, totals.models, totals.labels],
-        backgroundColor: [
-          dashPalette.primary,
-          dashPalette.accent,
-          dashPalette.neutral,
-        ],
-        borderWidth: 0,
-      },
-    ],
-  };
-
-  const totalOperations = totals.layers + totals.models + totals.labels;
-
-  const monthLabels = [];
-  const monthKeys = [];
-  const monthCountMap = {};
-  const monthCursor = new Date(nowMs);
-  monthCursor.setDate(1);
-  for (let i = 5; i >= 0; i -= 1) {
-    const d = new Date(monthCursor.getFullYear(), monthCursor.getMonth() - i, 1);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const label = d.toLocaleString("en-US", { month: "short" });
-    monthKeys.push(key);
-    monthLabels.push(label);
-    monthCountMap[key] = 0;
-  }
-
-  projects.forEach((project) => {
-    const created = new Date(project.creationDate);
-    if (!Number.isNaN(created.getTime())) {
-      const key = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}`;
-      if (Object.prototype.hasOwnProperty.call(monthCountMap, key)) {
-        monthCountMap[key] += 1;
-      }
-    }
-  });
-
-  const monthlyCreationData = {
-    labels: monthLabels,
-    datasets: [
-      {
-        label: "Projects created",
-        data: monthKeys.map((key) => monthCountMap[key]),
-        fill: true,
-        borderColor: dashPalette.primary,
-        backgroundColor: hexToRgba(dashPalette.primary, 0.16),
-        pointRadius: 4,
-        pointBackgroundColor: dashPalette.primary,
-        tension: 0.28,
-      },
-    ],
-  };
-
   const projectsByCountry = projects.reduce((acc, project) => {
     (project.affectedCountries || []).forEach((country) => {
       if (country) {
@@ -325,15 +238,15 @@ const Home = () => {
                     label="Projects"
                     onClick={() => navigate("/projects")}
                   />
-                  <StatCard icon="fileimage" value={totals.layers} label="Image Layers" />
-                  <StatCard icon="modelingview" value={totals.models} label="Models" />
-                  <StatCard icon="bulletedlist" value={totals.labels} label="Labels" />
                   <StatCard
                     icon="reportdocument"
                     value={catalog.length}
                     label="Catalog Models"
                     onClick={isAdmin ? () => navigate("/model-catalog") : undefined}
                   />
+                  <StatCard icon="fileimage" value={totals.layers} label="Image Layers" />
+                  <StatCard icon="modelingview" value={totals.models} label="Models" />
+                  <StatCard icon="bulletedlist" value={totals.labels} label="Labels" />
                   <StatCard icon="globe" value={countries.length} label="Countries" />
                 </div>
               </div>
@@ -365,78 +278,12 @@ const Home = () => {
 
             <div className="col-12 col-xxl-4">
               <WidgetShell
-                title="Operational Signals"
-                subtitle="Live indices based on data volume and project creation velocity"
-                icon="analyticsreport"
+                title="Ongoing Jobs"
+                subtitle="Imagery processing, training and inference currently running"
+                icon="releasedefinition"
+                className="dash-widget--jobs"
               >
-                <div className="dash-chart-grid">
-                  <div className="dash-chart-wrap">
-                    <Doughnut
-                      data={operationsMixData}
-                      options={{
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                          legend: {
-                            display: false,
-                          },
-                        },
-                        cutout: "68%",
-                      }}
-                    />
-                    <div className="dash-status-chart-center">
-                      <div className="dash-status-total">{totalOperations}</div>
-                      <div className="dash-status-total-label">assets</div>
-                    </div>
-                  </div>
-                  <div className="dash-status-legend">
-                    <div className="dash-status-row">
-                      <span className="dash-status-dot dash-status-dot--active" />
-                      <span className="dash-status-label">Image Layers</span>
-                      <span className="dash-status-count">{totals.layers}</span>
-                    </div>
-                    <div className="dash-status-row">
-                      <span className="dash-status-dot dash-status-dot--modeled" />
-                      <span className="dash-status-label">Models</span>
-                      <span className="dash-status-count">{totals.models}</span>
-                    </div>
-                    <div className="dash-status-row">
-                      <span className="dash-status-dot dash-status-dot--labels" />
-                      <span className="dash-status-label">Labels</span>
-                      <span className="dash-status-count">{totals.labels}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="dash-trend-wrap mt-3">
-                  <div className="dash-trend-title">Projects created in last 6 months</div>
-                  <div className="dash-trend-chart">
-                    <Line
-                      data={monthlyCreationData}
-                      options={{
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                          legend: {
-                            display: false,
-                          },
-                        },
-                        scales: {
-                          x: {
-                            grid: {
-                              display: false,
-                            },
-                          },
-                          y: {
-                            beginAtZero: true,
-                            ticks: {
-                              precision: 0,
-                            },
-                          },
-                        },
-                      }}
-                    />
-                  </div>
-                </div>
+                <OngoingJobs projects={projects} />
               </WidgetShell>
             </div>
 
