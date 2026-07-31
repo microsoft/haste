@@ -13,35 +13,33 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  tokens as fluentTokens,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 import PropTypes from "prop-types";
 import { buildUrl } from "../../util/api";
 
-/* ── Fluent v8 design tokens ─────────────────────────────────── */
+/* ── Theme-aware design tokens (follow light/dark via Fluent) ─── */
 const tokens = {
-  colorNeutralBackground1: "#ffffff",
-  colorNeutralBackground2: "#faf9f8",
-  colorNeutralBackground3: "#f3f2f1",
-  colorNeutralForeground1: "#242424",
-  colorNeutralForeground2: "#424242",
-  colorNeutralForeground3: "#616161",
-  colorNeutralStroke1: "#d1d1d1",
-  colorNeutralStroke2: "#e0e0e0",
-  colorBrandBackground: "#0f6cbd",
-  colorBrandForeground1: "#0f6cbd",
-  colorBrandBackground2: "#ebf3fc",
-  colorSuccessBackground1: "#f1faf1",
-  colorSuccessForeground1: "#107C10",
-  colorDangerBackground1: "#fdf3f4",
-  colorDangerForeground1: "#C50F1F",
-  colorSuccessTint30: "#54B054",
-  colorDangerTint30: "#DC626D",
-  colorNeutralForegroundInverted: "#ffffff",
-  spacingS: 4,
-  spacingM: 8,
-  spacingL: 16,
-  borderRadius: 4,
+  colorNeutralBackground1: fluentTokens.colorNeutralBackground1,
+  colorNeutralBackground2: fluentTokens.colorNeutralBackground2,
+  colorNeutralForeground1: fluentTokens.colorNeutralForeground1,
+  colorNeutralForeground2: fluentTokens.colorNeutralForeground2,
+  colorNeutralForeground3: fluentTokens.colorNeutralForeground3,
+  colorNeutralStroke1: fluentTokens.colorNeutralStroke1,
+  colorNeutralStroke2: fluentTokens.colorNeutralStroke2,
+  colorBrandForeground1: fluentTokens.colorBrandForeground1,
+  colorBrandBackground2: fluentTokens.colorBrandBackground2,
+  colorSuccessBackground1: fluentTokens.colorStatusSuccessBackground1,
+  colorSuccessForeground1: fluentTokens.colorStatusSuccessForeground1,
+  colorSuccessBorder1: fluentTokens.colorStatusSuccessBorder1,
+  colorDangerBackground1: fluentTokens.colorStatusDangerBackground1,
+  colorDangerForeground1: fluentTokens.colorStatusDangerForeground1,
+  colorDangerBorder1: fluentTokens.colorStatusDangerBorder1,
+  spacingS: fluentTokens.spacingVerticalS,
+  spacingM: fluentTokens.spacingVerticalM,
+  spacingL: fluentTokens.spacingVerticalL,
+  borderRadius: fluentTokens.borderRadiusMedium,
 };
 
 const pct = (v) => (v != null ? `${(v * 100).toFixed(1)}%` : "—");
@@ -113,18 +111,24 @@ const thStyle = {
 };
 
 const ConfusionMatrix = ({ matrix, labels }) => {
-  const total = matrix.flat().reduce((a, b) => a + b, 0);
   const cellStyle = (i, j, val) => {
-    const intensity = total > 0 ? Math.min(val / total * 4, 1) : 0;
     const isCorrect = i === j;
     return {
       padding: "10px",
       textAlign: "center",
       fontSize: 14,
       fontWeight: 600,
-      background: isCorrect ? tokens.colorSuccessTint30 : val > 0 ? tokens.colorDangerTint30 : tokens.colorNeutralBackground2,
+      background: isCorrect
+        ? tokens.colorSuccessBackground1
+        : val > 0
+        ? tokens.colorDangerBackground1
+        : tokens.colorNeutralBackground2,
       border: `1px solid ${tokens.colorNeutralStroke2}`,
-      color: isCorrect || val > 0 ? tokens.colorNeutralForegroundInverted : tokens.colorNeutralForeground3,
+      color: isCorrect
+        ? tokens.colorSuccessForeground1
+        : val > 0
+        ? tokens.colorDangerForeground1
+        : tokens.colorNeutralForeground3,
     };
   };
   const hdr = {
@@ -172,11 +176,11 @@ const ConfusionMatrix = ({ matrix, labels }) => {
       </div>
       <div style={{ display: "flex", gap: tokens.spacingL, justifyContent: "flex-start" }}>
         <div style={{ display: "flex", alignItems: "center", gap: tokens.spacingS }}>
-          <div style={{ width: 10, height: 10, borderRadius: 2, background: tokens.colorSuccessTint30 }} />
+          <div style={{ width: 10, height: 10, borderRadius: 2, background: tokens.colorSuccessBackground1, border: `1px solid ${tokens.colorSuccessBorder1}` }} />
           <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>Correct</Text>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: tokens.spacingS }}>
-          <div style={{ width: 10, height: 10, borderRadius: 2, background: tokens.colorDangerTint30 }} />
+          <div style={{ width: 10, height: 10, borderRadius: 2, background: tokens.colorDangerBackground1, border: `1px solid ${tokens.colorDangerBorder1}` }} />
           <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>Misclassified</Text>
         </div>
       </div>
@@ -255,9 +259,18 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
         if (!d.open) onDismiss();
       }}
     >
-      <DialogSurface style={{ minWidth: 680, maxWidth: 760 }}>
+      <DialogSurface style={{ width: "min(920px, 94vw)", maxWidth: "94vw" }}>
         <DialogBody>
-          <DialogTitle>
+          <DialogTitle
+            action={
+              <Button
+                appearance="subtle"
+                aria-label="Close"
+                icon={<FluentIcon name="Cancel" />}
+                onClick={onDismiss}
+              />
+            }
+          >
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <FluentIcon name="ReportDocument" style={{ fontSize: 20, color: tokens.colorBrandForeground1 }} />
               <span>{`Validation Report — ${modelName || modelId}`}</span>
@@ -271,8 +284,11 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
             )}
 
             {loading && (
-              <div style={{ display: "flex", justifyContent: "center", padding: "32px 0" }}>
-                <Spinner size="large" label="Computing report…" />
+              <div className="app-loading-inline">
+                <div className="app-loading-card">
+                  <Text className="app-loading-message">Computing report…</Text>
+                  <Spinner size="tiny" className="app-loading-spinner" />
+                </div>
               </div>
             )}
 
@@ -287,15 +303,15 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
                 {/* Overall Metrics */}
                 <div>
                   <SectionTitle>Overall Metrics</SectionTitle>
-                  <div style={{ display: "flex", gap: 12 }}>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                     <HeroCard label="Accuracy" value={pct(report.accuracy)} color={tokens.colorBrandForeground1} />
                     <HeroCard label="Macro F1" value={pct(report.macroF1)} color={tokens.colorSuccessForeground1} />
                   </div>
                 </div>
 
                 {/* Two-column layout */}
-                <div style={{ display: "flex", gap: 32 }}>
-                  <div style={{ flexGrow: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
+                  <div style={{ flex: "1 1 300px", minWidth: 0 }}>
                     <SectionTitle>Label Summary</SectionTitle>
                     <div style={{ display: "flex", flexDirection: "column", gap: tokens.spacingS }}>
                       <MetricCard label="Total validation labels" value={report.totalValidationLabels} />
@@ -306,9 +322,10 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
                     </div>
                   </div>
 
-                  <div style={{ flexGrow: 1, minWidth: 0 }}>
+                  <div style={{ flex: "1 1 300px", minWidth: 0 }}>
                     <SectionTitle>Per-Class Metrics</SectionTitle>
-                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+                    <div style={{ overflowX: "auto" }}>
+                    <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 360, fontSize: 13 }}>
                       <thead>
                         <tr>
                           {["Class", "Precision", "Recall", "F1"].map((h) => (
@@ -332,6 +349,7 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
                         })}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                 </div>
 

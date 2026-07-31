@@ -398,7 +398,7 @@ const CreateEditImageLayerModal = () => {
                 {!imageLayerId && (
                   <div className="mt-3">
                     <Button
-                      icon={<FluentIcon name="Map" />}
+                      icon={<FluentIcon name="MapRegular" />}
                       onClick={() => setIsCatalogOpen(true)}
                     >
                       Browse Open Data Catalog

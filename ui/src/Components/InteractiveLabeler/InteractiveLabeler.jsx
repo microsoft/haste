@@ -30,6 +30,8 @@ import {
   Spinner,
   Switch,
   Text,
+  makeStyles,
+  tokens,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 import { PMTiles, Protocol } from "pmtiles";
@@ -110,6 +112,159 @@ const CLASS_COLORS = ["#107C10", "#C50F1F", "#5B5FC7"]; // intact, damaged, clou
 // Human-readable class names, indexed by class number (parallel to CLASS_COLORS).
 const CLASS_LABELS = ["Intact", "Damaged", "Cloudy"];
 const UNLABELED_COLOR = "#BDBDBD";
+
+const useStyles = makeStyles({
+  root: {
+    display: "flex",
+    flexGrow: 1,
+    minHeight: 0,
+    height: "calc(100dvh - 40px - var(--footer-height, 0px))",
+    position: "relative",
+    overflow: "hidden",
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
+  mapBadge: {
+    position: "absolute",
+    top: "10px",
+    zIndex: 1000,
+    padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
+    borderRadius: tokens.borderRadiusMedium,
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    boxShadow: tokens.shadow4,
+    fontSize: tokens.fontSizeBase200,
+    fontWeight: tokens.fontWeightSemibold,
+    whiteSpace: "nowrap",
+    pointerEvents: "none",
+  },
+  mapBadgeRight: {
+    right: "calc(clamp(280px, 24vw, 340px) + 20px)",
+    "@media (max-width: 700px)": {
+      right: "10px",
+    },
+  },
+  legend: {
+    position: "absolute",
+    right: "calc(clamp(280px, 24vw, 340px) + 20px)",
+    bottom: "10px",
+    zIndex: 900,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+    borderRadius: tokens.borderRadiusMedium,
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    boxShadow: tokens.shadow8,
+    fontSize: tokens.fontSizeBase100,
+    lineHeight: tokens.lineHeightBase200,
+    pointerEvents: "none",
+    "@media (max-width: 700px)": {
+      right: "8px",
+      bottom: "calc(55% + 18px)",
+    },
+  },
+  secondaryText: {
+    color: tokens.colorNeutralForeground3,
+  },
+  sidePanel: {
+    position: "absolute",
+    top: "10px",
+    right: "10px",
+    bottom: "10px",
+    zIndex: 1000,
+    boxSizing: "border-box",
+    width: "clamp(280px, 24vw, 340px)",
+    maxWidth: "calc(100% - 20px)",
+    padding: tokens.spacingHorizontalL,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    boxShadow: tokens.shadow16,
+    display: "flex",
+    flexDirection: "column",
+    color: tokens.colorNeutralForeground1,
+    "@media (max-width: 700px)": {
+      top: "auto",
+      right: "8px",
+      bottom: "8px",
+      left: "8px",
+      width: "auto",
+      maxWidth: "none",
+      maxHeight: "min(55%, 520px)",
+      padding: tokens.spacingHorizontalM,
+    },
+  },
+  sidePanelScroll: {
+    flex: 1,
+    minHeight: 0,
+    overflowX: "hidden",
+    overflowY: "auto",
+    overscrollBehavior: "contain",
+    scrollbarGutter: "stable",
+    paddingRight: tokens.spacingHorizontalS,
+    touchAction: "pan-y",
+  },
+  section: {
+    marginTop: tokens.spacingVerticalS,
+    paddingTop: tokens.spacingVerticalS,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    color: tokens.colorNeutralForeground1,
+  },
+  dangerButton: {
+    marginTop: tokens.spacingVerticalS,
+    width: "100%",
+    color: tokens.colorStatusDangerForeground1,
+  },
+  footerHelp: {
+    marginTop: tokens.spacingVerticalM,
+    paddingTop: tokens.spacingVerticalS,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground3,
+  },
+  predictOverlay: {
+    position: "absolute",
+    inset: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.45)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 2000,
+  },
+  predictDialog: {
+    minWidth: "min(380px, calc(100vw - 32px))",
+    maxWidth: "480px",
+    padding: tokens.spacingHorizontalXXL,
+    borderRadius: tokens.borderRadiusLarge,
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    boxShadow: tokens.shadow64,
+  },
+  mapInfo: {
+    position: "absolute",
+    bottom: "6px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    zIndex: 900,
+    padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalM}`,
+    borderRadius: tokens.borderRadiusMedium,
+    color: tokens.colorNeutralForeground2,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    boxShadow: tokens.shadow4,
+    fontSize: tokens.fontSizeBase200,
+    fontFamily: "monospace",
+    whiteSpace: "nowrap",
+    "@media (max-width: 700px)": {
+      bottom: "calc(55% + 18px)",
+      maxWidth: "calc(100% - 32px)",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+    },
+  },
+});
 
 // In-browser class -> validation-report vocabulary (Damaged/NotDamaged/Unknown).
 const CLASS_TO_VALIDATION = {
@@ -297,6 +452,7 @@ function fmtMetric(m, asPercent) {
 }
 
 const InteractiveLabeler = () => {
+  const styles = useStyles();
   const { projectId, imageLayerId, modelId } = useParams();
   const navigate = useNavigate();
   const { setIsLoading, setDialog, setAppHeaderRightButtons } =
@@ -1759,38 +1915,20 @@ const InteractiveLabeler = () => {
   }, [canTrain]);
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexGrow: 1,
-        minHeight: 0,
-        // Pin to the space below the 40px app header so the right panel scrolls
-        // internally (its own scrollbar) instead of growing the page — which
-        // would otherwise push the map and its on-map legends below the fold
-        // when the Advanced tab is expanded. Mirrors the Visualizer container.
-        height: "calc(100vh - 40px - var(--footer-height, 0px))",
-        position: "relative",
-        overflow: "hidden",
-      }}
-    >
+    <div className={styles.root}>
       <div
+        className="labeling-tool-surface labeling-navigation-controls"
         style={{
-          position: "absolute",
           // While the swipe view is on, the "Pre imagery" label sits at the top
           // and the Back button drops just below it.
           top: swipeOn ? 46 : 10,
-          left: 10,
-          zIndex: 1000,
-          backgroundColor: "rgba(255, 255, 255, 1)",
-          padding: "5px 10px",
-          borderRadius: "5px",
         }}
       >
         <Button
           id="backButton"
           appearance="transparent"
           icon={<FluentIcon name="ChevronLeft" />}
-          onClick={() => navigate(`/project/${projectId}`)}
+          onClick={() => navigate(-1)}
         >
           Back
         </Button>
@@ -1838,40 +1976,15 @@ const InteractiveLabeler = () => {
         {swipeOn && (
           <>
             <div
+              className={styles.mapBadge}
               style={{
-                position: "absolute",
-                top: 10,
                 left: 10,
-                zIndex: 1000,
-                background: "rgba(255,255,255,0.95)",
-                padding: "4px 10px",
-                borderRadius: 6,
-                boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
-                fontSize: 12,
-                fontWeight: 600,
-                color: "#444",
-                whiteSpace: "nowrap",
-                pointerEvents: "none",
               }}
             >
               Pre imagery
             </div>
             <div
-              style={{
-                position: "absolute",
-                top: 10,
-                right: 10,
-                zIndex: 1000,
-                background: "rgba(255,255,255,0.95)",
-                padding: "4px 10px",
-                borderRadius: 6,
-                boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
-                fontSize: 12,
-                fontWeight: 600,
-                color: "#444",
-                whiteSpace: "nowrap",
-                pointerEvents: "none",
-              }}
+              className={`${styles.mapBadge} ${styles.mapBadgeRight}`}
             >
               Post imagery
             </div>
@@ -1882,22 +1995,7 @@ const InteractiveLabeler = () => {
             (Intact / Damaged / Cloudy), or the uncertainty ramp when the
             uncertainty view is on. Hidden when footprints are hidden. */}
         {isMapReady && showFootprints && (
-          <div
-            style={{
-              position: "absolute",
-              bottom: 10,
-              right: 10,
-              zIndex: 900,
-              background: "rgba(255,255,255,0.95)",
-              padding: "8px 10px",
-              borderRadius: 6,
-              boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
-              fontSize: 11,
-              color: "#333",
-              lineHeight: 1.5,
-              pointerEvents: "none",
-            }}
-          >
+          <div className={styles.legend}>
             {uncertaintyOn ? (
               <>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>
@@ -1916,7 +2014,7 @@ const InteractiveLabeler = () => {
                     display: "flex",
                     justifyContent: "space-between",
                     fontSize: 10,
-                    color: "#999",
+                    color: tokens.colorNeutralForeground3,
                     marginTop: 2,
                   }}
                 >
@@ -1953,17 +2051,8 @@ const InteractiveLabeler = () => {
       </div>
 
       {isMapReady && (
-        <div
-          style={{
-            width: 280,
-            padding: 16,
-            background: "#fff",
-            borderLeft: "1px solid #e1e1e1",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+        <div className={`${styles.sidePanel} labeling-tool-surface`}>
+          <div className={styles.sidePanelScroll}>
           <Text size={500} block style={{ marginBottom: 2 }}>
             Interactive Labeler
           </Text>
@@ -1971,7 +2060,9 @@ const InteractiveLabeler = () => {
             <div
               style={{
                 fontSize: 11,
-                color: backend === "WebGPU" ? "#0a7d33" : "#888",
+                color: backend === "WebGPU"
+                  ? tokens.colorStatusSuccessForeground1
+                  : tokens.colorNeutralForeground3,
                 marginBottom: 8,
               }}
             >
@@ -2014,7 +2105,7 @@ const InteractiveLabeler = () => {
             style={{ marginTop: 12 }}
           />
           {!canTrain && (
-            <div style={{ fontSize: 11, color: "#999", marginTop: -4 }}>
+            <div className={styles.secondaryText} style={{ fontSize: 11, marginTop: -4 }}>
               Predicted / Uncertainty views need {MIN_PER_CLASS}+ labels in at
               least 2 classes.
             </div>
@@ -2027,15 +2118,7 @@ const InteractiveLabeler = () => {
           />
 
           {metrics && (
-            <div
-              style={{
-                marginTop: 10,
-                fontSize: 12,
-                color: "#333",
-                borderTop: "1px solid #eee",
-                paddingTop: 8,
-              }}
-            >
+            <div className={styles.section} style={{ fontSize: 12 }}>
               <div style={{ fontWeight: 600, marginBottom: 4 }}>
                 Damaged class (80/20 holdout)
               </div>
@@ -2050,23 +2133,23 @@ const InteractiveLabeler = () => {
                   F1 <b>{(metrics.f1 * 100).toFixed(0)}%</b>
                 </span>
               </div>
-              <div style={{ color: "#999", marginTop: 2 }}>
+              <div className={styles.secondaryText} style={{ marginTop: 2 }}>
                 {metrics.nPos} damaged / {metrics.nNeg} other
               </div>
             </div>
           )}
 
           <div
+            className={styles.secondaryText}
             style={{
               marginTop: 8,
               minHeight: 18,
               fontSize: 12,
-              color: "#888",
             }}
           >
             {status}
           </div>
-          <div style={{ marginTop: 4, fontSize: 12, color: "#888" }}>
+          <div className={styles.secondaryText} style={{ marginTop: 4, fontSize: 12 }}>
             {totalLabeled} labeled · {viewportPredicted} predicted in viewport
           </div>
 
@@ -2088,7 +2171,7 @@ const InteractiveLabeler = () => {
           </Button>
           <Button
             onClick={handleClearLabels}
-            style={{ marginTop: 8, width: "100%", color: "#a4262c" }}
+            className={styles.dangerButton}
             title="Remove every label for this model — both in-session and in the saved store."
           >
             Clear labels
@@ -2135,7 +2218,7 @@ const InteractiveLabeler = () => {
               )}
 
               {cvResult && cvResult.ok && (
-                <div style={{ marginTop: 8, fontSize: 12, color: "#333" }}>
+                <div style={{ marginTop: 8, fontSize: 12 }}>
                   <table
                     style={{
                       width: "100%",
@@ -2144,7 +2227,7 @@ const InteractiveLabeler = () => {
                     }}
                   >
                     <thead>
-                      <tr style={{ color: "#666" }}>
+                      <tr className={styles.secondaryText}>
                         <th style={{ textAlign: "left", padding: "2px 3px" }}>
                           Class
                         </th>
@@ -2202,7 +2285,7 @@ const InteractiveLabeler = () => {
                       })}
                     </tbody>
                   </table>
-                  <div style={{ color: "#999", marginTop: 4 }}>
+                  <div className={styles.secondaryText} style={{ marginTop: 4 }}>
                     k-fold={cvResult.k}
                     {cvResult.k < cvResult.requestedK &&
                       " (reduced — insufficient per-class samples)"}
@@ -2219,9 +2302,7 @@ const InteractiveLabeler = () => {
                 onChange={(_e, data) => setSwipeOn(!!data.checked)}
                 style={{ marginTop: 12 }}
               />
-              <div
-                style={{ fontSize: 11, color: "#999", marginTop: -4 }}
-              >
+              <div className={styles.secondaryText} style={{ fontSize: 11, marginTop: -4 }}>
                 Drag the divider to compare pre-event imagery (left) with
                 post-event imagery (right). Satellite basemap is used on the pre
                 side when the layer has no pre-event imagery.
@@ -2240,7 +2321,7 @@ const InteractiveLabeler = () => {
                   if (data.checked) setViewMode("label");
                 }}
               />
-              <div style={{ fontSize: 11, color: "#999", marginTop: -4 }}>
+              <div className={styles.secondaryText} style={{ fontSize: 11, marginTop: -4 }}>
                 Recolors every scored footprint by the model&apos;s predictive
                 uncertainty. Needs {MIN_PER_CLASS}+ labels in at least 2 classes.
                 A legend appears on the map.
@@ -2249,15 +2330,7 @@ const InteractiveLabeler = () => {
           )}
           </div>
 
-          <div
-            style={{
-              marginTop: 12,
-              paddingTop: 10,
-              borderTop: "1px solid #e1e1e1",
-              fontSize: 11,
-              color: "#999",
-            }}
-          >
+          <div className={styles.footerHelp}>
             Click a building to label it · right-click to clear ·{" "}
             <kbd>Ctrl</kbd>+drag to box-label · <kbd>1</kbd>/<kbd>2</kbd>/
             <kbd>3</kbd> set class · <kbd>P</kbd> toggle view ·{" "}
@@ -2282,31 +2355,12 @@ const InteractiveLabeler = () => {
 
       {/* Full-coverage Predict-all progress modal. */}
       {fullPredict && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: "rgba(0,0,0,0.45)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 2000,
-          }}
-        >
-          <div
-            style={{
-              background: "#fff",
-              borderRadius: 8,
-              padding: 24,
-              minWidth: 380,
-              maxWidth: 480,
-              boxShadow: "0 4px 18px rgba(0,0,0,0.3)",
-            }}
-          >
+        <div className={styles.predictOverlay}>
+          <div className={styles.predictDialog}>
             <Text size={500} block style={{ marginBottom: 8 }}>
               Predict all buildings
             </Text>
-            <div style={{ fontSize: 13, color: "#444", marginBottom: 12 }}>
+            <div style={{ fontSize: 13, marginBottom: 12 }}>
               {fullPredict.message}
             </div>
             <ProgressBar
@@ -2332,23 +2386,7 @@ const InteractiveLabeler = () => {
 
       {/* Bottom info bar: lat / lon / zoom */}
       {isMapReady && (
-        <div
-          style={{
-            position: "absolute",
-            bottom: 6,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "rgba(255,255,255,0.95)",
-            padding: "4px 12px",
-            borderRadius: 6,
-            boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
-            zIndex: 900,
-            fontSize: 12,
-            fontFamily: "monospace",
-            color: "#444",
-            whiteSpace: "nowrap",
-          }}
-        >
+        <div className={styles.mapInfo}>
           Zoom: {mapInfo.zoom.toFixed(2)} | Lat: {mapInfo.lat.toFixed(4)}, Lon:{" "}
           {mapInfo.lon.toFixed(4)}
         </div>

@@ -18,6 +18,7 @@ import {
   DrawerHeader,
   DrawerHeaderTitle,
   Dropdown,
+  Label,
   MessageBar,
   MessageBarBody,
   Option,
@@ -26,6 +27,8 @@ import {
   Tab,
   TabList,
   Text,
+  makeStyles,
+  tokens,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 
@@ -39,6 +42,140 @@ import { isAzureMapsPlaceholder } from "../../util/azureMapsAuth";
 import OpenDataCatalogMap from "./OpenDataCatalogMap";
 import SceneListItem from "./SceneListItem";
 
+const useStyles = makeStyles({
+  drawer: {
+    width: "min(1120px, 94vw)",
+    maxWidth: "100vw",
+    backgroundColor: tokens.colorNeutralBackground1,
+    "@media (max-width: 700px)": {
+      width: "100vw",
+    },
+  },
+  body: {
+    padding: 0,
+    overflow: "hidden",
+  },
+  layout: {
+    display: "flex",
+    flexDirection: "column",
+    height: "100%",
+    minHeight: 0,
+    color: tokens.colorNeutralForeground1,
+  },
+  controls: {
+    flexShrink: 0,
+    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
+    "@media (max-width: 700px)": {
+      padding: tokens.spacingVerticalS,
+    },
+  },
+  description: {
+    color: tokens.colorNeutralForeground2,
+    marginBottom: tokens.spacingVerticalS,
+  },
+  controlRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "end",
+    gap: tokens.spacingHorizontalL,
+    "@media (max-width: 700px)": {
+      alignItems: "stretch",
+      gap: tokens.spacingVerticalS,
+    },
+  },
+  eventDropdown: {
+    minWidth: "min(320px, 100%)",
+    "@media (max-width: 700px)": {
+      width: "100%",
+      minWidth: 0,
+    },
+  },
+  catalogBody: {
+    display: "flex",
+    flex: 1,
+    width: "100%",
+    minHeight: 0,
+    overflow: "hidden",
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    "@media (max-width: 700px)": {
+      flexDirection: "column",
+    },
+  },
+  sceneList: {
+    width: "380px",
+    flexShrink: 0,
+    overflowY: "auto",
+    borderRight: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    "@media (max-width: 700px)": {
+      width: "100%",
+      height: "42%",
+      minHeight: "180px",
+      borderRight: "none",
+      borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    },
+  },
+  emptyState: {
+    color: tokens.colorNeutralForeground2,
+  },
+  loadingState: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    height: "100%",
+    minHeight: "180px",
+    padding: tokens.spacingVerticalL,
+  },
+  mapRegion: {
+    flex: 1,
+    width: "100%",
+    minWidth: 0,
+    minHeight: "240px",
+    position: "relative",
+  },
+  mapCallout: {
+    display: "inline-flex",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalS,
+    alignItems: "center",
+    maxWidth: "100%",
+    padding: `${tokens.spacingVerticalSNudge} ${tokens.spacingHorizontalS}`,
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    boxShadow: tokens.shadow4,
+  },
+  mapHint: {
+    display: "inline-block",
+    maxWidth: "100%",
+    padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    boxShadow: tokens.shadow4,
+  },
+  mapHintMuted: {
+    color: tokens.colorNeutralForeground2,
+  },
+  mapWarning: {
+    display: "block",
+    width: "fit-content",
+    maxWidth: "100%",
+    marginTop: tokens.spacingVerticalXXS,
+    padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
+    color: tokens.colorStatusWarningForeground1,
+    backgroundColor: tokens.colorStatusWarningBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorStatusWarningBorder1}`,
+    borderRadius: tokens.borderRadiusMedium,
+  },
+  floatingButton: {
+    backgroundColor: tokens.colorNeutralBackground1,
+  },
+});
+
 const OpenDataCatalogPanel = ({
   isOpen,
   onDismiss,
@@ -48,6 +185,7 @@ const OpenDataCatalogPanel = ({
   preUrls,
   postUrls,
 }) => {
+  const styles = useStyles();
   const [events, setEvents] = useState([]);
   const [eventKey, setEventKey] = useState(null);
   const [discovering, setDiscovering] = useState(false);
@@ -211,7 +349,7 @@ const OpenDataCatalogPanel = ({
       open={isOpen}
       position="start"
       size="full"
-      style={{ width: "min(1120px, 94vw)" }}
+      className={styles.drawer}
       onOpenChange={(_, data) => {
         if (!data.open) onDismiss();
       }}
@@ -230,17 +368,17 @@ const OpenDataCatalogPanel = ({
           Open Data Catalog
         </DrawerHeaderTitle>
       </DrawerHeader>
-      <DrawerBody style={{ padding: 0, overflow: "hidden" }}>
-      <div className="d-flex flex-column" style={{ height: "100%", minHeight: 0 }}>
+      <DrawerBody className={styles.body}>
+      <div className={styles.layout}>
         {/* Header controls (full width) */}
-        <div className="p-3 pb-2" style={{ flex: "none" }}>
-          <Text size={200} style={{ color: "#616161" }} block className="mb-2">
+        <div className={styles.controls}>
+          <Text size={200} block className={styles.description}>
             Browse open disaster imagery from the Vantor/Maxar and Planet Open
             Data Programs, then add a scene directly to your pre- or post-event
             imagery. Imagery is licensed CC&nbsp;BY-NC&nbsp;4.0.
           </Text>
 
-          <div className="d-flex flex-wrap align-items-end" style={{ gap: "16px" }}>
+          <div className={styles.controlRow}>
             <Dropdown
               placeholder={discovering ? "Discovering events…" : "Select an event"}
               aria-label="Disaster event"
@@ -248,7 +386,7 @@ const OpenDataCatalogPanel = ({
               value={event?.name || ""}
               disabled={discovering}
               onOptionSelect={(_, data) => setEventKey(data.optionValue)}
-              style={{ minWidth: 320 }}
+              className={styles.eventDropdown}
             >
               {events.map((item) => (
                 <Option key={item.key} value={item.key}>
@@ -326,33 +464,28 @@ const OpenDataCatalogPanel = ({
         ))}
 
         {/* Body: list (left) + map (right) */}
-        <div
-          className="d-flex"
-          style={{
-            flex: 1,
-            minHeight: "70vh",
-            borderTop: "1px solid #e1e1e1",
-          }}
-        >
+        <div className={styles.catalogBody}>
           {/* Scene list */}
           <div
             ref={listRef}
-            style={{
-              width: 380,
-              flex: "none",
-              overflowY: "auto",
-              borderRight: "1px solid #e1e1e1",
-            }}
+            className={styles.sceneList}
           >
             {loading || discovering ? (
-              <div className="p-4 d-flex justify-content-center">
-                <Spinner
-                  size="large"
-                  label={discovering ? "Discovering events…" : "Loading imagery…"}
-                />
+              <div
+                className={styles.loadingState}
+                role="status"
+                aria-live="polite"
+                aria-busy="true"
+              >
+                <div className="app-loading-card">
+                  <Label className="app-loading-message">
+                    {discovering ? "Discovering events..." : "Loading imagery..."}
+                  </Label>
+                  <Spinner size="tiny" className="app-loading-spinner" />
+                </div>
               </div>
             ) : filtered.length === 0 ? (
-              <Text block className="p-4" style={{ color: "#616161" }}>
+              <Text block className={`p-4 ${styles.emptyState}`}>
                 {scenes.length === 0
                   ? "No imagery available for this event."
                   : "No scenes match the current filters."}
@@ -376,7 +509,7 @@ const OpenDataCatalogPanel = ({
           </div>
 
           {/* Map / preview */}
-          <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
+          <div className={styles.mapRegion}>
             {isOpen && (
               <OpenDataCatalogMap
                 scenes={filtered}
@@ -405,18 +538,7 @@ const OpenDataCatalogPanel = ({
                 }}
               >
                 {clipMode ? (
-                  <span
-                    style={{
-                      background: "rgba(255,255,255,0.95)",
-                      border: "1px solid #e1e1e1",
-                      borderRadius: 4,
-                      padding: "6px 10px",
-                      fontSize: 12,
-                      display: "inline-flex",
-                      gap: 8,
-                      alignItems: "center",
-                    }}
-                  >
+                  <span className={styles.mapCallout}>
                     Drag a box to set the clip area.
                     <Button
                       size="small"
@@ -426,19 +548,7 @@ const OpenDataCatalogPanel = ({
                     </Button>
                   </span>
                 ) : clipAoi ? (
-                  <span
-                    style={{
-                      background: "rgba(255,255,255,0.95)",
-                      border: "1px solid #e1e1e1",
-                      borderRadius: 4,
-                      padding: "6px 10px",
-                      fontSize: 12,
-                      display: "inline-flex",
-                      gap: 6,
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                    }}
-                  >
+                  <span className={styles.mapCallout}>
                     Clip area set — imagery is clipped to it during processing.
                     <Button
                       size="small"
@@ -458,7 +568,7 @@ const OpenDataCatalogPanel = ({
                   <Button
                     icon={<FluentIcon name="Crop" />}
                     onClick={() => setClipMode(true)}
-                    style={{ background: "#fff" }}
+                    className={styles.floatingButton}
                   >
                     Set clip area
                   </Button>
@@ -475,47 +585,16 @@ const OpenDataCatalogPanel = ({
               }}
             >
               {selectedScene ? (
-                <span
-                  style={{
-                    display: "inline-block",
-                    background: "rgba(255,255,255,0.9)",
-                    border: "1px solid #e1e1e1",
-                    borderRadius: 4,
-                    padding: "4px 8px",
-                    fontSize: 12,
-                  }}
-                >
+                <span className={styles.mapHint}>
                   Previewing: {selectedScene.place || selectedScene.title || selectedScene.id}
                 </span>
               ) : (
-                <span
-                  style={{
-                    display: "inline-block",
-                    background: "rgba(255,255,255,0.9)",
-                    border: "1px solid #e1e1e1",
-                    borderRadius: 4,
-                    padding: "4px 8px",
-                    fontSize: 12,
-                    color: "#616161",
-                  }}
-                >
+                <span className={`${styles.mapHint} ${styles.mapHintMuted}`}>
                   Select a scene to preview its imagery here.
                 </span>
               )}
               {isAzureMapsPlaceholder && (
-                <span
-                  style={{
-                    display: "block",
-                    marginTop: 4,
-                    background: "rgba(255,255,255,0.9)",
-                    border: "1px solid #e1e1e1",
-                    borderRadius: 4,
-                    padding: "2px 8px",
-                    fontSize: 11,
-                    color: "#8a6d00",
-                    width: "fit-content",
-                  }}
-                >
+                <span className={styles.mapWarning}>
                   Satellite basemap disabled (no Azure Maps key) — footprints and
                   scene previews still work.
                 </span>
