@@ -37,7 +37,7 @@ az login
 azd env new dev3
 
 # Required configuration.
-azd env set HASTE_RESOURCE_PREFIX     ai4gl
+azd env set HASTE_RESOURCE_PREFIX     myorg
 azd env set HASTE_RANDOM_SUFFIX       dev3
 azd env set AZURE_LOCATION            westus2
 azd env set HASTE_APIM_PUBLISHER_EMAIL you@example.com
@@ -83,7 +83,7 @@ Common knobs:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `HASTE_RESOURCE_PREFIX` | `ai4gl` | Resource name prefix. |
+| `HASTE_RESOURCE_PREFIX` | `haste` | Resource name prefix. |
 | `HASTE_RANDOM_SUFFIX` | `dev1` | Per-environment suffix. |
 | `AZURE_LOCATION` | `westus2` | Azure region. |
 | `HASTE_APIM_PUBLISHER_EMAIL` | — | APIM publisher email. |

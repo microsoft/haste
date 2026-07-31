@@ -181,6 +181,9 @@ class ImageryPostProcessor:
             runner_type=config.runner_type,
             config=self.config,
             pool_id=self.config.get_azure_batch_config()["imageprep_pool_id"],
+            candidate_pool_ids=self.config.get_azure_batch_config()[
+                "imageryprep_pool_ids"
+            ],
         )
         self.queue = AzureQueueHandler(
             config.queue_config["queue_connection_string"],
@@ -292,6 +295,9 @@ class ImageryPostProcessor:
             "user_building_footprints_url": (
                 self.image_data.userBuildingFootprintsUrl
             ),
+            # Optional server-side clip AOI ([w, s, e, n] EPSG:4326). When set,
+            # prepare-imagery clips the pre/post mosaics to this box.
+            "clip_bbox": self.image_data.clipBbox,
         }
         self.storage.save(
             identifier=self.image_data.imageLayerId,
@@ -335,7 +341,7 @@ class ImageryPostProcessor:
         imagery_output_prefix = (
             f"{MetadataUtils.hash_string(self.image_data.projectId)}/{task_id}"
         )
-        self.runner.add_task(
+        job_id, task_id = self.runner.add_task(
             job_id=job_id,
             task_id=task_id,
             output_prefix=imagery_output_prefix,

@@ -42,6 +42,20 @@ USER_MANAGED_IDENTITY="${RESOURCE_PREFIX}-haste-${RANDOM_SUFFIX}-umi"
 TRAINING_DOCKER_IMAGE="hastetraining:${TRAINING_IMAGE_TAG}"
 IMAGEPREP_DOCKER_IMAGE="hasteimageryprep:${IMAGEPREP_IMAGE_TAG}"
 BATCH_POOL_ID="${RESOURCE_PREFIX}-haste-${RANDOM_SUFFIX}-pool"
+# Batch pool wiring. Defaults reproduce the legacy single-pool behavior; set the
+# corresponding GitHub Environment variables to point an environment at
+# pre-created shared pools (see docs/configuration.md).
+#   *_POOL_ID   - the pool used when no candidate list is supplied. It is also
+#                 the default Batch *job* id, so it must be identical across the
+#                 api and queues apps or status lookups miss the job.
+#   *_POOL_IDS  - ordered candidate lists for capacity-aware routing.
+BATCH_TRAINING_POOL_ID="${BATCH_TRAINING_POOL_ID:-$BATCH_POOL_ID}"
+BATCH_IMAGERYPREP_POOL_ID="${BATCH_IMAGERYPREP_POOL_ID:-$BATCH_POOL_ID}"
+BATCH_TRAINING_POOL_IDS="${BATCH_TRAINING_POOL_IDS:-}"
+BATCH_INFERENCE_POOL_IDS="${BATCH_INFERENCE_POOL_IDS:-}"
+BATCH_IMAGERYPREP_POOL_IDS="${BATCH_IMAGERYPREP_POOL_IDS:-}"
+BATCH_USE_SAS="${BATCH_USE_SAS:-false}"
+BATCH_MANAGE_POOLS="${BATCH_MANAGE_POOLS:-true}"
 MAPS_ACCOUNT="${RESOURCE_PREFIX}haste${RANDOM_SUFFIX}maps"
 API_MANAGEMENT="${RESOURCE_PREFIX}-haste-${RANDOM_SUFFIX}-apim"
 FIXED_TAGS="project=haste created_by=deploy_apps"
@@ -87,6 +101,7 @@ deploy_function() {
             "STATS_QUEUE_NAME=stats-queue" \
             "TRAIN_QUEUE_NAME=train-queue" \
             "ZIP_QUEUE_NAME=zip-queue" \
+            "EMBEDDING_QUEUE_NAME=embedding-queue" \
             "IMAGERY_STORAGE_TYPE=blob" \
             "METADATA_STORAGE_TYPE=blob" \
             "ARTIFACT_STORAGE_TYPE=blob" \
@@ -104,9 +119,14 @@ deploy_function() {
             "AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE=${ACR_NAME}.azurecr.io/${IMAGEPREP_DOCKER_IMAGE}" \
             "AZURE_BATCH_DOCKER_IMAGE=${ACR_NAME}.azurecr.io/${TRAINING_DOCKER_IMAGE}" \
             "AZURE_BATCH_OUTPUT_CONTAINER_URL=https://${STORAGE_ACCOUNT}.blob.core.windows.net/data" \
-            "AZURE_BATCH_TRAINING_POOL_ID=${BATCH_POOL_ID}" \
-            "AZURE_BATCH_IMAGERYPREP_POOL_ID=${BATCH_POOL_ID}" \
-            "AZURE_BATCH_REGISTRY_SERVER_URL=https://${ACR_NAME}.azurecr.io" \
+            "AZURE_BATCH_TRAINING_POOL_ID=${BATCH_TRAINING_POOL_ID}" \
+            "AZURE_BATCH_IMAGERYPREP_POOL_ID=${BATCH_IMAGERYPREP_POOL_ID}" \
+            "AZURE_BATCH_TRAINING_POOL_IDS=${BATCH_TRAINING_POOL_IDS}" \
+            "AZURE_BATCH_INFERENCE_POOL_IDS=${BATCH_INFERENCE_POOL_IDS}" \
+            "AZURE_BATCH_IMAGERYPREP_POOL_IDS=${BATCH_IMAGERYPREP_POOL_IDS}" \
+            "AZURE_BATCH_USE_SAS=${BATCH_USE_SAS}" \
+            "AZURE_BATCH_MANAGE_POOLS=${BATCH_MANAGE_POOLS}" \
+            "AZURE_BATCH_REGISTRY_SERVER=${ACR_NAME}.azurecr.io" \
             "AZURE_BATCH_REGISTRY_IMAGE=${ACR_NAME}.azurecr.io/${TRAINING_DOCKER_IMAGE}" \
             "AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID=/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$USER_MANAGED_IDENTITY" \
             "STATIC_APP_SUBSCRIPTION_ID=$SUBSCRIPTION_ID" \
@@ -114,20 +134,32 @@ deploy_function() {
             "STATIC_APP_NAME=$STATIC_WEB_APP" \
             "STATIC_APP_DOMAIN=${STATIC_APP_DOMAIN}" \
             "EMAIL_CONNECTION_STRING=${EMAIL_CONNECTION_STRING}" \
-            "EMAIL_SENDER=${EMAIL_SENDER}"
+            "EMAIL_SENDER=${EMAIL_SENDER}" \
+            --output none
     fi
 
     az functionapp restart --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP"
 
-    echo "Deploying function code..."
-    # Deploy and handle health check failures gracefully
-    if (cd "$FUNCTION_DIR" && func azure functionapp publish "$FUNCTION_NAME" --python --build remote --verbose); then
-        echo "✅ Function deployment completed successfully"
-    else
-        echo "⚠️  WARNING: Function deployment completed but health check failed."
-        echo "   This is often normal for cold starts and doesn't indicate a real problem."
-        echo "   The function app is likely working correctly. Check the Azure portal to verify."
+    # Function apps publish via `func` -> remote pip install on Azure, so the
+    # editable hastegeo default in requirements.txt (used by docker-compose)
+    # must be swapped for the published wheel. Apps without a hastegeo line
+    # (e.g. titiler) are left untouched.
+    if [ -n "${HASTEGEO_WHEEL_URL:-}" ] && grep -qE '^[[:space:]]*#?[[:space:]]*(-e[[:space:]]+[^[:space:]]*hastelib|hastegeo[[:space:]]*@)' "$FUNCTION_DIR/requirements.txt" 2>/dev/null; then
+        echo "Pinning hastegeo wheel for $FUNCTION_NAME: $HASTEGEO_WHEEL_URL"
+        python3 "$(dirname "$0")/set_hastegeo_source.py" --mode wheel --url "$HASTEGEO_WHEEL_URL" "$FUNCTION_DIR/requirements.txt"
     fi
+
+    echo "Deploying function code..."
+    # A non-zero exit can represent a package/build/deployment failure. Do not
+    # convert it into a success-shaped warning: set -e propagates the failure.
+    (
+        cd "$FUNCTION_DIR"
+        func azure functionapp publish "$FUNCTION_NAME" \
+            --python \
+            --build remote \
+            --verbose
+    )
+    echo "Function deployment completed successfully."
 
     echo "Setting tags for Function App $FUNCTION_NAME ..."
     az functionapp update --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --set $AZ_FUNCTIONAPP_TAGS

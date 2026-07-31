@@ -13,14 +13,34 @@ param poolName string
 @description('Pool VM size.')
 param vmSize string
 
-@description('Max dedicated nodes (autoscale cap).')
+@description('Max nodes (autoscale cap).')
 param maxNodes int
+
+@description('Scale mode: Fixed (dev/prod reserved) or Autoscale (shared-demo burst).')
+@allowed([
+  'Fixed'
+  'Autoscale'
+])
+param scaleMode string = 'Autoscale'
+
+@description('Node cost tier: Dedicated (guaranteed) or LowPriority (spot, preemptible).')
+@allowed([
+  'Dedicated'
+  'LowPriority'
+])
+param nodeType string = 'Dedicated'
+
+@description('Node count when scaleMode == Fixed.')
+param fixedNodeCount int = 1
+
+@description('Autoscale floor. 0 = scale-to-zero when idle (shared-demo burst); 1 keeps the legacy always-on behavior.')
+param minNodes int = 1
 
 @description('User-assigned managed identity resource id (for ACR pull).')
 param umiResourceId string
 
-@description('Resource id of the env VNet subnet for the pool.')
-param subnetId string
+@description('VNet subnet resource id for VNet-injected pools. Empty => no VNet injection (BatchManaged public IPs). Shared-demo pools finalize their subnet + per-demo-storage firewall allowlisting before running workloads.')
+param subnetId string = ''
 
 @description('Shared ACR name (without .azurecr.io).')
 param acrName string
@@ -33,7 +53,26 @@ param imageryprepImage string
 
 var registryServer = '${acrName}.azurecr.io'
 
-var autoscaleFormula = '$samples = $ActiveTasks.GetSamplePercent(TimeInterval_Minute * 15);$tasks = $samples < 70 ? max(0, $ActiveTasks.GetSample(1)) : max($ActiveTasks.GetSample(1), avg($ActiveTasks.GetSample(TimeInterval_Minute * 15)));$targetVMs = $tasks > 0 ? $tasks : max(0, $TargetDedicatedNodes / 2);$cappedPoolSize = ${maxNodes};$TargetDedicatedNodes = max(1, min($targetVMs, $cappedPoolSize));$NodeDeallocationOption = taskcompletion;'
+// Autoscale targets the node bucket matching nodeType; minNodes=0 => scale-to-zero
+// when idle (shared-demo burst preserves scarce GPU quota).
+var scaleTargetVar = nodeType == 'LowPriority' ? '$TargetLowPriorityNodes' : '$TargetDedicatedNodes'
+var otherScaleTargetVar = nodeType == 'LowPriority' ? '$TargetDedicatedNodes' : '$TargetLowPriorityNodes'
+var autoscaleFormula = '$samples = $ActiveTasks.GetSamplePercent(TimeInterval_Minute * 15);$tasks = $samples < 70 ? max(0, $ActiveTasks.GetSample(1)) : max($ActiveTasks.GetSample(1), avg($ActiveTasks.GetSample(TimeInterval_Minute * 15)));$targetVMs = $tasks > 0 ? $tasks : ${minNodes};${scaleTargetVar} = max(${minNodes}, min($targetVMs, ${maxNodes}));${otherScaleTargetVar} = 0;$NodeDeallocationOption = taskcompletion;'
+
+// Fixed (reserved dev/prod) vs Autoscale (shared-demo burst), targeting the
+// Dedicated or LowPriority bucket per nodeType.
+var scaleSettings = scaleMode == 'Fixed' ? {
+  fixedScale: {
+    targetDedicatedNodes: nodeType == 'Dedicated' ? fixedNodeCount : 0
+    targetLowPriorityNodes: nodeType == 'LowPriority' ? fixedNodeCount : 0
+    resizeTimeout: 'PT15M'
+  }
+} : {
+  autoScale: {
+    formula: autoscaleFormula
+    evaluationInterval: 'PT5M'
+  }
+}
 
 resource batchAccount 'Microsoft.Batch/batchAccounts@2024-07-01' existing = {
   name: batchAccountName
@@ -91,20 +130,17 @@ resource pool 'Microsoft.Batch/batchAccounts/pools@2024-07-01' = {
         }
       }
     }
-    networkConfiguration: {
-      subnetId: subnetId
-      publicIPAddressConfiguration: {
-        provision: 'BatchManaged'
+    ...(empty(subnetId) ? {} : {
+      networkConfiguration: {
+        subnetId: subnetId
+        publicIPAddressConfiguration: {
+          provision: 'BatchManaged'
+        }
+        dynamicVnetAssignmentScope: 'none'
+        enableAcceleratedNetworking: false
       }
-      dynamicVnetAssignmentScope: 'none'
-      enableAcceleratedNetworking: false
-    }
-    scaleSettings: {
-      autoScale: {
-        formula: autoscaleFormula
-        evaluationInterval: 'PT5M'
-      }
-    }
+    })
+    scaleSettings: scaleSettings
   }
 }
 

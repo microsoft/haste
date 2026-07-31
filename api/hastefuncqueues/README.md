@@ -127,8 +127,13 @@ Handles image layer messages that exceeded the max dequeue count (`maxDequeueCou
 | `AZURE_BATCH_ACCOUNT_NAME` | Batch account name | — |
 | `AZURE_BATCH_ACCOUNT_KEY` | Batch account key (if not using managed identity) | — |
 | `AZURE_BATCH_ACCOUNT_URL` | Batch account endpoint URL | — |
-| `AZURE_BATCH_TRAINING_POOL_ID` | Pool for training and inference | `training-pool` |
-| `AZURE_BATCH_IMAGERYPREP_POOL_ID` | Pool for imagery preprocessing | `imageryprep-pool` |
+| `AZURE_BATCH_TRAINING_POOL_ID` | Pool for training and inference; also the default training/inference job id | `training-pool` |
+| `AZURE_BATCH_IMAGERYPREP_POOL_ID` | Pool for imagery preprocessing; also the default imageryprep/artifact job id | `imageryprep-pool` |
+| `AZURE_BATCH_TRAINING_POOL_IDS` | Ordered candidate training pools (comma-separated) | `AZURE_BATCH_TRAINING_POOL_ID` |
+| `AZURE_BATCH_INFERENCE_POOL_IDS` | Ordered candidate inference/embedding pools | training pool |
+| `AZURE_BATCH_IMAGERYPREP_POOL_IDS` | Ordered candidate imageryprep/artifact pools | `AZURE_BATCH_IMAGERYPREP_POOL_ID` |
+| `AZURE_BATCH_USE_SAS` | Per-job user-delegation SAS for blob I/O instead of the pool identity. Required for shared pools. | `false` |
+| `AZURE_BATCH_MANAGE_POOLS` | Runner auto-creates/resizes its pool. Set `false` for pre-created autoscale pools. | `true` |
 | `AZURE_BATCH_TARGET_DEDICATED_NODES` | Number of dedicated nodes per pool | `1` |
 | `AZURE_BATCH_TARGET_LOW_PRIORITY_NODES` | Number of spot nodes per pool | `0` |
 | `AZURE_BATCH_TASK_RETENTION_TIME` | ISO 8601 retention for task files | `P2D` |
@@ -141,7 +146,7 @@ Handles image layer messages that exceeded the max dequeue count (`maxDequeueCou
 
 | Environment Variable | Description |
 |----------------------|-------------|
-| `AZURE_BATCH_REGISTRY_SERVER` | ACR login server (e.g. `myregistry.azurecr.io`) |
+| `AZURE_BATCH_REGISTRY_SERVER` | ACR login server (e.g. `myregistry.azurecr.io`). Falls back to the deprecated `AZURE_BATCH_REGISTRY_SERVER_URL`; a `https://` prefix is stripped. Only read when `AZURE_BATCH_MANAGE_POOLS` is true. |
 | `AZURE_BATCH_DOCKER_IMAGE` | Training/inference Docker image (full tag) |
 | `AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE` | Imagery preprocessing Docker image (full tag) |
 | `AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID` | Managed identity resource ID for ACR pull |
@@ -161,7 +166,9 @@ The app ships as a Docker container.
 
 **Base image:** `mcr.microsoft.com/azure-functions/python:4-python3.11`
 
-The container runs as a non-root `appuser`. Local `hastegeo` source is copied in alongside the installed wheel to support development builds. Set `HASTE_SKIP_VERSION_BUMP=1` during the build to prevent version bumping.
+The container runs as a non-root `appuser`. Its requirements default to an
+editable `/home/hastelib` install so local Docker builds use the checked-out
+source. Deployment CI rewrites that requirement to a validated release wheel.
 
 ```bash
 docker build -t hastefuncqueues .

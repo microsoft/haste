@@ -48,6 +48,12 @@ var queueDataContributorRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
 )
+// Storage Blob Delegator: lets the app mint user-delegation SAS (v2.1.0 per-job
+// SAS for multi-tenant shared Batch pools). Not included in Blob Data Owner.
+var blobDelegatorRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  'db58b8e5-c6ad-4a2a-8342-4190687cbf4a'
+)
 
 var deploymentContainerName = 'app-package-${name}'
 
@@ -187,6 +193,16 @@ resource siteQueueContributor 'Microsoft.Authorization/roleAssignments@2022-04-0
   scope: storageAccount
   properties: {
     roleDefinitionId: queueDataContributorRoleId
+    principalId: site.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource siteBlobDelegator 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, site.id, 'blobDelegator')
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: blobDelegatorRoleId
     principalId: site.identity.principalId
     principalType: 'ServicePrincipal'
   }

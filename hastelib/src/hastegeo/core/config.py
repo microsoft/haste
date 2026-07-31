@@ -1,10 +1,48 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
+import logging
 import os
+import re
 import tempfile
 from enum import Enum
 from string import Template
 from typing import NamedTuple
+
+_logger = logging.getLogger(__name__)
+
+REGISTRY_SERVER_PLACEHOLDER = "<registry-name>.azurecr.io"
+
+_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
+
+
+def _strip_scheme(value):
+    """Reduce a registry URL to the bare login server.
+
+    Azure Batch's ``ContainerRegistry.registry_server`` expects
+    ``myacr.azurecr.io``, but the app setting is frequently supplied as a URL.
+    """
+    return _SCHEME_RE.sub("", value.strip()).rstrip("/")
+
+
+def _resolve_registry_server():
+    """Resolve the ACR login server used for Batch pool creation.
+
+    ``AZURE_BATCH_REGISTRY_SERVER`` is canonical. Environments provisioned
+    before the rename set ``AZURE_BATCH_REGISTRY_SERVER_URL`` instead, so it is
+    still honored to keep those deployments working across the upgrade.
+    """
+    server = os.getenv("AZURE_BATCH_REGISTRY_SERVER")
+    if not server:
+        legacy = os.getenv("AZURE_BATCH_REGISTRY_SERVER_URL")
+        if not legacy:
+            return REGISTRY_SERVER_PLACEHOLDER
+        _logger.warning(
+            "AZURE_BATCH_REGISTRY_SERVER_URL is deprecated and will be "
+            "removed in a future release; rename this application setting "
+            "to AZURE_BATCH_REGISTRY_SERVER."
+        )
+        server = legacy
+    return _strip_scheme(server)
 
 
 class StorageType(Enum):
@@ -423,6 +461,16 @@ class Config:
         imageryprep_pool_id = os.getenv(
             "AZURE_BATCH_IMAGERYPREP_POOL_ID", "imageryprep-pool"
         )
+
+        def _split_ids(raw, fallback):
+            # Ordered candidate pool ids for capacity-aware routing (v2.1.0).
+            # Comma-separated env override; fall back to the single legacy id.
+            if raw:
+                ids = [p.strip() for p in raw.split(",") if p.strip()]
+                if ids:
+                    return ids
+            return [fallback]
+
         return {
             "account_name": os.getenv(
                 "AZURE_BATCH_ACCOUNT_NAME", "<batch-account-name>"
@@ -438,10 +486,31 @@ class Config:
             "imageprep_pool_id": os.getenv(
                 "AZURE_BATCH_IMAGERYPREP_POOL_ID", "imageryprep-pool"
             ),
-            "registry_server": os.getenv(
-                "AZURE_BATCH_REGISTRY_SERVER",
-                "<registry-name>.azurecr.io",
+            # Ordered candidate pools per workload (v2.1.0 capacity-aware
+            # routing): preference-first, spillover-second
+            # (e.g. AZURE_BATCH_TRAINING_POOL_IDS="h100-pool,t4-pool").
+            "training_pool_ids": _split_ids(
+                os.getenv("AZURE_BATCH_TRAINING_POOL_IDS"), training_pool_id
             ),
+            "inference_pool_ids": _split_ids(
+                os.getenv("AZURE_BATCH_INFERENCE_POOL_IDS"), training_pool_id
+            ),
+            "imageryprep_pool_ids": _split_ids(
+                os.getenv("AZURE_BATCH_IMAGERYPREP_POOL_IDS"),
+                imageryprep_pool_id,
+            ),
+            # Per-job user-delegation SAS instead of pool-identity for blob I/O
+            # (required for multi-tenant shared pools). Default off = legacy
+            # identity_reference path.
+            "use_sas": os.getenv("AZURE_BATCH_USE_SAS", "false").lower()
+            == "true",
+            # Whether the runner auto-creates/resizes its pool. Off for
+            # pre-created IaC/autoscale pools (resize fails on autoscale).
+            "manage_pools": os.getenv(
+                "AZURE_BATCH_MANAGE_POOLS", "true"
+            ).lower()
+            == "true",
+            "registry_server": _resolve_registry_server(),
             "registry_image": os.getenv(
                 "AZURE_BATCH_REGISTRY_IMAGE",
                 "<registry-name>.azurecr.io/<training-image>:latest",

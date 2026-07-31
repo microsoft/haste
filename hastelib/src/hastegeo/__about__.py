@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 #
-# This value is auto-updated at build time to the version resolved from blob
-# storage (see ../../../haste_build.py) so that source/Docker installs report
-# the same version that was published. Committed value tracks the latest
-# published release.
-__version__ = "1.0.26"
+# Local/editable installs intentionally use a development marker. CI supplies
+# HASTE_SET_VERSION when building a release wheel, and the build hook stamps
+# that exact PEP 440 version into the wheel's bundled copy of this file.
+__version__ = "0.0.0+local"

@@ -63,6 +63,9 @@ class ArtifactProcessor:
             runner_type=self.config.runner_type,
             config=self.config,
             pool_id=self.config.get_azure_batch_config()["imageprep_pool_id"],
+            candidate_pool_ids=self.config.get_azure_batch_config()[
+                "imageryprep_pool_ids"
+            ],
         )
         self.model_artifacts = model_artifacts
         if self.model_data is not None:
@@ -307,7 +310,7 @@ class ArtifactProcessor:
             task_id = f"{ZIP_PREFIX}-{MetadataUtils.generate_id()}"
             zip_output_prefix = f"{MetadataUtils.hash_string(self.model_artifacts.projectId)}/{task_id}"
 
-            self.runner.add_task(
+            job_id, task_id = self.runner.add_task(
                 job_id=job_id,
                 task_id=task_id,
                 output_prefix=zip_output_prefix,

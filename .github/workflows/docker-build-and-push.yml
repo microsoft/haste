@@ -32,19 +32,23 @@ jobs:
     outputs:
       training: ${{ steps.filter.outputs.training }}
       imageryprep: ${{ steps.filter.outputs.imageryprep }}
+      hastelib: ${{ steps.filter.outputs.hastelib }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
         id: filter
-        # On manual dispatch always build the requested image(s)
+        # Hastegeo changes are handled by hastegeo-publish.yml so images use
+        # the exact matching RC tag and are not built twice.
         if: github.event_name == 'pull_request'
         with:
           filters: |
             training:
               - 'docker/training/**'
-              - 'hastelib/**'
             imageryprep:
               - 'docker/imageryprep/**'
+            hastelib:
               - 'hastelib/**'
 
   build-and-push:
@@ -63,7 +67,9 @@ jobs:
             changed: ${{ needs.detect-changes.outputs.imageryprep }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Resolve image selection
         id: resolve
@@ -72,23 +78,21 @@ jobs:
           INPUT="${{ github.event.inputs.image_dir || 'all' }}"
           MATRIX_IMAGE="${{ matrix.image_dir }}"
           MATRIX_CHANGED="${{ matrix.changed }}"
+          HASTELIB_CHANGED="${{ needs.detect-changes.outputs.hastelib }}"
           if [[ "$EVENT" == "workflow_dispatch" ]]; then
             if [[ "$INPUT" == "all" || "$INPUT" == "$MATRIX_IMAGE" ]]; then
               echo "run=true" >> "$GITHUB_OUTPUT"
             else
               echo "run=false" >> "$GITHUB_OUTPUT"
             fi
-          elif [[ "$EVENT" == "pull_request" && "$MATRIX_CHANGED" == "true" ]]; then
+          elif [[ "$EVENT" == "pull_request" && \
+                  "$MATRIX_CHANGED" == "true" && \
+                  "$HASTELIB_CHANGED" != "true" ]]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Dependabot PRs don't receive repo Actions secrets, so the regular
-      # push path can't run. Build locally on the runner instead — this still
-      # catches dep-resolver conflicts and missing system libs, which is the
-      # signal we want for "is this bump safe to merge as-is?". Deeper
-      # validation happens via the batch-review of Dependabot PRs.
       - name: Build image locally (Dependabot PRs)
         if: steps.resolve.outputs.run == 'true' && github.actor == 'dependabot[bot]'
         shell: bash
@@ -99,7 +103,7 @@ jobs:
 
       - name: Azure Login
         if: steps.resolve.outputs.run == 'true' && github.actor != 'dependabot[bot]'
-        uses: azure/login@v2
+        uses: azure/login@1384c340ab2dda50fed2bee3041d1d87018aa5e8 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -117,7 +121,6 @@ jobs:
           echo "Building with IMAGE_DIR=$IMAGE_DIR and IMAGE_TAG=$IMAGE_TAG"
           bash .github/scripts/build_and_push_images.sh -i "$IMAGE_DIR" -t "$IMAGE_TAG" -a "$ACR_NAME"
 
-  # Always-green gate so branch protection passes even when no images needed rebuilding
   docker-build-gate:
     needs: build-and-push
     runs-on: ubuntu-latest

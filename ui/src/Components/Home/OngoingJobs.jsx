@@ -2,154 +2,87 @@
 // Licensed under the MIT License.
 import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { Spinner } from "@fluentui/react-components";
+import {
+  Button,
+  MessageBar,
+  MessageBarBody,
+  Spinner,
+} from "@fluentui/react-components";
 import { useNavigate } from "react-router-dom";
 import { apiGet } from "../../util/api";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
 import NoResultsMessage from "../NoResultsMessage";
+import { extractJobs } from "./ongoingJobsUtils";
 
-// A job is "ongoing" when its status is set and not in a terminal state.
-const TERMINAL_STATES = new Set([
-  "Processed",
-  "Completed",
-  "Failed",
-  "Cancelled",
-]);
-
-const isOngoing = (status) =>
-  typeof status === "string" &&
-  status.length > 0 &&
-  !TERMINAL_STATES.has(status);
-
-/** Collect ongoing imagery/training/inference jobs from a project detail. */
-function extractJobs(projectId, project) {
-  const jobs = [];
-  const projectName = project.name || "Project";
-
-  (project.imageLayer || []).forEach((layer) => {
-    const target = `/project/${projectId}/${layer.imageLayerId}`;
-
-    if (isOngoing(layer.status)) {
-      jobs.push({
-        key: `layer-${layer.imageLayerId}`,
-        kind: "Imagery",
-        projectName,
-        name: layer.name,
-        target,
-        indicator: {
-          id: `ongoingImagery-${layer.imageLayerId}`,
-          currentStep: layer.currentStep,
-          totalSteps: layer.totalSteps,
-          progressPct: layer.progressPct,
-          status: layer.status,
-          statusMessage: layer.statusMessage || "",
-          prefix: "Imagery",
-          contextLabel: `Image Layer: ${layer.name}`,
-        },
-      });
-    }
-
-    (layer.models || []).forEach((model) => {
-      const isInference = !!model.inferenceStatus;
-
-      if (isInference && isOngoing(model.inferenceStatus)) {
-        jobs.push({
-          key: `inference-${model.modelId}`,
-          kind: "Inference",
-          projectName,
-          name: model.name,
-          target,
-          indicator: {
-            id: `ongoingInference-${model.modelId}`,
-            currentStep: model.inferenceCurrentStep,
-            totalSteps: model.inferenceTotalSteps,
-            progressPct: model.inferenceProgressPct,
-            status: model.inferenceStatus,
-            statusMessage: model.inferenceStatusMessage || "",
-            prefix: "Inference",
-            contextLabel: `Model: ${model.name} \u00b7 Inference`,
-          },
-        });
-      } else if (!isInference && isOngoing(model.status)) {
-        jobs.push({
-          key: `training-${model.modelId}`,
-          kind: "Training",
-          projectName,
-          name: model.name,
-          target,
-          indicator: {
-            id: `ongoingTraining-${model.modelId}`,
-            currentStep: model.currentStep,
-            totalSteps: model.totalSteps,
-            progressPct: model.progressPct,
-            status: model.status,
-            statusMessage: model.statusMessage || "",
-            prefix: "Training",
-            contextLabel: `Model: ${model.name} \u00b7 Training`,
-          },
-        });
-      }
-    });
-  });
-
-  return jobs;
-}
+const REFRESH_INTERVAL_MS = 30000;
 
 // Load project details for the projects that could have running work and
 // surface every in-progress imagery/training/inference job. This runs after
 // the dashboard summary is already on screen, with its own in-block spinner,
 // because walking each project's models can take a while.
 const OngoingJobs = ({ projects }) => {
-  OngoingJobs.propTypes = {
-    projects: PropTypes.array.isRequired,
-  };
-
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [jobs, setJobs] = useState([]);
+  const [loadError, setLoadError] = useState("");
+  const [refreshToken, setRefreshToken] = useState(0);
 
-  const projectKey = projects.map((p) => p.projectId).join("|");
+  const projectKey = projects
+    .filter((project) =>
+      (project.imageLayerCount || 0) > 0 || (project.modelsCount || 0) > 0
+    )
+    .map((project) => project.projectId)
+    .join("|");
 
   useEffect(() => {
     let cancelled = false;
+    const projectIds = projectKey ? projectKey.split("|") : [];
 
-    const load = async () => {
-      setLoading(true);
+    const load = async (initialLoad = false) => {
+      if (initialLoad) setLoading(true);
 
-      const candidates = projects.filter(
-        (p) => (p.imageLayerCount || 0) > 0 || (p.modelsCount || 0) > 0
-      );
-
-      const results = await Promise.all(
-        candidates.map((p) =>
+      const results = await Promise.allSettled(
+        projectIds.map((projectId) =>
           apiGet(
-            `GetProjectDetails?projectId=${p.projectId}&includeModels=True`
+            `GetProjectDetails?projectId=${projectId}&includeModels=True`
           )
-            .then((res) => ({ projectId: p.projectId, res }))
-            .catch(() => null)
+            .then((res) => ({ projectId, res }))
         )
       );
 
       if (cancelled) return;
 
       const collected = [];
-      results.forEach((item) => {
-        if (item && item.res) {
-          collected.push(...extractJobs(item.projectId, item.res));
+      let failedCount = 0;
+      results.forEach((result) => {
+        if (result.status === "fulfilled") {
+          collected.push(
+            ...extractJobs(result.value.projectId, result.value.res)
+          );
+        } else {
+          failedCount += 1;
         }
       });
 
       setJobs(collected);
+      setLoadError(
+        failedCount > 0
+          ? `${failedCount} of ${projectIds.length} projects could not be refreshed.`
+          : ""
+      );
       setLoading(false);
     };
 
-    load();
+    load(true);
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") load();
+    }, REFRESH_INTERVAL_MS);
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectKey]);
+  }, [projectKey, refreshToken]);
 
   if (loading) {
     return (
@@ -162,16 +95,33 @@ const OngoingJobs = ({ projects }) => {
   if (jobs.length === 0) {
     return (
       <div className="dash-jobs-empty">
-        <NoResultsMessage
-          title="No ongoing jobs"
-          fallbackMessage="Everything is up to date."
-        />
+        {loadError ? (
+          <MessageBar intent="error">
+            <MessageBarBody>{loadError}</MessageBarBody>
+            <Button size="small" onClick={() => setRefreshToken((value) => value + 1)}>
+              Retry
+            </Button>
+          </MessageBar>
+        ) : (
+          <NoResultsMessage
+            title="No ongoing jobs"
+            fallbackMessage="Everything is up to date."
+          />
+        )}
       </div>
     );
   }
 
   return (
-    <div className="dash-jobs-list">
+    <div className="dash-jobs-list" aria-live="polite">
+      {loadError && (
+        <MessageBar intent="warning">
+          <MessageBarBody>{loadError}</MessageBarBody>
+          <Button size="small" onClick={() => setRefreshToken((value) => value + 1)}>
+            Retry
+          </Button>
+        </MessageBar>
+      )}
       {jobs.map((job) => (
         <div className="dash-job-row" key={job.key}>
           <button
@@ -193,6 +143,10 @@ const OngoingJobs = ({ projects }) => {
       ))}
     </div>
   );
+};
+
+OngoingJobs.propTypes = {
+  projects: PropTypes.array.isRequired,
 };
 
 export default OngoingJobs;

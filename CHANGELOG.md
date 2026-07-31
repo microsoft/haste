@@ -7,6 +7,27 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Shared multi-tenant GPU Batch pools** — For deployments running many environments against scarce GPU quota, HASTE can now share a small set of multi-tenant Batch pools (H100 for training, T4 for inference/imageryprep + spillover) instead of one pool per environment. Data isolation is enforced at the credential boundary: each job mints a short-lived **user-delegation SAS** scoped to its own storage container (the pool identity is used only for ACR pull and holds no storage access), so a tenant's task can never read another tenant's data. Pools autoscale on low-priority nodes and scale to zero when idle. New `hastelib` routing picks a pool from an ordered candidate list **at submit time** (first with an idle node, else the preferred pool). Provisioned by the standalone [`infra/shared-pools.bicep`](infra/shared-pools.bicep) + [`shared-pools.bicepparam`](infra/shared-pools.bicepparam); opted into per environment via `AZURE_BATCH_*_POOL_IDS`, `AZURE_BATCH_USE_SAS`, and `AZURE_BATCH_MANAGE_POOLS` (all default to the legacy single-pool behavior). Full design in [`spec/features/batch-compute-expansion/`](spec/features/batch-compute-expansion). See [docs/configuration.md](docs/configuration.md#shared-multi-tenant-gpu-pools).
+
+### Fixed
+- **Batch application settings were out of sync with the code that reads them** — `hastegeo` reads `AZURE_BATCH_REGISTRY_SERVER`, but every deploy path still emitted `AZURE_BATCH_REGISTRY_SERVER_URL`, which nothing read. The setting therefore fell back to its `<registry-name>.azurecr.io` placeholder and image preprocessing failed with `InvalidPropertyValue: The specified registry is an invalid docker registry server name` before any task reached Batch. Separately, [`deploy_apps.sh`](.github/scripts/deploy_apps.sh) never emitted the shared-pool settings added alongside the multi-tenant pools (`AZURE_BATCH_*_POOL_IDS`, `AZURE_BATCH_USE_SAS`, `AZURE_BATCH_MANAGE_POOLS`) or `EMBEDDING_QUEUE_NAME`, so environments deployed through it silently ran the legacy single-pool path. Both deploy paths now emit the full set, the legacy `AZURE_BATCH_REGISTRY_SERVER_URL` is still honored as a fallback (with any `https://` prefix stripped) so existing deployments keep working, and a new `Config drift` workflow fails any PR that reintroduces this class of drift.
+
+  > **Operator action:** rename the `AZURE_BATCH_REGISTRY_SERVER_URL` application setting to `AZURE_BATCH_REGISTRY_SERVER` (value: the bare login server, e.g. `myacr.azurecr.io`) on the `api` and `queues` Function Apps. Confirm `AZURE_BATCH_TRAINING_POOL_ID` / `AZURE_BATCH_IMAGERYPREP_POOL_ID` name pools that still exist and are **identical across both apps** — they double as the default Batch job ids.
+
+- **A reused Batch job stayed pinned to the pool that created it** — job ids default to the configured pool id, and `create_job` only re-enabled an existing job, never re-pointing it. Capacity-aware spillover was therefore silently ineffective, and once a pool was renamed or deleted every task queued into a job bound to a pool that no longer existed. Job ids are now derived from the pool a task is routed to (one job per pool), so spillover works even while another task is running; `create_job` falls back to a pool-scoped job rather than failing the submission. Environments with a single candidate pool keep their existing job ids unchanged. Full design in [`spec/features/batch-pool-job-binding/`](spec/features/batch-pool-job-binding).
+- **Missing Batch settings now fail fast** — the runner validates its configuration before the first Batch call and names the specific application setting that is unset, instead of surfacing an opaque Azure error from deep inside pool creation.
+- **Pool creation whitelisted only the training image** — pools created by the runner now list both the training and imageryprep images, matching [`infra/modules/batchPool.bicep`](infra/modules/batchPool.bicep).
+
+### Changed
+- **`infra/modules/batchPool.bicep` parameterized** — one module now serves fixed-dedicated (dev/prod) and autoscale-low-priority (shared) pools via `scaleMode` / `nodeType` / `minNodes` params, with optional VNet injection. Backward-compatible defaults.
+- **Generic-default IaC for reuse by other partners** — `HASTE_RESOURCE_PREFIX` now defaults to the neutral `haste` (overridable per deployment); the shared-pools template keeps its account/ACR as bring-your-own params. The `api`/`queues` Function App identity is granted **Storage Blob Delegator** (in `functionApp.bicep`) so it can mint user-delegation SAS.
+- **Pinned `azure-batch==14.2.0`** — the 15.x track-2 rewrite restructures the batch models this code uses; migration is tracked separately.
+
+---
+
 ## [v2.0.0] — Building labeling workflow & one-step `azd` setup
 
 ### Added
