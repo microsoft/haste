@@ -87,7 +87,10 @@ const Projects = () => {
   const [viewMode, setViewMode] = useState(() => {
     return localStorage.getItem("haste-projects-view") || "list";
   });
-  const effectiveGroupBy = viewMode === "cards" ? "none" : groupBy;
+  const isMobile = appParams.bootstrapBreakpoint < 4;
+  const effectiveViewMode = isMobile ? "cards" : viewMode;
+  const effectiveGroupBy =
+    effectiveViewMode === "cards" ? "none" : groupBy;
 
   const changeView = (mode) => {
     setViewMode(mode);
@@ -242,14 +245,6 @@ const Projects = () => {
           <div>
             <h1 className="pgrid-title">
               Projects
-              <Tooltip
-                content="Browse, filter, and track your disaster assessment projects."
-                relationship="label"
-              >
-                <span>
-                  <FluentIcon name="Info" className="pgrid-title-info" />
-                </span>
-              </Tooltip>
             </h1>
             <div className="pgrid-subtitle">
               Browse, filter, and track disaster assessment projects.
@@ -280,7 +275,7 @@ const Projects = () => {
               resetPage();
             }}
           />
-          {viewMode === "list" && (
+          {effectiveViewMode === "list" && (
             <Menu
               checkedValues={{ group: [groupBy] }}
               onCheckedValueChange={(_, { checkedItems }) =>
@@ -311,28 +306,32 @@ const Projects = () => {
           <div className="pgrid-toolbar-spacer" />
           <div
             className={`pgrid-toolbar-controls ${
-              viewMode === "list" ? "pgrid-toolbar-controls--list" : ""
+              effectiveViewMode === "list"
+                ? "pgrid-toolbar-controls--list"
+                : ""
             }`}
           >
-            <div className="pgrid-view-toggle">
-              <Button
-                appearance="subtle"
-                className={viewMode === "list" ? "pgrid-view-active" : ""}
-                icon={<FluentIcon name="BulletedList" />}
-                title="List view"
-                aria-label="List view"
-                onClick={() => changeView("list")}
-              />
-              <Button
-                appearance="subtle"
-                className={viewMode === "cards" ? "pgrid-view-active" : ""}
-                icon={<FluentIcon name="GridViewSmall" />}
-                title="Grid view"
-                aria-label="Grid view"
-                onClick={() => changeView("cards")}
-              />
-            </div>
-            {viewMode === "list" && (
+            {!isMobile && (
+              <div className="pgrid-view-toggle">
+                <Button
+                  appearance="subtle"
+                  className={viewMode === "list" ? "pgrid-view-active" : ""}
+                  icon={<FluentIcon name="BulletedList" />}
+                  title="List view"
+                  aria-label="List view"
+                  onClick={() => changeView("list")}
+                />
+                <Button
+                  appearance="subtle"
+                  className={viewMode === "cards" ? "pgrid-view-active" : ""}
+                  icon={<FluentIcon name="GridViewSmall" />}
+                  title="Grid view"
+                  aria-label="Grid view"
+                  onClick={() => changeView("cards")}
+                />
+              </div>
+            )}
+            {effectiveViewMode === "list" && (
               <Menu
                 checkedValues={{ columns: visibleColumns }}
                 onCheckedValueChange={(_, { checkedItems }) =>
@@ -385,7 +384,7 @@ const Projects = () => {
           </div>
         ) : (
           <>
-            {viewMode === "list" ? (
+            {effectiveViewMode === "list" ? (
             <div className="pgrid-table-wrap">
               {hasNoResults ? (
                 <NoResultsMessage

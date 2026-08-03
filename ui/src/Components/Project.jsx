@@ -113,32 +113,15 @@ const Project = ({ setModalComponent }) => {
   const [viewMode, setViewMode] = useState(
     () => localStorage.getItem("haste-project-view") || "list"
   );
-  const isMobileLayout = Number(appParams.bootstrapBreakpoint) <= 2;
-  const effectiveViewMode = viewMode;
+  const isMobileLayout = appParams.bootstrapBreakpoint < 4;
+  const effectiveViewMode = isMobileLayout ? "cards" : viewMode;
   const effectiveGroupBy =
     effectiveViewMode === "cards" ? "none" : groupBy;
 
   const changeView = (mode) => {
     setViewMode(mode);
     localStorage.setItem("haste-project-view", mode);
-    if (isMobileLayout) {
-      localStorage.setItem("haste-project-view-mobile", mode);
-    }
   };
-
-  useEffect(() => {
-    if (!isMobileLayout) {
-      return;
-    }
-    const mobileStored = localStorage.getItem("haste-project-view-mobile");
-    if (mobileStored && mobileStored !== viewMode) {
-      setViewMode(mobileStored);
-      return;
-    }
-    if (!mobileStored && viewMode !== "cards") {
-      setViewMode("cards");
-    }
-  }, [isMobileLayout, viewMode]);
 
   const defaultProjectDetailsRef = useRef(null);
 
@@ -350,14 +333,6 @@ const Project = ({ setModalComponent }) => {
             <div>
               <h1 className="pgrid-title">
                 Image Layers
-                <Tooltip
-                  content="Manage imagery, labeling, training, and validation for this project."
-                  relationship="label"
-                >
-                  <span>
-                    <FluentIcon name="Info" className="pgrid-title-info" />
-                  </span>
-                </Tooltip>
               </h1>
               <div className="pgrid-subtitle">
                 Manage imagery, labeling, training, and validation for this
@@ -491,7 +466,7 @@ const Project = ({ setModalComponent }) => {
                   </Menu>
                 )}
                 <div className="pgrid-toolbar-spacer" />
-                <div
+                {!isMobileLayout && <div
                   className={`pgrid-toolbar-controls ${
                     effectiveViewMode === "list"
                       ? "pgrid-toolbar-controls--list"
@@ -551,7 +526,7 @@ const Project = ({ setModalComponent }) => {
                       </MenuPopover>
                     </Menu>
                   )}
-                </div>
+                </div>}
               </div>
 
               {effectiveViewMode === "list" ? (

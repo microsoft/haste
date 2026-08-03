@@ -1,35 +1,103 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-// In dev compose, hastefuncapi returns blob URLs with the docker-internal
-// hostname `azurite` (e.g. http://azurite:10000/devstoreaccount1/...). That's
-// what the function-app code path needs server-side, but the *browser* can't
-// resolve `azurite` — it's a docker network DNS name. Azurite is bound to
-// host port 10000 in docker-compose, so the same blob is reachable from the
-// browser at http://localhost:10000/... (or 127.0.0.1).
-//
-// Most blob fetches in the UI go through api-proxy/titiler server-side and
-// never hit this. The PMTiles archive used by the Interactive Labeler is the
-// exception: pmtiles.js issues HTTP range requests directly from the browser,
-// so the URL we hand it must be browser-resolvable.
-//
-// This helper is a no-op in production (URL has no `azurite` hostname) and in
-// non-local dev (UI not running on localhost). It only rewrites the host when
-// the UI is on localhost/127.0.0.1 AND the URL points at the docker name.
-export function toBrowserBlobUrl(url) {
-  if (typeof url !== "string" || !url) return url;
-  let parsed;
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
+const STORAGE_PROXY_PATHS = new Set([
+  "/api/haste/storage/get-artifacts",
+  "/api/haste/storage/get-project-artifacts",
+]);
+
+function parseHttpUrl(value, base) {
+  if (typeof value !== "string" || !value) return null;
   try {
-    parsed = new URL(url);
+    const parsed = new URL(value, base);
+    if (!["http:", "https:"].includes(parsed.protocol)) return null;
+    if (parsed.username || parsed.password) return null;
+    return parsed;
   } catch {
-    return url;
+    return null;
   }
-  if (parsed.hostname !== "azurite") return url;
-  if (typeof window === "undefined") return url;
-  const localHosts = new Set(["localhost", "127.0.0.1"]);
-  if (!localHosts.has(window.location.hostname)) return url;
-  parsed.hostname = window.location.hostname;
-  return parsed.toString();
+}
+
+function isAllowedStorageSource(parsed, browserHostname) {
+  if (parsed.protocol === "https:" && parsed.hostname.endsWith(".blob.core.windows.net")) {
+    return true;
+  }
+  if (parsed.protocol === "http:" && parsed.hostname === "azurite") {
+    return true;
+  }
+  return (
+    parsed.protocol === "http:" &&
+    LOCAL_HOSTS.has(browserHostname) &&
+    LOCAL_HOSTS.has(parsed.hostname)
+  );
+}
+
+function storagePathSegments(parsed) {
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  try {
+    return segments.every((segment) => {
+      const decoded = decodeURIComponent(segment);
+      return ![".", ".."].includes(decoded) && !/[\\/]/.test(decoded);
+    })
+      ? segments
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function buildBrowserStorageUrl(url, storageProxy, browserUrl) {
+  const browser = parseHttpUrl(browserUrl);
+  const source = parseHttpUrl(url);
+  if (!browser || !source) return null;
+  if (!isAllowedStorageSource(source, browser.hostname)) return null;
+  const sourceSegments = storagePathSegments(source);
+  if (!sourceSegments || sourceSegments.length < 2) return null;
+
+  if (!storageProxy) {
+    if (source.hostname !== "azurite") {
+      return source.toString();
+    }
+    source.hostname = browser.hostname;
+    return source.toString();
+  }
+
+  const target = parseHttpUrl(storageProxy, browser.origin);
+  if (!target) return null;
+  const targetPath = target.pathname.replace(/\/+$/, "");
+  const isManagedIdentityProxy = STORAGE_PROXY_PATHS.has(targetPath);
+  const isLocalStorage =
+    target.hostname === browser.hostname ||
+    (LOCAL_HOSTS.has(browser.hostname) && LOCAL_HOSTS.has(target.hostname));
+  if (!isManagedIdentityProxy && !isLocalStorage) return null;
+  const expectedSegments = targetPath.endsWith("/get-project-artifacts") ? 3 : 4;
+  if (isManagedIdentityProxy && sourceSegments.length !== expectedSegments) {
+    return null;
+  }
+
+  target.pathname = `${targetPath}/${source.pathname.replace(/^\/+/, "")}`;
+  target.hash = "";
+  if (isManagedIdentityProxy) {
+    target.search = "";
+  } else {
+    target.search = source.search;
+  }
+  return target.toString();
+}
+
+export function toBrowserBlobUrl(url) {
+  if (typeof window === "undefined") return null;
+  return buildBrowserStorageUrl(url, null, window.location.href);
+}
+
+export function toBrowserStorageUrl(url) {
+  if (typeof window === "undefined") return null;
+  return buildBrowserStorageUrl(
+    url,
+    import.meta.env?.VITE_STORAGE_APIM_URL,
+    window.location.href
+  );
 }
 
 // Interactive Labeler imagery tiles are served by titiler. Tile-URL templates
@@ -40,14 +108,21 @@ export function toBrowserBlobUrl(url) {
 // prefix to a directly-reachable titiler base. No-op in production (non-local
 // host) and when the env var is unset, so it's safe to ship.
 export function toBrowserTitilerUrl(url) {
-  if (typeof url !== "string" || !url) return url;
-  if (typeof window === "undefined") return url;
-  const localHosts = new Set(["localhost", "127.0.0.1"]);
-  if (!localHosts.has(window.location.hostname)) return url;
-  const base = import.meta.env.VITE_TITILER_URL;
+  if (typeof window === "undefined") return "";
+  const source = parseHttpUrl(url, window.location.origin);
+  if (!source) return "";
+  if (!LOCAL_HOSTS.has(window.location.hostname)) return url;
+  const base = import.meta.env?.VITE_TITILER_URL;
   if (!base) return url;
   const marker = "/api/titiler/";
-  const idx = url.indexOf(marker);
-  if (idx === -1) return url;
-  return base.replace(/\/+$/, "") + "/" + url.slice(idx + marker.length);
+  if (!source.pathname.startsWith(marker)) return "";
+  const target = parseHttpUrl(base, window.location.origin);
+  if (!target) return "";
+  target.pathname =
+    target.pathname.replace(/\/+$/, "") +
+    "/" +
+    source.pathname.slice(marker.length);
+  target.search = source.search;
+  target.hash = "";
+  return target.toString().replace(/%7B/gi, "{").replace(/%7D/gi, "}");
 }

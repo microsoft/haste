@@ -17,13 +17,14 @@ import ModelRow from "./ModelRow";
 import React, { useContext, useState, useEffect } from "react";
 import { apiDelete } from "../../util/api";
 import { limitTextLength } from "../../util/conversion";
-import { satellitePlaceholder } from "../../util/satellitePlaceholders";
+import { imageLayerThumbnail } from "../../util/satellitePlaceholders";
 import { AppContext } from "../../AppContext";
 import CreateEditModelTrainingModal from "../CreateEditModelTrainingModal";
 import CreateEditEmbeddingModal from "../CreateEditEmbeddingModal";
 import { useNavigate } from "react-router-dom";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
 import { fileDownload } from "../../util/file";
+import { useImagePreload } from "./useImagePreload";
 
 const LayerRow = ({
   item,
@@ -52,6 +53,9 @@ const LayerRow = ({
   const navigate = useNavigate();
   const { setIsLoading, appParams } = useContext(AppContext);
   const isCompactLayout = appParams.bootstrapBreakpoint < 4;
+  const thumbnailUrl = imageLayerThumbnail(item);
+  const { isLoading: isThumbnailLoading, loadedUrl: loadedThumbnailUrl } =
+    useImagePreload(thumbnailUrl);
 
   // Optional columns controlled by the Customize-Columns menu. When no
   // `columns` prop is supplied every optional column is shown.
@@ -268,17 +272,24 @@ const LayerRow = ({
           data-label="Name"
         >
           <div className="lrow-name-cell">
-            {/* AOI post-event thumbnail placeholder (imagery wiring pending) */}
             <span
-              className="lrow-thumb lrow-thumb--empty"
-              aria-hidden="true"
-              style={{
-                backgroundImage:
-                  'url("' +
-                  satellitePlaceholder(item.imageLayerId, index) +
-                  '")',
-              }}
-            />
+              className={`lrow-thumb ${loadedThumbnailUrl ? "lrow-thumb--image" : "lrow-thumb--empty"}`}
+              role="img"
+              aria-label={loadedThumbnailUrl ? "Post-event imagery" : "No imagery available"}
+              style={
+                loadedThumbnailUrl
+                  ? { backgroundImage: `url("${loadedThumbnailUrl}")` }
+                  : undefined
+              }
+            >
+              {isThumbnailLoading ? (
+                <span className="thumbnail-preloader" role="status" aria-label="Loading imagery" />
+              ) : !loadedThumbnailUrl && (
+                <span className="no-image-icon" aria-hidden="true">
+                  <FluentIcon name="FileImage" />
+                </span>
+              )}
+            </span>
             <span
               className="me-4"
               id={"singleProjectName" + index}

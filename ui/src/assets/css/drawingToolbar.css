@@ -7,6 +7,12 @@
     gap: 4px;
   }
 
+  .labeling-tool-page {
+    position: relative;
+    isolation: isolate;
+    min-width: 0;
+  }
+
   .labeling-tool-dock {
     position: absolute;
     top: 10px;

@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { Button } from "@fluentui/react-components";
+import { Button, makeStyles, tokens } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 import { useEffect, useMemo, useRef, useState, useContext } from "react";
 import { useParams, useNavigate } from "react-router-dom";
@@ -10,6 +10,7 @@ import { AppContext } from "../../AppContext.jsx";
 import BuildingValidationRightPanel from "./BuildingValidationRightPanel.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
 import "../../assets/css/labels.css";
+import "../../assets/css/drawingToolbar.css";
 
 const LABEL_COLORS = {
   Damaged: "#C50F1F",
@@ -17,6 +18,31 @@ const LABEL_COLORS = {
   Unknown: "#4D4D4D",
   unlabeled: "#BDBDBD",
 };
+
+const useStyles = makeStyles({
+  root: {
+    display: "flex",
+    flexGrow: 1,
+    position: "relative",
+    isolation: "isolate",
+    overflow: "hidden",
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
+  emptyState: {
+    position: "absolute",
+    top: "70px",
+    right: "16px",
+    zIndex: 1000,
+    maxWidth: "calc(100% - 32px)",
+    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    boxShadow: tokens.shadow8,
+  },
+});
 
 // Filter values used by the right-panel dropdown and the map dim logic.
 // 'all' means no filter; 'unlabeled' means buildings with no label set yet;
@@ -31,6 +57,7 @@ function buildingMatchesFilter(feature, labels, filter) {
 }
 
 const BuildingValidation = () => {
+  const styles = useStyles();
   const { projectId, imageLayerId } = useParams();
   const navigate = useNavigate();
   const { setIsLoading, setDialog, setAppHeaderRightButtons } = useContext(AppContext);
@@ -531,15 +558,14 @@ const BuildingValidation = () => {
   const labeledCount = Object.keys(labels).length;
 
   return (
-    <div style={{ display: "flex", flexGrow: 1, position: "relative", overflow: "hidden" }}>
-      {/* Back button — matches Visualizer styling */}
-      <div className="absolute-labels pre-disaster d-flex flex-column labels-back-button">
+    <div className={`${styles.root} building-validation-page`}>
+      {/* Back button — shares the Interactive Labeler navigation surface. */}
+      <div className="labeling-tool-surface labeling-navigation-controls">
         <Button
           id="backButton"
           appearance="transparent"
           icon={<FluentIcon name="ChevronLeft" />}
-          className="w-100 p-0 m-0"
-          onClick={() => navigate(`/project/${projectId}`)}
+          onClick={() => navigate(-1)}
         >
           Back
         </Button>
@@ -554,7 +580,6 @@ const BuildingValidation = () => {
           features={features}
           labels={labels}
           selectedIndex={selectedIndex}
-          setSelectedIndex={setSelectedIndex}
           onLabel={handleLabel}
           onSave={handleSave}
           onDownload={handleDownload}
@@ -576,17 +601,7 @@ const BuildingValidation = () => {
       )}
 
       {isMapReady && features.length === 0 && (
-        <div
-          style={{
-            position: "absolute",
-            top: 70,
-            right: 16,
-            background: "rgba(255,255,255,0.95)",
-            padding: "16px 20px",
-            borderRadius: 6,
-            zIndex: 1000,
-          }}
-        >
+        <div className={styles.emptyState}>
           No building footprints available for this image layer.
         </div>
       )}

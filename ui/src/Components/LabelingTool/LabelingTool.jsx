@@ -19,6 +19,7 @@ import PropType from "prop-types";
 import { AppContext } from "../../AppContext.jsx";
 import { useDrawingUndoRedo } from "./UndoRedo.jsx";
 import { splitShape } from "./SplitShape.jsx";
+import "../../assets/css/drawingToolbar.css";
 
 const LabelingTool = ({ setModalComponent }) => {
   LabelingTool.propTypes = {
@@ -268,7 +269,11 @@ const LabelingTool = ({ setModalComponent }) => {
 
   return (
     <>
-      <div ref={mapRef} id="map" className="d-flex flex-grow-1 p-0 m-0">
+      <div
+        ref={mapRef}
+        id="map"
+        className="labeling-tool-page d-flex flex-grow-1 p-0 m-0"
+      >
         {isMapReady && drawingManager !== null ? (
 
           <>

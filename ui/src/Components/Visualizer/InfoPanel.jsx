@@ -4,6 +4,8 @@ import {
   Checkbox,
   Button,
   Text,
+  makeStyles,
+  tokens,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 
@@ -11,17 +13,48 @@ import { useState, useContext } from "react";
 import PropType from "prop-types";
 import { AppContext } from "../../AppContext";
 
+const DAMAGE_LEGEND = [
+  { label: "0 - 20% damaged", color: "#FFFFFF" },
+  { label: "20 - 40% damaged", color: "#FFB99F" },
+  { label: "40 - 60% damaged", color: "#FF6846" },
+  { label: "60 - 80% damaged", color: "#DD1E25" },
+  { label: "80 - 100% damaged", color: "#85000F" },
+];
+
+const useStyles = makeStyles({
+  legend: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXS,
+    marginTop: tokens.spacingVerticalM,
+    marginBottom: tokens.spacingVerticalM,
+  },
+  legendItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    color: tokens.colorNeutralForeground1,
+    fontSize: tokens.fontSizeBase200,
+    lineHeight: tokens.lineHeightBase200,
+    whiteSpace: "nowrap",
+  },
+  legendSwatch: {
+    width: "28px",
+    height: "18px",
+    flex: "0 0 28px",
+    boxSizing: "border-box",
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1}`,
+    borderRadius: tokens.borderRadiusSmall,
+  },
+});
+
 const InfoPanel = ({
   togglePredictedDamageLayerVisibility,
   resetMapPosition,
   visualizerResults,
+  surfaceClassName,
 }) => {
-  InfoPanel.propTypes = {
-    togglePredictedDamageLayerVisibility: PropType.func.isRequired,
-    resetMapPosition: PropType.func.isRequired,
-    visualizerResults: PropType.object.isRequired,
-  };
-
+  const styles = useStyles();
   const [panelVisibility, setPanelVisibility] = useState("");
   const { appParams } = useContext(AppContext);
 
@@ -36,7 +69,7 @@ const InfoPanel = ({
   return (
     <>
       <div
-        className="absolute-labels info-panel col-12"
+        className={`absolute-labels info-panel col-12 ${surfaceClassName}`}
       >
         <Button
           appearance="transparent"
@@ -86,11 +119,18 @@ const InfoPanel = ({
               Legend
             </Text>
 
-            <img
-              src="../../../assets/img/visualizerLegend.png"
-              alt="legend"
-              className="map-legend mb-3 mt-3"
-            />
+            <div className={styles.legend} aria-label="Damage percentage legend">
+              {DAMAGE_LEGEND.map((item) => (
+                <div className={styles.legendItem} key={item.label}>
+                  <span
+                    className={styles.legendSwatch}
+                    style={{ backgroundColor: item.color }}
+                    aria-hidden="true"
+                  />
+                  <span>{item.label}</span>
+                </div>
+              ))}
+            </div>
 
             <Button
               appearance="transparent"
@@ -108,6 +148,13 @@ const InfoPanel = ({
       </div>
     </>
   );
+};
+
+InfoPanel.propTypes = {
+  togglePredictedDamageLayerVisibility: PropType.func.isRequired,
+  resetMapPosition: PropType.func.isRequired,
+  visualizerResults: PropType.object.isRequired,
+  surfaceClassName: PropType.string.isRequired,
 };
 
 export default InfoPanel;

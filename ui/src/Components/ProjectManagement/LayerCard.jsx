@@ -18,7 +18,7 @@ import PropTypes from "prop-types";
 import React, { useContext, useState } from "react";
 import { apiDelete } from "../../util/api";
 import { limitTextLength } from "../../util/conversion";
-import { satellitePlaceholder } from "../../util/satellitePlaceholders";
+import { imageLayerThumbnail } from "../../util/satellitePlaceholders";
 import { AppContext } from "../../AppContext";
 import ModelRow from "./ModelRow";
 import StatusIndicatorModal from "../OtherComponents/StatusIndicatorModal";
@@ -27,6 +27,7 @@ import CreateEditEmbeddingModal from "../CreateEditEmbeddingModal";
 import { useNavigate } from "react-router-dom";
 import { fileDownload } from "../../util/file";
 import { validateTimestamp } from "../../util/validation";
+import { useImagePreload } from "./useImagePreload";
 
 /** Map an image-layer status to a pcard status tone. Mirrors the solid
  *  status colors used by StatusIndicator (.modelStatus-*) in the list view. */
@@ -93,6 +94,9 @@ const LayerCard = ({
   const navigate = useNavigate();
   const { setIsLoading, setDialog } = useContext(AppContext);
   const [modelsOpen, setModelsOpen] = useState(false);
+  const thumbnailUrl = imageLayerThumbnail(item);
+  const { isLoading: isThumbnailLoading, loadedUrl: loadedThumbnailUrl } =
+    useImagePreload(thumbnailUrl);
 
   // Building labeling workflow: layers created with workflowType "building"
   // get an Embed button instead of the Label/Train actions.
@@ -238,16 +242,25 @@ const LayerCard = ({
 
   return (
     <div className="pcard pcard--static" id={"singleProjectCard" + index}>
-      {/* AOI post-event thumbnail placeholder (imagery wiring pending) */}
       <div
-        className="lcard-thumb lcard-thumb--empty"
-        style={{
-          backgroundImage:
-            'url("' +
-            satellitePlaceholder(item.imageLayerId, index) +
-            '")',
-        }}
+        className={`lcard-thumb ${loadedThumbnailUrl ? "lcard-thumb--image" : "lcard-thumb--empty"}`}
+        aria-label={loadedThumbnailUrl ? "Post-event imagery" : "No imagery available"}
+        style={
+          loadedThumbnailUrl
+            ? { backgroundImage: `url("${loadedThumbnailUrl}")` }
+            : undefined
+        }
       >
+        {isThumbnailLoading ? (
+          <div className="thumbnail-preloader" role="status" aria-label="Loading imagery" />
+        ) : !loadedThumbnailUrl && (
+          <div className="no-image-state" aria-hidden="true">
+            <span className="no-image-icon no-image-icon--card">
+              <FluentIcon name="FileImage" />
+            </span>
+            <span className="no-image-label">No imagery</span>
+          </div>
+        )}
         {item.statusMessage ? (
           <button
             type="button"

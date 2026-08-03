@@ -18,17 +18,9 @@ const VisualizerInformationMobile = ({
   convertPreOrPostEventImagerySource,
   setSwipeStateMobile,
   swipeStateMobile,
-  togglePredictedDamageLayerVisibility
+  togglePredictedDamageLayerVisibility,
+  surfaceClassName,
 }) => {
-  VisualizerInformationMobile.propTypes = {
-    visualizerResults: PropType.object.isRequired,
-    convertPreOrPostEventImageryDate: PropType.func.isRequired,
-    convertPreOrPostEventImagerySource: PropType.func.isRequired,
-    setSwipeStateMobile: PropType.func.isRequired,
-    swipeStateMobile: PropType.string.isRequired,
-    togglePredictedDamageLayerVisibility: PropType.func.isRequired,
-  };
-
   const [panelVisibility, setPanelVisibility] = useState("d-none");
 
   const togglePanelVisibility = () => {
@@ -41,7 +33,9 @@ const VisualizerInformationMobile = ({
   return (
     <>
       <div
-        className="absolute-labels post-disaster visualizer-information-mobile d-block d-lg-none"
+        className={`absolute-labels post-disaster visualizer-information-mobile${
+          panelVisibility === "" ? " visualizer-information-mobile--expanded" : ""
+        } d-block d-lg-none ${surfaceClassName}`}
       >
         <Button
           appearance="transparent"
@@ -53,7 +47,9 @@ const VisualizerInformationMobile = ({
           <span className="ms-2 fw-semibold">Info</span>
         </Button>
 
-        <div className={panelVisibility + " p-3 pt-0 d-flex flex-column"}>
+        <div
+          className={`${panelVisibility} visualizer-information-mobile-content d-flex flex-column`}
+        >
           <Text className="mt-2 fw-semibold">
             {visualizerResults.projectName}
           </Text>
@@ -129,6 +125,16 @@ const VisualizerInformationMobile = ({
       </div>
     </>
   );
+};
+
+VisualizerInformationMobile.propTypes = {
+  visualizerResults: PropType.object.isRequired,
+  convertPreOrPostEventImageryDate: PropType.func.isRequired,
+  convertPreOrPostEventImagerySource: PropType.func.isRequired,
+  setSwipeStateMobile: PropType.func.isRequired,
+  swipeStateMobile: PropType.string.isRequired,
+  togglePredictedDamageLayerVisibility: PropType.func.isRequired,
+  surfaceClassName: PropType.string.isRequired,
 };
 
 export default VisualizerInformationMobile;

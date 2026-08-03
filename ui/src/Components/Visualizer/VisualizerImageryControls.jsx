@@ -4,26 +4,31 @@ import {
   Slider,
   Button,
   Field,
+  makeStyles,
+  tokens,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 
 import PropTypes from "prop-types";
-import { useState, useEffect, useRef } from "react";
+
+const useStyles = makeStyles({
+  surface: {
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    boxShadow: tokens.shadow8,
+  },
+});
 
 const VisualizerImageryControls = ({ updateImageryProperties, resetImageryProperties, imageryValues,  visualizerResults}) => {
-  VisualizerImageryControls.propTypes = {
-    updateImageryProperties: PropTypes.func.isRequired,
-    resetImageryProperties: PropTypes.func.isRequired,
-    imageryValues: PropTypes.object.isRequired,
-  };
-
+  const styles = useStyles();
 
   return (
     <>
       {visualizerResults.projectName && (
         <div
 
-          className=" d-none d-lg-flex absolute-labels imagery-controls"
+          className={`d-none d-lg-flex absolute-labels imagery-controls ${styles.surface}`}
           id="imageryControls"
         >
           <div>
@@ -33,8 +38,17 @@ const VisualizerImageryControls = ({ updateImageryProperties, resetImageryProper
               }}
               className="d-none d-lg-block"
             >
-              <Field label="Opacity">
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Opacity</span>
+                    <output>{Math.round(imageryValues.opacity * 100)}%</output>
+                  </span>
+                }
+              >
                 <Slider
+                  className="labeling-imagery-slider"
                   min={0}
                   max={1}
                   step={0.01}
@@ -43,8 +57,17 @@ const VisualizerImageryControls = ({ updateImageryProperties, resetImageryProper
                 />
               </Field>
 
-              <Field label="Contrast">
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Contrast</span>
+                    <output>{imageryValues.contrast.toFixed(2)}</output>
+                  </span>
+                }
+              >
                 <Slider
+                  className="labeling-imagery-slider"
                   min={-1}
                   max={1}
                   step={0.01}
@@ -53,8 +76,17 @@ const VisualizerImageryControls = ({ updateImageryProperties, resetImageryProper
                 />
               </Field>
 
-              <Field label="Hue Rotation">
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Hue Rotation</span>
+                    <output>{imageryValues.hueRotation}&deg;</output>
+                  </span>
+                }
+              >
                 <Slider
+                  className="labeling-imagery-slider"
                   min={-180}
                   max={180}
                   step={1}
@@ -63,8 +95,17 @@ const VisualizerImageryControls = ({ updateImageryProperties, resetImageryProper
                 />
               </Field>
 
-              <Field label="Saturation">
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Saturation</span>
+                    <output>{imageryValues.saturation.toFixed(2)}</output>
+                  </span>
+                }
+              >
                 <Slider
+                  className="labeling-imagery-slider"
                   min={-1}
                   max={1}
                   step={0.01}
@@ -87,6 +128,13 @@ const VisualizerImageryControls = ({ updateImageryProperties, resetImageryProper
       )}
     </>
   );
+};
+
+VisualizerImageryControls.propTypes = {
+  updateImageryProperties: PropTypes.func.isRequired,
+  resetImageryProperties: PropTypes.func.isRequired,
+  imageryValues: PropTypes.object.isRequired,
+  visualizerResults: PropTypes.object.isRequired,
 };
 
 export default VisualizerImageryControls;

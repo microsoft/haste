@@ -120,6 +120,7 @@ const useStyles = makeStyles({
     minHeight: 0,
     height: "calc(100dvh - 40px - var(--footer-height, 0px))",
     position: "relative",
+    isolation: "isolate",
     overflow: "hidden",
     color: tokens.colorNeutralForeground1,
     backgroundColor: tokens.colorNeutralBackground2,
@@ -193,6 +194,7 @@ const useStyles = makeStyles({
       maxWidth: "none",
       maxHeight: "min(55%, 520px)",
       padding: tokens.spacingHorizontalM,
+      zIndex: 25,
     },
   },
   sidePanelScroll: {
