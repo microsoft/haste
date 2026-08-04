@@ -369,14 +369,14 @@ function normalizeVantorItem(item, eventDate) {
   };
 }
 
-async function fetchVantorScenes(src) {
-  const collection = await fetchJson(src.collectionUrl);
-  const eventDate = (collection["odp:event_date"] || "").slice(0, 10) || null;
-  const itemLinks = stacLinks(collection, "item");
+// Fetch + normalize the STAC items linked directly from a Vantor collection
+// document located at `baseUrl`.
+async function fetchVantorItems(doc, baseUrl, eventDate) {
+  const itemLinks = stacLinks(doc, "item");
   const scenes = await Promise.all(
     itemLinks.map(async (l) => {
       try {
-        const item = await fetchJson(absUrl(l.href, src.collectionUrl));
+        const item = await fetchJson(absUrl(l.href, baseUrl));
         return normalizeVantorItem(item, eventDate);
       } catch {
         return null;
@@ -384,6 +384,40 @@ async function fetchVantorScenes(src) {
     })
   );
   return scenes.filter(Boolean);
+}
+
+// Vantor events normally list every scene item directly under the event
+// collection. As a safety net for a future event that instead nests items
+// under child collections (as some Planet events do — see
+// collectPlanetCollections), descend child links *only when a collection
+// exposes no direct items*. Events that already list items flat — the current
+// norm, including ones that ALSO nest redundant pre/post children — keep their
+// existing behavior with no extra fetches and no duplicate scenes.
+const VANTOR_MAX_DEPTH = 5;
+
+async function collectVantorScenes(doc, baseUrl, eventDate, depth = 0) {
+  const direct = await fetchVantorItems(doc, baseUrl, eventDate);
+  if (direct.length > 0 || depth >= VANTOR_MAX_DEPTH) return direct;
+  const childLinks = stacLinks(doc, "child");
+  const nested = await Promise.all(
+    childLinks.map(async (link) => {
+      const childUrl = absUrl(link.href, baseUrl);
+      try {
+        const childDoc = await fetchJson(childUrl);
+        return collectVantorScenes(childDoc, childUrl, eventDate, depth + 1);
+      } catch (err) {
+        console.warn(`Skipping Vantor STAC catalog ${childUrl}: ${err.message}`);
+        return [];
+      }
+    })
+  );
+  return nested.flat();
+}
+
+async function fetchVantorScenes(src) {
+  const collection = await fetchJson(src.collectionUrl);
+  const eventDate = (collection["odp:event_date"] || "").slice(0, 10) || null;
+  return collectVantorScenes(collection, src.collectionUrl, eventDate);
 }
 
 // ── Planet Open Data (Source Cooperative STAC) ──────────────────────────────
