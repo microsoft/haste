@@ -402,15 +402,29 @@ function planetSourceTypeKey(item, collection) {
     : SOURCE_TYPE_KEYS.planet;
 }
 
-function normalizePlanetItem({ item, itemUrl, collection, aboutUrl, eventDate }) {
+function normalizePlanetItem({
+  item,
+  itemUrl,
+  collection,
+  collectionUrl,
+  aboutUrl,
+  eventDate,
+  inheritedPhase,
+}) {
   const props = item.properties || {};
   const visual = pickVisualAsset(item.assets);
   const cogUrl = visual ? absUrl(visual.href, itemUrl) : null;
+  // Prefer a per-item thumbnail; otherwise fall back to the collection's
+  // shared thumbnail. The collection asset's href is relative to the
+  // collection document, not the item — resolve it against collectionUrl
+  // (some events, e.g. Gironde, ship no per-item thumbnail, so this fallback
+  // is the only list preview they have).
   const thumbUrl =
     assetHref(item.assets?.thumbnail, itemUrl) ||
-    assetHref(collection?.assets?.thumbnail, itemUrl);
+    assetHref(collection?.assets?.thumbnail, collectionUrl || itemUrl);
   const phase =
     planetPhaseFromCollectionId(item.collection || collection?.id) ||
+    inheritedPhase ||
     resolvePhase(null, props.datetime, eventDate);
   return {
     id: item.id,
@@ -463,8 +477,14 @@ function normalizePlanetMosaic({ collection, collectionUrl, asset }) {
   };
 }
 
-async function fetchPlanetCollectionScenes({ collectionDoc, collectionUrl, aboutUrl, eventDate }) {
-  const phase = planetPhaseFromCollectionId(collectionDoc.id);
+async function fetchPlanetCollectionScenes({
+  collectionDoc,
+  collectionUrl,
+  aboutUrl,
+  eventDate,
+  inheritedPhase,
+}) {
+  const phase = planetPhaseFromCollectionId(collectionDoc.id) || inheritedPhase;
   const mosaic = phase === "pre" ? collectionDoc.assets?.mosaic : null;
   if (mosaic) {
     return [
@@ -485,8 +505,10 @@ async function fetchPlanetCollectionScenes({ collectionDoc, collectionUrl, about
           item: doc,
           itemUrl: url,
           collection: collectionDoc,
+          collectionUrl,
           aboutUrl,
           eventDate,
+          inheritedPhase: phase,
         });
       } catch (err) {
         console.warn(`Skipping Planet STAC item ${itemUrl}: ${err.message}`);
@@ -497,20 +519,53 @@ async function fetchPlanetCollectionScenes({ collectionDoc, collectionUrl, about
   return items.filter(Boolean);
 }
 
+// Recursively descend Planet STAC `child` links until reaching nodes that
+// actually hold scenes (item links or a pre-event mosaic asset). Most events
+// expose collections directly under the root, but some nest an extra catalog
+// level (root → pre-/post-event catalog → dated collections → items); without
+// this walk those events surface as "no imagery available". The pre/post
+// `phase` is carried down from whichever ancestor declares it (e.g. the
+// intermediate "post-event" catalog), since the leaf collection ids
+// ("post-event-2026-07-29") don't match on their own.
+const PLANET_MAX_DEPTH = 5;
+
+async function collectPlanetCollections(doc, url, aboutUrl, inheritedPhase, depth = 0) {
+  const phase = planetPhaseFromCollectionId(doc.id) || inheritedPhase;
+  const about = stacLink(doc, "about", url) || aboutUrl;
+  const hasItems = stacLinks(doc, "item").length > 0;
+  const hasMosaic = phase === "pre" && !!doc.assets?.mosaic;
+  if (hasItems || hasMosaic) {
+    return [{ doc, url, aboutUrl: about, phase }];
+  }
+  if (depth >= PLANET_MAX_DEPTH) return [];
+  const childLinks = stacLinks(doc, "child");
+  const nested = await Promise.all(
+    childLinks.map(async (link) => {
+      const childUrl = absUrl(link.href, url);
+      try {
+        const { doc: childDoc, url: resolvedUrl } = await fetchJsonRetry(childUrl);
+        return collectPlanetCollections(childDoc, resolvedUrl, about, phase, depth + 1);
+      } catch (err) {
+        console.warn(`Skipping Planet STAC catalog ${childUrl}: ${err.message}`);
+        return [];
+      }
+    })
+  );
+  return nested.flat();
+}
+
 async function fetchPlanetScenes(src) {
   const { doc: root, url: rootUrl } = await fetchJsonRetry(src.catalogUrl);
-  const childLinks = stacLinks(root, "child");
-  const collections = await Promise.all(
-    childLinks.map((link) => fetchJsonRetry(absUrl(link.href, rootUrl)))
-  );
+  const rootAbout = stacLink(root, "about", rootUrl);
+  const collections = await collectPlanetCollections(root, rootUrl, rootAbout, null);
   const nested = await Promise.all(
-    collections.map(({ doc, url }) =>
+    collections.map(({ doc, url, aboutUrl, phase }) =>
       fetchPlanetCollectionScenes({
         collectionDoc: doc,
         collectionUrl: url,
-        aboutUrl:
-          stacLink(doc, "about", url) || stacLink(root, "about", rootUrl),
+        aboutUrl,
         eventDate: src.date,
+        inheritedPhase: phase,
       })
     )
   );
