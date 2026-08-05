@@ -128,14 +128,6 @@ const AdminUsers = ({ setModalComponent }) => {
           <div>
             <h1 className="pgrid-title">
               Users
-              <Tooltip
-                content="Manage user access, roles, and invitations."
-                relationship="label"
-              >
-                <span>
-                  <FluentIcon name="Info" className="pgrid-title-info" />
-                </span>
-              </Tooltip>
             </h1>
             <div className="pgrid-subtitle">
               Manage user access, roles, and invitations.
