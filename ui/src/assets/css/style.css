@@ -155,6 +155,65 @@
   max-width: 450px;
 }
 
+.embedding-modal {
+  width: 100%;
+  max-width: 100%;
+}
+
+.embedding-modal > .row {
+  margin-right: 0;
+  margin-left: 0;
+}
+
+.embedding-modal > .row > .col-12 {
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.embedding-modal__control {
+  width: 100%;
+  min-width: 0;
+}
+
+.embedding-modal__help {
+  margin: 8px 0;
+  color: #666;
+  font-size: 12px;
+}
+
+.embedding-modal__parameters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.embedding-modal__field {
+  min-width: 0;
+}
+
+.embedding-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 767px) {
+  .embedding-modal__parameters {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .embedding-modal__actions {
+    flex-direction: column;
+  }
+
+  .embedding-modal__actions > button {
+    width: 100%;
+  }
+}
+
 .container {
   max-width: 1700px !important;
 }

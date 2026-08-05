@@ -160,11 +160,12 @@ const CreateEditEmbeddingModal = ({
       icon="OpenFolderHorizontal"
       onClose={onClose}
       body={
-        <>
+        <div className="embedding-modal">
           <div className="row mb-2">
             <div className="col-12">
               <Field label="Name" validationMessage={state.nameError}>
                 <Input
+                  className="embedding-modal__control"
                   id="createEmbeddingName"
                   value={state.name}
                   onChange={(e, data) => onField(data.value, "name")}
@@ -176,6 +177,7 @@ const CreateEditEmbeddingModal = ({
             <div className="col-12">
               <Field label="Embedding model">
                 <Dropdown
+                  className="embedding-modal__control"
                   id="createEmbeddingModel"
                   selectedOptions={[String(state.embeddingModel)]}
                   value={
@@ -192,21 +194,22 @@ const CreateEditEmbeddingModal = ({
                   ))}
                 </Dropdown>
               </Field>
-              <p style={{ fontSize: 12, color: "#666", margin: "8px 0" }}>
+              <p className="embedding-modal__help">
                 {modelHelp}
               </p>
             </div>
           </div>
           <div className="row mb-4">
-            <div className="col-12 flex-column flex-md-row d-flex">
+            <div className="col-12 embedding-modal__parameters">
               {isMosaiks && (
                 <Field
                   label="Number of features"
-                  className="me-0 me-md-4 mb-2"
+                  className="embedding-modal__field"
                   required
                   validationMessage={state.numFeaturesError}
                 >
                   <Input
+                    className="embedding-modal__control"
                     id="createEmbeddingNumFeatures"
                     value={state.numFeatures}
                     onChange={(e, data) => onField(data.value, "numFeatures")}
@@ -215,11 +218,12 @@ const CreateEditEmbeddingModal = ({
               )}
               <Field
                 label="Resize factor"
-                className="me-0 me-md-4 mb-2"
+                className="embedding-modal__field"
                 required
                 validationMessage={state.resizeFactorError}
               >
                 <Input
+                  className="embedding-modal__control"
                   id="createEmbeddingResizeFactor"
                   value={state.resizeFactor}
                   onChange={(e, data) => onField(data.value, "resizeFactor")}
@@ -227,11 +231,12 @@ const CreateEditEmbeddingModal = ({
               </Field>
               <Field
                 label="Batch size"
-                className="mb-2"
+                className="embedding-modal__field"
                 required
                 validationMessage={state.batchSizeError}
               >
                 <Input
+                  className="embedding-modal__control"
                   id="createEmbeddingBatchSize"
                   value={state.batchSize}
                   onChange={(e, data) => onField(data.value, "batchSize")}
@@ -240,10 +245,9 @@ const CreateEditEmbeddingModal = ({
             </div>
           </div>
           <div className="row">
-            <div className="col-12 d-flex justify-content-end">
+            <div className="col-12 embedding-modal__actions">
               <Button
                 appearance="primary"
-                className="me-2"
                 onClick={submit}
                 id="createEmbeddingSubmit"
               >
@@ -252,7 +256,7 @@ const CreateEditEmbeddingModal = ({
               <Button onClick={onClose}>Cancel</Button>
             </div>
           </div>
-        </>
+        </div>
       }
     />
   );

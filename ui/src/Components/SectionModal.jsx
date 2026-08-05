@@ -67,7 +67,7 @@ const headerStyle = {
   flex: "1 1 auto",
   display: "flex",
   alignItems: "center",
-  padding: "12px 12px 14px 24px",
+  padding: "12px 24px 14px",
 };
 const headingStyle = { fontWeight: 600, fontSize: "20px", margin: 0 };
 const bodyStyle = {
