@@ -2435,6 +2435,29 @@ tr.model-mobile-row:not(:last-child) td {
 }
 
 @media (max-width: 992px) {
+  html[data-theme="dark"] .pgrid-page--model-catalog .pgrid-table tbody tr,
+  html[data-theme="dark"] .pgrid-page--model-catalog .pgrid-table tbody tr:hover {
+    background: #201f1e;
+    border-color: #3b3a39;
+  }
+
+  html[data-theme="dark"] .pgrid-page--model-catalog .pgrid-table tbody td {
+    border-bottom-color: #3b3a39;
+  }
+
+  html[data-theme="dark"] .pgrid-page--model-catalog .pgrid-table tbody td::before {
+    color: #a19f9d;
+  }
+
+  html[data-theme="dark"] .pgrid-page--model-catalog .pgrid-table tbody tr > td:first-child {
+    background-color: var(--brand-50);
+    color: #f4f8fc;
+  }
+
+  html[data-theme="dark"] .pgrid-page--model-catalog .pgrid-table tbody tr > td:first-child::before {
+    color: #c7d9ea;
+  }
+
   html[data-theme="dark"] .pgrid-page--projects .pgrid-table tbody tr,
   html[data-theme="dark"] .pgrid-page--projects .pgrid-table tbody tr:hover {
     background: #201f1e;

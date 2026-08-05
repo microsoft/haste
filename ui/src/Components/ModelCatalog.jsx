@@ -154,14 +154,6 @@ const ModelCatalog = () => {
             <div>
               <h1 className="pgrid-title">
                 Model Catalog
-                <Tooltip
-                  content="Browse and manage reusable base models for training workflows."
-                  relationship="label"
-                >
-                  <span>
-                    <FluentIcon name="Info" className="pgrid-title-info" />
-                  </span>
-                </Tooltip>
               </h1>
               <div className="pgrid-subtitle">
                 Browse and manage reusable base models for training workflows.
