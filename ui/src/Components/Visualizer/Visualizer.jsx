@@ -11,6 +11,7 @@ import { convertDateToString } from "../../util/conversion";
 import VisualizerImageryControls from "./VisualizerImageryControls"
 import "../../assets/css/visualizer.css";
 import { getAzureMapsAuthOptions } from "../../util/azureMapsAuth";
+import { shouldIgnoreShortcut } from "../keyboardShortcuts";
 
 
 const Visualizer = ({ setModalComponent }) => {
@@ -228,16 +229,7 @@ const Visualizer = ({ setModalComponent }) => {
   }, []);
 
   const handleKeyboardShortcuts = (event) => {
-    // Ignore when typing in an input/textarea/contenteditable element.
-    const target = event.target;
-    const tag = target?.tagName;
-    if (
-      tag === "INPUT" ||
-      tag === "TEXTAREA" ||
-      target?.isContentEditable
-    ) {
-      return;
-    }
+    if (shouldIgnoreShortcut(event)) return;
     if (event.ctrlKey || event.altKey || event.metaKey) {
       return;
     }

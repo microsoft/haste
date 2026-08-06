@@ -53,6 +53,11 @@ import {
   isValidVector,
 } from "./interactiveModel.js";
 import { getGpu } from "./gpuLogreg.js";
+import KeyboardShortcutHelp from "../KeyboardShortcutHelp.jsx";
+import {
+  INTERACTIVE_LABELER_SHORTCUTS,
+  shouldIgnoreShortcut,
+} from "../keyboardShortcuts.js";
 
 // Register the pmtiles protocol once at module load. After this, any
 // VectorTileSource configured with `url: "pmtiles://<url>"` will route
@@ -375,6 +380,41 @@ function fillOpacityExprUncertainty() {
   ];
 }
 
+// ── Misclassified view ──────────────────────────────────────────────────────
+// A building is misclassified only when it has BOTH a human label and a
+// current model prediction and those classes differ. The expression reads the
+// same "label" and "pred" feature-state used by the existing views, so correct
+// and unlabeled buildings remain transparent without a duplicate state map.
+const MISCLASSIFIED_COLOR = "#D83B01";
+const MISCLASSIFIED_FILL_OPACITY = 0.75;
+
+function validClassStateExpr(stateKey) {
+  return [
+    "any",
+    ["==", ["feature-state", stateKey], CLASS_INTACT],
+    ["==", ["feature-state", stateKey], CLASS_DAMAGED],
+    ["==", ["feature-state", stateKey], CLASS_CLOUDY],
+  ];
+}
+
+function misclassifiedExpr() {
+  return [
+    "all",
+    validClassStateExpr("label"),
+    validClassStateExpr("pred"),
+    ["!=", ["feature-state", "label"], ["feature-state", "pred"]],
+  ];
+}
+
+function fillOpacityExprMisclassified() {
+  return [
+    "case",
+    misclassifiedExpr(),
+    MISCLASSIFIED_FILL_OPACITY,
+    0,
+  ];
+}
+
 // Normalized Shannon entropy of a probability vector, in [0, 1] (0 = a single
 // class has all the mass, 1 = uniform across k classes). Used as the per-
 // building uncertainty score for the uncertainty view.
@@ -500,6 +540,9 @@ const InteractiveLabeler = () => {
   // free of the "Training…" status that used to fire on every settle.
   const trainedModelRef = useRef(null);
   const labelsDirtyRef = useRef(true);
+  // Guards asynchronous holdout/training work from publishing a model after
+  // labels changed or were cleared while that work was in flight.
+  const labelsRevisionRef = useRef(0);
   const fullPredictAbortRef = useRef({ cancelled: false });
 
   // Advanced → Swipe view. atlas.SwipeMap always reveals its SECONDARY map on
@@ -535,10 +578,13 @@ const InteractiveLabeler = () => {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [cvResult, setCvResult] = useState(null);
   const [cvRunning, setCvRunning] = useState(false);
-  const [swipeOn, setSwipeOn] = useState(false);
+  const [swipeOn, setSwipeOn] = useState(true);
   // Advanced → Uncertainty view: recolor every scored footprint by the model's
   // predictive uncertainty (with a legend).
   const [uncertaintyOn, setUncertaintyOn] = useState(false);
+  // Advanced → Misclassified view: emphasize only human labels that disagree
+  // with the current in-browser model prediction.
+  const [misclassifiedOn, setMisclassifiedOn] = useState(false);
 
   // selectedClass / viewMode are read by long-lived map event handlers.
   const selectedClassRef = useRef(selectedClass);
@@ -555,6 +601,10 @@ const InteractiveLabeler = () => {
   useEffect(() => {
     uncertaintyOnRef.current = uncertaintyOn;
   }, [uncertaintyOn]);
+  const misclassifiedOnRef = useRef(misclassifiedOn);
+  useEffect(() => {
+    misclassifiedOnRef.current = misclassifiedOn;
+  }, [misclassifiedOn]);
   // Read by the P hotkey (long-lived listener) so it can't switch to the
   // Predicted view before there are enough labels to train.
   const canTrainRef = useRef(false);
@@ -967,7 +1017,7 @@ const InteractiveLabeler = () => {
         const cls = VALIDATION_TO_CLASS[entry.label];
         if (cls == null) continue;
         const vec = lookupFeatureVector(id);
-        if (!vec) continue;
+        if (!isValidVector(vec)) continue;
         labeledMapRef.current[id] = {
           label: cls,
           features: vec,
@@ -978,6 +1028,7 @@ const InteractiveLabeler = () => {
       }
       if (restored > 0) {
         labelsDirtyRef.current = true;
+        labelsRevisionRef.current += 1;
         refreshCounts();
       }
     }
@@ -994,8 +1045,13 @@ const InteractiveLabeler = () => {
       if (pred != null) setFeatureStatePred(f.source, id, pred);
     }
 
-    // Viewport-scoped predict — only train + score what's on screen.
-    if (viewModeRef.current === "predict") {
+    // Predicted and Misclassified views both need current viewport
+    // predictions. maybeTrainAndPredict reuses the cached model unless labels
+    // changed.
+    if (
+      viewModeRef.current === "predict" ||
+      misclassifiedOnRef.current
+    ) {
       maybeTrainAndPredict(features);
     }
 
@@ -1010,9 +1066,7 @@ const InteractiveLabeler = () => {
   // trainedModelRef with the predict path; returns silently (with a status
   // hint) when there aren't enough labels to train.
   function computeUncertaintyForViewport(features) {
-    const entries = Object.values(labeledMapRef.current).filter((e) =>
-      isValidVector(e.features)
-    );
+    const entries = getValidLabeledEntries();
     const perClass = {};
     entries.forEach((e) => (perClass[e.label] = (perClass[e.label] || 0) + 1));
     const classesReady = Object.values(perClass).filter(
@@ -1128,7 +1182,15 @@ const InteractiveLabeler = () => {
     if (!map) return;
     const fill = map.layers.getLayerById?.("embeddingFill");
     if (!fill) return;
-    if (uncertaintyOn) {
+    if (misclassifiedOn) {
+      // The opacity expression itself requires a human label, a prediction,
+      // and a class mismatch. Correct and unlabeled buildings stay clear.
+      fill.setOptions({
+        fillColor: MISCLASSIFIED_COLOR,
+        fillOpacity: fillOpacityExprMisclassified(),
+      });
+      hydrateViewport(map);
+    } else if (uncertaintyOn) {
       // Uncertainty view overrides the label/predict coloring entirely.
       fill.setOptions({
         fillColor: fillColorExprUncertainty(),
@@ -1142,7 +1204,10 @@ const InteractiveLabeler = () => {
       });
       if (viewMode === "predict") hydrateViewport(map);
     }
-  }, [viewMode, uncertaintyOn, isMapReady]);
+    // hydrateViewport reads current refs and intentionally stays out of this
+    // dependency list to avoid re-running the effect on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, uncertaintyOn, misclassifiedOn, isMapReady]);
 
   // Show / hide the buildings layers without unmounting them. Driven by
   // the panel toggle + spacebar hotkey; the feature-state and the cached
@@ -1168,10 +1233,16 @@ const InteractiveLabeler = () => {
     return sc.matrix.subarray(id * sc.d, (id + 1) * sc.d);
   }
 
+  function getValidLabeledEntries() {
+    return Object.values(labeledMapRef.current).filter((entry) =>
+      isValidVector(entry.features)
+    );
+  }
+
   // ── Labeling ──────────────────────────────────────────────────────────────
   function recordLabel(id, props, cls) {
     const vec = lookupFeatureVector(id);
-    if (!vec) return false;
+    if (!isValidVector(vec)) return false;
     // Capture the Overture id (when present) up front so the save path
     // doesn't have to guess. The persisted store is keyed by Overture id
     // (so labels survive a re-embed that renumbers row-index ids); the
@@ -1186,13 +1257,18 @@ const InteractiveLabeler = () => {
     // Any label change invalidates the cached trained model; the next
     // viewport predict will retrain. Clearing also invalidates.
     labelsDirtyRef.current = true;
+    labelsRevisionRef.current += 1;
     return true;
   }
   function labelBuilding(id, props, cls) {
     if (!recordLabel(id, props, cls)) return;
     setFeatureStateLabel(primarySourceId(), id, cls);
     refreshCounts();
-    if (viewModeRef.current === "predict") {
+    if (
+      viewModeRef.current === "predict" ||
+      uncertaintyOnRef.current ||
+      misclassifiedOnRef.current
+    ) {
       hydrateViewport(mapRef.current);
     }
   }
@@ -1207,15 +1283,31 @@ const InteractiveLabeler = () => {
     if (n === 0) return;
     refreshCounts();
     setStatus(`Labeled ${n} buildings.`);
-    if (viewModeRef.current === "predict") {
+    if (
+      viewModeRef.current === "predict" ||
+      uncertaintyOnRef.current ||
+      misclassifiedOnRef.current
+    ) {
       hydrateViewport(mapRef.current);
     }
   }
   function clearLabel(id) {
+    const entry = labeledMapRef.current[id];
+    if (entry) {
+      delete savedLabelsRef.current[entry.overtureId ?? id];
+    }
     delete labeledMapRef.current[id];
     labelsDirtyRef.current = true;
+    labelsRevisionRef.current += 1;
     clearFeatureStateLabel(primarySourceId(), id);
     refreshCounts();
+    if (
+      viewModeRef.current === "predict" ||
+      uncertaintyOnRef.current ||
+      misclassifiedOnRef.current
+    ) {
+      hydrateViewport(mapRef.current);
+    }
   }
   function refreshCounts() {
     const next = { 0: 0, 1: 0, 2: 0 };
@@ -1316,9 +1408,7 @@ const InteractiveLabeler = () => {
       trainPendingRef.current = true;
       return;
     }
-    const entries = Object.values(labeledMapRef.current).filter((e) =>
-      isValidVector(e.features)
-    );
+    const entries = getValidLabeledEntries();
     const perClass = {};
     entries.forEach((e) => (perClass[e.label] = (perClass[e.label] || 0) + 1));
     const classesReady = Object.values(perClass).filter(
@@ -1336,13 +1426,13 @@ const InteractiveLabeler = () => {
       // Only retrain when the label set actually changed. The metrics panel
       // is paired with training, so it refreshes on the same cadence.
       if (labelsDirtyRef.current || !trainedModelRef.current) {
+        const trainingRevision = labelsRevisionRef.current;
         setStatus("Training…");
-        const metrics = await holdoutMetricsDamaged(
+        const nextMetrics = await holdoutMetricsDamaged(
           entries,
           0.2,
           CLASS_DAMAGED
         );
-        if (metrics) setMetrics({ ...metrics, mode: "holdout" });
         const ovr = new OvRLogisticRegression({
           learningRate: 0.1,
           numSteps: 500,
@@ -1352,6 +1442,12 @@ const InteractiveLabeler = () => {
           entries.map((e) => e.features),
           entries.map((e) => e.label)
         );
+        if (trainingRevision !== labelsRevisionRef.current) {
+          labelsDirtyRef.current = true;
+          trainPendingRef.current = true;
+          return;
+        }
+        if (nextMetrics) setMetrics({ ...nextMetrics, mode: "holdout" });
         trainedModelRef.current = ovr;
         labelsDirtyRef.current = false;
         // The backend label is purely cosmetic for the cached path —
@@ -1396,35 +1492,40 @@ const InteractiveLabeler = () => {
   // ── Keyboard: 1/2/3 set class, T cycles, P toggles view, Space hides ─────
   useEffect(() => {
     function onKeyDown(e) {
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
-      if (e.key === "1") setSelectedClass(CLASS_INTACT);
-      else if (e.key === "2") setSelectedClass(CLASS_DAMAGED);
-      else if (e.key === "3") setSelectedClass(CLASS_CLOUDY);
-      else if (e.key === "t" || e.key === "T")
+      if (shouldIgnoreShortcut(e)) return;
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "1") setSelectedClass(CLASS_INTACT);
+      else if (key === "2") setSelectedClass(CLASS_DAMAGED);
+      else if (key === "3") setSelectedClass(CLASS_CLOUDY);
+      else if (key === "t")
         setSelectedClass((c) => (c + 1) % 3);
-      else if (e.key === "p" || e.key === "P") {
+      else if (key === "p") {
         // Predicted view needs a trained model; ignore until we have enough
         // labels (matches the disabled View toggle).
         if (!canTrainRef.current) return;
         const next = viewModeRef.current === "label" ? "predict" : "label";
         setViewMode(next);
-        // Predicted view and Uncertainty view are mutually exclusive.
-        if (next === "predict") setUncertaintyOn(false);
-      } else if (e.key === " " || e.code === "Space") {
+        // Model-driven review views are mutually exclusive.
+        if (next === "predict") {
+          setUncertaintyOn(false);
+          setMisclassifiedOn(false);
+        }
+      } else if (key === " " || e.code === "Space") {
         // preventDefault to stop the browser from scrolling the page
         // when the map container doesn't have focus.
         e.preventDefault();
         setShowFootprints((v) => !v);
       } else if (
         swipeRef.current &&
-        (e.key === "a" || e.key === "s" || e.key === "d")
+        (key === "a" || key === "s" || key === "d")
       ) {
         // Snap the swipe divider: 'a' = full left, 's' = middle, 'd' = full
         // right. sliderPosition is in pixels from the left of the map; the
         // SwipeMap module clamps out-of-range values to [0, width].
         const el = swipeMapContainerRef.current || mapContainerRef.current;
         const w = el ? el.getBoundingClientRect().width : 0;
-        const pos = e.key === "a" ? 0 : e.key === "s" ? w / 2 : w;
+        const pos = key === "a" ? 0 : key === "s" ? w / 2 : w;
         try {
           swipeRef.current.setOptions({ sliderPosition: pos });
         } catch (err) {
@@ -1442,9 +1543,7 @@ const InteractiveLabeler = () => {
   // this keeps the main thread free enough that the map keeps rendering instead
   // of blanking out while the CV runs.
   async function handleRunCV() {
-    const entries = Object.values(labeledMapRef.current).filter((e) =>
-      isValidVector(e.features)
-    );
+    const entries = getValidLabeledEntries();
     if (entries.length === 0) {
       setCvResult({ ok: false, reason: "Label some buildings first." });
       return;
@@ -1661,6 +1760,7 @@ const InteractiveLabeler = () => {
         modelId,
         labels,
       });
+      savedLabelsRef.current = labels;
       setDialog("Saved", "Labels saved successfully.", [
         {
           type: "primary",
@@ -1720,6 +1820,7 @@ const InteractiveLabeler = () => {
             predictionsMapRef.current = {};
             trainedModelRef.current = null;
             labelsDirtyRef.current = true;
+            labelsRevisionRef.current += 1;
             refreshCounts();
             setMetrics(null);
             setViewportPredicted(0);
@@ -1762,9 +1863,7 @@ const InteractiveLabeler = () => {
   // modal, then PUTs predictions so the Validation/Assessment reports have
   // full coverage. Cancellable via fullPredictAbortRef.
   async function handlePredictAll() {
-    const entries = Object.values(labeledMapRef.current).filter((e) =>
-      isValidVector(e.features)
-    );
+    const entries = getValidLabeledEntries();
     const perClass = {};
     entries.forEach((e) => (perClass[e.label] = (perClass[e.label] || 0) + 1));
     const classesReady = Object.values(perClass).filter(
@@ -1896,22 +1995,27 @@ const InteractiveLabeler = () => {
   }
 
   const totalLabeled = counts[0] + counts[1] + counts[2];
-  // The Predicted and Uncertainty views both need a trained model, which needs
-  // at least MIN_PER_CLASS labels in 2+ classes. Gate both toggles on this.
+  // Predicted, Uncertainty, and Misclassified views need a trained model,
+  // which needs at least MIN_PER_CLASS labels in 2+ classes.
+  const trainableClassCounts = getValidLabeledEntries().reduce(
+    (classCounts, entry) => {
+      classCounts[entry.label] = (classCounts[entry.label] || 0) + 1;
+      return classCounts;
+    },
+    {}
+  );
   const canTrain =
-    [
-      counts[CLASS_INTACT],
-      counts[CLASS_DAMAGED],
-      counts[CLASS_CLOUDY],
-    ].filter((n) => n >= MIN_PER_CLASS).length >= 2;
+    Object.values(trainableClassCounts).filter((n) => n >= MIN_PER_CLASS)
+      .length >= 2;
 
   // If labels drop back below the trainable threshold (e.g. after clearing),
   // fall back to the Labeled view so we don't sit in a now-disabled Predicted
-  // or Uncertainty view with no model behind it.
+  // Uncertainty, or Misclassified view with no model behind it.
   useEffect(() => {
     canTrainRef.current = canTrain;
     if (!canTrain) {
       setUncertaintyOn(false);
+      setMisclassifiedOn(false);
       setViewMode("label");
     }
   }, [canTrain]);
@@ -1993,9 +2097,8 @@ const InteractiveLabeler = () => {
           </>
         )}
 
-        {/* Legend, bottom-right of the map. Shows the class colors normally
-            (Intact / Damaged / Cloudy), or the uncertainty ramp when the
-            uncertainty view is on. Hidden when footprints are hidden. */}
+        {/* Legend, bottom-right of the map. Shows class colors normally, the
+            uncertainty ramp, or the misclassified explanation. */}
         {isMapReady && showFootprints && (
           <div className={styles.legend}>
             {uncertaintyOn ? (
@@ -2327,6 +2430,31 @@ const InteractiveLabeler = () => {
                 Recolors every scored footprint by the model&apos;s predictive
                 uncertainty. Needs {MIN_PER_CLASS}+ labels in at least 2 classes.
                 A legend appears on the map.
+              </div>
+
+              <Separator styles={{ root: { marginTop: 12 } }} />
+
+              <Toggle
+                label="Show misclassified buildings"
+                onText="On"
+                offText="Off"
+                checked={misclassifiedOn}
+                disabled={!canTrain}
+                onChange={(e, checked) => {
+                  setMisclassifiedOn(!!checked);
+                  if (checked) {
+                    // Training is on demand: hydration trains/reuses the model
+                    // and refreshes predictions for the visible buildings.
+                    setViewMode("label");
+                    setUncertaintyOn(false);
+                    setStatus("Training model to find label disagreements…");
+                  }
+                }}
+              />
+              <div style={{ fontSize: 11, color: "#999", marginTop: -4 }}>
+                Trains or reuses the current model when enabled, then highlights
+                only human-labeled buildings whose predicted class differs.
+                Correct and unlabeled buildings stay unhighlighted.
               </div>
             </div>
           )}
