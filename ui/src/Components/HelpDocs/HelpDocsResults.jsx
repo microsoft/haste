@@ -41,6 +41,10 @@ const HelpDocsModelTraining = ({ anchor }) => {
       <h2 className=''>Built-in Visualizer</h2>
 
       <p>This opens a damage visualizer tool within HASTE. This is useful for quickly visualizing damage predictions, comparing them with pre-event imagery and for sharing these results via screenshots </p>
+      <p>
+        Use <kbd>A</kbd>, <kbd>S</kbd>, and <kbd>D</kbd> to move the imagery
+        swipe divider left, to an even split, or right.
+      </p>
 
       <img src={resultsVisualizerImage} alt="Visualizer" className="img-fluid pe-5 pt-4 pb-4" />
 

@@ -143,6 +143,7 @@ const BuildingValidationRightPanel = ({
   setShowFill,
   showPostImagery,
   setShowPostImagery,
+  hasPreImagery,
   hasPostImagery,
 }) => {
   const styles = useStyles();
@@ -293,6 +294,8 @@ const BuildingValidationRightPanel = ({
         <div><span style={{ color: "#107C10" }}>■</span> Not Damaged</div>
         <div><span style={{ color: "#4D4D4D" }}>■</span> Unknown</div>
       </div>
+
+      <KeyboardShortcutHelp shortcuts={BUILDING_VALIDATION_SHORTCUTS} />
 
       {/* Actions */}
       <div className={styles.actions} style={{ display: "flex", flexDirection: "column", gap: 8 }}>

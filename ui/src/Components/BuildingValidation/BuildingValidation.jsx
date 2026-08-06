@@ -311,9 +311,11 @@ const BuildingValidation = () => {
     }
   }, [showFill, isMapReady]);
 
-  // Toggle post-event imagery layer so the user can compare the
-  // post-event view against the basemap satellite underneath.
+  // A single-map comparison: post-event on, or pre-event/basemap when off.
   useEffect(() => {
+    if (preImageryRef.current) {
+      preImageryRef.current.setOptions({ visible: !showPostImagery });
+    }
     if (postImageryRef.current) {
       postImageryRef.current.setOptions({ visible: showPostImagery });
     }
@@ -487,12 +489,14 @@ const BuildingValidation = () => {
   // Keyboard shortcuts:
   //   1 / 2 / 3       — assign Damaged / NotDamaged / Unknown
   //   ArrowLeft / ArrowRight — move through the filtered list
+  //   A / D          — show pre (or basemap) / post imagery
   // The right-panel toggles and dropdown remain focusable; the
-  // INPUT/TEXTAREA/SELECT guard keeps shortcuts from hijacking typing.
+  // editable-target guard keeps shortcuts from hijacking typing.
   useEffect(() => {
     const keyMap = { "1": "Damaged", "2": "NotDamaged", "3": "Unknown" };
     function onKeyDown(e) {
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+      if (shouldIgnoreShortcut(e)) return;
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
       const labelValue = keyMap[e.key];
       if (labelValue) {
         handleLabel(labelValue);
@@ -504,6 +508,10 @@ const BuildingValidation = () => {
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
         navigateInFilter(1);
+      } else {
+        const key = e.key.toLowerCase();
+        if (key === "a") setShowPostImagery(false);
+        else if (key === "d") setShowPostImagery(true);
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -596,6 +604,7 @@ const BuildingValidation = () => {
           setShowFill={setShowFill}
           showPostImagery={showPostImagery}
           setShowPostImagery={setShowPostImagery}
+          hasPreImagery={!!preImageryRef.current}
           hasPostImagery={!!postImageryRef.current}
         />
       )}
