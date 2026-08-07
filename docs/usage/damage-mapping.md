@@ -138,7 +138,8 @@ use the predictions.
 control, the predicted damage layer overlaid on both, and an optional **raw predictions**
 layer you can toggle on. Imagery sliders (opacity, contrast, hue, saturation) and keyboard
 shortcuts — `A` (all pre-event), `S` (split), `D` (all post-event) — help you inspect and
-share the result.
+share the result. See {doc}`Keyboard shortcuts <keyboard-shortcuts>` for the complete
+reference.
 
 ![The raw per-pixel predictions layer toggled on](../_static/usage/results/raw-predictions-layer.png)
 
