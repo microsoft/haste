@@ -381,6 +381,7 @@ const LabelingToolLeftPanel = ({
                   }
                 />
               </div>
+              <KeyboardShortcutHelp shortcuts={LABELING_TOOL_SHORTCUTS} />
         </div>
       )}
 

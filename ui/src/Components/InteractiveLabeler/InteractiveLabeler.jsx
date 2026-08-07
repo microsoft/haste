@@ -1314,6 +1314,18 @@ const InteractiveLabeler = () => {
     Object.values(labeledMapRef.current).forEach((e) => {
       next[e.label] = (next[e.label] || 0) + 1;
     });
+    const nextCanTrain =
+      [
+        next[CLASS_INTACT],
+        next[CLASS_DAMAGED],
+        next[CLASS_CLOUDY],
+      ].filter((count) => count >= MIN_PER_CLASS).length >= 2;
+    canTrainRef.current = nextCanTrain;
+    if (!nextCanTrain) {
+      setUncertaintyOn(false);
+      setMisclassifiedOn(false);
+      setViewMode("label");
+    }
     setCounts(next);
   }
 
@@ -1997,28 +2009,12 @@ const InteractiveLabeler = () => {
   const totalLabeled = counts[0] + counts[1] + counts[2];
   // Predicted, Uncertainty, and Misclassified views need a trained model,
   // which needs at least MIN_PER_CLASS labels in 2+ classes.
-  const trainableClassCounts = getValidLabeledEntries().reduce(
-    (classCounts, entry) => {
-      classCounts[entry.label] = (classCounts[entry.label] || 0) + 1;
-      return classCounts;
-    },
-    {}
-  );
   const canTrain =
-    Object.values(trainableClassCounts).filter((n) => n >= MIN_PER_CLASS)
-      .length >= 2;
-
-  // If labels drop back below the trainable threshold (e.g. after clearing),
-  // fall back to the Labeled view so we don't sit in a now-disabled Predicted
-  // Uncertainty, or Misclassified view with no model behind it.
-  useEffect(() => {
-    canTrainRef.current = canTrain;
-    if (!canTrain) {
-      setUncertaintyOn(false);
-      setMisclassifiedOn(false);
-      setViewMode("label");
-    }
-  }, [canTrain]);
+    [
+      counts[CLASS_INTACT],
+      counts[CLASS_DAMAGED],
+      counts[CLASS_CLOUDY],
+    ].filter((count) => count >= MIN_PER_CLASS).length >= 2;
 
   return (
     <div className={styles.root}>
@@ -2204,8 +2200,11 @@ const InteractiveLabeler = () => {
             disabled={!canTrain}
             onChange={(_e, data) => {
               setViewMode(data.checked ? "predict" : "label");
-              // Predicted view and Uncertainty view are mutually exclusive.
-              if (data.checked) setUncertaintyOn(false);
+              // Model-driven review views are mutually exclusive.
+              if (data.checked) {
+                setUncertaintyOn(false);
+                setMisclassifiedOn(false);
+              }
             }}
             style={{ marginTop: 12 }}
           />
@@ -2421,9 +2420,11 @@ const InteractiveLabeler = () => {
                 disabled={!canTrain}
                 onChange={(_e, data) => {
                   setUncertaintyOn(!!data.checked);
-                  // Uncertainty view and Predicted view are mutually exclusive;
-                  // switching this on drops the map back to the Labeled view.
-                  if (data.checked) setViewMode("label");
+                  // Model-driven review views are mutually exclusive.
+                  if (data.checked) {
+                    setViewMode("label");
+                    setMisclassifiedOn(false);
+                  }
                 }}
               />
               <div className={styles.secondaryText} style={{ fontSize: 11, marginTop: -4 }}>
@@ -2432,17 +2433,15 @@ const InteractiveLabeler = () => {
                 A legend appears on the map.
               </div>
 
-              <Separator styles={{ root: { marginTop: 12 } }} />
+              <Divider style={{ marginTop: 12 }} />
 
-              <Toggle
+              <Switch
                 label="Show misclassified buildings"
-                onText="On"
-                offText="Off"
                 checked={misclassifiedOn}
                 disabled={!canTrain}
-                onChange={(e, checked) => {
-                  setMisclassifiedOn(!!checked);
-                  if (checked) {
+                onChange={(_e, data) => {
+                  setMisclassifiedOn(!!data.checked);
+                  if (data.checked) {
                     // Training is on demand: hydration trains/reuses the model
                     // and refreshes predictions for the visible buildings.
                     setViewMode("label");
@@ -2451,7 +2450,10 @@ const InteractiveLabeler = () => {
                   }
                 }}
               />
-              <div style={{ fontSize: 11, color: "#999", marginTop: -4 }}>
+              <div
+                className={styles.secondaryText}
+                style={{ fontSize: 11, marginTop: -4 }}
+              >
                 Trains or reuses the current model when enabled, then highlights
                 only human-labeled buildings whose predicted class differs.
                 Correct and unlabeled buildings stay unhighlighted.
@@ -2461,11 +2463,12 @@ const InteractiveLabeler = () => {
           </div>
 
           <div className={styles.footerHelp}>
-            Click a building to label it · right-click to clear ·{" "}
-            <kbd>Ctrl</kbd>+drag to box-label · <kbd>1</kbd>/<kbd>2</kbd>/
-            <kbd>3</kbd> set class · <kbd>P</kbd> toggle view ·{" "}
-            <kbd>Space</kbd> show/hide footprints · with swipe on,{" "}
-            <kbd>A</kbd>/<kbd>S</kbd>/<kbd>D</kbd> snap divider left/center/right
+            <div style={{ marginBottom: 8 }}>
+              Click a building to label it · right-click to clear it
+            </div>
+            <KeyboardShortcutHelp
+              shortcuts={INTERACTIVE_LABELER_SHORTCUTS}
+            />
           </div>
         </div>
       )}

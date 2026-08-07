@@ -10,6 +10,8 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
+import KeyboardShortcutHelp from "../KeyboardShortcutHelp";
+import { BUILDING_VALIDATION_SHORTCUTS } from "../keyboardShortcuts";
 
 const LABEL_OPTIONS = [
   { value: "Damaged", label: "Damaged (1)", color: "#C50F1F" },
@@ -203,7 +205,13 @@ const BuildingValidationRightPanel = ({
           onChange={(_e, data) => setShowFill(!!data.checked)}
         />
         <Switch
-          label="Show post-event imagery"
+          label={
+            showPostImagery
+              ? "Imagery: Post event"
+              : hasPreImagery
+                ? "Imagery: Pre event"
+                : "Imagery: Basemap"
+          }
           checked={showPostImagery}
           onChange={(_e, data) => setShowPostImagery(!!data.checked)}
           disabled={!hasPostImagery}
@@ -288,7 +296,7 @@ const BuildingValidationRightPanel = ({
 
       {/* Legend */}
       <div className={styles.legend}>
-        <div className={styles.legendTitle}>Legend · Hotkeys: 1 / 2 / 3 · ← →</div>
+        <div className={styles.legendTitle}>Legend</div>
         <div><span style={{ color: "#BDBDBD" }}>■</span> Unlabeled</div>
         <div><span style={{ color: "#C50F1F" }}>■</span> Damaged</div>
         <div><span style={{ color: "#107C10" }}>■</span> Not Damaged</div>
@@ -338,6 +346,7 @@ BuildingValidationRightPanel.propTypes = {
   setShowFill: PropTypes.func.isRequired,
   showPostImagery: PropTypes.bool.isRequired,
   setShowPostImagery: PropTypes.func.isRequired,
+  hasPreImagery: PropTypes.bool,
   hasPostImagery: PropTypes.bool,
 };
 
