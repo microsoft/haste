@@ -85,6 +85,7 @@ panel with the class selector, counts, a view toggle, and quality metrics.
 - **Shortcuts:** `1`/`2`/`3` pick a class, `T` cycles, `P` toggles Labeled/Predicted view,
   `Space` shows/hides footprints, and `Ctrl+drag` box-labels buildings. Swipe comparison is
   on by default; `A`/`S`/`D` move its divider left/to an even split/right.
+  See {doc}`Keyboard shortcuts <keyboard-shortcuts>` for the complete reference.
 
 Once you've labeled at least **3 buildings in each of 2+ classes**, an in-browser model
 (logistic regression, WebGPU-accelerated when available) trains automatically and predicts
