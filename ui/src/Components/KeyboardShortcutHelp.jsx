@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import { useState } from "react";
-import { ActionButton } from "@fluentui/react";
+import { Button } from "@fluentui/react-components";
+import { FluentIcon } from "../util/icons";
 import PropTypes from "prop-types";
 
 const rootStyle = {
@@ -81,25 +82,27 @@ const KeyboardShortcutHelp = ({
 
   return (
     <section style={rootStyle} aria-label={title}>
-      <ActionButton
+      <Button
+        appearance="subtle"
         aria-expanded={isExpanded}
-        iconProps={{
-          iconName: isExpanded ? "ChevronDown" : "ChevronRight",
-        }}
+        icon={
+          <FluentIcon
+            name={isExpanded ? "ChevronDown" : "ChevronRight"}
+          />
+        }
         onClick={() => setIsExpanded((expanded) => !expanded)}
-        styles={{
-          root: {
-            color: "#323130",
-            fontSize: 11,
-            fontWeight: 600,
-            height: 24,
-            padding: 0,
-          },
-          icon: { fontSize: 10 },
+        size="small"
+        style={{
+          color: "#323130",
+          fontSize: 11,
+          fontWeight: 600,
+          height: 24,
+          minWidth: 0,
+          padding: 0,
         }}
       >
         {title}
-      </ActionButton>
+      </Button>
       {isExpanded && (
         <div role="list">
           {shortcuts.map((shortcut) => (
