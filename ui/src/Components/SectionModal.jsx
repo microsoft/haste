@@ -1,16 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { useId } from "@fluentui/react-hooks";
 import { useContext } from "react";
 import {
-  getTheme,
-  mergeStyleSets,
-  FontWeights,
-  Modal,
-  FontIcon,
-  IconButton,
-} from "@fluentui/react";
+  Dialog,
+  DialogSurface,
+  Button,
+} from "@fluentui/react-components";
 
+import { FluentIcon } from "../util/icons";
 import { setGuidedTourState } from "./GuidedTourHelper";
 
 
@@ -28,94 +25,56 @@ const SectionModal = ({ title, body, onClose, icon, modalCurrentTour }) => {
 
   const { initCurrentTour, appParams } = useContext(AppContext);
 
-  const titleId = useId("title");
-
   return (
-    <Modal
-      titleAriaId={titleId}
-      isOpen={true}
-      onDismiss={onClose}
-      isBlocking={true}
-      containerClassName={contentStyles.container}
+    <Dialog
+      open={true}
+      onOpenChange={(_, d) => {
+        if (!d.open) onClose();
+      }}
     >
-      <div className={contentStyles.header}>
-        <div className="d-flex align-items-center flex-grow-1">
-          <FontIcon iconName={icon} className="me-2 modal-icon" />
-          <p className={contentStyles.heading} id={titleId}>
-            {title}
-          </p>
+      <DialogSurface style={{ padding: 0 }}>
+        <div style={headerStyle}>
+          <div className="d-flex align-items-center flex-grow-1">
+            <FluentIcon name={icon} className="me-2 modal-icon" />
+            <p className="m-0" style={headingStyle}>
+              {title}
+            </p>
+          </div>
+          <div className="">
+            {modalCurrentTour && (
+              <Button
+                appearance="subtle"
+                icon={<FluentIcon name="Help" />}
+                aria-label="Help"
+                onClick={() => setGuidedTourState(false, initCurrentTour, modalCurrentTour, appParams.guidedTourProperties)}
+              />
+            )}
+            <Button
+              appearance="subtle"
+              icon={<FluentIcon name="Cancel" />}
+              aria-label="Close popup modal"
+              onClick={onClose}
+            />
+          </div>
         </div>
-        <div className="">
-        { modalCurrentTour && (
-          <IconButton
-            styles={iconButtonStyles}
-            iconProps={helpIcon}
-            ariaLabel="Help"
-            onClick={() => setGuidedTourState(false, initCurrentTour, modalCurrentTour, appParams.guidedTourProperties)}
-          />
-        )}
-        <IconButton
-          styles={iconButtonStyles}
-          iconProps={cancelIcon}
-          ariaLabel="Close popup modal"
-          onClick={onClose}
-        />        
-        </div>
-      </div>
-      <div className={`${contentStyles.body}`}>{body}</div>
-    </Modal>
+        <div style={bodyStyle}>{body}</div>
+      </DialogSurface>
+    </Dialog>
   );
 };
 
-const cancelIcon = { iconName: "Cancel" };
-const helpIcon = { iconName: "Help" };
-
-const theme = getTheme();
-const contentStyles = mergeStyleSets({
-  container: {
-    display: "flex",
-    flexFlow: "column nowrap",
-    alignItems: "stretch",
-  },
-  header: [
-    {
-      flex: "1 1 auto",
-      borderTop: `4px solid ${theme.palette.themePrimary}`,
-      color: theme.palette.neutralPrimary,
-      display: "flex",
-      alignItems: "center",
-      fontWeight: FontWeights.semibold,
-      padding: "12px 12px 14px 24px",
-    },
-  ],
-  heading: {
-    color: theme.palette.neutralPrimary,
-    fontWeight: FontWeights.semibold,
-    fontSize: "20px",
-    margin: "0",
-  },
-  body: {
-    flex: "4 4 auto",
-    padding: "0 24px 24px 24px",
-    overflowY: "hidden",
-    selectors: {
-      p: { margin: "14px 0" },
-      "p:first-child": { marginTop: 0 },
-      "p:last-child": { marginBottom: 0 },
-    },
-  },
-});
-
-const iconButtonStyles = {
-  root: {
-    color: theme.palette.neutralPrimary,
-    marginLeft: "auto",
-    marginTop: "4px",
-    marginRight: "2px",
-  },
-  rootHovered: {
-    color: theme.palette.neutralDark,
-  },
+const headerStyle = {
+  flex: "1 1 auto",
+  display: "flex",
+  alignItems: "center",
+  padding: "12px 24px 14px",
+};
+const headingStyle = { fontWeight: 600, fontSize: "20px", margin: 0 };
+const bodyStyle = {
+  flex: "4 4 auto",
+  padding: "0 24px 24px 24px",
+  maxHeight: "75vh",
+  overflowY: "auto",
 };
 
 export default SectionModal;

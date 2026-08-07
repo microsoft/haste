@@ -1,7 +1,15 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import PropTypes from "prop-types";
-import { DefaultButton, Dropdown, PrimaryButton, Toggle } from "@fluentui/react";
+import {
+  Button,
+  Dropdown,
+  Option,
+  Switch,
+  Field,
+  makeStyles,
+  tokens,
+} from "@fluentui/react-components";
 
 const LABEL_OPTIONS = [
   { value: "Damaged", label: "Damaged (1)", color: "#C50F1F" },
@@ -17,36 +25,108 @@ const FILTER_LABELS = {
   Unknown: "Unknown only",
 };
 
-const coloredButtonStyles = (color, selected) => ({
-  root: {
-    backgroundColor: color,
-    borderColor: color,
-    color: "#fff",
-    width: "100%",
-    opacity: selected ? 1 : 0.85,
-    outline: selected ? `2px solid ${color}` : "none",
-    outlineOffset: 2,
+const coloredButtonStyle = (color, selected) => ({
+  backgroundColor: color,
+  borderColor: color,
+  color: "#fff",
+  width: "100%",
+  opacity: selected ? 1 : 0.85,
+  outline: selected ? `2px solid ${color}` : "none",
+  outlineOffset: 2,
+  fontWeight: 600,
+});
+
+const useStyles = makeStyles({
+  panel: {
+    position: "absolute",
+    top: "10px",
+    right: "10px",
+    bottom: "10px",
+    width: "clamp(280px, 24vw, 340px)",
+    maxWidth: "calc(100% - 20px)",
+    overflowX: "hidden",
+    overflowY: "auto",
+    overscrollBehavior: "contain",
+    scrollbarGutter: "stable",
+    zIndex: 1000,
+    boxSizing: "border-box",
+    padding: tokens.spacingHorizontalL,
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalM,
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    boxShadow: tokens.shadow16,
+    "& > *": {
+      flexShrink: 0,
+    },
+    "@media (max-width: 700px)": {
+      top: "auto",
+      right: "8px",
+      bottom: "8px",
+      left: "8px",
+      width: "auto",
+      maxWidth: "none",
+      maxHeight: "min(55%, 520px)",
+      padding: tokens.spacingHorizontalM,
+      zIndex: 25,
+    },
   },
-  rootHovered: {
-    backgroundColor: color,
-    borderColor: color,
-    color: "#fff",
-    opacity: 1,
+  header: {
+    paddingBottom: tokens.spacingVerticalS,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    fontSize: tokens.fontSizeBase400,
+    fontWeight: tokens.fontWeightSemibold,
   },
-  rootPressed: {
-    backgroundColor: color,
-    borderColor: color,
-    color: "#fff",
-    opacity: 0.9,
+  muted: {
+    color: tokens.colorNeutralForeground3,
   },
-  label: { fontWeight: 600 },
+  dividedSection: {
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  progressTrack: {
+    height: "6px",
+    overflow: "hidden",
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground4,
+  },
+  progressFill: {
+    height: "6px",
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorBrandBackground,
+    transitionProperty: "width",
+    transitionDuration: tokens.durationNormal,
+  },
+  buildingInfo: {
+    padding: `${tokens.spacingVerticalSNudge} ${tokens.spacingHorizontalS}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    fontSize: tokens.fontSizeBase100,
+  },
+  legend: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase100,
+    lineHeight: tokens.lineHeightBase200,
+  },
+  legendTitle: {
+    marginBottom: tokens.spacingVerticalXXS,
+    color: tokens.colorNeutralForeground2,
+    fontWeight: tokens.fontWeightSemibold,
+  },
+  actions: {
+    paddingTop: tokens.spacingVerticalS,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
 });
 
 const BuildingValidationRightPanel = ({
   features,
   labels,
   selectedIndex,
-  setSelectedIndex,
   onLabel,
   onSave,
   onDownload,
@@ -65,30 +145,7 @@ const BuildingValidationRightPanel = ({
   setShowPostImagery,
   hasPostImagery,
 }) => {
-  BuildingValidationRightPanel.propTypes = {
-    features: PropTypes.array.isRequired,
-    labels: PropTypes.object.isRequired,
-    selectedIndex: PropTypes.number.isRequired,
-    setSelectedIndex: PropTypes.func.isRequired,
-    onLabel: PropTypes.func.isRequired,
-    onSave: PropTypes.func.isRequired,
-    onDownload: PropTypes.func.isRequired,
-    isSaving: PropTypes.bool.isRequired,
-    labeledCount: PropTypes.number.isRequired,
-    filter: PropTypes.string.isRequired,
-    setFilter: PropTypes.func.isRequired,
-    filterValues: PropTypes.arrayOf(PropTypes.string).isRequired,
-    filteredIndices: PropTypes.arrayOf(PropTypes.number).isRequired,
-    onPrev: PropTypes.func.isRequired,
-    onNext: PropTypes.func.isRequired,
-    onSkipToNextUnlabeled: PropTypes.func.isRequired,
-    showFill: PropTypes.bool.isRequired,
-    setShowFill: PropTypes.func.isRequired,
-    showPostImagery: PropTypes.bool.isRequired,
-    setShowPostImagery: PropTypes.func.isRequired,
-    hasPostImagery: PropTypes.bool,
-  };
-
+  const styles = useStyles();
   const total = features.length;
   const currentFeature = features[selectedIndex];
   const currentId = currentFeature?.properties?.id;
@@ -107,109 +164,73 @@ const BuildingValidationRightPanel = ({
       : `(no buildings match filter)`;
 
   const remainingUnlabeled = total - labeledCount;
-  const filterOptions = filterValues.map((v) => ({
-    key: v,
-    text: FILTER_LABELS[v] || v,
-  }));
 
   return (
-    <div
-      style={{
-        position: "absolute",
-        right: 12,
-        top: 12,
-        width: 240,
-        background: "rgba(255, 255, 255, 0.97)",
-        borderRadius: 8,
-        boxShadow: "0 2px 12px rgba(0,0,0,0.18)",
-        zIndex: 1000,
-        padding: "14px 16px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-      }}
-    >
+    <div className={styles.panel}>
       {/* Header */}
-      <div style={{ fontWeight: 700, fontSize: 15, borderBottom: "1px solid #eee", paddingBottom: 8 }}>
+      <div className={styles.header}>
         Building Validation
       </div>
 
       {/* Progress */}
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-          <span style={{ color: "#555" }}>Progress</span>
+          <span className={styles.muted}>Progress</span>
           <span style={{ fontWeight: 600 }}>{labeledCount} / {total} ({progressPct}%)</span>
         </div>
-        <div style={{ background: "#e9ecef", borderRadius: 4, height: 6 }}>
+        <div className={styles.progressTrack}>
           <div
-            style={{
-              background: "#BDBDBD",
-              height: 6,
-              borderRadius: 4,
-              width: `${progressPct}%`,
-              transition: "width 0.3s",
-            }}
+            className={styles.progressFill}
+            style={{ width: `${progressPct}%` }}
           />
         </div>
       </div>
 
       {/* View toggles */}
       <div
+        className={styles.dividedSection}
         style={{
           display: "flex",
           flexDirection: "column",
           gap: 2,
-          borderTop: "1px solid #eee",
-          borderBottom: "1px solid #eee",
           padding: "6px 0",
         }}
       >
-        <Toggle
+        <Switch
           label="Show building fill"
           checked={showFill}
-          onChange={(_e, checked) => setShowFill(!!checked)}
-          onText="On"
-          offText="Off"
-          styles={{
-            root: { marginBottom: 0 },
-            label: { fontSize: 11, fontWeight: 600, color: "#555" },
-            text: { fontSize: 11 },
-          }}
+          onChange={(_e, data) => setShowFill(!!data.checked)}
         />
-        <Toggle
+        <Switch
           label="Show post-event imagery"
           checked={showPostImagery}
-          onChange={(_e, checked) => setShowPostImagery(!!checked)}
-          onText="On"
-          offText="Off"
+          onChange={(_e, data) => setShowPostImagery(!!data.checked)}
           disabled={!hasPostImagery}
-          styles={{
-            root: { marginBottom: 0 },
-            label: { fontSize: 11, fontWeight: 600, color: "#555" },
-            text: { fontSize: 11 },
-          }}
         />
       </div>
 
       {/* Filter */}
-      <Dropdown
-        label="Show / review"
-        selectedKey={filter}
-        options={filterOptions}
-        onChange={(_e, opt) => opt && setFilter(opt.key)}
-        styles={{
-          root: { marginTop: 4 },
-          label: { fontSize: 11, fontWeight: 600, color: "#555", padding: 0 },
-          dropdown: { fontSize: 12 },
-          title: { height: 28, lineHeight: "26px", fontSize: 12 },
-        }}
-      />
+      <Field label="Show / review" style={{ marginTop: 4 }}>
+        <Dropdown
+          selectedOptions={[filter]}
+          value={FILTER_LABELS[filter] || filter}
+          onOptionSelect={(_e, data) =>
+            data.optionValue && setFilter(data.optionValue)
+          }
+        >
+          {filterValues.map((v) => (
+            <Option key={v} value={v}>
+              {FILTER_LABELS[v] || v}
+            </Option>
+          ))}
+        </Dropdown>
+      </Field>
 
       {/* Building info */}
-      <div style={{ background: "#f8f9fa", borderRadius: 4, padding: "6px 8px", fontSize: 11 }}>
+      <div className={styles.buildingInfo}>
         <div style={{ fontWeight: 600, marginBottom: 2 }}>{positionLabel}</div>
         {currentId && (
-          <div style={{ color: "#666", wordBreak: "break-all" }}>
+          <div className={styles.muted} style={{ wordBreak: "break-all" }}>
             ID: {currentId.length > 20 ? `...${currentId.slice(-20)}` : currentId}
           </div>
         )}
@@ -221,49 +242,52 @@ const BuildingValidationRightPanel = ({
       </div>
 
       {/* Label buttons */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: "#555" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div className={styles.muted} style={{ fontSize: 11, fontWeight: 600 }}>
           Label this building:
         </div>
         {LABEL_OPTIONS.map((opt) => (
-          <PrimaryButton
+          <Button
             key={opt.value}
-            text={opt.label}
+            appearance="primary"
             onClick={() => onLabel(opt.value)}
-            styles={coloredButtonStyles(opt.color, currentLabel === opt.value)}
-          />
+            style={coloredButtonStyle(opt.color, currentLabel === opt.value)}
+          >
+            {opt.label}
+          </Button>
         ))}
       </div>
 
       {/* Navigation */}
-      <div style={{ display: "flex", gap: 6 }}>
-        <DefaultButton
-          text="Prev"
+      <div style={{ display: "flex", gap: 8 }}>
+        <Button
           onClick={onPrev}
           disabled={filteredIndices.length <= 1}
-          styles={{ root: { flex: 1 } }}
-        />
-        <DefaultButton
-          text="Next"
+          style={{ flex: 1 }}
+        >
+          Prev
+        </Button>
+        <Button
           onClick={onNext}
           disabled={filteredIndices.length <= 1}
-          styles={{ root: { flex: 1 } }}
-        />
+          style={{ flex: 1 }}
+        >
+          Next
+        </Button>
       </div>
-      <DefaultButton
-        text={
-          remainingUnlabeled > 0
-            ? `Skip to next unlabeled (${remainingUnlabeled} left)`
-            : "All buildings labeled"
-        }
+      <Button
         onClick={onSkipToNextUnlabeled}
         disabled={remainingUnlabeled === 0}
-        styles={{ root: { width: "100%" } }}
-      />
+        style={{ width: "100%" }}
+      >
+        {remainingUnlabeled > 0
+          ? `Skip to next unlabeled (${remainingUnlabeled} left)`
+          : "All buildings labeled"}
+      </Button>
 
       {/* Legend */}
-      <div style={{ fontSize: 10, color: "#888", lineHeight: 1.7 }}>
-        <div style={{ fontWeight: 600, marginBottom: 2, color: "#555" }}>Legend · Hotkeys: 1 / 2 / 3 · ← →</div>
+      <div className={styles.legend}>
+        <div className={styles.legendTitle}>Legend · Hotkeys: 1 / 2 / 3 · ← →</div>
         <div><span style={{ color: "#BDBDBD" }}>■</span> Unlabeled</div>
         <div><span style={{ color: "#C50F1F" }}>■</span> Damaged</div>
         <div><span style={{ color: "#107C10" }}>■</span> Not Damaged</div>
@@ -271,21 +295,47 @@ const BuildingValidationRightPanel = ({
       </div>
 
       {/* Actions */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: "1px solid #eee", paddingTop: 8 }}>
-        <PrimaryButton
-          text={isSaving ? "Saving…" : "Save Labels"}
+      <div className={styles.actions} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <Button
+          appearance="primary"
           onClick={onSave}
           disabled={isSaving}
-          styles={{ root: { width: "100%" } }}
-        />
-        <DefaultButton
-          text="Download GeoJSON"
+          style={{ width: "100%" }}
+        >
+          {isSaving ? "Saving…" : "Save Labels"}
+        </Button>
+        <Button
           onClick={onDownload}
-          styles={{ root: { width: "100%" } }}
-        />
+          style={{ width: "100%" }}
+        >
+          Download GeoJSON
+        </Button>
       </div>
     </div>
   );
+};
+
+BuildingValidationRightPanel.propTypes = {
+  features: PropTypes.array.isRequired,
+  labels: PropTypes.object.isRequired,
+  selectedIndex: PropTypes.number.isRequired,
+  onLabel: PropTypes.func.isRequired,
+  onSave: PropTypes.func.isRequired,
+  onDownload: PropTypes.func.isRequired,
+  isSaving: PropTypes.bool.isRequired,
+  labeledCount: PropTypes.number.isRequired,
+  filter: PropTypes.string.isRequired,
+  setFilter: PropTypes.func.isRequired,
+  filterValues: PropTypes.arrayOf(PropTypes.string).isRequired,
+  filteredIndices: PropTypes.arrayOf(PropTypes.number).isRequired,
+  onPrev: PropTypes.func.isRequired,
+  onNext: PropTypes.func.isRequired,
+  onSkipToNextUnlabeled: PropTypes.func.isRequired,
+  showFill: PropTypes.bool.isRequired,
+  setShowFill: PropTypes.func.isRequired,
+  showPostImagery: PropTypes.bool.isRequired,
+  setShowPostImagery: PropTypes.func.isRequired,
+  hasPostImagery: PropTypes.bool,
 };
 
 export default BuildingValidationRightPanel;

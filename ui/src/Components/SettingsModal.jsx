@@ -3,13 +3,15 @@
 import { useContext } from "react";
 import {
   Checkbox,
-  Dropdown,
-  Text
-} from "@fluentui/react";
+  Field,
+  Text,
+} from "@fluentui/react-components";
 
 import { apiGet } from "../util/api";
 import { updateUserSettings } from "../AppHelper";
 import { AppContext } from "../AppContext";
+import { useTheme } from "../util/ThemeContext";
+import { PALETTES, getPalette } from "../util/theme";
 import SectionModal from "./SectionModal";
 import proptypes from "prop-types";
 
@@ -20,6 +22,7 @@ const SettingsModal = ({ onClose }) => {
 
 
   const { appParams, setIsLoading, setAppParams } = useContext(AppContext);
+  const { palette, setPalette } = useTheme();
 
   async function handleGuidedTourToggle() {
     setIsLoading(true, "Toggling Guided Tour...");
@@ -35,23 +38,35 @@ const SettingsModal = ({ onClose }) => {
     setIsLoading(false);
   }
 
-  async function handleItemsPerPageChange(event, option) {
-    setIsLoading(true, "Updating Items Per Page...");
-    var response = await apiGet("GetUserById?userId=" + appParams.userId);
-    await updateUserSettings(response, [{ itemsPerPage: option.key }]);
+  async function handlePaletteChange(key) {
+    // Apply immediately for instant visual feedback (theme + localStorage).
+    setPalette(key);
+    // Optimistically reflect the choice in app state.
     setAppParams((prevParams) => ({
       ...prevParams,
       userSettings: {
         ...prevParams.userSettings,
-        itemsPerPage: option.key,
+        colorPalette: key,
       },
     }));
-    setIsLoading(false);
+    // Persist to the user profile so it syncs across devices. Refetch first
+    // to avoid clobbering concurrent settings changes (same pattern as above).
+    setIsLoading(true, "Updating Color Palette...");
+    try {
+      const response = await apiGet("GetUserById?userId=" + appParams.userId);
+      await updateUserSettings(response, [{ colorPalette: key }]);
+    } catch (error) {
+      // Non-blocking: the local (localStorage) value is the fallback if the
+      // backend write fails, so the UI still reflects the user's choice.
+      console.error("Error saving color palette preference:", error);
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (
     <SectionModal
-      title={"Settings"}
+      title={"User Preferences"}
       body={
         <>
           <div className="row mb-2">
@@ -66,27 +81,36 @@ const SettingsModal = ({ onClose }) => {
                 checked={!appParams.userSettings.disableGuidedTour}
                 onChange={handleGuidedTourToggle}
               />
-              <Text className="pt-2" variant="small">
+              <Text className="pt-2" size={200}>
                 When enabled, will provide step-by-step instructions to help you navigate through the application.
               </Text>
             </div>
             <hr />
             <div className="col-12 d-flex flex-column">
-              <Dropdown
-                label="Items per page in tables"
-                selectedKey={appParams.userSettings.itemsPerPage ?? 10}
-                options={[
-                  { key: 5, text: "5" },
-                  { key: 8, text: "8" },
-                  { key: 10, text: "10" },
-                  { key: 20, text: "20" },
-                  { key: 50, text: "50" },
-                ]}
-                onChange={handleItemsPerPageChange}
-                style={{width: 'fit-content'}}
-              />
-              <Text className="pt-2" variant="small">
-                Defines how many items are displayed per page in tables throughout the application.
+              <Field label="Color palette">
+                <div className="settings-palette-swatches">
+                  {PALETTES.map((p) => {
+                    const isActive = p.key === palette;
+                    return (
+                      <button
+                        key={p.key}
+                        type="button"
+                        className={
+                          "settings-palette-swatch" +
+                          (isActive ? " settings-palette-swatch--active" : "")
+                        }
+                        style={{ backgroundColor: getPalette(p.key).ramp[80] }}
+                        aria-label={p.label}
+                        aria-pressed={isActive}
+                        title={p.label}
+                        onClick={() => handlePaletteChange(p.key)}
+                      />
+                    );
+                  })}
+                </div>
+              </Field>
+              <Text className="pt-2" size={200}>
+                Choose the accent color used across buttons, links, and highlights.
               </Text>
             </div>
           </div>

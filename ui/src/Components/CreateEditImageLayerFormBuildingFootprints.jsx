@@ -4,11 +4,13 @@ import React, { useState, useEffect } from "react";
 import propTypes from "prop-types";
 import {
   Text,
-  Toggle,
+  Switch,
   Dropdown,
-  TextField,
-  PrimaryButton,
-} from "@fluentui/react";
+  Option,
+  Input,
+  Field,
+  Button,
+} from "@fluentui/react-components";
 
 import CreateEditImageLayerURL from "./CreateEditImageLayerURL";
 import CreateEditImageLayerFileUploader from "./CreateEditImageLayerFileUploader";
@@ -66,8 +68,8 @@ const CreateEditImageLayerFormBuildingFootprints = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
-  function handleToggle(_e, checked) {
-    onFormChange(!!checked, "userBuildingFootprintsEnabled", setComponentState, componentState);
+  function handleToggle(_e, data) {
+    onFormChange(!!data.checked, "userBuildingFootprintsEnabled", setComponentState, componentState);
   }
 
   function handleUrlAdd() {
@@ -105,7 +107,7 @@ const CreateEditImageLayerFormBuildingFootprints = ({
       <div className="col-12 p-4 flex-column d-flex box-highlight">
         <div className="col-12 mb-3">
           <h6 className="m-0 pb-2">Custom Building Footprints</h6>
-          <Text variant="medium">
+          <Text>
             Optional. By default, building footprints are downloaded from
             Overture Maps using the area-of-interest derived from the
             post-event imagery. Enable this panel to instead supply your
@@ -115,48 +117,60 @@ const CreateEditImageLayerFormBuildingFootprints = ({
         </div>
 
         <div className="col-12 mb-3">
-          <Toggle
+          <Switch
             label="Use custom building footprints (skip Overture download)"
             checked={enabled}
             onChange={handleToggle}
             disabled={editingExisting}
-            inlineLabel
           />
         </div>
 
         {enabled && (
           <React.Fragment>
             <div className="row mb-2">
-              <div className="col-12 d-flex">
+              <div className="col-12 d-flex imagery-source-row">
                 <Dropdown
-                  options={componentState.imageryOriginOptions}
-                  selectedKey={control}
-                  defaultSelectedKey={control}
-                  onChange={(_e, item) =>
-                    onFormChange(item.key, CONTROL, setComponentState, componentState)
-                  }
                   className="me-2"
+                  selectedOptions={[String(control ?? "")]}
+                  value={
+                    componentState.imageryOriginOptions.find(
+                      (o) => o.key === control
+                    )?.text || ""
+                  }
+                  onOptionSelect={(_e, data) =>
+                    onFormChange(data.optionValue, CONTROL, setComponentState, componentState)
+                  }
                   disabled={editingExisting}
-                />
+                >
+                  {componentState.imageryOriginOptions.map((o) => (
+                    <Option key={o.key} value={String(o.key)}>
+                      {o.text}
+                    </Option>
+                  ))}
+                </Dropdown>
                 {control === "url" || control === "" ? (
                   <React.Fragment>
-                    <TextField
+                    <Field
                       className="flex-grow-1 me-2"
-                      placeholder="Write or paste a .gpkg URL"
-                      value={urlInput}
-                      onChange={(e) => setUrlInput(e.target.value)}
-                      errorMessage={controlError}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleUrlAdd();
-                      }}
-                      disabled={editingExisting || entries.length > 0}
-                    />
-                    <PrimaryButton
+                      validationMessage={controlError}
+                    >
+                      <Input
+                        placeholder="Write or paste a .gpkg URL"
+                        value={urlInput}
+                        onChange={(e, data) => setUrlInput(data.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleUrlAdd();
+                        }}
+                        disabled={editingExisting || entries.length > 0}
+                      />
+                    </Field>
+                    <Button
+                      appearance="primary"
                       onClick={handleUrlAdd}
                       disabled={!urlInput || editingExisting || entries.length > 0}
                     >
                       Add
-                    </PrimaryButton>
+                    </Button>
                   </React.Fragment>
                 ) : (
                   <React.Fragment>
@@ -175,24 +189,28 @@ const CreateEditImageLayerFormBuildingFootprints = ({
                         }
                       }}
                     />
-                    <TextField
+                    <Field
                       className="flex-grow-1 me-2 cursor-pointer-on-hover"
-                      placeholder="Click here to select a .gpkg file"
-                      value={pickedFile ? pickedFile.name : ""}
-                      readOnly
-                      errorMessage={controlError}
-                      onClick={() => {
-                        const el = document.getElementById("userBuildingFootprintsFileInput");
-                        if (el) el.click();
-                      }}
-                      disabled={editingExisting || entries.length > 0}
-                    />
-                    <PrimaryButton
+                      validationMessage={controlError}
+                    >
+                      <Input
+                        placeholder="Click here to select a .gpkg file"
+                        value={pickedFile ? pickedFile.name : ""}
+                        readOnly
+                        onClick={() => {
+                          const el = document.getElementById("userBuildingFootprintsFileInput");
+                          if (el) el.click();
+                        }}
+                        disabled={editingExisting || entries.length > 0}
+                      />
+                    </Field>
+                    <Button
+                      appearance="primary"
                       onClick={handleFileAdd}
                       disabled={!pickedFile || editingExisting || entries.length > 0}
                     >
                       Upload
-                    </PrimaryButton>
+                    </Button>
                   </React.Fragment>
                 )}
               </div>

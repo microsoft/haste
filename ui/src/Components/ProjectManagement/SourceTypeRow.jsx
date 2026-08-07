@@ -1,7 +1,17 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { IconButton, Text, TooltipHost } from "@fluentui/react";
+import {
+  Text,
+  Tooltip,
+  Button,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import React from "react";
 import { limitTextLength } from "../../util/conversion";
 
@@ -20,7 +30,7 @@ const SourceTypeRow = ({ item, moreInfoVisibleId, setMoreInfoVisibleId }) => {
         key: "info",
         className: "d-block d-lg-none",
         text: moreInfoVisibleId === item.sourceTypeId ? "Hide Info" : "View Info",
-        iconProps: { iconName: moreInfoVisibleId === item.sourceTypeId ? "Cancel" : "Info" },
+        icon: <FluentIcon name={moreInfoVisibleId === item.sourceTypeId ? "Cancel" : "Info"} />,
         onClick: () => {
           if (moreInfoVisibleId === item.sourceTypeId) {
             setMoreInfoVisibleId(null);
@@ -32,12 +42,12 @@ const SourceTypeRow = ({ item, moreInfoVisibleId, setMoreInfoVisibleId }) => {
       {
         key: "edit",
         text: "Edit",
-        iconProps: { iconName: "Edit" },
+        icon: <FluentIcon name="Edit" />,
       },
       {
         key: "remove",
         text: "Remove",
-        iconProps: { iconName: "Delete" },
+        icon: <FluentIcon name="Delete" />,
       },
     ],
   };
@@ -46,19 +56,19 @@ const SourceTypeRow = ({ item, moreInfoVisibleId, setMoreInfoVisibleId }) => {
     <React.Fragment>
       <tr key={item.sourceTypeId}>
         <td className="">
-          <Text variant="medium" className="pe-4">
+          <Text className="pe-4">
             {limitTextLength(item.name, 50, 55)}
           </Text>
 
           {moreInfoVisibleId == item.sourceTypeId && (<>
-            <Text variant="small">
+            <Text size={200}>
               <table className="col-12 dashboard-inner-table p-3 mt-2">
                 <tbody>
                   <tr>
                     <td>
                       <div className="pb-2">
                         <Text
-                          variant="small"
+                          size={200}
                           className="me-4 fw-semibold custom-text-color"
                         >
                           Source Type Info:
@@ -84,25 +94,44 @@ const SourceTypeRow = ({ item, moreInfoVisibleId, setMoreInfoVisibleId }) => {
 
         </td>
         <td className="custom-text-no-wrap d-none d-xl-table-cell">
-          <Text variant="medium" className="pe-4 ellipsis">
-            <TooltipHost content={item.baseURL} delay={200}>
-              {item.baseURL}
-            </TooltipHost>
+          <Text className="pe-4 ellipsis">
+            <Tooltip content={item.baseURL} relationship="label">
+              <span>{item.baseURL}</span>
+            </Tooltip>
           </Text>
         </td>
         <td className="custom-text-no-wrap d-none d-xl-table-cell">
-          <Text variant="medium" className="pe-4">
+          <Text className="pe-4">
             {item.creationDate}
           </Text>
         </td>
         <td className="custom-text-no-wrap d-flex align-items-start align-items-md-center justify-content-end">
-          <IconButton
-            className="no-dropdown-icon"
-            menuProps={moreMenuOptions}
-            iconProps={{ iconName: "more" }}
-            title="Menu"
-            ariaLabel="Menu"
-          />
+          <Menu positioning="below-end">
+            <MenuTrigger disableButtonEnhancement>
+              <Button
+                appearance="subtle"
+                className="no-dropdown-icon"
+                icon={<FluentIcon name="More" />}
+                title="Menu"
+                aria-label="Menu"
+              />
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                {moreMenuOptions.items.map((mi) => (
+                  <MenuItem
+                    key={mi.key}
+                    className={mi.className}
+                    icon={mi.icon}
+                    disabled={mi.disabled}
+                    onClick={mi.onClick}
+                  >
+                    {mi.text}
+                  </MenuItem>
+                ))}
+              </MenuList>
+            </MenuPopover>
+          </Menu>
         </td>
       </tr>
     </React.Fragment>

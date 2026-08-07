@@ -1,11 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import { useState, useContext, useEffect } from "react";
-import { TextField, Link, Text } from "@fluentui/react";
 import {
-  DefaultButton,
-  PrimaryButton,
-} from "@fluentui/react/lib/Button";
+  Button,
+  Field,
+  Input,
+  Textarea,
+  Link,
+} from "@fluentui/react-components";
 
 import { apiPut } from "../util/api";
 import { validateEmptyOrInvalid, validateRepeatedKeyInArray } from "../util/validation";
@@ -157,45 +159,47 @@ const CreateEditModelCheckpoint = ({
         <div className="modal-container p-1">
           <div className="row mb-2">
             <div className="col-12">
-              <TextField
-                id="createEditModelTrainingName"
-                label="Name"
-                maxLength={100}
-                value={componentState.baseModelName}
-                onChange={(e, newValue) =>
-                  onFormChange(
-                    newValue,
-                    "baseModelName",
-                    setComponentState,
-                    componentState
-                  )
-                }
-                errorMessage={componentState.baseModelNameError}
-              />
+              <Field label="Name" validationMessage={componentState.baseModelNameError}>
+                <Input
+                  id="createEditModelTrainingName"
+                  maxLength={100}
+                  value={componentState.baseModelName}
+                  onChange={(e, data) =>
+                    onFormChange(
+                      data.value,
+                      "baseModelName",
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                />
+              </Field>
             </div>
           </div>
 
           <div className="row mb-2">
             <div className="col-12">
-              <TextField
-                id="createEditProjectDescription"
-                multiline
-                rows={5}
+              <Field
                 label="Description"
-                description={
+                hint={
                   componentState.description.length + "/2000 " + "characters"
                 }
-                value={componentState.description}
-                onChange={(e, newValue) =>
-                  onFormChange(
-                    newValue,
-                    "description",
-                    setComponentState,
-                    componentState
-                  )
-                }
-                maxLength={2000}
-              />
+              >
+                <Textarea
+                  id="createEditProjectDescription"
+                  rows={5}
+                  value={componentState.description}
+                  onChange={(e, data) =>
+                    onFormChange(
+                      data.value,
+                      "description",
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  maxLength={2000}
+                />
+              </Field>
             </div>
           </div>
 
@@ -243,10 +247,10 @@ const CreateEditModelCheckpoint = ({
           <div className="row mt-4
           ">
             <div className="col-12 d-flex justify-content-end">
-              <PrimaryButton className="me-2" onClick={validateBeforeSubmit} id="createEditModelTrainingSubmit">
+              <Button appearance="primary" className="me-2" onClick={validateBeforeSubmit} id="createEditModelTrainingSubmit">
                 Submit
-              </PrimaryButton>
-              <DefaultButton onClick={onClose}>Cancel</DefaultButton>
+              </Button>
+              <Button onClick={onClose}>Cancel</Button>
             </div>
           </div>
         </div>

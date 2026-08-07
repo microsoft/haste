@@ -2,15 +2,91 @@
  * Licensed under the MIT License.
  */
 #drawingToolbar {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 4px;
+  }
+
+  .labeling-tool-page {
+    position: relative;
+    isolation: isolate;
+    min-width: 0;
+  }
+
+  .labeling-tool-dock {
     position: absolute;
-    right: 10px;
     top: 10px;
-    background-color: rgba(255, 255, 255, 1);
-    padding: 10px 10px;
-    border-radius: 5px;
+    right: 10px;
     z-index: 1000;
     display: flex;
-    gap: 5px;
+    align-items: center;
+    gap: 6px;
+    max-width: calc(100% - 20px);
+    padding: 6px;
+    border-radius: 6px;
+  }
+
+  .labeling-tool-dock-divider {
+    width: 1px;
+    height: 28px;
+    flex: 0 0 1px;
+    background: #e1dfdd;
+  }
+
+  .labeling-class-trigger {
+    max-width: 180px;
+  }
+
+  .labeling-class-trigger-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .labeling-navigation-controls {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding: 4px;
+    border-radius: 6px;
+  }
+
+  .labeling-navigation-controls button {
+    width: 104px;
+    justify-content: flex-start;
+  }
+
+  .labeling-imagery-controls {
+    position: absolute;
+    top: 96px;
+    left: 10px;
+    z-index: 1000;
+    width: 220px;
+    max-height: calc(100% - 150px);
+    overflow-y: auto;
+    padding: 12px;
+    border-radius: 6px;
+  }
+
+  .labeling-count-badge {
+    position: absolute;
+    left: 55px;
+    bottom: 38px;
+    z-index: 1000;
+    padding: 5px 10px;
+    border-radius: 5px;
+  }
+
+  .labeling-tool-surface {
+    color: #242424;
+    background-color: #ffffff;
+    border: 1px solid #e1dfdd;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
   }
   
   .drawing-button {
@@ -34,5 +110,209 @@
     color: #a19f9d;
     cursor: not-allowed;
     border-color: #e1dfdd;
+  }
+
+  html[data-theme="dark"] .labeling-tool-surface {
+    color: #f5f5f5;
+    background-color: #292929;
+    border-color: #525252;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  }
+
+  html[data-theme="dark"] .labeling-tool-dock-divider {
+    background: #525252;
+  }
+
+  html[data-theme="dark"] .drawing-button {
+    color: #f5f5f5;
+    background: #333333;
+    border-color: #616161;
+  }
+
+  html[data-theme="dark"] .drawing-button:hover:not(:disabled) {
+    background: #424242;
+  }
+
+  html[data-theme="dark"] .drawing-button.active {
+    color: #ffffff;
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+  }
+
+  html[data-theme="dark"] .drawing-button.disabled {
+    color: #8a8a8a;
+    background: #252525;
+    border-color: #424242;
+  }
+
+  .primary-class-radio .fui-Radio__indicator {
+    color: var(--class-color) !important;
+    border-color: var(--class-color) !important;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+  }
+
+  .primary-class-radio input:checked + .fui-Radio__indicator {
+    background-color: var(--class-color) !important;
+  }
+
+  .primary-class-radio input:focus-visible + .fui-Radio__indicator {
+    outline: 2px solid var(--class-color);
+    outline-offset: 2px;
+  }
+
+  .primary-class-radio-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .primary-class-color-swatch {
+    width: 10px;
+    height: 10px;
+    flex: 0 0 10px;
+    border: 1px solid rgba(0, 0, 0, 0.55);
+    border-radius: 2px;
+  }
+
+  html[data-theme="dark"] .primary-class-radio .fui-Radio__indicator {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.65);
+  }
+
+  html[data-theme="dark"] .primary-class-color-swatch {
+    border-color: rgba(255, 255, 255, 0.7);
+  }
+
+  .labeling-imagery-field {
+    margin-bottom: 8px;
+  }
+
+  .labeling-imagery-label {
+    display: flex;
+    width: 100%;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .labeling-imagery-label output {
+    color: #616161;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .labeling-imagery-slider .fui-Slider__rail {
+    height: 4px;
+    background: linear-gradient(
+      90deg,
+      var(--primary-color) 0%,
+      var(--primary-color) var(--fui-Slider--progress),
+      #8a8886 var(--fui-Slider--progress),
+      #8a8886 100%
+    ) !important;
+  }
+
+  .labeling-imagery-slider .fui-Slider__rail::before {
+    content: none !important;
+    display: none !important;
+  }
+
+  .labeling-imagery-slider .fui-Slider__thumb {
+    width: 16px;
+    height: 16px;
+    background-color: var(--primary-color);
+    border: 2px solid #ffffff;
+    box-shadow: 0 0 0 1px #8a8886;
+  }
+
+  html[data-theme="dark"] .labeling-imagery-label output {
+    color: #c7c7c7;
+  }
+
+  html[data-theme="dark"] .labeling-imagery-slider .fui-Slider__rail {
+    background: linear-gradient(
+      90deg,
+      var(--primary-color) 0%,
+      var(--primary-color) var(--fui-Slider--progress),
+      #737373 var(--fui-Slider--progress),
+      #737373 100%
+    ) !important;
+  }
+
+  html[data-theme="dark"] .labeling-imagery-slider .fui-Slider__thumb {
+    border-color: #292929;
+    box-shadow: 0 0 0 1px #d6d6d6;
+  }
+
+  @media (max-width: 767.98px) {
+    .labeling-navigation-controls {
+      top: 8px;
+      left: 8px;
+      flex-direction: row;
+    }
+
+    .labeling-navigation-controls button {
+      min-height: 40px;
+    }
+
+    .labeling-tool-dock {
+      top: auto;
+      right: 8px;
+      bottom: 34px;
+      left: 8px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "class actions"
+        "tools tools";
+      max-width: none;
+      gap: 6px;
+    }
+
+    .drawing-button {
+      width: auto;
+      min-width: 0;
+      height: 40px;
+      padding: 4px;
+    }
+
+    #drawingToolbar {
+      grid-area: tools;
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 2px;
+    }
+
+    .labeling-class-trigger {
+      grid-area: class;
+      width: 100%;
+      max-width: none;
+    }
+
+    .labeling-actions-menu {
+      grid-area: actions;
+    }
+
+    .labeling-actions-menu button {
+      width: auto;
+      height: 32px;
+    }
+
+    .labeling-tool-dock-divider {
+      display: none;
+    }
+
+    .labeling-imagery-controls {
+      top: auto;
+      right: 8px;
+      bottom: 190px;
+      left: 8px;
+      width: auto;
+      max-height: 50vh;
+    }
+
+    .labeling-count-badge {
+      bottom: 142px;
+      left: 8px;
+    }
   }
   

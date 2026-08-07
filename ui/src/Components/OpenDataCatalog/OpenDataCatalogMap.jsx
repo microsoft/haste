@@ -7,7 +7,7 @@
 // list's hover/selection state.
 import { useEffect, useRef, useCallback, useState } from "react";
 import PropTypes from "prop-types";
-import { Spinner, SpinnerSize } from "@fluentui/react";
+import { Spinner, makeStyles, tokens } from "@fluentui/react-components";
 
 import {
   getAzureMapsAuthOptions,
@@ -20,6 +20,39 @@ import { SOURCE_COLORS, titilerTileUrl } from "./openDataCatalog";
 // Normal footprint fill opacity (active scene emphasized). Kept as a constant
 // so the preview effect can restore it after transparently disabling the fill.
 const FILL_OPACITY_EXPR = ["case", ["get", "_active"], 0.35, 0.12];
+
+const useStyles = makeStyles({
+  root: {
+    position: "relative",
+    width: "100%",
+    height: "100%",
+    minHeight: "240px",
+  },
+  map: {
+    width: "100%",
+    height: "100%",
+    backgroundColor: tokens.colorNeutralBackground3,
+  },
+  loading: {
+    position: "absolute",
+    top: tokens.spacingVerticalS,
+    left: "50%",
+    transform: "translateX(-50%)",
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    maxWidth: "calc(100% - 16px)",
+    padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalM}`,
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusCircular,
+    boxShadow: tokens.shadow8,
+    zIndex: 5,
+    pointerEvents: "none",
+    whiteSpace: "nowrap",
+  },
+});
 
 function findGlMap(atlasMap) {
   if (!atlasMap) return null;
@@ -66,6 +99,7 @@ const OpenDataCatalogMap = ({
   onClipDrawn,
   center,
 }) => {
+  const styles = useStyles();
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const dataSourceRef = useRef(null);
@@ -360,32 +394,11 @@ const OpenDataCatalogMap = ({
   }, [previewScene]);
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%", minHeight: 240 }}>
-      <div
-        ref={containerRef}
-        style={{ width: "100%", height: "100%", background: "#f5f5f5" }}
-      />
+    <div className={styles.root}>
+      <div ref={containerRef} className={styles.map} />
       {tilesLoading && (
-        <div
-          style={{
-            position: "absolute",
-            top: 8,
-            left: "50%",
-            transform: "translateX(-50%)",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            background: "rgba(255,255,255,0.95)",
-            border: "1px solid #e1e1e1",
-            borderRadius: 999,
-            padding: "4px 12px",
-            fontSize: 12,
-            boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
-            zIndex: 5,
-            pointerEvents: "none",
-          }}
-        >
-          <Spinner size={SpinnerSize.xSmall} /> Loading imagery…
+        <div className={styles.loading}>
+          <Spinner size="tiny" /> Loading imagery…
         </div>
       )}
     </div>

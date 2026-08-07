@@ -1,27 +1,31 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import { useState, useContext, useEffect } from "react";
-import { TextField, Dropdown } from "@fluentui/react";
 import {
-  DefaultButton,
-  ActionButton,
-  PrimaryButton,
-  IconButton,
-} from "@fluentui/react/lib/Button";
+  Button,
+  Field,
+  Input,
+  OverlayDrawer,
+  DrawerHeader,
+  DrawerHeaderTitle,
+  DrawerBody,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../util/icons";
+import { useDrawerAnimation } from "../util/useDrawerAnimation";
 
 import { apiPut } from "../util/api";
 import { validateEmptyOrInvalid, validateInt, validateFloat } from "../util/validation";
 import { useNavigate } from "react-router-dom";
-import { initGuidedTourState } from "./GuidedTourHelper";
+import { initGuidedTourState, setGuidedTourState } from "./GuidedTourHelper";
 import BaseModelDropdown from "./BaseModelDropdown";
 
 import {
   createComponentDefaultState,
+  fetchModelCatalog,
   onFormChange,
 } from "./CreateEditModelTrainingHelper";
 
 import { AppContext } from "../AppContext";
-import SectionModal from "./SectionModal";
 
 import proptypes from "prop-types";
 
@@ -48,12 +52,25 @@ const CreateEditModelTrainingModal = ({
     useContext(AppContext);
   const [componentState, setComponentState] = useState(null);
   const navigate = useNavigate();
+  const { open, requestClose } = useDrawerAnimation(onClose);
 
   useEffect(() => {
     async function initComponent() {
-      setComponentState(
-        await createComponentDefaultState(modelToEdit, imageLayer, projectId, eventTypes)
+      // Show the app loading overlay while the model catalog loads, then
+      // reveal the panel (mirrors the create-project flow).
+      setIsLoading(true, "Loading pre-trained models...");
+      const baseState = createComponentDefaultState(
+        modelToEdit,
+        imageLayer,
+        projectId
       );
+      const cataloguedModels = await fetchModelCatalog(imageLayer, eventTypes);
+      setComponentState({
+        ...baseState,
+        cataloguedModels,
+        catalogLoading: false,
+      });
+      setIsLoading(false);
 
       if (autoLaunchGuidedTour) {
         initCurrentTour(guidedTour);
@@ -144,128 +161,185 @@ const CreateEditModelTrainingModal = ({
   }
 
   return (
-    <SectionModal
-      modalCurrentTour={guidedTour}
-      title={modelToEdit ? "Edit Model" : "New Model"}
-      body={
-        <>
-          <div className="row mb-2">
-            <div className="col-12">
-              <TextField
+    <OverlayDrawer
+      position="end"
+      open={open}
+      onOpenChange={(_, d) => {
+        if (!d.open) requestClose();
+      }}
+      className="section-panel-drawer"
+    >
+      <DrawerHeader className="section-panel-header">
+        <DrawerHeaderTitle
+          action={
+            <div className="d-flex">
+              {guidedTour && (
+                <Button
+                  appearance="subtle"
+                  icon={<FluentIcon name="Help" />}
+                  aria-label="Help"
+                  onClick={() =>
+                    setGuidedTourState(
+                      false,
+                      initCurrentTour,
+                      guidedTour,
+                      appParams.guidedTourProperties
+                    )
+                  }
+                />
+              )}
+              <Button
+                appearance="subtle"
+                icon={<FluentIcon name="Cancel" />}
+                aria-label="Close"
+                onClick={requestClose}
+              />
+            </div>
+          }
+        >
+          <span className="section-panel-title">
+            <FluentIcon name="ProductCatalog" className="modal-icon" />
+            {modelToEdit ? "Edit Model" : "New Model"}
+          </span>
+        </DrawerHeaderTitle>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="row mb-2">
+          <div className="col-12">
+            <Field label="Name" validationMessage={componentState.nameError}>
+              <Input
                 id="createEditModelTrainingName"
-                label="Name"
                 value={componentState.name}
-                onChange={(e, newValue) =>
+                onChange={(e, data) =>
                   onFormChange(
-                    newValue,
+                    data.value,
                     "name",
                     setComponentState,
                     componentState
                   )
                 }
-                errorMessage={componentState.nameError}
               />
-            </div>
+            </Field>
           </div>
-          <div className="row mb-2">
-            <div className="col-12">
+        </div>
+        <div className="row mb-2">
+          <div className="col-12">
+            <BaseModelDropdown
+              componentState={componentState}
+              setComponentState={setComponentState}
+              onFormChange={onFormChange}
+            />
+          </div>
+        </div>
+        <div className="row mb-4">
+          <div className="col-12 d-flex align-items-center">
+            <Button
+              id="createEditModelTrainingParams"
+              appearance="transparent"
+              icon={
+                <FluentIcon
+                  name={
+                    componentState.viewParams ? "ChevronDown" : "ChevronRight"
+                  }
+                />
+              }
+              style={{
+                paddingLeft: 0,
+                minWidth: 0,
+                border: "none",
+                fontWeight: 600,
+                justifyContent: "flex-start",
+              }}
+              onClick={() =>
+                onFormChange(
+                  !componentState.viewParams,
+                  "viewParams",
+                  setComponentState,
+                  componentState
+                )
+              }
+            >
+              Params
+            </Button>
+          </div>
 
-              <BaseModelDropdown
-                componentState={componentState}
-                setComponentState={setComponentState}
-                onFormChange={onFormChange}
-              />
-            </div>
-          </div>
-          <div className="row mb-4">
-            <div className="col-12 d-flex align-items-center">
-              <ActionButton
-                id="createEditModelTrainingParams"
-                iconProps={{
-                  iconName: componentState.viewParams
-                    ? "ChevronDown"
-                    : "ChevronRight",
-                }}
-                styles={{ root: { padding: 0, border: "none" } }}
-                onClick={() =>
-                  onFormChange(
-                    !componentState.viewParams,
-                    "viewParams",
-                    setComponentState,
-                    componentState
-                  )
-                }
+          {componentState.viewParams && (
+            <div className="col-12 d-flex flex-column">
+              <Field
+                label="Learning Rate"
+                className="mb-2"
+                required
+                validationMessage={componentState.learningRateError}
               >
-                Params
-              </ActionButton>
-            </div>
-
-            {componentState.viewParams && (
-              <div className="col-12 flex-column flex-md-row d-flex">
-                <TextField
+                <Input
                   id="createEditModelTrainingLearningRate"
-                  label="Learning Rate"
-                  className="me-0 me-md-4 mb-2"
                   value={componentState.learningRate}
-                  onChange={(e, newValue) =>
+                  onChange={(e, data) =>
                     onFormChange(
-                      newValue,
+                      data.value,
                       "learningRate",
                       setComponentState,
                       componentState
                     )
                   }
-                  errorMessage={componentState.learningRateError}
-                  required
                 />
-                <TextField
+              </Field>
+              <Field
+                label="Batch Size"
+                className="mb-2"
+                required
+                validationMessage={componentState.batchSizeError}
+              >
+                <Input
                   id="createEditModelTrainingBatchSize"
-                  label="Batch Size"
-                  className="me-0 me-md-4 mb-2"
                   value={componentState.batchSize}
-                  onChange={(e, newValue) =>
+                  onChange={(e, data) =>
                     onFormChange(
-                      newValue,
+                      data.value,
                       "batchSize",
                       setComponentState,
                       componentState
                     )
                   }
-                  errorMessage={componentState.batchSizeError}
-                  required
                 />
-                <TextField
+              </Field>
+              <Field
+                label="Max Epochs"
+                className="mb-2"
+                required
+                validationMessage={componentState.maxEpochsError}
+              >
+                <Input
                   id="createEditModelTrainingMaxEpochs"
-                  label="Max Epochs"
                   value={componentState.maxEpochs}
-                  onChange={(e, newValue) =>
+                  onChange={(e, data) =>
                     onFormChange(
-                      newValue,
+                      data.value,
                       "maxEpochs",
                       setComponentState,
                       componentState
                     )
                   }
-                  errorMessage={componentState.maxEpochsError}
-                  className="mb-2"
-                  required
                 />
-              </div>
-            )}
-          </div>
-          <div className="row">
-            <div className="col-12 d-flex justify-content-end">
-              <PrimaryButton className="me-2" onClick={validateBeforeSubmit} id="createEditModelTrainingSubmit">
-                Submit
-              </PrimaryButton>
-              <DefaultButton onClick={onClose}>Cancel</DefaultButton>
+              </Field>
             </div>
+          )}
+        </div>
+        <div className="row">
+          <div className="col-12 d-flex justify-content-end">
+            <Button
+              appearance="primary"
+              className="me-2"
+              onClick={validateBeforeSubmit}
+              id="createEditModelTrainingSubmit"
+            >
+              Submit
+            </Button>
+            <Button onClick={requestClose}>Cancel</Button>
           </div>
-        </>
-      }
-      onClose={onClose}
-      icon="OpenFolderHorizontal"
-    />
+        </div>
+      </DrawerBody>
+    </OverlayDrawer>
   );
 };
 

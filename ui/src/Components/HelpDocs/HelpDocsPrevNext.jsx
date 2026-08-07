@@ -1,4 +1,5 @@
-import { ActionButton } from "@fluentui/react";
+import { Button } from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import PropTypes from "prop-types";
 
 const HelpDocsPrevNext = ({ prevNext }) => {
@@ -18,26 +19,26 @@ const HelpDocsPrevNext = ({ prevNext }) => {
       {/* Navigation between sections */}
       <div className="col-12 d-flex justify-content-between align-items-center">
         {prevNext.previous ? (
-          <ActionButton
-            iconProps={{ iconName: "chevronleft" }}
+          <Button
+            appearance="transparent"
+            icon={<FluentIcon name="chevronleft" />}
             onClick={() => goTo(prevNext.previous.url)}
           >
             {prevNext.previous.title}
-          </ActionButton>
+          </Button>
         ) : (
           <div />
         )}
 
         {prevNext.next ? (
-          <ActionButton
-            iconProps={{ iconName: "chevronright" }}
-            styles={{
-              flexContainer: { flexDirection: "row-reverse" },
-            }}
+          <Button
+            appearance="transparent"
+            icon={<FluentIcon name="chevronright" />}
+            iconPosition="after"
             onClick={() => goTo(prevNext.next.url)}
           >
             {prevNext.next.title}
-          </ActionButton>
+          </Button>
         ) : (
           <div />
         )}

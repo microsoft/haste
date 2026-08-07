@@ -1,37 +1,39 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import { useEffect, useState } from "react";
-import { Dialog, DialogType, DialogFooter } from "@fluentui/react/lib/Dialog";
 import {
-  DefaultButton,
-  PrimaryButton,
+  Button,
   Spinner,
-  SpinnerSize,
   Text,
-  Icon,
-  Stack,
   MessageBar,
-  MessageBarType,
-  mergeStyles,
-} from "@fluentui/react";
+  MessageBarBody,
+  Dialog,
+  DialogSurface,
+  DialogBody,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  tokens as fluentTokens,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import PropTypes from "prop-types";
 import { apiGet } from "../../util/api";
 
-/* ── Fluent v8 design tokens ─────────────────────────────────── */
+/* ── Theme-aware design tokens (follow light/dark via Fluent) ─── */
 const tokens = {
-  colorNeutralBackground1: "#ffffff",
-  colorNeutralBackground2: "#faf9f8",
-  colorNeutralForeground1: "#242424",
-  colorNeutralForeground2: "#424242",
-  colorNeutralForeground3: "#616161",
-  colorNeutralStroke1: "#d1d1d1",
-  colorNeutralStroke2: "#e0e0e0",
-  colorBrandForeground1: "#0f6cbd",
-  colorSuccessForeground1: "#107C10",
-  colorDangerForeground1: "#C50F1F",
-  spacingS: 4,
-  spacingM: 8,
-  borderRadius: 4,
+  colorNeutralBackground1: fluentTokens.colorNeutralBackground1,
+  colorNeutralBackground2: fluentTokens.colorNeutralBackground2,
+  colorNeutralForeground1: fluentTokens.colorNeutralForeground1,
+  colorNeutralForeground2: fluentTokens.colorNeutralForeground2,
+  colorNeutralForeground3: fluentTokens.colorNeutralForeground3,
+  colorNeutralStroke1: fluentTokens.colorNeutralStroke1,
+  colorNeutralStroke2: fluentTokens.colorNeutralStroke2,
+  colorBrandForeground1: fluentTokens.colorBrandForeground1,
+  colorSuccessForeground1: fluentTokens.colorStatusSuccessForeground1,
+  colorDangerForeground1: fluentTokens.colorStatusDangerForeground1,
+  spacingS: fluentTokens.spacingVerticalS,
+  spacingM: fluentTokens.spacingVerticalM,
+  borderRadius: fluentTokens.borderRadiusMedium,
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -41,7 +43,7 @@ const int = (v) => (v == null ? "—" : Math.round(v).toLocaleString());
 const num = (v, d = 4) => (v == null ? "—" : Number(v).toFixed(d));
 
 /* ── Styles ──────────────────────────────────────────────────── */
-const metricCardClass = mergeStyles({
+const metricCardStyle = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "center",
@@ -49,30 +51,31 @@ const metricCardClass = mergeStyles({
   borderRadius: tokens.borderRadius,
   background: tokens.colorNeutralBackground2,
   border: `1px solid ${tokens.colorNeutralStroke2}`,
-});
+};
 
-const heroCardBase = mergeStyles({
+const heroCardStyle = {
   flex: 1,
   padding: "12px 16px",
   borderRadius: tokens.borderRadius,
   background: tokens.colorNeutralBackground2,
   border: `1px solid ${tokens.colorNeutralStroke2}`,
-});
+};
 
-const halfItemStyles = { root: { minWidth: 0, flexBasis: "50%", maxWidth: "50%" } };
+const halfItemStyle = { minWidth: 0, flex: "1 1 220px" };
+const rowStyle = { display: "flex", gap: tokens.spacingS, flexWrap: "wrap" };
 
 /* ── Sub-components ──────────────────────────────────────────── */
 const SectionTitle = ({ children }) => (
-  <Text variant="medium" styles={{ root: { fontWeight: 600, color: tokens.colorNeutralForeground1, display: "block", marginBottom: tokens.spacingM } }}>
+  <Text style={{ fontWeight: 600, color: tokens.colorNeutralForeground1, display: "block", marginBottom: tokens.spacingM }}>
     {children}
   </Text>
 );
 SectionTitle.propTypes = { children: PropTypes.node.isRequired };
 
 const MetricCard = ({ label, value, accent }) => (
-  <div className={metricCardClass}>
-    <Text variant="small" styles={{ root: { color: tokens.colorNeutralForeground3 } }}>{label}</Text>
-    <Text variant="medium" styles={{ root: { fontWeight: 600, color: accent || tokens.colorNeutralForeground1 } }}>
+  <div style={metricCardStyle}>
+    <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>{label}</Text>
+    <Text style={{ fontWeight: 600, color: accent || tokens.colorNeutralForeground1 }}>
       {value}
     </Text>
   </div>
@@ -84,11 +87,11 @@ MetricCard.propTypes = {
 };
 
 const HeroCard = ({ label, value, color }) => (
-  <div className={heroCardBase}>
-    <Text variant="small" styles={{ root: { color: tokens.colorNeutralForeground3, display: "block", marginBottom: 10 } }}>
+  <div style={heroCardStyle}>
+    <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: "block", marginBottom: 10 }}>
       {label}
     </Text>
-    <Text variant="xxLarge" styles={{ root: { fontWeight: 600, color, lineHeight: 1 } }}>
+    <Text size={700} style={{ fontWeight: 600, color, lineHeight: 1 }}>
       {value}
     </Text>
   </div>
@@ -234,160 +237,181 @@ const AssessmentReportModal = ({
 
   return (
     <Dialog
-      hidden={false}
-      onDismiss={onDismiss}
-      dialogContentProps={{
-        type: DialogType.largeHeader,
-        title: (
-          <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }}>
-            <Icon iconName="AnalyticsReport" styles={{ root: { fontSize: 20, color: tokens.colorBrandForeground1 } }} />
-            <span>{`Assessment Report — ${modelName || modelId}`}</span>
-          </Stack>
-        ),
-        subText: loading ? undefined : error ? undefined : summarySentence,
+      open={true}
+      onOpenChange={(_, d) => {
+        if (!d.open) onDismiss();
       }}
-      modalProps={{ isBlocking: false }}
-      minWidth={860}
     >
-      {loading && (
-        <Stack horizontalAlign="center" styles={{ root: { padding: "32px 0" } }}>
-          <Spinner size={SpinnerSize.large} label="Computing assessment…" />
-        </Stack>
-      )}
+      <DialogSurface style={{ width: "min(920px, 94vw)", maxWidth: "94vw" }}>
+        <DialogBody>
+          <DialogTitle
+            action={
+              <Button
+                appearance="subtle"
+                aria-label="Close"
+                icon={<FluentIcon name="Cancel" />}
+                onClick={onDismiss}
+              />
+            }
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <FluentIcon name="AnalyticsReport" style={{ fontSize: 20, color: tokens.colorBrandForeground1 }} />
+              <span>{`Assessment Report — ${modelName || modelId}`}</span>
+            </div>
+          </DialogTitle>
+          <DialogContent>
+            {!loading && !error && summarySentence && (
+              <Text style={{ display: "block", color: tokens.colorNeutralForeground2, marginBottom: 16 }}>
+                {summarySentence}
+              </Text>
+            )}
 
-      {!loading && error && (
-        <MessageBar messageBarType={MessageBarType.error} isMultiline={false}>
-          {error}
-        </MessageBar>
-      )}
-
-      {!loading && report && !error && (
-        <Stack tokens={{ childrenGap: 24 }}>
-          {/* Predictions — 2 columns, 2 per row */}
-          <div>
-            <SectionTitle>Predictions</SectionTitle>
-            <Stack tokens={{ childrenGap: tokens.spacingS }}>
-              <Stack horizontal tokens={{ childrenGap: tokens.spacingS }}>
-                <Stack.Item grow={1} styles={halfItemStyles}>
-                  <MetricCard label="Buildings with a prediction" value={int(preds?.total)} />
-                </Stack.Item>
-                <Stack.Item grow={1} styles={halfItemStyles}>
-                  <MetricCard label="Non-cloudy" value={int(preds?.knownNonCloudy)} />
-                </Stack.Item>
-              </Stack>
-              <Stack horizontal tokens={{ childrenGap: tokens.spacingS }}>
-                <Stack.Item grow={1} styles={halfItemStyles}>
-                  <MetricCard label="Cloud-covered (excluded)" value={int(preds?.cloudy)} />
-                </Stack.Item>
-                <Stack.Item grow={1} styles={halfItemStyles}>
-                  <MetricCard label={`Predicted damaged (> ${report.threshold})`} value={`${int(preds?.predictedDamaged)} (${preds?.predictedDamagedPctOfKnown ?? 0}% of non-cloudy)`} accent={tokens.colorDangerForeground1} />
-                </Stack.Item>
-              </Stack>
-            </Stack>
-          </div>
-
-          {/* Population estimate — 2 columns, 2 per row */}
-          <div>
-            <SectionTitle>Damaged-building population estimate</SectionTitle>
-            <Stack tokens={{ childrenGap: tokens.spacingS }}>
-              <Stack horizontal tokens={{ childrenGap: tokens.spacingS }}>
-                <Stack.Item grow={1} styles={halfItemStyles}>
-                  <MetricCard label={`N (buildings with area > ${pop?.minAreaM2?.toFixed(0)} m²)`} value={int(pop?.N)} />
-                </Stack.Item>
-                <Stack.Item grow={1} styles={halfItemStyles}>
-                  <MetricCard label="Sample size (n)" value={int(pop?.n)} />
-                </Stack.Item>
-              </Stack>
-              <Stack horizontal tokens={{ childrenGap: tokens.spacingS }}>
-                <Stack.Item grow={1} styles={halfItemStyles}>
-                  <MetricCard label="Damaged in sample (x)" value={int(pop?.x)} />
-                </Stack.Item>
-                <Stack.Item grow={1} styles={halfItemStyles}>
-                  <MetricCard label="Sample damage rate (p̂)" value={pct(pop?.pHat)} accent={tokens.colorDangerForeground1} />
-                </Stack.Item>
-              </Stack>
-              <Stack horizontal tokens={{ childrenGap: tokens.spacingS }}>
-                <Stack.Item grow={1} styles={halfItemStyles}>
-                  <MetricCard label="Sampling fraction (n/N)" value={num(pop?.samplingFraction, 6)} />
-                </Stack.Item>
-                <Stack.Item grow={1} styles={halfItemStyles}>
-                  <MetricCard label="Std. error of p̂" value={num(pop?.sePHat, 6)} />
-                </Stack.Item>
-              </Stack>
-              <Stack horizontal tokens={{ childrenGap: tokens.spacingS }}>
-                <Stack.Item grow={1} styles={halfItemStyles}>
-                  <MetricCard label="Estimated damaged buildings (Ŷ)" value={int(pop?.estimatedDamaged)} accent={tokens.colorDangerForeground1} />
-                </Stack.Item>
-                <Stack.Item grow={1} styles={halfItemStyles}>
-                  <MetricCard label="95% CI" value={pop?.ciLower != null && pop?.ciUpper != null ? `[${int(pop.ciLower)}, ${int(pop.ciUpper)}]` : "—"} />
-                </Stack.Item>
-              </Stack>
-            </Stack>
-          </div>
-
-          {/* Metrics & PR curve — only when labels exist */}
-          {hasLabels && (
-            <>
-              {/* Binary metrics — 2 columns, 2 per row */}
-              <div>
-                <SectionTitle>Binary metrics (positive class = Damaged)</SectionTitle>
-                <Stack tokens={{ childrenGap: tokens.spacingS }}>
-                  <Stack horizontal tokens={{ childrenGap: tokens.spacingS }}>
-                    <Stack.Item grow={1} styles={halfItemStyles}>
-                      <MetricCard label="Accuracy" value={pct(metrics?.accuracy)} />
-                    </Stack.Item>
-                    <Stack.Item grow={1} styles={halfItemStyles}>
-                      <MetricCard label="Precision" value={pct(metrics?.precision)} />
-                    </Stack.Item>
-                  </Stack>
-                  <Stack horizontal tokens={{ childrenGap: tokens.spacingS }}>
-                    <Stack.Item grow={1} styles={halfItemStyles}>
-                      <MetricCard label="Recall" value={pct(metrics?.recall)} />
-                    </Stack.Item>
-                    <Stack.Item grow={1} styles={halfItemStyles}>
-                      <MetricCard label="Average precision" value={pct(metrics?.averagePrecision)} />
-                    </Stack.Item>
-                  </Stack>
-                  <Stack horizontal tokens={{ childrenGap: tokens.spacingS }}>
-                    <Stack.Item grow={1} styles={halfItemStyles}>
-                      <MetricCard label="Matched sample" value={int(sample?.n)} />
-                    </Stack.Item>
-                    <Stack.Item grow={1} styles={halfItemStyles}>
-                      <MetricCard label="True damaged / not damaged" value={`${int(sample?.trueDamaged)} / ${int(sample?.trueNotDamaged)}`} />
-                    </Stack.Item>
-                  </Stack>
-                </Stack>
+            {loading && (
+              <div className="app-loading-inline">
+                <div className="app-loading-card">
+                  <Text className="app-loading-message">Computing assessment…</Text>
+                  <Spinner size="tiny" className="app-loading-spinner" />
+                </div>
               </div>
-              {sample?.hasBothClasses === false && (
-                <MessageBar messageBarType={MessageBarType.warning} isMultiline={false}>
-                  The labeled sample contains only one class; metrics may be degenerate.
-                </MessageBar>
-              )}
+            )}
 
-              <div>
-                <SectionTitle>Precision-recall curve</SectionTitle>
-                <PrecisionRecallChart
-                  precision={report.precisionRecallCurve?.precision}
-                  recall={report.precisionRecallCurve?.recall}
-                />
+            {!loading && error && (
+              <MessageBar intent="error">
+                <MessageBarBody>{error}</MessageBarBody>
+              </MessageBar>
+            )}
+
+            {!loading && report && !error && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                {/* Predictions — 2 columns, 2 per row */}
+                <div>
+                  <SectionTitle>Predictions</SectionTitle>
+                  <div style={{ display: "flex", flexDirection: "column", gap: tokens.spacingS }}>
+                    <div style={rowStyle}>
+                      <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                        <MetricCard label="Buildings with a prediction" value={int(preds?.total)} />
+                      </div>
+                      <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                        <MetricCard label="Non-cloudy" value={int(preds?.knownNonCloudy)} />
+                      </div>
+                    </div>
+                    <div style={rowStyle}>
+                      <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                        <MetricCard label="Cloud-covered (excluded)" value={int(preds?.cloudy)} />
+                      </div>
+                      <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                        <MetricCard label={`Predicted damaged (> ${report.threshold})`} value={`${int(preds?.predictedDamaged)} (${preds?.predictedDamagedPctOfKnown ?? 0}% of non-cloudy)`} accent={tokens.colorDangerForeground1} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Population estimate — 2 columns, 2 per row */}
+                <div>
+                  <SectionTitle>Damaged-building population estimate</SectionTitle>
+                  <div style={{ display: "flex", flexDirection: "column", gap: tokens.spacingS }}>
+                    <div style={rowStyle}>
+                      <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                        <MetricCard label={`N (buildings with area > ${pop?.minAreaM2?.toFixed(0)} m²)`} value={int(pop?.N)} />
+                      </div>
+                      <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                        <MetricCard label="Sample size (n)" value={int(pop?.n)} />
+                      </div>
+                    </div>
+                    <div style={rowStyle}>
+                      <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                        <MetricCard label="Damaged in sample (x)" value={int(pop?.x)} />
+                      </div>
+                      <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                        <MetricCard label="Sample damage rate (p̂)" value={pct(pop?.pHat)} accent={tokens.colorDangerForeground1} />
+                      </div>
+                    </div>
+                    <div style={rowStyle}>
+                      <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                        <MetricCard label="Sampling fraction (n/N)" value={num(pop?.samplingFraction, 6)} />
+                      </div>
+                      <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                        <MetricCard label="Std. error of p̂" value={num(pop?.sePHat, 6)} />
+                      </div>
+                    </div>
+                    <div style={rowStyle}>
+                      <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                        <MetricCard label="Estimated damaged buildings (Ŷ)" value={int(pop?.estimatedDamaged)} accent={tokens.colorDangerForeground1} />
+                      </div>
+                      <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                        <MetricCard label="95% CI" value={pop?.ciLower != null && pop?.ciUpper != null ? `[${int(pop.ciLower)}, ${int(pop.ciUpper)}]` : "—"} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Metrics & PR curve — only when labels exist */}
+                {hasLabels && (
+                  <>
+                    {/* Binary metrics — 2 columns, 2 per row */}
+                    <div>
+                      <SectionTitle>Binary metrics (positive class = Damaged)</SectionTitle>
+                      <div style={{ display: "flex", flexDirection: "column", gap: tokens.spacingS }}>
+                        <div style={rowStyle}>
+                          <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                            <MetricCard label="Accuracy" value={pct(metrics?.accuracy)} />
+                          </div>
+                          <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                            <MetricCard label="Precision" value={pct(metrics?.precision)} />
+                          </div>
+                        </div>
+                        <div style={rowStyle}>
+                          <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                            <MetricCard label="Recall" value={pct(metrics?.recall)} />
+                          </div>
+                          <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                            <MetricCard label="Average precision" value={pct(metrics?.averagePrecision)} />
+                          </div>
+                        </div>
+                        <div style={rowStyle}>
+                          <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                            <MetricCard label="Matched sample" value={int(sample?.n)} />
+                          </div>
+                          <div style={{ flexGrow: 1, ...halfItemStyle }}>
+                            <MetricCard label="True damaged / not damaged" value={`${int(sample?.trueDamaged)} / ${int(sample?.trueNotDamaged)}`} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    {sample?.hasBothClasses === false && (
+                      <MessageBar intent="warning">
+                        <MessageBarBody>
+                          The labeled sample contains only one class; metrics may be degenerate.
+                        </MessageBarBody>
+                      </MessageBar>
+                    )}
+
+                    <div>
+                      <SectionTitle>Precision-recall curve</SectionTitle>
+                      <PrecisionRecallChart
+                        precision={report.precisionRecallCurve?.precision}
+                        recall={report.precisionRecallCurve?.recall}
+                      />
+                    </div>
+
+                    {report.labeledMissingFromPredictions > 0 && (
+                      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                        {report.labeledMissingFromPredictions} sure label
+                        {report.labeledMissingFromPredictions === 1 ? "" : "s"} had
+                        no matching prediction and were dropped.
+                      </Text>
+                    )}
+                  </>
+                )}
               </div>
-
-              {report.labeledMissingFromPredictions > 0 && (
-                <Text variant="small" styles={{ root: { color: tokens.colorNeutralForeground3 } }}>
-                  {report.labeledMissingFromPredictions} sure label
-                  {report.labeledMissingFromPredictions === 1 ? "" : "s"} had
-                  no matching prediction and were dropped.
-                </Text>
-              )}
-            </>
-          )}
-        </Stack>
-      )}
-
-      <DialogFooter>
-        {error && <PrimaryButton onClick={fetchReport} text="Retry" />}
-        <DefaultButton onClick={onDismiss} text="Close" />
-      </DialogFooter>
+            )}
+          </DialogContent>
+          <DialogActions>
+            {error && <Button appearance="primary" onClick={fetchReport}>Retry</Button>}
+            <Button onClick={onDismiss}>Close</Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
     </Dialog>
   );
 };

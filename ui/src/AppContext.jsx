@@ -38,13 +38,6 @@ export const AppProvider = ({ children }) => {
         },
         {
           type: "teachingBubble",
-          target: `#singleModelRunInference0`,
-          title: "Run Inference",
-          content:
-            "Once model training is successful, the \"Run Inference\" button will activate. NOTE: If the property 'Auto Run Inference' was selected when creating the model, this step will be automatically started.",
-        },
-        {
-          type: "teachingBubble",
           target: `#singleModelResults0`,
           title: "Model Results",
           content:
@@ -69,13 +62,6 @@ export const AppProvider = ({ children }) => {
           title: "Base Model",
           content:
             "The base model is the pre-trained model that will be used as a starting point for training yours. Expand the dropdown to see available models.",
-        },
-        {
-          type: "teachingBubble",
-          target: `#createEditModelTrainingAutoRunInference`,
-          title: "Auto Run Inference",
-          content:
-            "If this checkbox is selected, the model will automatically run inference on the imagery once it is trained.",
         },
         {
           type: "teachingBubble",
@@ -144,10 +130,10 @@ export const AppProvider = ({ children }) => {
       steps: [
         {
           type: "teachingBubble",
-          target: `#leftPanel`,
+          target: `#imageryControlsButton`,
           title: "Imagery properties",
           content:
-            "Adjust the imagery properties to help you identify elements.",
+            "Open the imagery controls to adjust image properties and switch imagery layers.",
         },
         {
           type: "teachingBubble",
@@ -165,7 +151,7 @@ export const AppProvider = ({ children }) => {
         },          
         {
           type: "teachingBubble",
-          target: `#rightPanel`,
+          target: `.labeling-class-trigger`,
           title: "Primary Classes",
           content:
             "Switch between label classes here. You must select a tool as well as a class to draw a label. ",

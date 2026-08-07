@@ -3,36 +3,42 @@
 
 import { apiGet } from "../util/api";
 
-export async function createComponentDefaultState(modelToEdit, imageLayer, projectId, eventTypes) {
+export async function fetchModelCatalog(imageLayer, eventTypes) {
+  const cataloguedModels = [];
   try {
+    let eventTypesL = "eventTypes=" + eventTypes;
 
-    var  eventTypesL = "eventTypes=" + eventTypes;
-    var imagerySource = "";
-
-    if (imageLayer.sourceTypePostEvent !== "" && imageLayer.sourceTypePostEvent !== null && imageLayer.sourceTypePostEvent !== undefined) {
-      var concatChar = eventTypesL === "" ? "" : "&";
+    if (
+      imageLayer.sourceTypePostEvent !== "" &&
+      imageLayer.sourceTypePostEvent !== null &&
+      imageLayer.sourceTypePostEvent !== undefined
+    ) {
+      const concatChar = eventTypesL === "" ? "" : "&";
       eventTypesL += concatChar + "imagerySource=" + imageLayer.sourceTypePostEvent;
     }
 
-    var cataloguedModels = [];
-
-    
-    await apiGet(`GetModelCatalog?${eventTypesL}${imagerySource}`)
+    await apiGet(`GetModelCatalog?${eventTypesL}`)
       .then((response) => {
         cataloguedModels.push(
           ...response.modelCatalog.map((model) => ({
             key: model.modelId,
             text: model.baseModelName,
-            value: model
+            value: model,
           }))
         );
       })
       .catch((error) => {
         console.error("Error fetching model catalog:", error);
       });
+  } catch (error) {
+    console.error("Error fetching model catalog:", error);
+  }
 
-    
+  return cataloguedModels;
+}
 
+export function createComponentDefaultState(modelToEdit, imageLayer, projectId) {
+  try {
     const tempState = modelToEdit
       ? {
         ...modelToEdit,
@@ -41,8 +47,9 @@ export async function createComponentDefaultState(modelToEdit, imageLayer, proje
         learningRateError: "",
         batchSizeError: "",
         maxEpochsError: "",
-        cataloguedModels: cataloguedModels
-        
+        cataloguedModels: [],
+        catalogLoading: true,
+
       }
       : {
         modelId: "",
@@ -59,7 +66,8 @@ export async function createComponentDefaultState(modelToEdit, imageLayer, proje
         maxEpochs: "3",
         maxEpochsError: "",
         initialWeightsUrl: "",
-        cataloguedModels: cataloguedModels
+        cataloguedModels: [],
+        catalogLoading: true,
       }
 
     return tempState;

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import React, { useEffect } from "react";
-import { Dropdown } from "@fluentui/react";
+import { Dropdown, Option } from "@fluentui/react-components";
 
 import CreateEditImageLayerFormFile from "./CreateEditImageLayerFormFile";
 import CreateEditImageLayerFileUploader from "./CreateEditImageLayerFileUploader";
@@ -44,24 +44,33 @@ const CreateEditImageLayerFormImagerySources = ({
     <React.Fragment>
       <div className="row mb-2">
         <div className="col-12 d-flex flex-column mb-3">
-          <div className="col-12 d-flex">
+          <div className="col-12 d-flex imagery-source-row">
             <Dropdown
-              options={componentState.imageryOriginOptions}
-              onChange={(e, item) =>
+              className="imagery-origin-dropdown me-2"
+              selectedOptions={[
+                String(componentState[currentEventImageryUrlControl] ?? ""),
+              ]}
+              value={
+                componentState.imageryOriginOptions.find(
+                  (o) => o.key === componentState[currentEventImageryUrlControl]
+                )?.text || ""
+              }
+              onOptionSelect={(e, data) =>
                 onFormChange(
-                  item.key,
+                  data.optionValue,
                   currentEventImageryUrlControl,
                   setComponentState,
                   componentState
                 )
               }
-              selectedKey={componentState[currentEventImageryUrlControl]}
-              className="me-2"
-              defaultSelectedKey={
-                componentState[currentEventImageryUrlControl]
-              }
               disabled={imageLayerId ? true : false}
-            />
+            >
+              {componentState.imageryOriginOptions.map((o) => (
+                <Option key={o.key} value={String(o.key)}>
+                  {o.text}
+                </Option>
+              ))}
+            </Dropdown>
             {componentState[currentEventImageryUrlControl] === "url" ||
             componentState[currentEventImageryUrlControl] === "" ? (
               <CreateEditImageLayerFormURL

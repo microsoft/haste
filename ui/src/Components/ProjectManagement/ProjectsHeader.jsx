@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { Text } from "@fluentui/react";
+import { Text } from "@fluentui/react-components";
 
 import React from "react";
 

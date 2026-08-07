@@ -1,13 +1,22 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-import { useMemo, useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import "./assets/css/style.css";
-import { DefaultButton, PrimaryButton } from "@fluentui/react/lib/Button";
-import { Dialog, DialogFooter, DialogType } from "@fluentui/react/lib/Dialog";
+import {
+  Button,
+  Dialog,
+  DialogSurface,
+  DialogBody,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+} from "@fluentui/react-components";
 import { AppContext } from "./AppContext";
 import { apiValidateUser, apiLogout, apiGet } from "./util/api";
 import { upsertUser } from "./AppHelper";
+import { useTheme } from "./util/ThemeContext";
+import { getPalette } from "./util/theme";
 
 import { useLocation } from 'react-router-dom';
 
@@ -16,19 +25,32 @@ import GuidedTour from "./Components/GuidedTour";
 // Components
 import AppBody from "./Components/AppBody";
 import AppHeader from "./Components/AppHeader";
+import AppSidebar from "./Components/AppSidebar";
 import AppFooter from "./Components/AppFooter";
 import Loading from "./Components/OtherComponents/Loading";
-import { initializeIcons } from "@fluentui/react";
-
-initializeIcons();
 
 function App() {
   const { appParams, setDialog, setIsLoading, setAppParams } =
     useContext(AppContext);
+  const { palette, setPalette, mode, setTheme } = useTheme();
   const location = useLocation();
   const isHome = location.pathname === '/' || location.pathname === '/home';
 
   const [modalComponent, setModalComponent] = useState(null);
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    const stored = localStorage.getItem("haste-nav-collapsed");
+    return stored === null ? true : stored === "true";
+  });
+
+  const isMobileNav = Number(appParams.bootstrapBreakpoint) <= 2;
+
+  const toggleNav = () => {
+    setNavCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("haste-nav-collapsed", String(next));
+      return next;
+    });
+  };
 
   useEffect(() => {
     const validateUser = async () => {
@@ -41,6 +63,39 @@ function App() {
 
     //eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Apply the user's saved color palette once preferences load. Falls back to
+  // the default palette when the stored key is missing or invalid. The local
+  // (localStorage) value applied in main.jsx acts as an anti-flash cache; the
+  // backend value wins here.
+  useEffect(() => {
+    const storedKey = appParams.userSettings?.colorPalette;
+    if (!storedKey) return;
+    const resolved = getPalette(storedKey).key;
+    if (resolved !== palette) {
+      setPalette(resolved);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appParams.userSettings?.colorPalette]);
+
+  // Apply the user's saved light/dark theme once preferences load. Anything
+  // other than "dark" falls back to light. localStorage (main.jsx) is the
+  // anti-flash cache; the backend value wins here.
+  useEffect(() => {
+    if (!appParams.userSettings) return;
+    const resolved =
+      appParams.userSettings.theme === "dark" ? "dark" : "light";
+    if (resolved !== mode) {
+      setTheme(resolved);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appParams.userSettings?.theme, appParams.userSettings]);
+
+  useEffect(() => {
+    if (isMobileNav) {
+      setNavCollapsed(true);
+    }
+  }, [isMobileNav]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -78,23 +133,6 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const modalPropsStyles = { main: { maxWidth: "450px" } };
-  const modalProps = useMemo(
-    () => ({
-      isBlocking: true,
-      styles: modalPropsStyles,
-    }),
-
-    //eslint-disable-next-line react-hooks/exhaustive-deps
-    []
-  );
-
-  const dialogContentProps = {
-    title: appParams.dialogParams.title,
-    subText: appParams.dialogParams.subText,
-    type: DialogType.largeHeader,
-  };
-
   return (
     <>
       <div className={`app-container ${isHome ? 'background-color-home' : 'background-color-app'}`}>
@@ -106,8 +144,28 @@ function App() {
         ) : (
           appParams.userId !== null ? (
             <>
-              <AppHeader setModalComponent={setModalComponent} />
-              <AppBody setModalComponent={setModalComponent} />
+              <AppHeader
+                setModalComponent={setModalComponent}
+                onToggleNav={toggleNav}
+              />
+              <div className={`app-main d-flex flex-grow-1${isMobileNav ? " app-main--mobile" : ""}`}>
+                <AppSidebar
+                  setModalComponent={setModalComponent}
+                  collapsed={navCollapsed}
+                  mobile={isMobileNav}
+                  open={!navCollapsed}
+                  onItemSelected={isMobileNav ? () => setNavCollapsed(true) : undefined}
+                />
+                {isMobileNav && !navCollapsed && (
+                  <button
+                    type="button"
+                    className="app-sidebar-backdrop"
+                    aria-label="Close navigation"
+                    onClick={() => setNavCollapsed(true)}
+                  />
+                )}
+                <AppBody setModalComponent={setModalComponent} />
+              </div>
             </>
           ) : (
             <Loading />
@@ -116,27 +174,38 @@ function App() {
 
         {appParams.dialogParams.title && (
           <Dialog
-            onDismiss={() => setDialog()}
-            hidden={false}
-            dialogContentProps={dialogContentProps}
-            modalProps={modalProps}
+            open={true}
+            onOpenChange={(_, data) => {
+              if (!data.open) setDialog();
+            }}
           >
-            <DialogFooter>
-              {(appParams.dialogParams.buttons || []).map((button) =>
-                button.type === "primary" ? (
-                  <PrimaryButton key={button.key} onClick={button.onClick}>
-                    {button.text}
-                  </PrimaryButton>
-                ) : (
-                  <DefaultButton key={button.key} onClick={button.onClick}>
-                    {button.text}
-                  </DefaultButton>
-                )
-              )}
-              {(!appParams.dialogParams.buttons || appParams.dialogParams.buttons.length === 0) && (
-                <DefaultButton onClick={() => setDialog()}>Close</DefaultButton>
-              )}
-            </DialogFooter>
+            <DialogSurface style={{ maxWidth: "450px" }}>
+              <DialogBody>
+                <DialogTitle>{appParams.dialogParams.title}</DialogTitle>
+                <DialogContent>{appParams.dialogParams.subText}</DialogContent>
+                <DialogActions>
+                  {(appParams.dialogParams.buttons || []).map((button) =>
+                    button.type === "primary" ? (
+                      <Button
+                        key={button.key}
+                        appearance="primary"
+                        onClick={button.onClick}
+                      >
+                        {button.text}
+                      </Button>
+                    ) : (
+                      <Button key={button.key} onClick={button.onClick}>
+                        {button.text}
+                      </Button>
+                    )
+                  )}
+                  {(!appParams.dialogParams.buttons ||
+                    appParams.dialogParams.buttons.length === 0) && (
+                    <Button onClick={() => setDialog()}>Close</Button>
+                  )}
+                </DialogActions>
+              </DialogBody>
+            </DialogSurface>
           </Dialog>
         )}
 

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import React, { useState } from "react";
-import { TextField, PrimaryButton } from "@fluentui/react";
+import { Input, Button, Field } from "@fluentui/react-components";
 import propTypes from "prop-types";
 import { addUrlToEventImageryArray } from "./CreateEditImageLayerHelper";
 
@@ -38,22 +38,25 @@ const CreateEditImageLayerFormURL = ({
 
   return (
     <React.Fragment>
-      <TextField
+      <Field
         className="flex-grow-1 me-2"
-        placeholder="Write or paste a URL"
-        onChange={(e) => setUrl(e.target.value)}
-        errorMessage={componentState[currentEventImageryUrlControl + "Error"]}
-        value={url}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            handleAddition();
-          }
-        }}
-        disabled={imageLayerId ? true : false}
-      />
-      <PrimaryButton onClick={handleAddition} disabled={!url}>
+        validationMessage={componentState[currentEventImageryUrlControl + "Error"]}
+      >
+        <Input
+          placeholder="Write or paste a URL"
+          onChange={(e, data) => setUrl(data.value)}
+          value={url}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              handleAddition();
+            }
+          }}
+          disabled={imageLayerId ? true : false}
+        />
+      </Field>
+      <Button appearance="primary" onClick={handleAddition} disabled={!url}>
         Add
-      </PrimaryButton>
+      </Button>
     </React.Fragment>
   );
 };

@@ -2,13 +2,14 @@
 // Licensed under the MIT License.
 // Components
 import {
-  ColorPicker,
-  TextField,
+  Button,
+  Dialog,
+  DialogSurface,
+  DialogBody,
+  DialogActions,
+  Input,
   Label,
-  Modal,
-  PrimaryButton,
-  DefaultButton,
-} from "@fluentui/react";
+} from "@fluentui/react-components";
 import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 
@@ -59,7 +60,7 @@ const CustomColorPicker = ({
           {labelText}
         </Label>
         <div className="d-flex">
-          <TextField
+          <Input
             aria-labelledby={labelText}
             className="me-1"
             style={{ width: "150px" }}
@@ -67,7 +68,6 @@ const CustomColorPicker = ({
             readOnly
             disabled={isDisabled}
             maxLength={7}
-
           />
           <div
             style={{
@@ -79,32 +79,53 @@ const CustomColorPicker = ({
         </div>
       </div>
 
-      <Modal isOpen={isModalOpen}>
-        <div className="row p-0 m-0">
-          <div className="col-12 p-2">
-            <ColorPicker
-              alphaType={"none"}
-              showPreview={true}
-              color={selectedColor}
-              onChange={(e, color) => setSelectedColor(color.str)}
-            />
-            <div className="col-12 d-flex justify-content-end ps-3 pe-3 pb-3">
-              <PrimaryButton
-                className="mt-3 me-2"
-                onClick={handleColorSelection}
-              >
-                Select
-              </PrimaryButton>
-              <DefaultButton
-                className="mt-3"
-                onClick={() => setIsModalOpen(false)}
-              >
-                Cancel
-              </DefaultButton>
+      <Dialog
+        open={isModalOpen}
+        onOpenChange={(e, data) => setIsModalOpen(data.open)}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <div className="d-flex flex-column w-100">
+              <div className="d-flex align-items-center mb-3">
+                <input
+                  type="color"
+                  aria-label="Select a color"
+                  value={selectedColor}
+                  onChange={(e) => setSelectedColor(e.target.value)}
+                  style={{
+                    width: "100%",
+                    height: "40px",
+                    border: "none",
+                    cursor: "pointer",
+                  }}
+                />
+                <div
+                  className="ms-2"
+                  style={{
+                    width: "40px",
+                    height: "40px",
+                    flexShrink: 0,
+                    border: "1px solid #ccc",
+                    backgroundColor: selectedColor,
+                  }}
+                ></div>
+              </div>
+              <Input
+                aria-label="Selected color hex value"
+                value={selectedColor}
+                readOnly
+                maxLength={7}
+              />
             </div>
-          </div>
-        </div>
-      </Modal>
+            <DialogActions>
+              <Button appearance="primary" onClick={handleColorSelection}>
+                Select
+              </Button>
+              <Button onClick={() => setIsModalOpen(false)}>Cancel</Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </>
   );
 };

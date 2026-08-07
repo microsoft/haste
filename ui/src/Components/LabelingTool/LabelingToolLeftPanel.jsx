@@ -1,11 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import {
-  ActionButton,
+  Button,
   Slider,
-  Toggle,
+  Switch,
   Label,
-} from "@fluentui/react";
+  Field,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import { useState, useEffect } from "react";
 import { saveLabels, checkLabelsState } from "./LabelingToolHelper";
 
@@ -24,7 +26,6 @@ const LabelingToolLeftPanel = ({
   imageLayerId,
   labelingToolDataRef,
   setHasUnsavedChanges,
-  appParams
 }) => {
   LabelingToolLeftPanel.propTypes = {
     mapRef: PropType.object.isRequired,
@@ -38,11 +39,11 @@ const LabelingToolLeftPanel = ({
     imageLayerId: PropType.string.isRequired,
     labelingToolDataRef: PropType.object.isRequired,
     setHasUnsavedChanges: PropType.func.isRequired,
-    appParams: PropType.object.isRequired,
   };
 
   const [eventImageryVisibilityState, setEventImageryVisibilityState] =
     useState(true);
+  const [isImageryControlsOpen, setIsImageryControlsOpen] = useState(false);
 
   const [imageryValues, setImageryValues] = useState({
     opacity: 1,
@@ -181,6 +182,17 @@ const LabelingToolLeftPanel = ({
     };
   }, [eventImageryVisibilityState]);
 
+  // Close the imagery settings panel when the user clicks on the map.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.events) return;
+    const closeImageryControls = () => setIsImageryControlsOpen(false);
+    map.events.add("click", closeImageryControls);
+    return () => {
+      map.events.remove("click", closeImageryControls);
+    };
+  }, [mapRef]);
+
   const navigate = useNavigate();
 
   const handleBackNavigation = () => {
@@ -239,114 +251,134 @@ const LabelingToolLeftPanel = ({
   return (
     <>
       <div
-        style={{
-          position: "absolute",
-          left: 10,
-          top: 10,
-          backgroundColor: "rgba(255, 255, 255, 1)",
-          padding: "5px 10px",
-          borderRadius: "5px",
-          zIndex: 1000,
-        }}
-        className=""
+        className="labeling-tool-surface labeling-navigation-controls"
       >
-        <div>
-          <ActionButton
-            id="backButton"
-            iconProps={{ iconName: "ChevronLeft" }}
-            onClick={handleBackNavigation}
-          >
-            Back
-          </ActionButton>
+        <Button
+          appearance="transparent"
+          id="backButton"
+          icon={<FluentIcon name="ChevronLeft" />}
+          onClick={handleBackNavigation}
+        >
+          Back
+        </Button>
+        <Button
+          appearance="subtle"
+          id="imageryControlsButton"
+          icon={<FluentIcon name="Slider" />}
+          aria-expanded={isImageryControlsOpen}
+          aria-controls="leftPanel"
+          onClick={() => setIsImageryControlsOpen((isOpen) => !isOpen)}
+        >
+          Imagery
+        </Button>
+      </div>
 
-          {appParams.bootstrapBreakpoint >= 3 && (
-            <div
-              style={{
-                borderTop: "1px solid rgba(0, 0, 0, 0.1)",
-                paddingTop: "12px",
-                marginTop: "5px",
-              }}
-              id="leftPanel"
-            >
-              <Slider
-                label="Opacity"
-                min={0}
-                max={1}
-                step={0.01}
-                defaultValue={100}
-                showValue={false}
-                onChange={(value) => updateValues("opacity", value)}
-                value={imageryValues.opacity}
-              />
+      {isImageryControlsOpen && (
+        <div
+          className="labeling-tool-surface labeling-imagery-controls"
+          id="leftPanel"
+        >
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Opacity</span>
+                    <output>{Math.round(imageryValues.opacity * 100)}%</output>
+                  </span>
+                }
+              >
+                <Slider
+                  className="labeling-imagery-slider"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  onChange={(e, data) => updateValues("opacity", data.value)}
+                  value={imageryValues.opacity}
+                />
+              </Field>
 
-              <Slider
-                label="Contrast"
-                min={-1}
-                max={1}
-                step={0.01}
-                defaultValue={0}
-                showValue={false}
-                onChange={(value) => updateValues("contrast", value)}
-                value={imageryValues.contrast}
-              />
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Contrast</span>
+                    <output>{imageryValues.contrast.toFixed(2)}</output>
+                  </span>
+                }
+              >
+                <Slider
+                  className="labeling-imagery-slider"
+                  min={-1}
+                  max={1}
+                  step={0.01}
+                  onChange={(e, data) => updateValues("contrast", data.value)}
+                  value={imageryValues.contrast}
+                />
+              </Field>
 
-              <Slider
-                label="Hue Rotation"
-                min={-180}
-                max={180}
-                step={1}
-                defaultValue={0}
-                showValue={false}
-                onChange={(value) => updateValues("hueRotation", value)}
-                value={imageryValues.hueRotation}
-              />
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Hue Rotation</span>
+                    <output>{imageryValues.hueRotation}&deg;</output>
+                  </span>
+                }
+              >
+                <Slider
+                  className="labeling-imagery-slider"
+                  min={-180}
+                  max={180}
+                  step={1}
+                  onChange={(e, data) => updateValues("hueRotation", data.value)}
+                  value={imageryValues.hueRotation}
+                />
+              </Field>
 
-              <Slider
-                label="Saturation"
-                min={-1}
-                max={1}
-                step={0.01}
-                defaultValue={0}
-                showValue={false}
-                onChange={(value) => updateValues("saturation", value)}
-                value={imageryValues.saturation}
-              />
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Saturation</span>
+                    <output>{imageryValues.saturation.toFixed(2)}</output>
+                  </span>
+                }
+              >
+                <Slider
+                  className="labeling-imagery-slider"
+                  min={-1}
+                  max={1}
+                  step={0.01}
+                  onChange={(e, data) => updateValues("saturation", data.value)}
+                  value={imageryValues.saturation}
+                />
+              </Field>
 
 
-              <ActionButton
-                iconProps={{ iconName: "Slider" }}
+              <Button
+                appearance="transparent"
+                icon={<FluentIcon name="Slider" />}
                 className="w-100 mb-2 mt-2"
                 onClick={resetControls}
               >
                 Reset controls
-              </ActionButton>
+              </Button>
 
               <div id="postEventImagery">
                 <Label className="mt-2 mb-2">Imagery</Label>
-                <Toggle
-                  onText="Post Event"
-                  offText={labelingToolDataRef.current.imagery.preEventTileUrl ? "Pre Event" : "Basemap"}
+                <Switch
+                  label={eventImageryVisibilityState ? "Post Event" : (labelingToolDataRef.current.imagery.preEventTileUrl ? "Pre Event" : "Basemap")}
                   checked={eventImageryVisibilityState}
-                  onChange={(e, checked) =>
-                    setEventImageryVisibilityState(checked)
+                  onChange={(e, data) =>
+                    setEventImageryVisibilityState(data.checked)
                   }
                 />
               </div>
-            </div>
-          )}
         </div>
-      </div>
+      )}
 
       <div
-        style={{
-          position: "absolute",
-          left: 55,
-          bottom: 38,
-          backgroundColor: "rgba(255, 255, 255, 1)",
-          padding: "5px 10px",
-          borderRadius: "5px",
-          zIndex: 1000,
-        }}
+        className="labeling-tool-surface labeling-count-badge"
         id="numberOfLabels"
       >
         Number of labels: {drawingCount}

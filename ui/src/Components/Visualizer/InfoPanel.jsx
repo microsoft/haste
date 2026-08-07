@@ -2,25 +2,59 @@
 // Licensed under the MIT License.
 import {
   Checkbox,
-  ActionButton,
+  Button,
   Text,
-} from "@fluentui/react";
+  makeStyles,
+  tokens,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 
 import { useState, useContext } from "react";
 import PropType from "prop-types";
 import { AppContext } from "../../AppContext";
 
+const DAMAGE_LEGEND = [
+  { label: "0 - 20% damaged", color: "#FFFFFF" },
+  { label: "20 - 40% damaged", color: "#FFB99F" },
+  { label: "40 - 60% damaged", color: "#FF6846" },
+  { label: "60 - 80% damaged", color: "#DD1E25" },
+  { label: "80 - 100% damaged", color: "#85000F" },
+];
+
+const useStyles = makeStyles({
+  legend: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXS,
+    marginTop: tokens.spacingVerticalM,
+    marginBottom: tokens.spacingVerticalM,
+  },
+  legendItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    color: tokens.colorNeutralForeground1,
+    fontSize: tokens.fontSizeBase200,
+    lineHeight: tokens.lineHeightBase200,
+    whiteSpace: "nowrap",
+  },
+  legendSwatch: {
+    width: "28px",
+    height: "18px",
+    flex: "0 0 28px",
+    boxSizing: "border-box",
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1}`,
+    borderRadius: tokens.borderRadiusSmall,
+  },
+});
+
 const InfoPanel = ({
   togglePredictedDamageLayerVisibility,
   resetMapPosition,
   visualizerResults,
+  surfaceClassName,
 }) => {
-  InfoPanel.propTypes = {
-    togglePredictedDamageLayerVisibility: PropType.func.isRequired,
-    resetMapPosition: PropType.func.isRequired,
-    visualizerResults: PropType.object.isRequired,
-  };
-
+  const styles = useStyles();
   const [panelVisibility, setPanelVisibility] = useState("");
   const { appParams } = useContext(AppContext);
 
@@ -35,22 +69,23 @@ const InfoPanel = ({
   return (
     <>
       <div
-        className="absolute-labels info-panel col-12"
+        className={`absolute-labels info-panel col-12 ${surfaceClassName}`}
       >
-        <ActionButton
-          iconProps={{ iconName: panelVisibility === "" ? "chevronDown" : "chevronUp" }}
+        <Button
+          appearance="transparent"
+          icon={<FluentIcon name={panelVisibility === "" ? "chevronDown" : "chevronUp"} />}
           onClick={() => {
             togglePanelVisibility();
           }}
         >
           <span className="ms-2 fw-semibold">{appParams.bootstrapBreakpoint > 0 ? "Map Settings" : "Legend"}</span>
-        </ActionButton>
+        </Button>
 
         <div className={panelVisibility + " ps-3 pe-3"}>
 
 
           <div className="d-flex flex-column">
-            <Text variant="small" className="fw-bold mt-3 mb-3 d-none">
+            <Text size={200} className="fw-bold mt-3 mb-3 d-none">
               Select Imagery Layers
             </Text>
             <div
@@ -59,10 +94,10 @@ const InfoPanel = ({
               <Checkbox
                 defaultChecked={true}
                 label="Predicted building damage layer"
-                onChange={(e, checked) =>
+                onChange={(e, data) =>
                   togglePredictedDamageLayerVisibility(
                     "predictedDamageLayer",
-                    checked
+                    data.checked
                   )
                 }
               />
@@ -70,41 +105,56 @@ const InfoPanel = ({
                 className="mt-2"
                 defaultChecked={false}
                 label="Predictions layer (raw)"
-                onChange={(e, checked) =>
+                onChange={(e, data) =>
                   togglePredictedDamageLayerVisibility(
                     "predictionsLayer",
-                    checked
+                    data.checked
                   )
                 }
               />
             </div>
           </div>
           <div className="d-flex flex-column">
-            <Text variant="small" className="fw-bold mt-2 d-none d-xl-block">
+            <Text size={200} className="fw-bold mt-2 d-none d-xl-block">
               Legend
             </Text>
 
-            <img
-              src="../../../assets/img/visualizerLegend.png"
-              alt="legend"
-              className="map-legend mb-3 mt-3"
-            />
+            <div className={styles.legend} aria-label="Damage percentage legend">
+              {DAMAGE_LEGEND.map((item) => (
+                <div className={styles.legendItem} key={item.label}>
+                  <span
+                    className={styles.legendSwatch}
+                    style={{ backgroundColor: item.color }}
+                    aria-hidden="true"
+                  />
+                  <span>{item.label}</span>
+                </div>
+              ))}
+            </div>
 
-            <ActionButton
-              iconProps={{ iconName: "MapPin" }}
+            <Button
+              appearance="transparent"
+              icon={<FluentIcon name="MapPin" />}
               className="d-none d-xl-block"
               onClick={() => {
                 resetMapPosition(visualizerResults.studyArea);
               }}
             >
               Reset map position
-            </ActionButton>
+            </Button>
 
           </div>
         </div>
       </div>
     </>
   );
+};
+
+InfoPanel.propTypes = {
+  togglePredictedDamageLayerVisibility: PropType.func.isRequired,
+  resetMapPosition: PropType.func.isRequired,
+  visualizerResults: PropType.object.isRequired,
+  surfaceClassName: PropType.string.isRequired,
 };
 
 export default InfoPanel;

@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 // Components
 
-import { PrimaryButton } from "@fluentui/react";
+import { Button } from "@fluentui/react-components";
 
 const SendInvitationButton = () => {
 
@@ -12,12 +12,14 @@ function handleSendInvitation(){
 }
 
   return (
-    <PrimaryButton
-      text="Send Invitation"
+    <Button
+      appearance="primary"
       onClick={() => {
         handleSendInvitation();
       }}
-    />
+    >
+      Send Invitation
+    </Button>
   );
 };
 

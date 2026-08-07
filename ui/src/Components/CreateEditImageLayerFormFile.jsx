@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import React, { useState } from "react";
-import { TextField, PrimaryButton } from "@fluentui/react";
+import { Input, Button, Field } from "@fluentui/react-components";
 import propTypes from "prop-types";
 import { addFileToEventImageryArray } from "./CreateEditImageLayerHelper";
 import { v4 as uuidv4 } from "uuid";
@@ -65,24 +65,27 @@ const CreateEditImageLayerFormFile = ({
         id={"fileInput" + uniqueId}
         aria-label="File Input"
       />
-      <TextField
+      <Field
         className="flex-grow-1 me-2 cursor-pointer-on-hover"
-        placeholder="Click here to select one or more files"
-        errorMessage={componentState[currentEventImageryUrlControl + "Error"]}
-        value={
-          files && files.length === 1
-            ? files[0].name
-            : files && files.length > 1
-            ? `${files.length} files selected`
-            : ""
-        }
-        onClick={hanfleFileInputOpen}
-        readOnly={true}
-        disabled={imageLayerId ? true : false}
-      />
-      <PrimaryButton onClick={handleFileAddition} disabled={!files}>
+        validationMessage={componentState[currentEventImageryUrlControl + "Error"]}
+      >
+        <Input
+          placeholder="Click here to select one or more files"
+          value={
+            files && files.length === 1
+              ? files[0].name
+              : files && files.length > 1
+              ? `${files.length} files selected`
+              : ""
+          }
+          onClick={hanfleFileInputOpen}
+          readOnly={true}
+          disabled={imageLayerId ? true : false}
+        />
+      </Field>
+      <Button appearance="primary" onClick={handleFileAddition} disabled={!files}>
         Upload
-      </PrimaryButton>
+      </Button>
     </React.Fragment>
   );
 };

@@ -1,5 +1,5 @@
 import React from "react";
-import { Dropdown } from "@fluentui/react";
+import { Dropdown, Option, Field } from "@fluentui/react-components";
 
 const styles = {
   container: {
@@ -54,19 +54,6 @@ const renderOption = (option) => {
   );
 };
 
-// Renders the selected value (collapsed field)
-const renderTitle = (selectedOptions) => {
-  const selected = selectedOptions && selectedOptions[0];
-  if (!selected) return null;
-  const { baseModelName } = selected;
-
-  return (
-    <div style={styles.container}>
-      <span style={styles.selectedTitle}>{baseModelName}</span>
-    </div>
-  );
-};
-
 function BaseModelDropdown({
   componentState,
   setComponentState,
@@ -85,27 +72,37 @@ function BaseModelDropdown({
     }));
   }, [cataloguedModels]);
 
-  const handleChange = (_ev, item) => {
-    onFormChange(item.checkpointFilePath, "initialWeightsUrl", setComponentState, componentState);
+  const selectedOption = options.find(
+    (o) => String(o.key) === String(baseModelId)
+  );
+
+  const handleOptionSelect = (_ev, data) => {
+    const picked = options.find((o) => String(o.key) === data.optionValue);
+    onFormChange(
+      picked ? picked.checkpointFilePath : "",
+      "initialWeightsUrl",
+      setComponentState,
+      componentState
+    );
   };
 
   return (
-    <Dropdown
-      id="createEditModelTrainingBaseModel"
-      label="Base Model"
-      placeholder="Select Model"
-      options={options}
-      selectedKey={baseModelId}
-      onChange={handleChange}
-      onRenderOption={renderOption}
-      disabled={options.length === 0}
-      onRenderTitle={renderTitle}
-      errorMessage={baseModelIdError}
-      styles={{
-        dropdownItem: { height: "auto", minHeight: 42 },
-        dropdownItemSelected: { height: "auto", minHeight: 42 },
-      }}
-    />
+    <Field label="Base Model" validationMessage={baseModelIdError}>
+      <Dropdown
+        id="createEditModelTrainingBaseModel"
+        placeholder="Select Model"
+        selectedOptions={baseModelId ? [String(baseModelId)] : []}
+        value={selectedOption ? selectedOption.baseModelName : ""}
+        onOptionSelect={handleOptionSelect}
+        disabled={options.length === 0}
+      >
+        {options.map((o) => (
+          <Option key={o.key} value={String(o.key)} text={o.baseModelName}>
+            {renderOption(o)}
+          </Option>
+        ))}
+      </Dropdown>
+    </Field>
   );
 }
 

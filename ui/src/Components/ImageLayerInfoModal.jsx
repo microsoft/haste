@@ -1,20 +1,17 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import { useState } from "react";
-import { useId } from "@fluentui/react-hooks";
 import {
-  getTheme,
-  mergeStyleSets,
-  FontWeights,
-  Modal,
+  Dialog,
+  DialogSurface,
+  Button,
   Link,
-  FontIcon,
   Text,
-  Label
-} from "@fluentui/react";
+  Label,
+  tokens,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../util/icons";
 import { safeHref } from "../util/validation";
-
-import { DefaultButton, IconButton } from "@fluentui/react/lib/Button";
 
 import { CopyToClipboard } from "react-copy-to-clipboard";
 
@@ -33,32 +30,30 @@ const ImageLayerInfoModal = ({ onClose, imageLayer }) => {
     setTimeout(() => setCopied(false), 2000); // Reset copied state after 2 seconds
   };
 
-  const titleId = useId("title");
-
   return (
-    <Modal
-      titleAriaId={titleId}
-      isOpen={true}
-      onDismiss={onClose}
-      isBlocking={true}
-      containerClassName={contentStyles.container}
+    <Dialog
+      open={true}
+      onOpenChange={(_, d) => {
+        if (!d.open) onClose();
+      }}
     >
-      <div className={contentStyles.header}>
-        <div className="d-flex align-items-center">
-          <FontIcon iconName={"FileImage"} className="me-2 modal-icon" />
-          <p className={contentStyles.heading} id={titleId}>
-            Image Layer Information
-            
-          </p>
+      <DialogSurface style={{ padding: 0 }}>
+        <div style={headerStyle}>
+          <div className="d-flex align-items-center">
+            <FluentIcon name="FileImage" className="me-2 modal-icon" />
+            <p style={headingStyle}>
+              Image Layer Information
+
+            </p>
+          </div>
+          <Button
+            appearance="subtle"
+            icon={<FluentIcon name="Cancel" />}
+            aria-label="Close popup modal"
+            onClick={onClose}
+          />
         </div>
-        <IconButton
-          styles={iconButtonStyles}
-          iconProps={cancelIcon}
-          ariaLabel="Close popup modal"
-          onClick={onClose}
-        />
-      </div>
-      <div className={`${contentStyles.body} modal-form-body`}>
+        <div style={bodyStyle} className="modal-form-body">
         <div className="row mb-3">
           <div className="col-12">
             <Label className="m-0 p-0">Layer Name</Label>
@@ -88,10 +83,11 @@ const ImageLayerInfoModal = ({ onClose, imageLayer }) => {
                 text={imageLayer.cloudOptimizedGeotiff}
                 onCopy={handleCopy}
               >
-                <IconButton
-                  iconProps={{ iconName: copied ? "CheckMark" : "Copy" }}
+                <Button
+                  appearance="subtle"
+                  icon={<FluentIcon name={copied ? "CheckMark" : "Copy"} />}
                   title="Copy to clipboard"
-                  ariaLabel="Copy to clipboard"
+                  aria-label="Copy to clipboard"
                 />
               </CopyToClipboard>
             </div>
@@ -131,66 +127,31 @@ const ImageLayerInfoModal = ({ onClose, imageLayer }) => {
             <Label className="m-0 p-0">Model Count</Label>
             <Text>{imageLayer.modelTrainingCount}</Text>
           </div>
-        </div>                
+        </div>
         <div className="row">
           <div className="col-12 d-flex justify-content-end">
-            <DefaultButton onClick={onClose}>Close</DefaultButton>
+            <Button onClick={onClose}>Close</Button>
           </div>
         </div>
-      </div>
-    </Modal>
+        </div>
+      </DialogSurface>
+    </Dialog>
   );
 };
 
-const cancelIcon = { iconName: "Cancel" };
-
-const theme = getTheme();
-const contentStyles = mergeStyleSets({
-  container: {
-    display: "flex",
-    flexFlow: "column nowrap",
-    alignItems: "stretch",
-  },
-  header: [
-    theme.fonts.xLargePlus,
-    {
-      flex: "1 1 auto",
-      borderTop: `4px solid ${theme.palette.themePrimary}`,
-      color: theme.palette.neutralPrimary,
-      display: "flex",
-      alignItems: "center",
-      fontWeight: FontWeights.semibold,
-      padding: "12px 12px 14px 24px",
-    },
-  ],
-  heading: {
-    color: theme.palette.neutralPrimary,
-    fontWeight: FontWeights.semibold,
-    fontSize: "20px",
-    margin: "0",
-  },
-  body: {
-    flex: "4 4 auto",
-    padding: "0 24px 24px 24px",
-    overflowY: "hidden",
-    selectors: {
-      p: { margin: "14px 0" },
-      "p:first-child": { marginTop: 0 },
-      "p:last-child": { marginBottom: 0 },
-    },
-  },
-});
-
-const iconButtonStyles = {
-  root: {
-    color: theme.palette.neutralPrimary,
-    marginLeft: "auto",
-    marginTop: "4px",
-    marginRight: "2px",
-  },
-  rootHovered: {
-    color: theme.palette.neutralDark,
-  },
+const headerStyle = {
+  flex: "1 1 auto",
+  borderTop: `4px solid ${tokens.colorBrandBackground}`,
+  display: "flex",
+  alignItems: "center",
+  padding: "12px 12px 14px 24px",
+};
+const headingStyle = { fontWeight: 600, fontSize: "20px", margin: 0 };
+const bodyStyle = {
+  flex: "4 4 auto",
+  padding: "0 24px 24px 24px",
+  maxHeight: "75vh",
+  overflowY: "auto",
 };
 
 export default ImageLayerInfoModal;

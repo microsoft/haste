@@ -2,10 +2,11 @@
 // Licensed under the MIT License.
 import {
   Checkbox,
-  ActionButton,
+  Button,
   Text,
-  Toggle,
-} from "@fluentui/react";
+  Switch,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 
 
 import { useState } from "react";
@@ -17,17 +18,9 @@ const VisualizerInformationMobile = ({
   convertPreOrPostEventImagerySource,
   setSwipeStateMobile,
   swipeStateMobile,
-  togglePredictedDamageLayerVisibility
+  togglePredictedDamageLayerVisibility,
+  surfaceClassName,
 }) => {
-  VisualizerInformationMobile.propTypes = {
-    visualizerResults: PropType.object.isRequired,
-    convertPreOrPostEventImageryDate: PropType.func.isRequired,
-    convertPreOrPostEventImagerySource: PropType.func.isRequired,
-    setSwipeStateMobile: PropType.func.isRequired,
-    swipeStateMobile: PropType.string.isRequired,
-    togglePredictedDamageLayerVisibility: PropType.func.isRequired,
-  };
-
   const [panelVisibility, setPanelVisibility] = useState("d-none");
 
   const togglePanelVisibility = () => {
@@ -40,28 +33,32 @@ const VisualizerInformationMobile = ({
   return (
     <>
       <div
-        className="absolute-labels post-disaster visualizer-information-mobile d-block d-lg-none"
+        className={`absolute-labels post-disaster visualizer-information-mobile${
+          panelVisibility === "" ? " visualizer-information-mobile--expanded" : ""
+        } d-block d-lg-none ${surfaceClassName}`}
       >
-        <ActionButton
-          iconProps={{ iconName: panelVisibility === "" ? "cancel" : "info" }}
+        <Button
+          appearance="transparent"
+          icon={<FluentIcon name={panelVisibility === "" ? "cancel" : "info"} />}
           onClick={() => {
             togglePanelVisibility();
           }}
         >
           <span className="ms-2 fw-semibold">Info</span>
-        </ActionButton>
+        </Button>
 
-        <div className={panelVisibility + " p-3 pt-0 d-flex flex-column"}>
-          <Text variant="medium" className="mt-2 fw-semibold">
+        <div
+          className={`${panelVisibility} visualizer-information-mobile-content d-flex flex-column`}
+        >
+          <Text className="mt-2 fw-semibold">
             {visualizerResults.projectName}
           </Text>
 
-          <Toggle
-            onText="Post Event"
-            offText="Pre Event"
+          <Switch
+            label={swipeStateMobile === "post" ? "Post Event" : "Pre Event"}
             checked={swipeStateMobile === "post"}
-            onChange={(e, checked) =>
-              setSwipeStateMobile(checked ? "post" : "pre")
+            onChange={(e, data) =>
+              setSwipeStateMobile(data.checked ? "post" : "pre")
             }
             className="mt-2"
           />
@@ -69,15 +66,15 @@ const VisualizerInformationMobile = ({
           <hr />
           {swipeStateMobile === "pre" ? (
             <>
-              <Text variant="medium" className="fw-semibold">
+              <Text className="fw-semibold">
                 Pre disaster imagery
               </Text>
-              <Text variant="medium">
+              <Text>
                 {convertPreOrPostEventImageryDate(
                   visualizerResults.imageryCaptureDatePreEvent
                 )}
               </Text>
-              <Text variant="small">
+              <Text size={200}>
                 {convertPreOrPostEventImagerySource(
                   visualizerResults.preDisasterImagery.url, visualizerResults.sourceTypePreEvent
                 )}
@@ -85,15 +82,15 @@ const VisualizerInformationMobile = ({
             </>
           ) : (
             <>
-              <Text variant="medium" className="fw-semibold">
+              <Text className="fw-semibold">
                 Post disaster imagery
               </Text>
-              <Text variant="medium">
+              <Text>
                 {convertPreOrPostEventImageryDate(
                   visualizerResults.imageryCaptureDatePostEvent
                 )}
               </Text>
-              <Text variant="small">
+              <Text size={200}>
                 {convertPreOrPostEventImagerySource(
                   visualizerResults.postDisasterImagery.url, visualizerResults.sourceTypePostEvent
                 )}
@@ -106,20 +103,20 @@ const VisualizerInformationMobile = ({
             <Checkbox
               defaultChecked={true}
               label="Predicted damage layer"
-              onChange={(e, checked) =>
+              onChange={(e, data) =>
                 togglePredictedDamageLayerVisibility(
                   "predictedDamageLayer",
-                  checked
+                  data.checked
                 )
               }
             />
             <Checkbox
               defaultChecked={false}
               label="Predictions layer (raw)"
-              onChange={(e, checked) =>
+              onChange={(e, data) =>
                 togglePredictedDamageLayerVisibility(
                   "predictionsLayer",
-                  checked
+                  data.checked
                 )
               }
             />
@@ -128,6 +125,16 @@ const VisualizerInformationMobile = ({
       </div>
     </>
   );
+};
+
+VisualizerInformationMobile.propTypes = {
+  visualizerResults: PropType.object.isRequired,
+  convertPreOrPostEventImageryDate: PropType.func.isRequired,
+  convertPreOrPostEventImagerySource: PropType.func.isRequired,
+  setSwipeStateMobile: PropType.func.isRequired,
+  swipeStateMobile: PropType.string.isRequired,
+  togglePredictedDamageLayerVisibility: PropType.func.isRequired,
+  surfaceClassName: PropType.string.isRequired,
 };
 
 export default VisualizerInformationMobile;

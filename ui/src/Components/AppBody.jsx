@@ -33,7 +33,7 @@ const AppBody = ({ setModalComponent }) => {
   const { appParams } = useContext(AppContext);
 
   return (
-    <div className="d-flex flex-grow-1 justify-content-center">
+    <div className="app-body-shell d-flex flex-grow-1 justify-content-center">
       {appParams.isLoading && <Loading />}
       <Routes>
         {appParams.userRoles !== null &&

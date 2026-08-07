@@ -47,33 +47,26 @@
     max-width: 900px;
 }
 
+.visualizer-information-mobile-content {
+    padding: 0 12px 12px;
+}
+
 .labels-back-button {
     margin-top: 2px;
     padding: 1px;
 }
 
 .info-panel-checkboxes-wrapper {
-    border: 3px solid #eaeaea;
+    border: 1px solid var(--colorNeutralStroke2);
     border-radius: 5px;
     padding: 10px;
     margin-bottom: 10px;
 }
 
-.map-legend {
-    width: 170px;
-    height: auto;
-}
-
-
 @media screen and (max-width: 1200px) {
     .absolute-labels {
         padding: 5px;
         max-width: fit-content;
-    }
-
-    .map-legend {
-        width: 130px;
-        height: auto;
     }
 
     .imagery-controls {
@@ -82,4 +75,27 @@
         left: 10px;
     }
 
+}
+
+@media screen and (max-width: 991.98px) {
+    .visualizer-information-mobile--expanded {
+        left: 8px;
+        right: 8px;
+        width: auto;
+        max-width: none;
+        box-sizing: border-box;
+        padding: 4px;
+    }
+}
+
+@media screen and (max-width: 700px) {
+    .building-validation-page #validationMap .bottom-left.subcontrol-container {
+        display: none;
+    }
+
+    .building-validation-page #validationMap .non-fixed.subcontrol-container {
+        position: absolute;
+        right: 0;
+        bottom: calc(min(55vh, 520px) + 8px);
+    }
 }

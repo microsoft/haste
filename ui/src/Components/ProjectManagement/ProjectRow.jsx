@@ -1,7 +1,16 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { IconButton, Text, TooltipHost, Link } from "@fluentui/react";
+import {
+  Button,
+  Tooltip,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 
 import PropTypes from "prop-types";
 import { apiDelete } from "../../util/api";
@@ -9,77 +18,34 @@ import { AppContext } from "../../AppContext";
 import CreateEditProjectModal from "../CreateEditProjectModal";
 import { useNavigate } from "react-router-dom";
 import { limitTextLength } from "../../util/conversion";
+import { formatProjectDate } from "./projectStatus";
 
 import React from "react";
 
-const ProjectRow = ({ item, index, setModalComponent, fetchProjects, moreInfoVisibleId, setMoreInfoVisibleId }) => {
+const ProjectRow = ({
+  item,
+  index,
+  columns,
+  countryNames,
+  setModalComponent,
+  fetchProjects,
+}) => {
   ProjectRow.propTypes = {
     item: PropTypes.object.isRequired,
     index: PropTypes.number.isRequired,
+    columns: PropTypes.arrayOf(
+      PropTypes.shape({
+        key: PropTypes.string.isRequired,
+        label: PropTypes.string,
+      })
+    ).isRequired,
+    countryNames: PropTypes.object,
     setModalComponent: PropTypes.func,
     fetchProjects: PropTypes.func.isRequired,
-    moreInfoVisibleId: PropTypes.string,
-    setMoreInfoVisibleId: PropTypes.func,
   };
 
   const navigate = useNavigate();
   const { setDialog, setIsLoading } = React.useContext(AppContext);
-
-  const moreMenuOptions = {
-    items: [
-      {
-        key: "info",
-        className: "d-block d-lg-none",
-        text: moreInfoVisibleId === item.projectId ? "Hide Info" : "View Info",
-        iconProps: { iconName: moreInfoVisibleId === item.projectId ? "Cancel" : "Info" },
-        onClick: () => {
-          if (moreInfoVisibleId === item.projectId) {
-            setMoreInfoVisibleId(null);
-          } else {
-            setMoreInfoVisibleId(item.projectId);
-          }
-        },
-      },
-      {
-        key: "edit",
-        text: "Edit",
-        iconProps: { iconName: "Edit" },
-        onClick: () => {
-          setModalComponent(
-            <CreateEditProjectModal
-              onClose={() => setModalComponent(null)}
-              projectId={item.projectId}
-            />
-          );
-        },
-      },
-      {
-        key: "remove",
-        text: "Remove",
-        iconProps: { iconName: "Delete" },
-        onClick: () => {
-          setDialog(
-            "Important",
-            `Do you want to remove the project "${item.name}"?. This will remove all child Image Layers, Labels and Models.`,
-            [
-              {
-                type: "primary",
-                key: "yes",
-                text: "Yes",
-                onClick: handleDeletion,
-              },
-              {
-                type: "default",
-                key: "no",
-                text: "No",
-                onClick: () => setDialog(),
-              },
-            ]
-          );
-        },
-      }
-    ],
-  };
 
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -105,101 +71,199 @@ const ProjectRow = ({ item, index, setModalComponent, fetchProjects, moreInfoVis
     setIsLoading(false);
   }
 
+  function confirmRemove() {
+    setDialog(
+      "Important",
+      `Do you want to remove the project "${item.name}"?. This will remove all child Image Layers, Labels and Models.`,
+      [
+        {
+          type: "primary",
+          key: "yes",
+          text: "Yes",
+          onClick: handleDeletion,
+        },
+        {
+          type: "default",
+          key: "no",
+          text: "No",
+          onClick: () => setDialog(),
+        },
+      ]
+    );
+  }
+
+  function renderCell(column) {
+    const key = column.key;
+    const label = column.label || key;
+    switch (key) {
+      case "name":
+        return (
+          <td key={key} data-label={label}>
+            <div className="pgrid-name-cell">
+              <FluentIcon name="FolderHorizontal" className="pgrid-name-icon" />
+              <Tooltip content={item.name} relationship="label">
+                <span
+                  className="pgrid-name-link"
+                  id={"projectsName" + index}
+                  role="link"
+                  tabIndex={0}
+                  onClick={() => navigate(`/project/${item.projectId}`)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      navigate(`/project/${item.projectId}`);
+                    }
+                  }}
+                >
+                  {limitTextLength(item.name, false, 45)}
+                </span>
+              </Tooltip>
+            </div>
+          </td>
+        );
+      case "description":
+        return (
+          <td key={key} data-label={label}>
+            <Tooltip content={item.description || "—"} relationship="label">
+              <div
+                className="pgrid-desc-cell"
+                id={"projectsDescription" + index}
+              >
+                {item.description ? (
+                  limitTextLength(item.description, 90, 90)
+                ) : (
+                  <span className="pgrid-muted">—</span>
+                )}
+              </div>
+            </Tooltip>
+          </td>
+        );
+      case "createdBy": {
+        const createdBy = item.createdBy || item.userId;
+        return (
+          <td key={key} data-label={label} id={"projectsCreatedBy" + index}>
+            {createdBy ? (
+              limitTextLength(createdBy, 40, 40)
+            ) : (
+              <span className="pgrid-muted">—</span>
+            )}
+          </td>
+        );
+      }
+      case "affectedCountries": {
+        const countries = Array.isArray(item.affectedCountries)
+          ? item.affectedCountries
+          : [];
+        if (countries.length === 0) {
+          return (
+            <td key={key} data-label={label}>
+              <span className="pgrid-muted">—</span>
+            </td>
+          );
+        }
+        const shown = countries.slice(0, 2);
+        const rest = countries.length - shown.length;
+        const countryName = (code) => countryNames?.[code] ?? code;
+        return (
+          <td key={key} data-label={label} id={"projectsCountries" + index}>
+            <div className="pgrid-country-cell">
+              {shown.map((country) => (
+                <span className="pgrid-country-pill" key={country}>
+                  <FluentIcon name="Globe" className="pgrid-country-icon" />
+                  {countryName(country)}
+                </span>
+              ))}
+              {rest > 0 && (
+                <Tooltip content={countries.map(countryName).join(", ")} relationship="label">
+                  <span className="pgrid-country-pill pgrid-country-more">
+                    +{rest}
+                  </span>
+                </Tooltip>
+              )}
+            </div>
+          </td>
+        );
+      }
+      case "imageLayerCount":
+        return (
+          <td key={key} data-label={label} className="pgrid-td-numeric">
+            <span
+              className="pgrid-count-badge"
+              id={"projectsImageLayerCount" + index}
+            >
+              {item.imageLayerCount ?? 0}
+            </span>
+          </td>
+        );
+      case "modelsCount":
+        return (
+          <td key={key} data-label={label} className="pgrid-td-numeric">
+            <span className="pgrid-count-badge">{item.modelsCount ?? 0}</span>
+          </td>
+        );
+      case "labelsCount":
+        return (
+          <td key={key} data-label={label} className="pgrid-td-numeric">
+            <span className="pgrid-count-badge">{item.labelsCount ?? 0}</span>
+          </td>
+        );
+      case "creationDate":
+        return (
+          <td key={key} data-label={label} id={"projectsCreationDate" + index}>
+            {formatProjectDate(item.creationDate)}
+          </td>
+        );
+      default:
+        return <td key={key} data-label={label} />;
+    }
+  }
+
   return (
-    <React.Fragment>
-      <tr>
-        <td className="custom-text-no-wrap">
-          <TooltipHost content={item.name} delay={2}>
-            <Text variant="medium" className="pe-4 d-flex flex-column" id={"projectsName" + index}>
-              <Link onClick={() => navigate(`/project/${item.projectId}`)}>
-                {limitTextLength(item.name, false, 55)}
-              </Link>
-            </Text>
-          </TooltipHost>
-
-
-          {moreInfoVisibleId == item.projectId && (<>
-            <Text variant="small">
-              <table className="col-12 dashboard-inner-table p-3 mt-2">
-                <tbody>
-                  <tr>
-                    <td>
-                      <div className="pb-2">
-                        <Text
-                          variant="small"
-                          className="me-4 fw-semibold custom-text-color"
-                        >
-                          Project Info:
-                        </Text>
-                      </div>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td>
-                      <span className="fw-semibold">Description:</span>{limitTextLength(item.description, 500, 55)}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td>
-                      <span className="fw-semibold">Layer Count:</span> {item.imageLayerCount}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td>
-                      <span className="fw-semibold">Creation Date:</span> {item.creationDate.substring(0, 10) + " " + item.creationDate.substring(11, 19)}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </Text>
-          </>
-          )}
-
-
-        </td>
-        <td className="custom-text-no-wrap d-none d-lg-table-cell">
-          <Text
-            variant="medium"
-            className="pe-4 ellipsis"
-            id={"projectsDescription" + index}
-          >
-            <TooltipHost content={item.description} delay={2}>
-              {limitTextLength(item.description, 80, 70)}
-            </TooltipHost>
-          </Text>
-        </td>
-        <td className="custom-text-no-wrap d-none d-xl-table-cell">
-          <Text
-            variant="medium"
-            className="pe-4"
-            id={"projectsImageLayerCount" + index}
-          >
-            {item.imageLayerCount}
-          </Text>
-        </td>
-        <td className="custom-text-no-wrap d-none d-xl-table-cell">
-          <Text
-            variant="medium"
-            className="pe-4"
-            id={"projectsCreationDate" + index}
-          >
-            {item.creationDate.substring(0, 10) +
-              " " +
-              item.creationDate.substring(11, 19)}
-          </Text>
-        </td>
-        <td className="custom-text-no-wrap d-flex align-items-start align-items-md-center justify-content-end">
-          <IconButton
-            id={"projectsMoreOptions" + index}
-            className="no-dropdown-icon"
-            menuProps={moreMenuOptions}
-            iconProps={{ iconName: "more" }}
-            title="Menu"
-            ariaLabel="Menu"
-          />
-        </td>
-      </tr>
-    </React.Fragment>
+    <tr>
+      {columns.map((col) => renderCell(col))}
+      <td className="pgrid-td-numeric" data-label="Actions">
+        <Menu positioning="below-end">
+          <MenuTrigger disableButtonEnhancement>
+            <Button
+              id={"projectsMoreOptions" + index}
+              appearance="subtle"
+              className="no-dropdown-icon"
+              icon={<FluentIcon name="More" />}
+              title="Menu"
+              aria-label="Menu"
+            />
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              <MenuItem
+                icon={<FluentIcon name="OpenFolderHorizontal" />}
+                onClick={() => navigate(`/project/${item.projectId}`)}
+              >
+                Open
+              </MenuItem>
+              <MenuItem
+                icon={<FluentIcon name="Edit" />}
+                onClick={() => {
+                  setModalComponent(
+                    <CreateEditProjectModal
+                      onClose={() => setModalComponent(null)}
+                      projectId={item.projectId}
+                    />
+                  );
+                }}
+              >
+                Edit
+              </MenuItem>
+              <MenuItem
+                icon={<FluentIcon name="Delete" />}
+                onClick={confirmRemove}
+              >
+                Remove
+              </MenuItem>
+            </MenuList>
+          </MenuPopover>
+        </Menu>
+      </td>
+    </tr>
   );
 };
 

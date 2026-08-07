@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import React from "react";
-import { TextField, IconButton } from "@fluentui/react";
+import { Input, Textarea, Field, Button } from "@fluentui/react-components";
+import { FluentIcon } from "../util/icons";
 
 import {
   onChangeMetadata,
@@ -29,47 +30,47 @@ const UserMetadataCreator = ({
       <div className="row" key={index}>
         <div className="col-12 align-items-end justify-content-center p- gap-0 gap-lg-2">
           <div className="col-12">
-            <TextField
-              id={`userMetadata${index}`}
-              label="Key"
-              value={metadata.key}
-              maxLength={50}
-              onChange={(e) => {
-                const filteredValue = e.target.value.replace(/[^A-Za-z0-9\-_\s]/g, "");
-                onChangeMetadata(
-                  index,
-                  "key",
-                  filteredValue,
-                  setComponentState,
-                  componentState
-                );
-              }}
-            />
+            <Field label="Key">
+              <Input
+                id={`userMetadata${index}`}
+                value={metadata.key}
+                maxLength={50}
+                onChange={(e, data) => {
+                  const filteredValue = data.value.replace(/[^A-Za-z0-9\-_\s]/g, "");
+                  onChangeMetadata(
+                    index,
+                    "key",
+                    filteredValue,
+                    setComponentState,
+                    componentState
+                  );
+                }}
+              />
+            </Field>
           </div>
           <div className="col-12 d-flex align-items-end gap-2 ">
-            <TextField
-              label="Value"
-              value={metadata.value}
-              maxLength={250}
-              autoAdjustHeight
-              multiline
-              className="flex-grow-1"
-              onChange={(e) => {
-                const filteredValue = e.target.value.replace(/[^A-Za-z0-9\-_\s]/g, "");
-                onChangeMetadata(
-                  index,
-                  "value",
-                  filteredValue,
-                  setComponentState,
-                  componentState
-                );
-              }}
-            />
+            <Field label="Value" className="flex-grow-1">
+              <Textarea
+                value={metadata.value}
+                maxLength={250}
+                onChange={(e, data) => {
+                  const filteredValue = data.value.replace(/[^A-Za-z0-9\-_\s]/g, "");
+                  onChangeMetadata(
+                    index,
+                    "value",
+                    filteredValue,
+                    setComponentState,
+                    componentState
+                  );
+                }}
+              />
+            </Field>
 
-            <IconButton
-              iconProps={{ iconName: "Delete" }}
+            <Button
+              appearance="subtle"
+              icon={<FluentIcon name="Delete" />}
               title="Remove Metadata"
-              ariaLabel="Remove Metadata"
+              aria-label="Remove Metadata"
               onClick={() =>
                 removeMetadata(index, setComponentState, componentState)
               }

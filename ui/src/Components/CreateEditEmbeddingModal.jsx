@@ -4,11 +4,13 @@
 // workflow). Mirrors CreateEditModelTrainingModal — collects the embedding
 // backbone + per-backbone parameters and POSTs to PutRunEmbeddingQueueMessage.
 import { useContext, useMemo, useState } from "react";
-import { Dropdown, TextField } from "@fluentui/react";
 import {
-  DefaultButton,
-  PrimaryButton,
-} from "@fluentui/react/lib/Button";
+  Dropdown,
+  Option,
+  Field,
+  Input,
+  Button,
+} from "@fluentui/react-components";
 import proptypes from "prop-types";
 
 import { apiPut } from "../util/api";
@@ -78,12 +80,13 @@ const CreateEditEmbeddingModal = ({
     setState((s) => ({ ...s, [key]: value }));
   }
 
-  function onModelChange(_e, option) {
-    if (!option) return;
+  function onModelChange(_e, data) {
+    const key = data.optionValue;
+    if (!key) return;
     // Switching to DINOv2 picks per-backbone defaults that match what the
     // server-side preprocessor would fill in (resizeFactor=1, no num_feats).
     setState((s) => {
-      if (option.key === "mosaiks") {
+      if (key === "mosaiks") {
         return {
           ...s,
           embeddingModel: "mosaiks",
@@ -93,7 +96,7 @@ const CreateEditEmbeddingModal = ({
       }
       return {
         ...s,
-        embeddingModel: option.key,
+        embeddingModel: key,
         resizeFactor: "1",
       };
     });
@@ -157,81 +160,103 @@ const CreateEditEmbeddingModal = ({
       icon="OpenFolderHorizontal"
       onClose={onClose}
       body={
-        <>
+        <div className="embedding-modal">
           <div className="row mb-2">
             <div className="col-12">
-              <TextField
-                id="createEmbeddingName"
-                label="Name"
-                value={state.name}
-                onChange={(e, v) => onField(v, "name")}
-                errorMessage={state.nameError}
-              />
+              <Field label="Name" validationMessage={state.nameError}>
+                <Input
+                  className="embedding-modal__control"
+                  id="createEmbeddingName"
+                  value={state.name}
+                  onChange={(e, data) => onField(data.value, "name")}
+                />
+              </Field>
             </div>
           </div>
           <div className="row mb-2">
             <div className="col-12">
-              <Dropdown
-                id="createEmbeddingModel"
-                label="Embedding model"
-                selectedKey={state.embeddingModel}
-                options={EMBEDDING_MODEL_OPTIONS.map((o) => ({
-                  key: o.key,
-                  text: o.text,
-                }))}
-                onChange={onModelChange}
-              />
-              <p style={{ fontSize: 12, color: "#666", margin: "8px 0" }}>
+              <Field label="Embedding model">
+                <Dropdown
+                  className="embedding-modal__control"
+                  id="createEmbeddingModel"
+                  selectedOptions={[String(state.embeddingModel)]}
+                  value={
+                    EMBEDDING_MODEL_OPTIONS.find(
+                      (o) => o.key === state.embeddingModel
+                    )?.text || ""
+                  }
+                  onOptionSelect={onModelChange}
+                >
+                  {EMBEDDING_MODEL_OPTIONS.map((o) => (
+                    <Option key={o.key} value={o.key}>
+                      {o.text}
+                    </Option>
+                  ))}
+                </Dropdown>
+              </Field>
+              <p className="embedding-modal__help">
                 {modelHelp}
               </p>
             </div>
           </div>
           <div className="row mb-4">
-            <div className="col-12 flex-column flex-md-row d-flex">
+            <div className="col-12 embedding-modal__parameters">
               {isMosaiks && (
-                <TextField
-                  id="createEmbeddingNumFeatures"
+                <Field
                   label="Number of features"
-                  className="me-0 me-md-4 mb-2"
-                  value={state.numFeatures}
-                  onChange={(e, v) => onField(v, "numFeatures")}
-                  errorMessage={state.numFeaturesError}
+                  className="embedding-modal__field"
                   required
-                />
+                  validationMessage={state.numFeaturesError}
+                >
+                  <Input
+                    className="embedding-modal__control"
+                    id="createEmbeddingNumFeatures"
+                    value={state.numFeatures}
+                    onChange={(e, data) => onField(data.value, "numFeatures")}
+                  />
+                </Field>
               )}
-              <TextField
-                id="createEmbeddingResizeFactor"
+              <Field
                 label="Resize factor"
-                className="me-0 me-md-4 mb-2"
-                value={state.resizeFactor}
-                onChange={(e, v) => onField(v, "resizeFactor")}
-                errorMessage={state.resizeFactorError}
+                className="embedding-modal__field"
                 required
-              />
-              <TextField
-                id="createEmbeddingBatchSize"
+                validationMessage={state.resizeFactorError}
+              >
+                <Input
+                  className="embedding-modal__control"
+                  id="createEmbeddingResizeFactor"
+                  value={state.resizeFactor}
+                  onChange={(e, data) => onField(data.value, "resizeFactor")}
+                />
+              </Field>
+              <Field
                 label="Batch size"
-                className="mb-2"
-                value={state.batchSize}
-                onChange={(e, v) => onField(v, "batchSize")}
-                errorMessage={state.batchSizeError}
+                className="embedding-modal__field"
                 required
-              />
+                validationMessage={state.batchSizeError}
+              >
+                <Input
+                  className="embedding-modal__control"
+                  id="createEmbeddingBatchSize"
+                  value={state.batchSize}
+                  onChange={(e, data) => onField(data.value, "batchSize")}
+                />
+              </Field>
             </div>
           </div>
           <div className="row">
-            <div className="col-12 d-flex justify-content-end">
-              <PrimaryButton
-                className="me-2"
+            <div className="col-12 embedding-modal__actions">
+              <Button
+                appearance="primary"
                 onClick={submit}
                 id="createEmbeddingSubmit"
               >
                 Embed
-              </PrimaryButton>
-              <DefaultButton onClick={onClose}>Cancel</DefaultButton>
+              </Button>
+              <Button onClick={onClose}>Cancel</Button>
             </div>
           </div>
-        </>
+        </div>
       }
     />
   );

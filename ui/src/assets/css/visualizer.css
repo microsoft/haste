@@ -13,11 +13,15 @@ html {
 
 
 .visualizer-container {
-  position: absolute;
-  left: 0px;
-  top: 40px;
-  height: calc(100% - 40px - var(--footer-height, 0px));
+  position: relative;
+  isolation: isolate;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: calc(100vh - 40px - var(--footer-height, 0px));
   width: 100%;
+  overflow: hidden;
+  color: var(--colorNeutralForeground1);
+  background-color: var(--colorNeutralBackground2);
 }
 
 .resizable-div {

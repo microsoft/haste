@@ -1,17 +1,24 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import React, { useState, useContext, useEffect } from "react";
+import { DatePicker } from "@fluentui/react-datepicker-compat";
 import {
-  TextField,
-  DefaultButton,
-  PrimaryButton,
-  ComboBox,
-  IconButton,
+  Button,
+  Combobox,
+  Option,
+  Field,
+  Input,
+  Textarea,
   Label,
   Link,
-  DatePicker,
   Text,
-} from "@fluentui/react";
+  OverlayDrawer,
+  DrawerHeader,
+  DrawerHeaderTitle,
+  DrawerBody,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../util/icons";
+import { useDrawerAnimation } from "../util/useDrawerAnimation";
 
 import {
   createComponentDefaultState,
@@ -25,7 +32,6 @@ import {
 
 import PrimaryClassCreator from "./PrimaryClassCreator";
 import { apiPut } from "../util/api";
-import SectionModal from "./SectionModal";
 import ErrorMessage from "./OtherComponents/ErrorMessage";
 import proptypes from "prop-types";
 import {
@@ -43,6 +49,8 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
     onClose: proptypes.func.isRequired,
     projectId: proptypes.string,
   };
+
+  const { open, requestClose } = useDrawerAnimation(onClose);
 
   const [componentState, setComponentState] = useState(null);
   const [selectedCountry, setSelectedCountry] = useState(null);
@@ -189,79 +197,105 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
   }
 
   return (
-    <SectionModal
-      title={projectId ? "Edit Project" : "Start a Project"}
-      body={
-        <div className="modal-container p-3">
+    <OverlayDrawer
+      open={open}
+      position="end"
+      size="medium"
+      style={{ width: "560px" }}
+      onOpenChange={(_, { open }) => {
+        if (!open) requestClose();
+      }}
+    >
+      <DrawerHeader className="pt-3">
+        <DrawerHeaderTitle
+          action={
+            <Button
+              appearance="subtle"
+              icon={<FluentIcon name="Cancel" />}
+              aria-label="Close panel"
+              onClick={requestClose}
+            />
+          }
+        >
+          <span className="d-flex align-items-center">
+            <FluentIcon
+              name="FolderHorizontal"
+              className="me-2 modal-icon"
+            />
+            {projectId ? "Edit Project" : "Start a Project"}
+          </span>
+        </DrawerHeaderTitle>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="p-3" style={{ width: "100%" }}>
           <div className="row mb-2">
             <div className="col-12 p-0">
-              <TextField
-                id="createEditProjectName"
-                required
-                label="Name"
-                value={componentState.name}
-                onChange={(e, newValue) =>
-                  onFormChange(
-                    "name",
-                    newValue,
-                    setComponentState,
-                    componentState
-                  )
-                }
-                errorMessage={componentState.nameError}
-                maxLength={250}
-              />
+              <Field label="Name" required validationMessage={componentState.nameError}>
+                <Input
+                  id="createEditProjectName"
+                  value={componentState.name}
+                  onChange={(e, data) =>
+                    onFormChange(
+                      "name",
+                      data.value,
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  maxLength={250}
+                />
+              </Field>
             </div>
           </div>
           <div className="row mb-2">
             <div className="col-12 p-0">
-              <TextField
-                id="createEditProjectDescription"
-                multiline
-                rows={5}
+              <Field
                 label="Description"
-                description={
+                hint={
                   componentState.description.length + "/2000 " + "characters"
                 }
-                value={componentState.description}
-                onChange={(e, newValue) =>
-                  onFormChange(
-                    "description",
-                    newValue,
-                    setComponentState,
-                    componentState
-                  )
-                }
-                maxLength={2000}
-              />
+              >
+                <Textarea
+                  id="createEditProjectDescription"
+                  rows={5}
+                  value={componentState.description}
+                  onChange={(e, data) =>
+                    onFormChange(
+                      "description",
+                      data.value,
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  maxLength={2000}
+                />
+              </Field>
             </div>
           </div>
 
           <div className="row mb-1 mt-4">
             <div className="col-12 p-0">
-              <Label className="me-2" required>
-                Event Date
-              </Label>
-              <DatePicker
-                id="createEditProjectEventDate"
-                placeholder="Select a date..."
-                ariaLabel="Select a date"
-                onSelectDate={(e) =>
-                  onFormChange(
-                    "eventDate",
-                    e,
-                    setComponentState,
-                    componentState
-                  )
-                }
-                isRequired={componentState.eventDateError}
-                value={
-                  componentState.eventDate !== ""
-                    ? new Date(componentState.eventDate)
-                    : ""
-                }
-                className="mb-3"
-              />
+              <Field label="Event Date" required>
+                <DatePicker
+                  id="createEditProjectEventDate"
+                  placeholder="Select a date..."
+                  aria-label="Select a date"
+                  onSelectDate={(e) =>
+                    onFormChange(
+                      "eventDate",
+                      e,
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  value={
+                    componentState.eventDate !== ""
+                      ? new Date(componentState.eventDate)
+                      : null
+                  }
+                  className="mb-3"
+                />
+              </Field>
             </div>
           </div>
 
@@ -273,29 +307,32 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
                 </Label>
               </div>
               <div className="col-12 d-flex">
-                <ComboBox
-                  id="createEditProjectAffectedCountries"
-                  ariaLabel="ExpandCountries"
-                  options={componentState.countries}
-                  placeholder="Select country"
-                  allowFreeInput
-                  onKeyUp={(e) => {
-                    if (e.key === "Enter") {
-                      handleCountryAddition();
-                    }
-                  }}
-                  onItemClick={(e, option) => {
-                    if (option) {
-                      handleCountryAdditionOnSelect(option);
-                    }
-                  }}
-                  autoComplete="on"
+                <Field
                   className="flex-grow-1"
-                  onChange={(_, option) => setSelectedCountry(option)}
-                  selectedKey={selectedCountry ? selectedCountry.key : null}
-                  text=""
-                  errorMessage={componentState.affectedCountriesError}
-                />
+                  validationMessage={componentState.affectedCountriesError}
+                >
+                  <Combobox
+                    id="createEditProjectAffectedCountries"
+                    aria-label="ExpandCountries"
+                    placeholder="Select country"
+                    freeform
+                    autoComplete="on"
+                    onOptionSelect={(e, data) => {
+                      const option = componentState.countries.find(
+                        (c) => c.key === data.optionValue
+                      );
+                      if (option) {
+                        handleCountryAdditionOnSelect(option);
+                      }
+                    }}
+                  >
+                    {componentState.countries.map((option) => (
+                      <Option key={option.key} value={option.key} text={option.text}>
+                        {option.text}
+                      </Option>
+                    ))}
+                  </Combobox>
+                </Field>
               </div>
 
             </div>
@@ -317,9 +354,10 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
                 className="col-auto d-flex align-items-center mb-1 pb-1 pt-1 ps-0 pe-0"
                 style={{ borderBottom: "1px solid #eaeaea" }}
               >
-                <IconButton
-                  ariaLabel="RemoveAffectedCountry"
-                  iconProps={{ iconName: "Delete" }}
+                <Button
+                  appearance="subtle"
+                  aria-label="RemoveAffectedCountry"
+                  icon={<FluentIcon name="Delete" />}
                   onClick={() =>
                     removeAffectedCountry(
                       affectedCountry,
@@ -342,30 +380,33 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
                 </Label>
               </div>
               <div className="col-12 d-flex">
-                <ComboBox
-                  id="createEditProjectEventTypes"
-                  ariaLabel="ExpandEventTypes"
-                  options={componentState.eventTypeList}
-                  placeholder="Select event types"
-                  allowFreeInput
-                  disabled={projectId !== undefined}
-                  onKeyUp={(e) => {
-                    if (e.key === "Enter") {
-                      handleEventTypesAddition();
-                    }
-                  }}
-                  onItemClick={(e, option) => {
-                    if (option) {
-                      handleEventTypesAdditionOnSelect(option);
-                    }
-                  }}
-                  autoComplete="on"
+                <Field
                   className="flex-grow-1"
-                  onChange={(_, option) => setSelectedEventType(option)}
-                  selectedKey={selectedEventType ? selectedEventType.key : null}
-                  text=""
-                  errorMessage={componentState.eventTypesError}
-                />
+                  validationMessage={componentState.eventTypesError}
+                >
+                  <Combobox
+                    id="createEditProjectEventTypes"
+                    aria-label="ExpandEventTypes"
+                    placeholder="Select event types"
+                    freeform
+                    autoComplete="on"
+                    disabled={projectId !== undefined}
+                    onOptionSelect={(e, data) => {
+                      const option = componentState.eventTypeList.find(
+                        (c) => c.key === data.optionValue
+                      );
+                      if (option) {
+                        handleEventTypesAdditionOnSelect(option);
+                      }
+                    }}
+                  >
+                    {componentState.eventTypeList.map((option) => (
+                      <Option key={option.key} value={option.key} text={option.text}>
+                        {option.text}
+                      </Option>
+                    ))}
+                  </Combobox>
+                </Field>
               </div>
 
             </div>
@@ -387,9 +428,10 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
                 className="col-auto d-flex align-items-center mb-1 pb-1 pt-1 ps-0 pe-0"
                 style={{ borderBottom: "1px solid #eaeaea" }}
               >
-                <IconButton
-                  ariaLabel="RemoveEventType"
-                  iconProps={{ iconName: "Delete" }}
+                <Button
+                  appearance="subtle"
+                  aria-label="RemoveEventType"
+                  icon={<FluentIcon name="Delete" />}
                   onClick={() =>
                     removeEventType(
                       eventType,
@@ -413,7 +455,7 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
 
                 <ErrorMessage errorMessage={componentState.primaryClassesError} />
 
-                <Text variant="medium" id="createEditProjectPrimaryClasses">
+                <Text id="createEditProjectPrimaryClasses">
                   These categories will be used to train the damage assessment model. Use the defaults here or edit them to define your own.
                 </Text>
               </div>
@@ -445,17 +487,15 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
 
           <div className="row">
             <div className="col-12 d-flex justify-content-end">
-              <PrimaryButton className="me-2" onClick={validateBeforeSubmit} id="createEditProjectSubmit">
+              <Button appearance="primary" className="me-2" onClick={validateBeforeSubmit} id="createEditProjectSubmit">
                 Submit
-              </PrimaryButton>
-              <DefaultButton onClick={onClose}>Cancel</DefaultButton>
+              </Button>
+              <Button onClick={requestClose}>Cancel</Button>
             </div>
           </div>
         </div>
-      }
-      onClose={onClose}
-      icon="OpenFolderHorizontal"
-    />
+      </DrawerBody>
+    </OverlayDrawer>
   );
 };
 

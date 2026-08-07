@@ -2,26 +2,33 @@
 // Licensed under the MIT License.
 import {
   Slider,
-  ActionButton,
-} from "@fluentui/react";
+  Button,
+  Field,
+  makeStyles,
+  tokens,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 
 import PropTypes from "prop-types";
-import { useState, useEffect, useRef } from "react";
+
+const useStyles = makeStyles({
+  surface: {
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    boxShadow: tokens.shadow8,
+  },
+});
 
 const VisualizerImageryControls = ({ updateImageryProperties, resetImageryProperties, imageryValues,  visualizerResults}) => {
-  VisualizerImageryControls.propTypes = {
-    updateImageryProperties: PropTypes.func.isRequired,
-    resetImageryProperties: PropTypes.func.isRequired,
-    imageryValues: PropTypes.object.isRequired,
-  };
-
+  const styles = useStyles();
 
   return (
     <>
       {visualizerResults.projectName && (
         <div
 
-          className=" d-none d-lg-flex absolute-labels imagery-controls"
+          className={`d-none d-lg-flex absolute-labels imagery-controls ${styles.surface}`}
           id="imageryControls"
         >
           <div>
@@ -31,59 +38,103 @@ const VisualizerImageryControls = ({ updateImageryProperties, resetImageryProper
               }}
               className="d-none d-lg-block"
             >
-              <Slider
-                label="Opacity"
-                min={0}
-                max={1}
-                step={0.01}
-                showValue={false}
-                onChange={(value) => updateImageryProperties("opacity", value)}
-                value={imageryValues.opacity}
-              />
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Opacity</span>
+                    <output>{Math.round(imageryValues.opacity * 100)}%</output>
+                  </span>
+                }
+              >
+                <Slider
+                  className="labeling-imagery-slider"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  onChange={(e, data) => updateImageryProperties("opacity", data.value)}
+                  value={imageryValues.opacity}
+                />
+              </Field>
 
-              <Slider
-                label="Contrast"
-                min={-1}
-                max={1}
-                step={0.01}
-                showValue={false}
-                onChange={(value) => updateImageryProperties("contrast", value)}
-                value={imageryValues.contrast}
-              />
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Contrast</span>
+                    <output>{imageryValues.contrast.toFixed(2)}</output>
+                  </span>
+                }
+              >
+                <Slider
+                  className="labeling-imagery-slider"
+                  min={-1}
+                  max={1}
+                  step={0.01}
+                  onChange={(e, data) => updateImageryProperties("contrast", data.value)}
+                  value={imageryValues.contrast}
+                />
+              </Field>
 
-              <Slider
-                label="Hue Rotation"
-                min={-180}
-                max={180}
-                step={1}
-                showValue={false}
-                onChange={(value) => updateImageryProperties("hueRotation", value)}
-                value={imageryValues.hueRotation}
-              />
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Hue Rotation</span>
+                    <output>{imageryValues.hueRotation}&deg;</output>
+                  </span>
+                }
+              >
+                <Slider
+                  className="labeling-imagery-slider"
+                  min={-180}
+                  max={180}
+                  step={1}
+                  onChange={(e, data) => updateImageryProperties("hueRotation", data.value)}
+                  value={imageryValues.hueRotation}
+                />
+              </Field>
 
-              <Slider
-                label="Saturation"
-                min={-1}
-                max={1}
-                step={0.01}
-                showValue={false}
-                onChange={(value) => updateImageryProperties("saturation", value)}
-                value={imageryValues.saturation}
-              />
+              <Field
+                className="labeling-imagery-field"
+                label={
+                  <span className="labeling-imagery-label">
+                    <span>Saturation</span>
+                    <output>{imageryValues.saturation.toFixed(2)}</output>
+                  </span>
+                }
+              >
+                <Slider
+                  className="labeling-imagery-slider"
+                  min={-1}
+                  max={1}
+                  step={0.01}
+                  onChange={(e, data) => updateImageryProperties("saturation", data.value)}
+                  value={imageryValues.saturation}
+                />
+              </Field>
 
-              <ActionButton
-                iconProps={{ iconName: "Slider" }}
+              <Button
+                appearance="transparent"
+                icon={<FluentIcon name="Slider" />}
                 className="w-100 mb-2 mt-2"
                 onClick={resetImageryProperties}
               >
                 Reset controls
-              </ActionButton>
+              </Button>
             </div>
           </div>
         </div>
       )}
     </>
   );
+};
+
+VisualizerImageryControls.propTypes = {
+  updateImageryProperties: PropTypes.func.isRequired,
+  resetImageryProperties: PropTypes.func.isRequired,
+  imageryValues: PropTypes.object.isRequired,
+  visualizerResults: PropTypes.object.isRequired,
 };
 
 export default VisualizerImageryControls;

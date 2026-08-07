@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Dependencies 
-import { ActionButton, Text, Link, Toggle } from "@fluentui/react";
+import { Button, Text, Link, makeStyles, tokens } from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import { useNavigate } from "react-router-dom";
 import { convertDateToString } from "../../util/conversion";
 import { sourceTypeOptions } from "../CreateEditImageLayerHelper";
@@ -10,6 +11,16 @@ import "../../assets/css/labels.css";
 import PropType from "prop-types";
 import InfoPanel from "./InfoPanel";
 import VisualizerInformationMobile from "./VisualizerInformationMobile";
+import "../../assets/css/drawingToolbar.css";
+
+const useStyles = makeStyles({
+  surface: {
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    boxShadow: tokens.shadow8,
+  },
+});
 
 const Labels = ({
   togglePredictedDamageLayerVisibility,
@@ -18,15 +29,8 @@ const Labels = ({
   setSwipeStateMobile,
   swipeStateMobile
 }) => {
-  Labels.propTypes = {
-    togglePredictedDamageLayerVisibility: PropType.func.isRequired,
-    resetMapPosition: PropType.func.isRequired,
-    visualizerResults: PropType.object.isRequired,
-    setSwipeStateMobile: PropType.func.isRequired,
-    swipeStateMobile: PropType.string.isRequired,
-  };
-
   const navigate = useNavigate();
+  const styles = useStyles();
 
   const handleBackNavigation = () => {
     navigate(-1);
@@ -73,27 +77,27 @@ const Labels = ({
         <>
           {/* PRE DISASTER */}
 
-          <div className="absolute-labels pre-disaster d-flex flex-column labels-back-button">
-            <ActionButton
+          <div className="labeling-tool-surface labeling-navigation-controls">
+            <Button
+              appearance="transparent"
               id="visualizerBackButton"
-              iconProps={{ iconName: "ChevronLeft" }}
-              className="w-100 p-0 m-0"
+              icon={<FluentIcon name="ChevronLeft" />}
               onClick={handleBackNavigation}
             >
               Back
-            </ActionButton>
+            </Button>
           </div>
 
-          <div className="absolute-labels pre-disaster d-flex flex-column d-none d-lg-flex">
-            <Text variant="large" className="fw-semibold">
+          <div className={`absolute-labels pre-disaster d-flex flex-column d-none d-lg-flex ${styles.surface}`}>
+            <Text className="fw-semibold">
               Pre disaster imagery
             </Text>
-            <Text variant="medium">
+            <Text>
               {convertPreOrPostEventImageryDate(
                 visualizerResults.imageryCaptureDatePreEvent
               )}
             </Text>
-            <Text variant="small">
+            <Text size={200}>
             {convertPreOrPostEventImagerySource(
                 visualizerResults.preDisasterImagery.url, visualizerResults.sourceTypePreEvent
               )}
@@ -102,16 +106,16 @@ const Labels = ({
 
           {/* POST DISASTER */}
 
-          <div className="absolute-labels post-disaster d-flex flex-column d-none d-lg-flex">
-            <Text variant="large" className="fw-semibold">
+          <div className={`absolute-labels post-disaster d-flex flex-column d-none d-lg-flex ${styles.surface}`}>
+            <Text className="fw-semibold">
               Post disaster imagery
             </Text>
-            <Text variant="medium">
+            <Text>
               {convertPreOrPostEventImageryDate(
                 visualizerResults.imageryCaptureDatePostEvent
               )}
             </Text>
-            <Text variant="small">
+            <Text size={200}>
               {convertPreOrPostEventImagerySource(
                 visualizerResults.postDisasterImagery.url, visualizerResults.sourceTypePostEvent
               )}
@@ -130,6 +134,7 @@ const Labels = ({
             togglePredictedDamageLayerVisibility={
               togglePredictedDamageLayerVisibility
             }
+            surfaceClassName={styles.surface}
           />
 
           <InfoPanel
@@ -138,11 +143,20 @@ const Labels = ({
             }
             resetMapPosition={resetMapPosition}
             visualizerResults={visualizerResults}
+            surfaceClassName={styles.surface}
           />
         </>
       )}
     </>
   );
+};
+
+Labels.propTypes = {
+  togglePredictedDamageLayerVisibility: PropType.func.isRequired,
+  resetMapPosition: PropType.func.isRequired,
+  visualizerResults: PropType.object.isRequired,
+  setSwipeStateMobile: PropType.func.isRequired,
+  swipeStateMobile: PropType.string.isRequired,
 };
 
 export default Labels;

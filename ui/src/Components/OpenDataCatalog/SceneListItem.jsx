@@ -1,9 +1,68 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import PropTypes from "prop-types";
-import { DefaultButton, Icon, Text, Link } from "@fluentui/react";
+import {
+  Button,
+  Link,
+  Text,
+  makeStyles,
+  tokens,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 
 import { SOURCE_COLORS } from "./openDataCatalog";
+
+const useStyles = makeStyles({
+  item: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: tokens.spacingHorizontalS,
+    padding: tokens.spacingVerticalS,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    cursor: "pointer",
+    color: tokens.colorNeutralForeground1,
+    ":hover": {
+      backgroundColor: tokens.colorNeutralBackground1Hover,
+    },
+  },
+  selected: {
+    backgroundColor: tokens.colorBrandBackground2,
+    ":hover": {
+      backgroundColor: tokens.colorBrandBackground2Hover,
+    },
+  },
+  hovered: {
+    backgroundColor: tokens.colorNeutralBackground1Hover,
+  },
+  thumbnail: {
+    width: "56px",
+    height: "56px",
+    flexShrink: 0,
+    borderRadius: tokens.borderRadiusMedium,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground3,
+    backgroundPosition: "center",
+    backgroundSize: "cover",
+    backgroundRepeat: "no-repeat",
+    display: "grid",
+    placeItems: "center",
+  },
+  secondaryText: {
+    color: tokens.colorNeutralForeground2,
+  },
+  metadata: {
+    borderTop: `${tokens.strokeWidthThin} dashed ${tokens.colorNeutralStroke2}`,
+  },
+  metadataValue: {
+    paddingRight: tokens.spacingHorizontalL,
+    textAlign: "right",
+    fontVariantNumeric: "tabular-nums",
+  },
+  errorText: {
+    color: tokens.colorStatusDangerForeground1,
+    marginTop: tokens.spacingVerticalXXS,
+  },
+});
 
 function formatDate(iso) {
   if (!iso) return "—";
@@ -58,7 +117,7 @@ Badge.propTypes = {
 
 // Extra metadata shown only when a scene is selected. Rows with no value
 // are omitted so the panel stays compact.
-function ExpandedMeta({ scene }) {
+function ExpandedMeta({ scene, styles }) {
   const rows = [
     ["Captured", formatDate(scene.datetime)],
     [
@@ -80,8 +139,7 @@ function ExpandedMeta({ scene }) {
 
   return (
     <div
-      className="mt-2 pt-2"
-      style={{ borderTop: "1px dashed #e1e1e1" }}
+      className={`mt-2 pt-2 ${styles.metadata}`}
       onClick={(e) => e.stopPropagation()}
     >
       <div
@@ -94,8 +152,8 @@ function ExpandedMeta({ scene }) {
       >
         {rows.map(([k, v]) => (
           <div key={k} style={{ display: "contents" }}>
-            <span style={{ color: "#616161" }}>{k}</span>
-            <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+            <span className={styles.secondaryText}>{k}</span>
+            <span className={styles.metadataValue}>
               {v}
             </span>
           </div>
@@ -115,7 +173,10 @@ function ExpandedMeta({ scene }) {
     </div>
   );
 }
-ExpandedMeta.propTypes = { scene: PropTypes.object.isRequired };
+ExpandedMeta.propTypes = {
+  scene: PropTypes.object.isRequired,
+  styles: PropTypes.object.isRequired,
+};
 
 const SceneListItem = ({
   scene,
@@ -129,6 +190,7 @@ const SceneListItem = ({
   coversAoi,
   disabled,
 }) => {
+  const styles = useStyles();
   const color = SOURCE_COLORS[scene.source] || "#616161";
   const gsd = formatGsd(scene.gsd);
   const hasCog = !!scene.cogUrl;
@@ -141,33 +203,24 @@ const SceneListItem = ({
   return (
     <div
       data-scene-uid={scene.uid || scene.id}
-      className="d-flex align-items-start p-2"
+      className={`${styles.item} ${isSelected ? styles.selected : ""} ${
+        isHovered ? styles.hovered : ""
+      }`}
       style={{
-        gap: "10px",
-        borderBottom: "1px solid #eaeaea",
         borderLeft: isSelected ? `3px solid ${color}` : "3px solid transparent",
-        background: isSelected ? "#eef6fc" : isHovered ? "#f3f2f1" : "transparent",
-        cursor: "pointer",
       }}
       onMouseEnter={() => onHover(scene.uid || scene.id)}
       onMouseLeave={() => onHover(null)}
       onClick={() => onSelect(scene)}
     >
       <div
+        className={styles.thumbnail}
         style={{
-          width: 56,
-          height: 56,
-          flex: "none",
-          borderRadius: 4,
-          border: "1px solid #e1e1e1",
-          background: "#faf9f8 center/cover no-repeat",
           backgroundImage: scene.thumbUrl ? `url("${scene.thumbUrl}")` : "none",
-          display: "grid",
-          placeItems: "center",
         }}
       >
         {!scene.thumbUrl && (
-          <Icon iconName="Photo2" style={{ color, fontSize: 20 }} />
+          <FluentIcon name="Image" style={{ color, fontSize: 20 }} />
         )}
       </div>
 
@@ -184,14 +237,14 @@ const SceneListItem = ({
         </div>
         <Text
           block
-          nowrap
-          variant="smallPlus"
+          truncate
+          size={300}
           style={{ fontWeight: 600 }}
           title={scene.place || scene.title || scene.id}
         >
           {scene.place || scene.title || scene.id}
         </Text>
-        <Text block variant="small" style={{ color: "#616161" }}>
+        <Text block size={200} className={styles.secondaryText}>
           {formatDate(scene.datetime)}
           {scene.sensor ? ` · ${scene.sensor}` : ""}
           {gsd ? ` · ${gsd}` : ""}
@@ -199,33 +252,33 @@ const SceneListItem = ({
 
         <div className="d-flex mt-2" style={{ gap: "6px" }} onClick={(e) => e.stopPropagation()}>
           {showPre && (
-            <DefaultButton
-              text={addedPre ? "Added to Pre" : "＋ Pre-event"}
+            <Button
+              size="small"
+              appearance={!addedPre && hasCog && scene.phase === "pre" ? "primary" : "secondary"}
               disabled={disabled || !hasCog || addedPre}
-              checked={addedPre}
-              primary={!addedPre && hasCog && scene.phase === "pre"}
               onClick={() => onAdd(scene, "preEventImageryUrls")}
-              styles={{ root: { minWidth: 0, height: 26, padding: "0 8px", fontSize: 12 } }}
-            />
+            >
+              {addedPre ? "Added to Pre" : "+ Pre-event"}
+            </Button>
           )}
           {showPost && (
-            <DefaultButton
-              text={addedPost ? "Added to Post" : "＋ Post-event"}
+            <Button
+              size="small"
+              appearance={!addedPost && hasCog && scene.phase !== "pre" ? "primary" : "secondary"}
               disabled={disabled || !hasCog || addedPost}
-              checked={addedPost}
-              primary={!addedPost && hasCog && scene.phase !== "pre"}
               onClick={() => onAdd(scene, "postEventImageryUrls")}
-              styles={{ root: { minWidth: 0, height: 26, padding: "0 8px", fontSize: 12 } }}
-            />
+            >
+              {addedPost ? "Added to Post" : "+ Post-event"}
+            </Button>
           )}
         </div>
         {!hasCog && (
-          <Text block variant="small" style={{ color: "#a4262c", marginTop: 4 }}>
+          <Text block size={200} className={styles.errorText}>
             COG not linked yet — footprint only.
           </Text>
         )}
 
-        {isSelected && <ExpandedMeta scene={scene} />}
+        {isSelected && <ExpandedMeta scene={scene} styles={styles} />}
       </div>
     </div>
   );

@@ -1,8 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { Nav, Dropdown, SelectableOptionMenuItemType} from "@fluentui/react";
+import { Dropdown, Option } from "@fluentui/react-components";
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 const HelpDocsNav = ({ helpSections, selectedKey }) => {
@@ -11,15 +10,14 @@ const HelpDocsNav = ({ helpSections, selectedKey }) => {
     selectedKey: PropTypes.string,
   };
 
-  const [helpSectionsForComboBox, setHelpSectionsForComboBox] = useState([]);
   const navigate = useNavigate();
 
-  const handleSelection = (option) => {
-    if (option) {
+  const handleSelection = (optionKey) => {
+    if (optionKey) {
       for (const section of helpSections[0].links) {
         if (section.links && section.links.length > 0) {
           for (const link of section.links) {
-            if (link.key === option.key) {
+            if (link.key === optionKey) {
               navigate(`/help-docs/${link.onClick()}`);
               return;
             }
@@ -27,67 +25,62 @@ const HelpDocsNav = ({ helpSections, selectedKey }) => {
         }
       }
     }
-  }
-
-
-  useEffect(() => {
-    if (helpSections !== null && helpSections.length > 0) {
-      var tempSectionsForComboBox = [];
-      helpSections[0].links.forEach((section) => {
-        if (section.links && section.links.length > 0) {
-          tempSectionsForComboBox.push({
-            key: section.key,
-            text: section.name,
-            itemType: SelectableOptionMenuItemType.Header,
-          });
-          section.links.forEach((link) => {
-            tempSectionsForComboBox.push({
-              key: link.key,
-              text: link.name,
-            });
-          });
-        }
-      });
-      setHelpSectionsForComboBox(tempSectionsForComboBox);
-    }
-
-  }, []);
-
+  };
 
   return (
+    <div className="col-12 col-lg-auto p-4 ps-2 pe-3 help-docs-nav-container">
+      {/* Desktop sidebar */}
+      <div className="help-docs-nav d-none d-lg-flex flex-column">
+        {helpSections[0].links.map((section) => (
+          <div key={section.key} className="mb-3">
+            <div className="fw-semibold mb-1">{section.name}</div>
+            {section.links &&
+              section.links.map((link) => (
+                <div
+                  key={link.key}
+                  role="button"
+                  tabIndex={0}
+                  className={`help-docs-nav-link ${
+                    link.key === selectedKey ? "help-docs-nav-link-active" : ""
+                  }`}
+                  onClick={() => navigate(`/help-docs/${link.onClick()}`)}
+                  onKeyUp={(e) => {
+                    if (e.key === "Enter") {
+                      navigate(`/help-docs/${link.onClick()}`);
+                    }
+                  }}
+                >
+                  {link.name}
+                </div>
+              ))}
+          </div>
+        ))}
+      </div>
 
-    <div
-      className="col-12 col-lg-auto p-4 ps-2 pe-3 help-docs-nav-container"
-    >
-      <Nav
-        className="help-docs-nav d-none d-lg-flex"
-        groups={helpSections}
-        selectedKey={null}
-      />
-
-      {helpSectionsForComboBox != null && helpSectionsForComboBox.length && (
-        <Dropdown
-          id="help-docs-nav-combobox"
-          ariaLabel="ExpandSections"
-          options={helpSectionsForComboBox}
-          label="Help Docs Sections"
-          onKeyUp={(e) => {
-            if (e.key === "Enter") {
-              handleSectionAddition();
-            }
-          }}
-          onItemClick={(e, option) => {
-            if (option) {
-              handleSelection(option);
-            }
-          }}
-          selectedKey={selectedKey !== null ? selectedKey : undefined}
-          className="flex-grow-1 d-lg-none"
-          onChange={(_, option) => handleSelection(option)}
-          text=""
-        />
-      )}
-
+      {/* Mobile dropdown */}
+      <Dropdown
+        id="help-docs-nav-combobox"
+        aria-label="ExpandSections"
+        placeholder="Help Docs Sections"
+        className="flex-grow-1 d-lg-none"
+        selectedOptions={selectedKey ? [selectedKey] : []}
+        onOptionSelect={(e, data) => handleSelection(data.optionValue)}
+      >
+        {helpSections[0].links.map((section) =>
+          section.links && section.links.length > 0 ? (
+            <div key={section.key}>
+              <Option value={section.key} disabled text={section.name}>
+                {section.name}
+              </Option>
+              {section.links.map((link) => (
+                <Option key={link.key} value={link.key} text={link.name}>
+                  {link.name}
+                </Option>
+              ))}
+            </div>
+          ) : null
+        )}
+      </Dropdown>
     </div>
   );
 };

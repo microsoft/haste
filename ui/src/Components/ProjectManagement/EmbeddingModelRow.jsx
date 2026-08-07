@@ -5,12 +5,16 @@
 // (drops into the Azure Maps labeler) and, once predictions have been saved
 // (model.gpkgUrl set), the same Validation/Assessment reports as ModelRow.
 import {
-  DefaultButton,
-  IconButton,
-  PrimaryButton,
   Text,
-  TooltipHost,
-} from "@fluentui/react";
+  Tooltip,
+  Button,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
+} from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import { useContext, useState } from "react";
 import React from "react";
 import PropTypes from "prop-types";
@@ -115,7 +119,7 @@ const EmbeddingModelRow = ({
       {
         key: "downloadGeopackage",
         text: "Download Geopackage (.gpkg)",
-        iconProps: { iconName: "download" },
+        icon: <FluentIcon name="download" />,
         disabled: !hasPredictions,
         onClick: () => {
           // Stream the predictions GeoPackage through the same-origin API
@@ -134,7 +138,7 @@ const EmbeddingModelRow = ({
       {
         key: "validationReport",
         text: "Validation Report",
-        iconProps: { iconName: "ReportDocument" },
+        icon: <FluentIcon name="ReportDocument" />,
         // Match the standard workflow (ModelResultsButton): the validation
         // report needs Building Validation labels to compute precision/recall,
         // so it stays disabled until at least one exists.
@@ -144,7 +148,7 @@ const EmbeddingModelRow = ({
       {
         key: "assessmentReport",
         text: "Assessment Report",
-        iconProps: { iconName: "AnalyticsReport" },
+        icon: <FluentIcon name="AnalyticsReport" />,
         // Predictions alone (+ cached footprints) are enough for the
         // damage-count estimate; labels are optional, so this only needs
         // predictions — same as the standard workflow.
@@ -159,7 +163,7 @@ const EmbeddingModelRow = ({
       {
         key: "remove",
         text: "Remove",
-        iconProps: { iconName: "Delete" },
+        icon: <FluentIcon name="Delete" />,
         onClick: () => {
           setDialog("Important", `Do you want to remove this embedding?`, [
             {
@@ -213,7 +217,7 @@ const EmbeddingModelRow = ({
       >
         <tr>
           <td className="custom-text-no-wrap pt-1">
-            <Text variant="small">
+            <Text size={200}>
               <span className="fw-semibold">Name:</span>{" "}
               <span>{model.name}</span>
             </Text>
@@ -221,7 +225,7 @@ const EmbeddingModelRow = ({
         </tr>
         <tr>
           <td>
-            <Text variant="small">
+            <Text size={200}>
               <span className="fw-semibold">Model:</span>{" "}
               {embeddingModelLabel(model)}
             </Text>
@@ -229,14 +233,14 @@ const EmbeddingModelRow = ({
         </tr>
         <tr>
           <td>
-            <Text variant="small">
+            <Text size={200}>
               <span className="fw-semibold">Embedded:</span> {createdDate}
             </Text>
           </td>
         </tr>
         <tr>
           <td className="pe-3 custom-text-no-wrap">
-            <Text variant="small">
+            <Text size={200}>
               <span className="fw-semibold">User:</span>{" "}
               {limitTextLength(model.userId, false, 35)}
             </Text>
@@ -253,15 +257,16 @@ const EmbeddingModelRow = ({
               id={`singleEmbeddingStatus${index}`}
               prefix={embeddingModelLabel(model)}
               infoMetadata={embeddingInfoMetadata(model)}
+              contextLabel={`Model: ${model.name}`}
             />
           </td>
         </tr>
         <tr>
           <td className="pb-2 pt-2">
             <div className="d-flex align-items-center">
-              <DefaultButton
+              <Button
                 id={"interactiveLabel" + index}
-                className="dashboard-button"
+                className="dashboard-button dashboard-button-light"
                 onClick={() =>
                   navigate(
                     `/interactive-label/${projectId}/${imageLayerId}/${model.modelId}`
@@ -270,28 +275,65 @@ const EmbeddingModelRow = ({
                 disabled={!isProcessed}
               >
                 Interactive Label
-              </DefaultButton>
-              <PrimaryButton
-                id={"embeddingResults" + index}
-                text="Results"
-                menuProps={resultsMenu}
-                allowDisabledFocus
-                className="dashboard-button ms-2"
-                disabled={!hasPredictions}
-              />
+              </Button>
+              <Menu positioning="below-end">
+                <MenuTrigger disableButtonEnhancement>
+                  <Button
+                    appearance="primary"
+                    id={"embeddingResults" + index}
+                    className="dashboard-button ms-2"
+                    disabled={!hasPredictions}
+                  >
+                    Results
+                  </Button>
+                </MenuTrigger>
+                <MenuPopover>
+                  <MenuList>
+                    {resultsMenu.items.map((mi) => (
+                      <MenuItem
+                        key={mi.key}
+                        icon={mi.icon}
+                        disabled={mi.disabled}
+                        onClick={mi.onClick}
+                      >
+                        {mi.text}
+                      </MenuItem>
+                    ))}
+                  </MenuList>
+                </MenuPopover>
+              </Menu>
             </div>
           </td>
         </tr>
         <tr className="model-mobile-row">
           <td className="pb-2">
-            <IconButton
-              id={`singleEmbeddingMoreOptions${index}`}
-              className="no-dropdown-icon"
-              menuProps={moreMenuOptions}
-              iconProps={{ iconName: "more" }}
-              title="Menu"
-              ariaLabel="Menu"
-            />
+            <Menu positioning="below-end">
+              <MenuTrigger disableButtonEnhancement>
+                <Button
+                  id={`singleEmbeddingMoreOptions${index}`}
+                  appearance="subtle"
+                  className="no-dropdown-icon"
+                  icon={<FluentIcon name="More" />}
+                  title="Menu"
+                  aria-label="Menu"
+                />
+              </MenuTrigger>
+              <MenuPopover>
+                <MenuList>
+                  {moreMenuOptions.items.map((mi) => (
+                    <MenuItem
+                      key={mi.key}
+                      className={mi.className}
+                      icon={mi.icon}
+                      disabled={mi.disabled}
+                      onClick={mi.onClick}
+                    >
+                      {mi.text}
+                    </MenuItem>
+                  ))}
+                </MenuList>
+              </MenuPopover>
+            </Menu>
           </td>
         </tr>
         {reportModals}
@@ -300,29 +342,33 @@ const EmbeddingModelRow = ({
   }
 
   return (
-    <tr>
-      <td className="pe-3 custom-text-no-wrap">
-        <TooltipHost content={model.name} delay={2}>
-          <Text variant="small">
-            <span>{limitTextLength(model.name, false, 59)}</span>
-          </Text>
-        </TooltipHost>
-      </td>
-      <td className="pe-3 custom-text-no-wrap d-none d-xxl-table-cell">
-        <Text variant="small">
-          <span className="fw-semibold">Embedded:</span> {createdDate}
-        </Text>
-      </td>
-      <td className="pe-3 custom-text-no-wrap d-none d-xxl-table-cell">
-        <Text variant="small">
-          <span className="fw-semibold">User: </span>
-          {limitTextLength(model.userId, false, 35)}
-        </Text>
-      </td>
-      <td className="pe-3 custom-text-no-wrap">
-        <Text variant="medium">{embeddingModelLabel(model)}</Text>
-      </td>
-      <td className="pe-3 custom-text-no-wrap d-flex align-items-center">
+    <div className="lmodel">
+      <div className="lmodel-info">
+        <div className="lmodel-name-row">
+          <Tooltip content={model.name} relationship="label">
+            <span className="lmodel-name">
+              {limitTextLength(model.name, false, 59)}
+            </span>
+          </Tooltip>
+          <span className="lmodel-chip">{embeddingModelLabel(model)}</span>
+        </div>
+        <div className="lmodel-meta">
+          {createdDate && (
+            <span>
+              <b>Embedded:</b> {createdDate}
+            </span>
+          )}
+          {createdDate && model.userId && (
+            <span className="lmodel-meta-sep">&middot;</span>
+          )}
+          {model.userId && (
+            <span>
+              <b>User:</b> {limitTextLength(model.userId, false, 35)}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="lmodel-status">
         <StatusIndicator
           currentStep={model.currentStep}
           totalSteps={model.totalSteps}
@@ -333,43 +379,76 @@ const EmbeddingModelRow = ({
           prefix={embeddingModelLabel(model)}
           infoMetadata={embeddingInfoMetadata(model)}
         />
-      </td>
-      <td className="pe-3 custom-text-no-wrap">
-        <div className="d-flex align-items-center pt-1 pb-1">
-          <DefaultButton
-            id={"interactiveLabel" + index}
-            className="dashboard-button"
-            onClick={() =>
-              navigate(
-                `/interactive-label/${projectId}/${imageLayerId}/${model.modelId}`
-              )
-            }
-            disabled={!isProcessed}
-          >
-            Interactive Label
-          </DefaultButton>{" "}
-          <PrimaryButton
-            id={"embeddingResults" + index}
-            text="Results"
-            menuProps={resultsMenu}
-            allowDisabledFocus
-            className="dashboard-button ms-2"
-            disabled={!hasPredictions}
-          />
-        </div>
-      </td>
-      <td>
-        <IconButton
-          id={`singleEmbeddingMoreOptions${index}`}
-          className="no-dropdown-icon"
-          menuProps={moreMenuOptions}
-          iconProps={{ iconName: "more" }}
-          title="Menu"
-          ariaLabel="Menu"
-        />
-      </td>
+      </div>
+      <div className="lmodel-actions">
+        <Button
+          id={"interactiveLabel" + index}
+          className="dashboard-button dashboard-button-light"
+          onClick={() =>
+            navigate(
+              `/interactive-label/${projectId}/${imageLayerId}/${model.modelId}`
+            )
+          }
+          disabled={!isProcessed}
+        >
+          Interactive Label
+        </Button>
+        <Menu positioning="below-end">
+          <MenuTrigger disableButtonEnhancement>
+            <Button
+              appearance="primary"
+              id={"embeddingResults" + index}
+              className="dashboard-button"
+              disabled={!hasPredictions}
+            >
+              Results
+            </Button>
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              {resultsMenu.items.map((mi) => (
+                <MenuItem
+                  key={mi.key}
+                  icon={mi.icon}
+                  disabled={mi.disabled}
+                  onClick={mi.onClick}
+                >
+                  {mi.text}
+                </MenuItem>
+              ))}
+            </MenuList>
+          </MenuPopover>
+        </Menu>
+        <Menu positioning="below-end">
+          <MenuTrigger disableButtonEnhancement>
+            <Button
+              id={`singleEmbeddingMoreOptions${index}`}
+              appearance="subtle"
+              className="no-dropdown-icon"
+              icon={<FluentIcon name="More" />}
+              title="Menu"
+              aria-label="Menu"
+            />
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              {moreMenuOptions.items.map((mi) => (
+                <MenuItem
+                  key={mi.key}
+                  className={mi.className}
+                  icon={mi.icon}
+                  disabled={mi.disabled}
+                  onClick={mi.onClick}
+                >
+                  {mi.text}
+                </MenuItem>
+              ))}
+            </MenuList>
+          </MenuPopover>
+        </Menu>
+      </div>
       {reportModals}
-    </tr>
+    </div>
   );
 };
 

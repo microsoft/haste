@@ -1,17 +1,20 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import { useState, useContext, useEffect } from "react";
+import { DatePicker } from "@fluentui/react-datepicker-compat";
 import {
-  TextField,
-  PrimaryButton,
-  DefaultButton,
+  Input,
+  Textarea,
+  Button,
   Text,
-  DatePicker,
   Dropdown,
-} from "@fluentui/react";
+  Option,
+  Field,
+  Tooltip,
+} from "@fluentui/react-components";
 
 import { useParams } from "react-router-dom";
-import SectionHeader from "./Section/SectionHeader";
+import { FluentIcon } from "../util/icons";
 import CreateEditImageLayerFormImagerySources from "./CreateEditImageLayerFormImagerySources";
 import CreateEditImageLayerFormBuildingFootprints from "./CreateEditImageLayerFormBuildingFootprints";
 import OpenDataCatalogPanel from "./OpenDataCatalog/OpenDataCatalogPanel";
@@ -245,80 +248,137 @@ const CreateEditImageLayerModal = () => {
     return null;
   }
 
+  const headerPath = componentState.sectionHeaderProperties?.path;
+  const currentCrumbLabel = componentState.name?.trim() || "New Image Layer";
+  const displayHeaderPath = headerPath
+    ? headerPath.map((crumb, i, arr) =>
+        i === arr.length - 1 ? { ...crumb, name: currentCrumbLabel } : crumb
+      )
+    : headerPath;
+
   return (
-    <div className="d-flex flex-column col">
-      <SectionHeader properties={componentState.sectionHeaderProperties} />
-      <div className="container d-flex justify-content-center mt-3 mb-3 mt-lg-5 mb-lg-5">
-        <div className="col-12 col-md-9 col-lg-8 col-xl-6">
+    <div className="d-flex flex-column w-100">
+      <div className="pgrid-page pgrid-page--scroll">
+        {/* Header */}
+        <div className="pgrid-header">
+          <div>
+            <h1 className="pgrid-title">
+              {imageLayerId ? "Edit Image Layer" : "New Image Layer"}
+              <Tooltip
+                content="Define imagery sources, capture dates, and building footprints for this image layer."
+                relationship="label"
+              >
+                <span>
+                  <FluentIcon name="Info" className="pgrid-title-info" />
+                </span>
+              </Tooltip>
+            </h1>
+            <div className="pgrid-subtitle">
+              Define imagery sources, capture dates, and building footprints
+              for this image layer.
+            </div>
+            {headerPath && (
+              <nav className="pgrid-breadcrumb" aria-label="Breadcrumb">
+                {displayHeaderPath.map((crumb, i, arr) => (
+                  <span key={i} className="pgrid-breadcrumb-item">
+                    {crumb.link ? (
+                      <button
+                        type="button"
+                        className="pgrid-breadcrumb-link"
+                        onClick={() => navigate(crumb.link)}
+                      >
+                        {crumb.name}
+                      </button>
+                    ) : (
+                      <span className="pgrid-breadcrumb-current">
+                        {crumb.name}
+                      </span>
+                    )}
+                    {i < arr.length - 1 && (
+                      <span className="pgrid-breadcrumb-sep" aria-hidden="true">
+                        /
+                      </span>
+                    )}
+                  </span>
+                ))}
+              </nav>
+            )}
+          </div>
+        </div>
+        <div className="pgrid-form-body">
+          <div className="container d-flex justify-content-center">
+            <div className="col-12 col-xl-9 col-xxl-7">
           <div className="row mb-2">
             <div className="col-12">
-              <TextField
-                required
-                id="createEditImageLayerName"
-                maxLength={250}
-                label="Name"
-                onChange={(e, newValue) =>
-                  onFormChange(
-                    newValue,
-                    "name",
-                    setComponentState,
-                    componentState
-                  )
-                }
-                errorMessage={componentState.nameError}
-                value={componentState.name}
-              />
+              <Field label="Name" required validationMessage={componentState.nameError}>
+                <Input
+                  id="createEditImageLayerName"
+                  maxLength={250}
+                  onChange={(e, data) =>
+                    onFormChange(
+                      data.value,
+                      "name",
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  value={componentState.name}
+                />
+              </Field>
             </div>
           </div>
           <div className="row mb-2">
             <div className="col-12">
-              <TextField
-                id="createEditImageLayerDescription"
-                multiline
-                rows={5}
+              <Field
                 label="Description"
-                description={
+                hint={
                   componentState.description.length + "/2000 " + "characters"
                 }
-                maxLength={2000}
-                onChange={(e, newValue) =>
-                  onFormChange(
-                    newValue,
-                    "description",
-                    setComponentState,
-                    componentState
-                  )
-                }
-                value={componentState.description}
-              />
+              >
+                <Textarea
+                  id="createEditImageLayerDescription"
+                  rows={5}
+                  maxLength={2000}
+                  onChange={(e, data) =>
+                    onFormChange(
+                      data.value,
+                      "description",
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  value={componentState.description}
+                />
+              </Field>
             </div>
           </div>
 
           <div className="row mb-2">
             <div className="col-12">
-              <Dropdown
-                id="createEditImageLayerWorkflowType"
-                label="Workflow type"
-                selectedKey={componentState.workflowType || "standard"}
-                options={[
-                  {
-                    key: "standard",
-                    text: "Standard labeling workflow",
-                  },
-                  {
-                    key: "building",
-                    text: "Building labeling workflow",
-                  },
-                ]}
-                onChange={(e, option) =>
-                  onFormChange(
-                    option.key,
-                    "workflowType",
-                    setComponentState,
-                    componentState
-                  )
-                }
-              />
+              <Field label="Workflow type">
+                <Dropdown
+                  id="createEditImageLayerWorkflowType"
+                  selectedOptions={[
+                    String(componentState.workflowType || "standard"),
+                  ]}
+                  value={
+                    (componentState.workflowType || "standard") === "building"
+                      ? "Building labeling workflow"
+                      : "Standard labeling workflow"
+                  }
+                  onOptionSelect={(e, data) =>
+                    onFormChange(
+                      data.optionValue,
+                      "workflowType",
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                >
+                  <Option value="standard">Standard labeling workflow</Option>
+                  <Option value="building">Building labeling workflow</Option>
+                </Dropdown>
+              </Field>
             </div>
           </div>
 
@@ -326,7 +386,7 @@ const CreateEditImageLayerModal = () => {
             <div className="col-12 p-4  flex-column d-flex box-highlight">
               <div className="col-12">
                 <h6 className="m-0 pb-2">Imagery Details</h6>
-                <Text variant="medium">
+                <Text>
                   Add imagery files by providing publicly accessible URLs or
                   uploading files from a local directory that show the Area of
                   Interest (AOI). If multiple files are provided in a section,
@@ -337,12 +397,13 @@ const CreateEditImageLayerModal = () => {
                 </Text>
                 {!imageLayerId && (
                   <div className="mt-3">
-                    <DefaultButton
-                      iconProps={{ iconName: "Nav2DMapView" }}
-                      text="Browse Open Data Catalog"
+                    <Button
+                      icon={<FluentIcon name="MapRegular" />}
                       onClick={() => setIsCatalogOpen(true)}
-                    />
-                    <Text variant="small" className="d-block mt-1" style={{ color: "#616161" }}>
+                    >
+                      Browse Open Data Catalog
+                    </Button>
+                    <Text size={200} className="d-block mt-1" style={{ color: "#616161" }}>
                       Explore Vantor/Maxar and Planet open imagery for a disaster
                       and add scenes straight into the sections below.
                     </Text>
@@ -359,7 +420,7 @@ const CreateEditImageLayerModal = () => {
                   Post-Event Imagery
                   <span className="required-form-element"> *</span>
                 </h6>
-                <Text variant="medium" className="">
+                <Text className="">
                   This section is <span className="fw-semibold">required</span>.
                   Here you must add imagery files that represent an AOI captured
                   after the date of the natural catastrophe. Select the
@@ -377,69 +438,87 @@ const CreateEditImageLayerModal = () => {
               />
             </div>
 
-            <div className="col-12 p-4 pt-0 d-flex flex-column flex-md-row  box-highlight">
-              <DatePicker
-                label="Imagery capture date"
-                id="createEditImageLayerImageryCapturePostEventDate"
-                placeholder="Select a date..."
-                ariaLabel="Select a date"
-                className="flex-grow-1 me-0 me-md-2"
-                onSelectDate={(e) =>
-                  onFormChange(
-                    e,
-                    "imageryCaptureDatePostEvent",
-                    setComponentState,
-                    componentState
-                  )
-                }
+            <div className="col-12 p-4 pt-0 d-flex flex-column flex-md-row align-items-md-start box-highlight imagery-metadata-row">
+              <Field
+                label="Date"
                 required
-                isRequired={componentState.imageryCaptureDatePostEventError}
-                value={
-                  componentState.imageryCaptureDatePostEvent !== ""
-                    ? new Date(componentState.imageryCaptureDatePostEvent)
-                    : ""
-                }
-                disabled={imageLayerId ? true : false}
-              />
-              <Dropdown
-                id="createEditImageLayerPostEventSourceType"
-                placeholder="Select a Source Type"
-                label="Source type"
-                options={componentState.sourceTypeList.filter(
-                  (option) => option.showInDropdown
-                )}
-                value={componentState.sourceTypePostEvent}
-                onChange={(e, item) =>
-                  onFormChange(
-                    item.key,
-                    "sourceTypePostEvent",
-                    setComponentState,
-                    componentState
-                  )
-                }
-                errorMessage={componentState.sourceTypePostEventError}
-                selectedKey={componentState.sourceTypePostEvent}
                 className="flex-grow-1 me-0 me-md-2"
-                disabled={imageLayerId ? true : false}
-              />
-              <Dropdown
-                placeholder="Select a Format"
+              >
+                <DatePicker
+                  id="createEditImageLayerImageryCapturePostEventDate"
+                  placeholder="Select a date..."
+                  aria-label="Date"
+                  onSelectDate={(e) =>
+                    onFormChange(
+                      e,
+                      "imageryCaptureDatePostEvent",
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  value={
+                    componentState.imageryCaptureDatePostEvent !== ""
+                      ? new Date(componentState.imageryCaptureDatePostEvent)
+                      : null
+                  }
+                  disabled={imageLayerId ? true : false}
+                />
+              </Field>
+              <Field
+                label="Source type"
+                className="flex-grow-1 me-0 me-md-2"
+                validationMessage={componentState.sourceTypePostEventError}
+              >
+                <Dropdown
+                  id="createEditImageLayerPostEventSourceType"
+                  placeholder="Select a Source Type"
+                  selectedOptions={[String(componentState.sourceTypePostEvent ?? "")]}
+                  value={
+                    componentState.sourceTypeList.find(
+                      (o) => o.key === componentState.sourceTypePostEvent
+                    )?.text || ""
+                  }
+                  onOptionSelect={(e, data) =>
+                    onFormChange(
+                      data.optionValue,
+                      "sourceTypePostEvent",
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  disabled={imageLayerId ? true : false}
+                >
+                  {componentState.sourceTypeList
+                    .filter((option) => option.showInDropdown)
+                    .map((option) => (
+                      <Option key={option.key} value={String(option.key)}>
+                        {option.text}
+                      </Option>
+                    ))}
+                </Dropdown>
+              </Field>
+              <Field
                 label="Format"
-                options={[{ key: "tif", text: "Tif" }]}
-                value={componentState.format}
-                onChange={(e, item) =>
-                  onFormChange(
-                    item.key,
-                    "format",
-                    setComponentState,
-                    componentState
-                  )
-                }
-                errorMessage={componentState.formatError}
-                selectedKey={componentState.format}
                 className="flex-grow-1 mb-2"
-                disabled={imageLayerId ? true : false}
-              />
+                validationMessage={componentState.formatError}
+              >
+                <Dropdown
+                  placeholder="Select a Format"
+                  selectedOptions={[String(componentState.format ?? "")]}
+                  value={componentState.format === "tif" ? "Tif" : ""}
+                  onOptionSelect={(e, data) =>
+                    onFormChange(
+                      data.optionValue,
+                      "format",
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  disabled={imageLayerId ? true : false}
+                >
+                  <Option value="tif">Tif</Option>
+                </Dropdown>
+              </Field>
             </div>
           </div>
 
@@ -447,7 +526,7 @@ const CreateEditImageLayerModal = () => {
             <div className="col-12 p-4 pb-0 flex-column d-flex box-highlight">
               <div className="col-12 mb-4">
                 <h6 className="m-0 pb-3">Pre-Event Imagery</h6>
-                <Text variant="medium">
+                <Text>
                   This section is optional. Here you can add imagery files that
                   represent an AOI captured prior to the date of the natural
                   catastrophe. Select the &quot;Source Type&quot; that matches
@@ -464,67 +543,83 @@ const CreateEditImageLayerModal = () => {
               />
             </div>
 
-            <div className="col-12 p-4 pt-0 d-flex flex-column flex-md-row box-highlight">
-              <DatePicker
-                label="Imagery capture date  "
-                id="createEditImageLayerImageryCapturePretEventDate"
-                placeholder="Select a date..."
-                ariaLabel="Select a date"
-                className="flex-grow-1 me-0 me-md-2"
-                onSelectDate={(e) =>
-                  onFormChange(
-                    e,
-                    "imageryCaptureDatePreEvent",
-                    setComponentState,
-                    componentState
-                  )
-                }
-                value={
-                  componentState.imageryCaptureDatePreEvent !== ""
-                    ? new Date(componentState.imageryCaptureDatePreEvent)
-                    : ""
-                }
-                disabled={imageLayerId ? true : false}
-              />
-              <Dropdown
-                id="createEditImageLayerPreEventSourceType"
-                placeholder="Select a Source Type"
+            <div className="col-12 p-4 pt-0 d-flex flex-column flex-md-row align-items-md-start box-highlight imagery-metadata-row">
+              <Field label="Date" className="flex-grow-1 me-0 me-md-2">
+                <DatePicker
+                  id="createEditImageLayerImageryCapturePretEventDate"
+                  placeholder="Select a date..."
+                  aria-label="Date"
+                  onSelectDate={(e) =>
+                    onFormChange(
+                      e,
+                      "imageryCaptureDatePreEvent",
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  value={
+                    componentState.imageryCaptureDatePreEvent !== ""
+                      ? new Date(componentState.imageryCaptureDatePreEvent)
+                      : null
+                  }
+                  disabled={imageLayerId ? true : false}
+                />
+              </Field>
+              <Field
                 label="Source type"
-                options={componentState.sourceTypeList.filter(
-                  (option) => option.showInDropdown
-                )}
-                value={componentState.sourceTypePreEvent}
-                onChange={(e, item) =>
-                  onFormChange(
-                    item.key,
-                    "sourceTypePreEvent",
-                    setComponentState,
-                    componentState
-                  )
-                }
-                errorMessage={componentState.sourceTypePreEventError}
-                selectedKey={componentState.sourceTypePreEvent}
                 className="flex-grow-1 me-0 me-md-2"
-                disabled={imageLayerId ? true : false}
-              />
-              <Dropdown
-                placeholder="Select a Format"
+                validationMessage={componentState.sourceTypePreEventError}
+              >
+                <Dropdown
+                  id="createEditImageLayerPreEventSourceType"
+                  placeholder="Select a Source Type"
+                  selectedOptions={[String(componentState.sourceTypePreEvent ?? "")]}
+                  value={
+                    componentState.sourceTypeList.find(
+                      (o) => o.key === componentState.sourceTypePreEvent
+                    )?.text || ""
+                  }
+                  onOptionSelect={(e, data) =>
+                    onFormChange(
+                      data.optionValue,
+                      "sourceTypePreEvent",
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  disabled={imageLayerId ? true : false}
+                >
+                  {componentState.sourceTypeList
+                    .filter((option) => option.showInDropdown)
+                    .map((option) => (
+                      <Option key={option.key} value={String(option.key)}>
+                        {option.text}
+                      </Option>
+                    ))}
+                </Dropdown>
+              </Field>
+              <Field
                 label="Format"
-                options={[{ key: "tif", text: "Tif" }]}
-                value={componentState.format}
-                onChange={(e, item) =>
-                  onFormChange(
-                    item.key,
-                    "format",
-                    setComponentState,
-                    componentState
-                  )
-                }
-                errorMessage={componentState.formatError}
-                selectedKey={componentState.format}
                 className="flex-grow-1 mb-2"
-                disabled={imageLayerId ? true : false}
-              />
+                validationMessage={componentState.formatError}
+              >
+                <Dropdown
+                  placeholder="Select a Format"
+                  selectedOptions={[String(componentState.format ?? "")]}
+                  value={componentState.format === "tif" ? "Tif" : ""}
+                  onOptionSelect={(e, data) =>
+                    onFormChange(
+                      data.optionValue,
+                      "format",
+                      setComponentState,
+                      componentState
+                    )
+                  }
+                  disabled={imageLayerId ? true : false}
+                >
+                  <Option value="tif">Tif</Option>
+                </Dropdown>
+              </Field>
             </div>
           </div>
 
@@ -536,9 +631,11 @@ const CreateEditImageLayerModal = () => {
 
           <div className="row">
             <div className="col-12 d-flex justify-content-end">
-              <PrimaryButton onClick={submit} disabled={isUploading}>
+              <Button appearance="primary" onClick={submit} disabled={isUploading}>
                 Submit
-              </PrimaryButton>
+              </Button>
+            </div>
+          </div>
             </div>
           </div>
         </div>
