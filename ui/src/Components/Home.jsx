@@ -14,8 +14,6 @@ import PropTypes from "prop-types";
 import { formatProjectDate } from "./ProjectManagement/projectStatus";
 import CreateEditProjectModal from "./CreateEditProjectModal";
 
-import StartProjectButton from "./StartProjectButton";
-
 const StatCard = ({ icon, value, label, onClick }) => (
   <div
     className={`dash-kpi${onClick ? " dash-kpi--clickable" : ""}`}
@@ -75,6 +73,17 @@ WidgetShell.propTypes = {
   children: PropTypes.node.isRequired,
 };
 
+const EmptyWidgetPlaceholder = ({ message }) => (
+  <div className="dash-empty-placeholder" role="status">
+    <FluentIcon name="info" aria-hidden="true" />
+    <Text>{message}</Text>
+  </div>
+);
+
+EmptyWidgetPlaceholder.propTypes = {
+  message: PropTypes.string.isRequired,
+};
+
 
 const Home = () => {
   const navigate = useNavigate();
@@ -96,6 +105,7 @@ const Home = () => {
       try {
         const response = await apiGet("GetDashboardData");
         setDashboardData(response);
+        
       } catch (error) {
         console.error("Error fetching projects:", error);
       }
@@ -142,6 +152,7 @@ const Home = () => {
   }
 
   const projects = dashboardData.projects || [];
+  const isEmpty = projects.length === 0;
   const isAdmin = appParams.userRoles?.includes("administrators");
   const isMobileLayout = Number(appParams.bootstrapBreakpoint) <= 2;
 
@@ -200,8 +211,7 @@ const Home = () => {
 
   return (
     <>
-      {projects.length > 0 ? (
-        <div className="home-dashboard-page">
+        <div className={`home-dashboard-page${isEmpty ? " home-dashboard-page--empty" : ""}`}>
           <div className="home-dashboard-content d-flex col-12 container flex-column align-items-center">
             <div className="row w-100 mb-3">
             <div className="d-flex col-12 align-items-start flex-wrap gap-3">
@@ -236,13 +246,13 @@ const Home = () => {
                     icon="folderhorizontal"
                     value={projects.length}
                     label="Projects"
-                    onClick={() => navigate("/projects")}
+                    onClick={!isEmpty ? () => navigate("/projects") : undefined}
                   />
                   <StatCard
                     icon="reportdocument"
                     value={catalog.length}
                     label="Catalog Models"
-                    onClick={isAdmin ? () => navigate("/model-catalog") : undefined}
+                    onClick={!isEmpty && isAdmin ? () => navigate("/model-catalog") : undefined}
                   />
                   <StatCard icon="fileimage" value={totals.layers} label="Image Layers" />
                   <StatCard icon="modelingview" value={totals.models} label="Models" />
@@ -259,20 +269,28 @@ const Home = () => {
                   subtitle="Newest projects with quick context and key counts"
                   icon="folderhorizontal"
                   action={
-                    <Button appearance="subtle" onClick={() => navigate("/projects")}>
+                    <Button
+                      appearance="subtle"
+                      disabled={isEmpty}
+                      onClick={() => navigate("/projects")}
+                    >
                       View all
                     </Button>
                   }
                 >
-                  <div className="dash-recent-list">
-                    {projects.slice(0, 3).map((project, index) => (
-                      <OpenProject
-                        key={project.projectId}
-                        openProject={project}
-                        index={index}
-                      />
-                    ))}
-                  </div>
+                  {isEmpty ? (
+                    <EmptyWidgetPlaceholder message="No recent projects to display." />
+                  ) : (
+                    <div className="dash-recent-list">
+                      {projects.slice(0, 3).map((project, index) => (
+                        <OpenProject
+                          key={project.projectId}
+                          openProject={project}
+                          index={index}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </WidgetShell>
               </div>
 
@@ -283,7 +301,11 @@ const Home = () => {
                 icon="releasedefinition"
                 className="dash-widget--jobs"
               >
-                <OngoingJobs projects={projects} />
+                {isEmpty ? (
+                  <EmptyWidgetPlaceholder message="No ongoing jobs to display." />
+                ) : (
+                  <OngoingJobs projects={projects} />
+                )}
               </WidgetShell>
             </div>
 
@@ -293,7 +315,10 @@ const Home = () => {
                 subtitle="Rolling health indicators for daily operations"
                 icon="calendar"
               >
-                <div className="dash-snapshot-grid">
+                {isEmpty ? (
+                  <EmptyWidgetPlaceholder message="No activity data available." />
+                ) : (
+                  <><div className="dash-snapshot-grid">
                   <div className="dash-snapshot-item">
                     <div className="dash-snapshot-value">{newLast30}</div>
                     <div className="dash-snapshot-label">New projects (30d)</div>
@@ -310,11 +335,12 @@ const Home = () => {
                     <div className="dash-snapshot-value">{modelCoverage}%</div>
                     <div className="dash-snapshot-label">Model coverage</div>
                   </div>
-                </div>
-                {newLast30 > 0 && (
+                  </div>
+                  {newLast30 > 0 && (
                   <span className="dash-new-badge d-inline-block mt-3">
                     {newLast30} new in the last 30 days
                   </span>
+                  )}</>
                 )}
               </WidgetShell>
             </div>
@@ -326,7 +352,7 @@ const Home = () => {
                 icon="globe"
                 className="dash-widget--dark"
               >
-                {topCountries.length > 0 ? (
+                {!isEmpty && topCountries.length > 0 ? (
                   <div className="dash-bars">
                     {topCountries.map(([country, count]) => {
                       const max = topCountries[0][1] || 1;
@@ -347,7 +373,7 @@ const Home = () => {
                     })}
                   </div>
                 ) : (
-                  <Text>No affected countries registered yet.</Text>
+                  <EmptyWidgetPlaceholder message="No geographic data available." />
                 )}
               </WidgetShell>
             </div>
@@ -358,7 +384,7 @@ const Home = () => {
                 subtitle="Oldest projects that still have no imagery layers"
                 icon="info"
               >
-                {attentionProjects.length > 0 ? (
+                {!isEmpty && attentionProjects.length > 0 ? (
                   <div className="dash-attention-list">
                     {attentionProjects.map((project) => (
                       <button
@@ -375,21 +401,13 @@ const Home = () => {
                     ))}
                   </div>
                 ) : (
-                  <Text>All projects have moved beyond draft state.</Text>
+                  <EmptyWidgetPlaceholder message="No projects to review yet." />
                 )}
               </WidgetShell>
             </div>
             </div>
           </div>
         </div>
-      ) : (
-        <div className="d-flex col-12 container flex-column align-items-center justify-content-center">
-          <StartProjectButton
-            setModalComponent={setModalComponent}
-            id={"dashboardStartProject"}
-          />
-        </div>
-      )}
 
       {modalComponent}
     </>
