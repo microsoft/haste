@@ -164,21 +164,6 @@ const LeftPanel = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventImageryVisibilityState]);
 
-
-  // need a listener to update the post event imagery layer visibility on ctrl + p
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.ctrlKey && e.altKey && e.key === "c") {
-        setEventImageryVisibilityState((prevState) => !prevState);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [eventImageryVisibilityState]);
-
   const navigate = useNavigate();
 
   const handleBackNavigation = () => {
