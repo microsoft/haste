@@ -91,8 +91,13 @@ export async function apiPut(endpoint, data) {
       return response.status;
     }
 
-    if (response.status !== 200 && response.status !== 409) {
+    // Accept any 2xx (e.g. 202 Accepted for async queue-message endpoints),
+    // not just 200. Backward-compatible: existing 200 callers are unaffected.
+    if (!response.ok) {
       throw new Error(response);
+    }
+    if (response.status === 204) {
+      return null;
     }
     const message = await response.json();
     return message;
@@ -126,7 +131,7 @@ export async function apiDelete(endpoint) {
     const response = await fetch(buildUrl(endpoint), {
       method: 'DELETE'
     });
-    if (response.status !== 200) {
+    if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     return response;

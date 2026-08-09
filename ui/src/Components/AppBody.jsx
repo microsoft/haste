@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { Route, Routes, useLocation } from "react-router-dom";
-import { useContext, useEffect } from "react";
+import { Route, Routes } from "react-router-dom";
+import { useContext } from "react";
 
 import Loading from "./OtherComponents/Loading";
 import Error404 from "./Error404";
@@ -14,28 +14,27 @@ import BuildingValidation from "./BuildingValidation/BuildingValidation";
 import InteractiveLabeler from "./InteractiveLabeler/InteractiveLabeler";
 import Visualizer from "./Visualizer/Visualizer";
 import ModelCatalog from "./ModelCatalog";
+import PublishedDatasets from "./PublishedDatasets";
 
 import AdminUsers from "./AdminUsers";
 import AdminSourceTypes from "./AdminSourceTypes";
 import AdminLabelingTool from "./AdminLabelingTool";
 import CreateEditImageLayerForm from "./CreateEditImageLayerForm";
 import HelpDocs from "./HelpDocs";
-import { apiValidateUser, apiLogout } from "../util/api";
 import PropType from "prop-types";
 
 import { AppContext } from "../AppContext";
 
 const AppBody = ({ setModalComponent }) => {
-  AppBody.propTypes = {
-    setModalComponent: PropType.func.isRequired,
-  };
-
   const { appParams } = useContext(AppContext);
 
   return (
     <div className="app-body-shell d-flex flex-grow-1 justify-content-center">
       {appParams.isLoading && <Loading />}
       <Routes>
+        {appParams.userRoles !== null && appParams.publishingEnabled && (
+          <Route path="/published-datasets" element={<PublishedDatasets />} />
+        )}
         {appParams.userRoles !== null &&
           (appParams.userRoles.includes("administrators") ||
             appParams.userRoles.includes("contributors")) && (
@@ -105,6 +104,10 @@ const AppBody = ({ setModalComponent }) => {
       </Routes>
     </div>
   );
+};
+
+AppBody.propTypes = {
+  setModalComponent: PropType.func.isRequired,
 };
 
 export default AppBody;
