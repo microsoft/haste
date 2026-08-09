@@ -2,9 +2,10 @@
 # Licensed under the MIT License.
 import re
 
-from abstract_data_layer import AbstractDataLayer
 from azure.cosmos import CosmosClient, exceptions  # type: ignore
 from azure.identity import DefaultAzureCredential  # type: ignore
+
+from .abstract_data_layer import AbstractDataLayer
 
 
 class AzureCosmosDBDataLayer(AbstractDataLayer):
@@ -122,6 +123,34 @@ class AzureCosmosDBDataLayer(AbstractDataLayer):
                 partition_key=self.partition_key,
             )
         )
+        return items
+
+    def load_bounded(self, data_type, max_records, data_format="json"):
+        if (
+            data_format != "json"
+            or not isinstance(max_records, int)
+            or not 1 <= max_records <= 10000
+        ):
+            raise ValueError("Invalid bounded Cosmos DB read")
+        id_prefix = self._id_prefix(data_type)
+        query = (
+            f"SELECT TOP {max_records + 1} * FROM c "
+            "WHERE STARTSWITH(c.id, @id_prefix)"
+        )
+        items = list(
+            self.container.query_items(
+                query=query,
+                parameters=[
+                    {"name": "@id_prefix", "value": id_prefix},
+                ],
+                enable_cross_partition_query=True,
+                max_item_count=max_records + 1,
+            )
+        )
+        if len(items) > max_records:
+            raise ValueError(
+                f"Metadata exceeds the {max_records:,}-record limit"
+            )
         return items
 
     def delete(self, identifier, data_type, data_format="json"):

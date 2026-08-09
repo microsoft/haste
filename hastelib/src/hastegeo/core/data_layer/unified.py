@@ -35,7 +35,9 @@ class UnifiedDataLayer:
 
         if storage_type in storage_class_map:
             module_name, class_name = storage_class_map[storage_type]
-            module = importlib.import_module(module_name)
+            module = importlib.import_module(
+                f"{__package__}.{module_name}"
+            )
             data_layer_class = getattr(module, class_name)
             self.data_layer = data_layer_class(
                 partition_key=self.partition_key, **kwargs
@@ -121,6 +123,35 @@ class UnifiedDataLayer:
     def load_all_from_partition(self, data_type, data_format="json"):
         return self.data_layer.load_all_from_partition(
             data_type, data_format=data_format
+        )
+
+    def load_bounded(self, data_type, max_records, data_format="json"):
+        return self.data_layer.load_bounded(
+            data_type=data_type,
+            max_records=max_records,
+            data_format=data_format,
+        )
+
+    def load_page(
+        self,
+        data_type,
+        page,
+        page_size,
+        data_format="json",
+        target=None,
+        status=None,
+        project_id=None,
+        max_records=None,
+    ):
+        return self.data_layer.load_page(
+            data_type=data_type,
+            page=page,
+            page_size=page_size,
+            data_format=data_format,
+            target=target,
+            status=status,
+            project_id=project_id,
+            max_records=max_records,
         )
 
     def delete(self, identifier, data_type, data_format="json"):

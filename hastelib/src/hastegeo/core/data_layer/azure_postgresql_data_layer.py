@@ -5,10 +5,11 @@ import os
 import re
 
 import psycopg2  # type: ignore
-from abstract_data_layer import AbstractDataLayer
 from azure.identity import DefaultAzureCredential  # type: ignore
 from psycopg2 import sql  # type: ignore
 from rasterio.io import MemoryFile
+
+from .abstract_data_layer import AbstractDataLayer
 
 
 class AzurePostgreSQLDataLayer(AbstractDataLayer):
@@ -228,6 +229,25 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
                 )
                 results = cursor.fetchall()
                 return [json.loads(result[0]) for result in results]
+
+    def load_bounded(self, data_type, max_records, data_format="json"):
+        if data_format != "json" or max_records < 1:
+            raise ValueError("Invalid bounded PostgreSQL read")
+        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
+        with psycopg2.connect(connection_string) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT data FROM {} WHERE data_type = %s LIMIT %s"
+                    ).format(self._table_identifier()),
+                    (data_type, max_records + 1),
+                )
+                results = cursor.fetchall()
+        if len(results) > max_records:
+            raise ValueError(
+                f"Metadata exceeds the {max_records:,}-record limit"
+            )
+        return [json.loads(result[0]) for result in results]
 
     def delete(self, identifier, data_type):
         partition_key = (

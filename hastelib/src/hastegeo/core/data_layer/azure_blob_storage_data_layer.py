@@ -4,11 +4,12 @@ import hashlib
 import json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from threading import Lock
 
 import yaml
-from abstract_data_layer import AbstractDataLayer
-from azure.core.exceptions import ResourceExistsError
+from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.identity import DefaultAzureCredential  # type: ignore
 from azure.storage.blob import AccessPolicy  # type: ignore
 from azure.storage.blob import BlobBlock  # type: ignore
@@ -17,6 +18,11 @@ from azure.storage.blob import (
     ContainerSasPermissions,
     generate_container_sas,
 )
+
+from .abstract_data_layer import AbstractDataLayer
+
+_INITIALIZED_CONTAINERS = set()
+_INITIALIZED_CONTAINERS_LOCK = Lock()
 
 
 class AzureBlobStorageDataLayer(AbstractDataLayer):
@@ -49,20 +55,26 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
             )
             self.account_key = None
 
-        try:
-            # Create the container
-            self.container_client = self.blob_service_client.create_container(
-                container
-            )
-            logging.info(f"Container '{container}' created successfully.")
-        except ResourceExistsError:
-            logging.info(f"Container '{container}' already exists.")
-            self.container_client = (
-                self.blob_service_client.get_container_client(container)
-            )
-
         self.container_read_policy = container_read_policy_name
-        self._create_or_update_managed_access_policy()
+        self.container_client = self.blob_service_client.get_container_client(
+            container
+        )
+        cache_key = (
+            self.blob_service_client.url,
+            container,
+            self.container_read_policy,
+        )
+        with _INITIALIZED_CONTAINERS_LOCK:
+            if cache_key not in _INITIALIZED_CONTAINERS:
+                try:
+                    self.container_client.create_container()
+                    logging.info(
+                        f"Container '{container}' created successfully."
+                    )
+                except ResourceExistsError:
+                    logging.info(f"Container '{container}' already exists.")
+                self._create_or_update_managed_access_policy()
+                _INITIALIZED_CONTAINERS.add(cache_key)
 
     def _create_or_update_managed_access_policy(self):
         expiration_days = 90
@@ -177,7 +189,11 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
         if self.is_bytes(data):
             blob_client.upload_blob(data, overwrite=True)
         elif self.is_json(data):
-            blob_client.upload_blob(json.dumps(data), overwrite=True)
+            blob_client.upload_blob(
+                json.dumps(data),
+                overwrite=True,
+                metadata=self._index_metadata(data_type, data),
+            )
         elif self.is_yaml(data):
             logging.info("data is yaml, dumping to blob")
             blob_client.upload_blob(
@@ -345,6 +361,142 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
             elif data_format == "yaml":
                 data.append(yaml.safe_load(downloader.readall()))
         return data
+
+    def load_bounded(self, data_type, max_records, data_format="json"):
+        records, _ = self.load_page(
+            data_type=data_type,
+            page=1,
+            page_size=max_records,
+            data_format=data_format,
+            max_records=max_records,
+        )
+        return records
+
+    def load_page(
+        self,
+        data_type,
+        page,
+        page_size,
+        data_format="json",
+        target=None,
+        status=None,
+        project_id=None,
+        max_records=None,
+    ):
+        if page < 1 or page_size < 1:
+            raise ValueError("page and page_size must be positive")
+        if max_records is not None and max_records < 1:
+            raise ValueError("max_records must be positive")
+
+        prefix = (
+            f"{self.partition_key}/{data_type}_"
+            if self.partition_key
+            else None
+        )
+        matching_blobs = []
+        catalog_record_count = 0
+        scanned_blob_count = 0
+        scan_limit = max_records * 10 if max_records is not None else None
+        list_options = {
+            "name_starts_with": prefix,
+            "include": ["metadata"],
+        }
+        if max_records is not None:
+            list_options["results_per_page"] = max_records + 1
+        blobs = self.container_client.list_blobs(**list_options)
+        pages = blobs.by_page()
+        for blob_page in pages:
+            for blob in blob_page:
+                scanned_blob_count += 1
+                if scan_limit is not None and scanned_blob_count > scan_limit:
+                    raise ValueError(
+                        "Catalog storage scan exceeds the bounded envelope"
+                    )
+                parts = blob.name.split("/")
+                if "stats" in blob.name or len(parts) > 2:
+                    continue
+                if self.partition_key:
+                    matches = blob.name.startswith(
+                        f"{self.partition_key}/{data_type}_"
+                    )
+                else:
+                    matches = parts[-1].startswith(f"{data_type}_")
+                if not matches or not blob.name.endswith(f".{data_format}"):
+                    continue
+                catalog_record_count += 1
+                if (
+                    max_records is not None
+                    and catalog_record_count > max_records
+                ):
+                    raise ValueError(
+                        f"Catalog exceeds the {max_records:,}-record limit"
+                    )
+                metadata = blob.metadata or {}
+                if target and metadata.get("hastetarget") != target:
+                    continue
+                if status and metadata.get("hastestatus") != status:
+                    continue
+                if project_id and metadata.get("hasteproject") != project_id:
+                    continue
+                matching_blobs.append(blob)
+
+        matching_blobs.sort(
+            key=lambda blob: (
+                (blob.metadata or {}).get("hastesort")
+                or blob.last_modified.isoformat(),
+                blob.name,
+            ),
+            reverse=True,
+        )
+        total_count = len(matching_blobs)
+        start = (page - 1) * page_size
+        page_names = [
+            blob.name for blob in matching_blobs[start : start + page_size]
+        ]
+        records = self._load_blob_names(page_names, data_format)
+        total_count -= len(page_names) - len(records)
+        return records, total_count
+
+    @staticmethod
+    def _index_metadata(data_type, data):
+        if data_type != "published_dataset" or not isinstance(data, dict):
+            return None
+        return {
+            "hastesort": str(
+                data.get("publishedDate") or data.get("createdDate") or ""
+            ),
+            "hastetarget": str(data.get("target") or ""),
+            "hastestatus": str(data.get("status") or ""),
+            "hasteproject": str(data.get("projectId") or ""),
+        }
+
+    def _load_blob_names(self, blob_names, data_format):
+        if not blob_names:
+            return []
+
+        missing_blob = object()
+
+        def load_blob(blob_name):
+            try:
+                downloader = self.container_client.get_blob_client(
+                    blob_name
+                ).download_blob()
+            except ResourceNotFoundError:
+                return missing_blob
+            contents = downloader.readall()
+            if data_format == "json":
+                contents = json.loads(contents)
+                if isinstance(contents, str):
+                    contents = json.loads(contents)
+                return contents
+            if data_format == "yaml":
+                return yaml.safe_load(contents)
+            raise ValueError(f"Unsupported data format: {data_format}")
+
+        workers = min(32, len(blob_names))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            records = list(executor.map(load_blob, blob_names))
+        return [record for record in records if record is not missing_blob]
 
     def delete(self, identifier, data_type, data_format="json"):
         blob_name = self.get_file_path(identifier, data_type, data_format)

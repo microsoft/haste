@@ -15,6 +15,21 @@ REGISTRY_SERVER_PLACEHOLDER = "<registry-name>.azurecr.io"
 _SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
 
 
+def _get_bool_env(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_bounded_int_env(name, default, minimum, maximum=None):
+    value = int(os.getenv(name, str(default)))
+    if value < minimum or (maximum is not None and value > maximum):
+        upper = f" and {maximum}" if maximum is not None else ""
+        raise ValueError(f"{name} must be between {minimum}{upper}")
+    return value
+
+
 def _strip_scheme(value):
     """Reduce a registry URL to the bare login server.
 
@@ -250,6 +265,7 @@ class Config:
             },
         }
         self.queue_config = self.get_queue_config()
+        self.publishing_config = self.get_publishing_config()
         self.storage_type = os.getenv("METADATA_STORAGE_TYPE", "local").lower()
         self.artifact_storage_type = os.getenv(
             "ARTIFACT_STORAGE_TYPE", "local"
@@ -302,6 +318,41 @@ class Config:
             "embedding_queue_name": os.getenv(
                 "EMBEDDING_QUEUE_NAME", "embedding-queue"
             ),
+            "publish_queue_name": os.getenv(
+                "PUBLISH_QUEUE_NAME", "publish-queue"
+            ),
+        }
+
+    @staticmethod
+    def get_publishing_config():
+        """Get publishing feature and provider configuration."""
+        return {
+            "publishing_enabled": _get_bool_env(
+                "PUBLISHING_ENABLED", False
+            ),
+            "pc_provider_enabled": _get_bool_env(
+                "PC_PROVIDER_ENABLED", False
+            ),
+            "max_total_bytes": _get_bounded_int_env(
+                "PUBLISH_MAX_TOTAL_BYTES", 5 * 1024**3, 1
+            ),
+            "download_sas_minutes": _get_bounded_int_env(
+                "PUBLISHED_DOWNLOAD_SAS_MINUTES", 15, 5, 60
+            ),
+            "pc_geocatalog_url": os.getenv("PC_GEOCATALOG_URL", ""),
+            "pc_ingestion_source": os.getenv("PC_INGESTION_SOURCE", ""),
+            "pc_collection_prefix": os.getenv(
+                "PC_COLLECTION_PREFIX", "haste-"
+            ),
+            "pc_explorer_url": os.getenv("PC_EXPLORER_URL", ""),
+            "pc_verify_attempts": _get_bounded_int_env(
+                "PC_VERIFY_ATTEMPTS", 5, 1, 20
+            ),
+            "lease_connection_string": os.getenv("AzureWebJobsStorage"),
+            "lease_account_url": os.getenv("BLOB_ACCOUNT_URL"),
+            "lease_container": os.getenv(
+                "PUBLISHING_LOCK_CONTAINER", "publishing-locks"
+            ),
         }
 
     @staticmethod
@@ -325,6 +376,7 @@ class Config:
             CONFIG = "config"
             MODEL = "model"
             MODEL_CATALOG = "model_catalog"
+            PUBLISHED_DATASET = "published_dataset"
             MODEL_ARTIFACTS = "artifacts_model"
             VISUALIZER = "visualizer_imagery"
             TRAIN_LABELS = "train_labels"

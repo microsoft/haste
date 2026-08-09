@@ -134,3 +134,35 @@ class UnifiedArtifactStorage:
 
     def get_base_url(self):
         return self.artifact_storage.get_base_url()
+
+    def resolve_artifact_path(self, location: str) -> str:
+        return self.artifact_storage.resolve_artifact_path(location)
+
+    def copy_artifact(
+        self,
+        source_path: str,
+        destination_path: str,
+        source_etag: str,
+    ) -> str:
+        return self.artifact_storage.copy_artifact(
+            source_path, destination_path, source_etag
+        )
+
+    def delete_prefix(self, prefix: str) -> int:
+        return self.artifact_storage.delete_prefix(prefix)
+
+    def artifact_exists(self, artifact_path: str) -> bool:
+        return self.artifact_storage.artifact_exists(artifact_path)
+
+    def get_artifact_size(self, artifact_path: str) -> int:
+        return self.artifact_storage.get_artifact_size(artifact_path)
+
+    def get_artifact_etag(self, artifact_path: str) -> str:
+        return self.artifact_storage.get_artifact_etag(artifact_path)
+
+    def get_scoped_download_url(
+        self, artifact_path: str, expires_minutes: int = 15
+    ) -> str:
+        return self.artifact_storage.get_scoped_download_url(
+            artifact_path, expires_minutes=expires_minutes
+        )
