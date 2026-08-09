@@ -24,6 +24,7 @@ import { AppContext } from "../../AppContext";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
+import PublishDatasetModal from "../PublishDatasetModal";
 import { fileDownload } from "../../util/file";
 import { limitTextLength } from "../../util/conversion";
 
@@ -75,20 +76,11 @@ const EmbeddingModelRow = ({
   validationLabelCount = 0,
   mobile = false,
 }) => {
-  EmbeddingModelRow.propTypes = {
-    model: PropTypes.object.isRequired,
-    projectId: PropTypes.string.isRequired,
-    imageLayerId: PropTypes.string.isRequired,
-    index: PropTypes.number.isRequired,
-    fetchProjectDetails: PropTypes.func.isRequired,
-    validationLabelCount: PropTypes.number,
-    mobile: PropTypes.bool,
-  };
-
-  const { setDialog, setIsLoading } = useContext(AppContext);
+  const { appParams, setDialog, setIsLoading } = useContext(AppContext);
   const navigate = useNavigate();
   const [showValidationReport, setShowValidationReport] = useState(false);
   const [showAssessmentReport, setShowAssessmentReport] = useState(false);
+  const [showPublishDataset, setShowPublishDataset] = useState(false);
 
   const isProcessed = model.status === "Processed";
   const hasPredictions = !!model.gpkgUrl;
@@ -155,6 +147,18 @@ const EmbeddingModelRow = ({
         disabled: !hasPredictions,
         onClick: () => setShowAssessmentReport(true),
       },
+      ...(appParams.publishingEnabled
+        ? [
+            {
+              key: "publishDataset",
+              text: "Publish dataset…",
+              icon: <FluentIcon name="Upload" />,
+              disabled:
+                model.inferenceStatus !== "Processed" || !hasPredictions,
+              onClick: () => setShowPublishDataset(true),
+            },
+          ]
+        : []),
     ],
   };
 
@@ -202,6 +206,20 @@ const EmbeddingModelRow = ({
           modelId={model.modelId}
           modelName={model.name}
           onDismiss={() => setShowAssessmentReport(false)}
+        />
+      )}
+      {showPublishDataset && (
+        <PublishDatasetModal
+          projectId={projectId}
+          imageLayerId={imageLayerId}
+          modelId={model.modelId}
+          onDismiss={() => setShowPublishDataset(false)}
+          onStarted={() =>
+            setDialog(
+              "Publishing started",
+              "Track progress in Published Datasets.",
+            )
+          }
         />
       )}
     </>
@@ -450,6 +468,16 @@ const EmbeddingModelRow = ({
       {reportModals}
     </div>
   );
+};
+
+EmbeddingModelRow.propTypes = {
+  model: PropTypes.object.isRequired,
+  projectId: PropTypes.string.isRequired,
+  imageLayerId: PropTypes.string.isRequired,
+  index: PropTypes.number.isRequired,
+  fetchProjectDetails: PropTypes.func.isRequired,
+  validationLabelCount: PropTypes.number,
+  mobile: PropTypes.bool,
 };
 
 export default EmbeddingModelRow;

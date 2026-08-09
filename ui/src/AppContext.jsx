@@ -1,16 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-import { createContext, useState } from "react";
+import { createContext, useCallback, useState } from "react";
 import PropTypes from "prop-types";
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const AppContext = createContext();
 
 export const AppProvider = ({ children }) => {
-  AppProvider.propTypes = {
-    children: PropTypes.node.isRequired,
-  };
-
   const guidedTourList = [
     {
       name: "dashboardGuide",
@@ -257,6 +254,9 @@ export const AppProvider = ({ children }) => {
     userRoles: null,
     userSettings: null,
     userStatus: null,
+    identityId: null,
+    publishingEnabled: false,
+    publishingProviders: [],
     isLoading: false,
     loadingMessage: "",
     appHeaderRightButtons: [],
@@ -273,20 +273,20 @@ export const AppProvider = ({ children }) => {
     }));
   }
 
-  function setIsLoading(isLoading, message = "Loading...") {
+  const setIsLoading = useCallback((isLoading, message = "Loading...") => {
     setAppParams((prevParams) => ({
       ...prevParams,
       isLoading: isLoading,
       loadingMessage: message,
     }));
-  }
+  }, []);
 
-  function setAppHeaderRightButtons(appHeaderRightButtons) {
+  const setAppHeaderRightButtons = useCallback((appHeaderRightButtons) => {
     setAppParams((prevParams) => ({
       ...prevParams,
       appHeaderRightButtons: appHeaderRightButtons,
     }));
-  }
+  }, []);
 
   function setCurrentTour(currentTourName) {
     const currentTourTemp = guidedTourList.find(
@@ -340,4 +340,8 @@ export const AppProvider = ({ children }) => {
       {children}
     </AppContext.Provider>
   );
+};
+
+AppProvider.propTypes = {
+  children: PropTypes.node.isRequired,
 };

@@ -13,8 +13,7 @@ import {
   DialogActions,
 } from "@fluentui/react-components";
 import { AppContext } from "./AppContext";
-import { apiValidateUser, apiLogout, apiGet } from "./util/api";
-import { upsertUser } from "./AppHelper";
+import { apiValidateUser, apiGet } from "./util/api";
 import { useTheme } from "./util/ThemeContext";
 import { getPalette } from "./util/theme";
 
@@ -56,6 +55,16 @@ function App() {
     const validateUser = async () => {
       setIsLoading(true);
       await apiValidateUser(setAppParams);
+      try {
+        const publishing = await apiGet("GetPublishingProviders");
+        setAppParams((previous) => ({
+          ...previous,
+          publishingEnabled: !!publishing.publishingEnabled,
+          publishingProviders: publishing.providers || [],
+        }));
+      } catch (error) {
+        console.error("Error loading publishing capabilities:", error);
+      }
       setIsLoading(false);
     };
 
@@ -93,6 +102,7 @@ function App() {
 
   useEffect(() => {
     if (isMobileNav) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setNavCollapsed(true);
     }
   }, [isMobileNav]);
