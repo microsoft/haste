@@ -346,7 +346,7 @@ class Config:
             ),
             "pc_explorer_url": os.getenv("PC_EXPLORER_URL", ""),
             "pc_verify_attempts": _get_bounded_int_env(
-                "PC_VERIFY_ATTEMPTS", 5, 1, 20
+                "PC_VERIFY_ATTEMPTS", 20, 1, 60
             ),
             "lease_connection_string": os.getenv("AzureWebJobsStorage"),
             "lease_account_url": os.getenv("BLOB_ACCOUNT_URL"),
