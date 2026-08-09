@@ -169,6 +169,7 @@ class PublishedDataset(BaseModel):
     queueDispatchedAt: Optional[str] = None
     reconciledAttempt: Optional[int] = Field(default=None, ge=1)
     publishedByUser: str
+    publishedByName: Optional[str] = None
     createdDate: str
     updatedDate: str
     publishedDate: Optional[str] = None

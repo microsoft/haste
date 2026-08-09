@@ -1,6 +1,14 @@
 import {
   Badge,
   Button,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Divider,
+  Link,
   Menu,
   MenuItem,
   MenuList,
@@ -10,26 +18,54 @@ import {
   Tooltip,
 } from "@fluentui/react-components";
 import PropTypes from "prop-types";
-import { useContext } from "react";
+import { useContext, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { AppContext } from "../AppContext";
 import { apiDelete, apiGet, apiPut } from "../util/api";
 import { toBrowserStorageUrl } from "../util/blobUrl";
+import { limitTextLength } from "../util/conversion";
 import { fileDownload } from "../util/file";
 import { FluentIcon } from "../util/icons";
-import {
-  getPublishingStatusDisplay,
-  isPublishingStatusActive,
-} from "../util/publishing";
+import { getPublishingStatusDisplay } from "../util/publishing";
 
 const PublishedDatasetRow = ({ item, index, onRefresh }) => {
   const { appParams, setDialog, setIsLoading } = useContext(AppContext);
+  const navigate = useNavigate();
+  const [showDetails, setShowDetails] = useState(false);
+  const preds = item.assessmentSummary?.predictions;
   const status = getPublishingStatusDisplay(item.status);
+
+  // Navigate to the source project, expanding the layer that produced this
+  // dataset. Route "/project/:projectId/:imageLayerId" opens the project view
+  // with that layer expanded (falls back to the project when no layer id).
+  const sourceHref = item.projectId
+    ? item.imageLayerId
+      ? `/project/${item.projectId}/${item.imageLayerId}`
+      : `/project/${item.projectId}`
+    : null;
+  const openSource = (e) => {
+    if (!sourceHref) return;
+    e.preventDefault();
+    navigate(sourceHref);
+  };
   const isAdmin = appParams.userRoles?.includes("administrators");
   const isOwner =
     String(item.publishedByUser).toLowerCase() ===
     String(appParams.identityId || appParams.userId).toLowerCase();
   const canManage = isAdmin || isOwner;
+
+  // Prefer a human-readable publisher: the name captured at publish time, else
+  // the current user's own name for their datasets, else a shortened id so the
+  // column doesn't show a long opaque identifier.
+  // Show the publisher the same way the project/layer views show the creator:
+  // the user's login/email captured at publish time (publishedByName), falling
+  // back to the current user's login for their own datasets.
+  const publishedBy =
+    item.publishedByName ||
+    (isOwner ? appParams.userId || appParams.userDetails : "") ||
+    item.publishedByUser ||
+    null;
 
   async function handleDownload(kind) {
     setIsLoading(true, "Preparing download...");
@@ -100,6 +136,12 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
   }
 
   const menuItems = [];
+  menuItems.push({
+    key: "details",
+    text: "View details",
+    icon: "Info",
+    onClick: () => setShowDetails(true),
+  });
   if (item.status === "PUBLISHED" && item.target === "local") {
     for (const artifact of item.artifacts || []) {
       menuItems.push({
@@ -156,8 +198,27 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
         </Tooltip>
       </td>
       <td data-label="Project / Layer">
-        <Text>{item.projectName || item.projectId}</Text>
-        <div className="pgrid-muted">{item.imageLayerName || item.imageLayerId}</div>
+        {sourceHref ? (
+          <Tooltip
+            content="Open the source project and layer"
+            relationship="label"
+          >
+            <Link href={sourceHref} onClick={openSource}>
+              {item.projectName || item.projectId}
+            </Link>
+          </Tooltip>
+        ) : (
+          <Text>{item.projectName || item.projectId}</Text>
+        )}
+        <div className="pgrid-muted">
+          {sourceHref ? (
+            <Link href={sourceHref} onClick={openSource} appearance="subtle">
+              {item.imageLayerName || item.imageLayerId}
+            </Link>
+          ) : (
+            item.imageLayerName || item.imageLayerId
+          )}
+        </div>
       </td>
       <td data-label="Target">
         {item.target === "local" ? "Local" : "Planetary Computer"}
@@ -169,7 +230,13 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
           </Badge>
         </Tooltip>
       </td>
-      <td data-label="Published by">{item.publishedByUser}</td>
+      <td data-label="Published by">
+        <Tooltip content={publishedBy || ""} relationship="label">
+          <Text>
+            {publishedBy ? limitTextLength(publishedBy, false, 30) : "User"}
+          </Text>
+        </Tooltip>
+      </td>
       <td data-label="Published date">
         {formatDate(item.publishedDate || item.createdDate)}
       </td>
@@ -177,12 +244,13 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
         <Menu positioning="below-end">
           <MenuTrigger disableButtonEnhancement>
             <Button
-              appearance="subtle"
-              className="no-dropdown-icon"
-              icon={<FluentIcon name="More" />}
+              appearance="primary"
+              size="small"
               aria-label={`Actions for ${item.name}`}
-              disabled={menuItems.length === 0 || isPublishingStatusActive(item.status)}
-            />
+              disabled={menuItems.length === 0}
+            >
+              Actions
+            </Button>
           </MenuTrigger>
           <MenuPopover>
             <MenuList>
@@ -198,6 +266,117 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
             </MenuList>
           </MenuPopover>
         </Menu>
+        {showDetails && (
+          <Dialog
+            open
+            onOpenChange={(_, data) => {
+              if (!data.open) setShowDetails(false);
+            }}
+          >
+            <DialogSurface aria-describedby={undefined}>
+              <DialogBody>
+                <DialogTitle>{item.name}</DialogTitle>
+                <DialogContent>
+                  {item.description && (
+                    <p
+                      style={{
+                        marginTop: 0,
+                        whiteSpace: "pre-wrap",
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {item.description}
+                    </p>
+                  )}
+                  <Divider />
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "auto 1fr",
+                      rowGap: 6,
+                      columnGap: 16,
+                      alignItems: "baseline",
+                      margin: "12px 0",
+                    }}
+                  >
+                    <Text weight="semibold">Project / Layer</Text>
+                    <div>
+                      {sourceHref ? (
+                        <Link href={sourceHref} onClick={openSource}>
+                          {item.projectName} — {item.imageLayerName}
+                        </Link>
+                      ) : (
+                        `${item.projectName || item.projectId} — ${
+                          item.imageLayerName || item.imageLayerId
+                        }`
+                      )}
+                    </div>
+                    <Text weight="semibold">Model</Text>
+                    <div>{item.modelName || item.modelId || "—"}</div>
+                    <Text weight="semibold">Target</Text>
+                    <div>
+                      {item.target === "local"
+                        ? "Local (HASTE storage)"
+                        : "Planetary Computer"}
+                    </div>
+                    <Text weight="semibold">Status</Text>
+                    <div>
+                      {status.label}
+                      {item.statusMessage ? ` — ${item.statusMessage}` : ""}
+                    </div>
+                    <Text weight="semibold">Published by</Text>
+                    <div>{publishedBy || "—"}</div>
+                    <Text weight="semibold">Published</Text>
+                    <div>{formatDate(item.publishedDate || item.createdDate)}</div>
+                  </div>
+                  {preds && (
+                    <>
+                      <Divider />
+                      <div style={{ margin: "12px 0" }}>
+                        <Text weight="semibold">Assessment</Text>
+                        <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                          <li>{int(preds.total)} buildings assessed</li>
+                          {preds.cloudy > 0 && (
+                            <li>{int(preds.cloudy)} obscured by clouds</li>
+                          )}
+                          <li>
+                            {int(preds.predictedDamaged)} predicted damaged
+                            {preds.predictedDamagedPctOfKnown != null &&
+                              ` (${preds.predictedDamagedPctOfKnown}% of assessed)`}
+                          </li>
+                        </ul>
+                      </div>
+                    </>
+                  )}
+                  {(item.artifacts || []).length > 0 && (
+                    <>
+                      <Divider />
+                      <div style={{ margin: "12px 0 0" }}>
+                        <Text weight="semibold">Published assets</Text>
+                        <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                          {item.artifacts.map((a) => (
+                            <li key={a.kind}>
+                              {artifactLabel(a.kind)}
+                              {a.sizeBytes ? ` — ${formatBytes(a.sizeBytes)}` : ""}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </>
+                  )}
+                </DialogContent>
+                <DialogActions>
+                  <Button
+                    appearance="secondary"
+                    onClick={() => setShowDetails(false)}
+                  >
+                    Close
+                  </Button>
+                </DialogActions>
+              </DialogBody>
+            </DialogSurface>
+          </Dialog>
+        )}
       </td>
     </tr>
   );
@@ -208,6 +387,22 @@ PublishedDatasetRow.propTypes = {
   index: PropTypes.number.isRequired,
   onRefresh: PropTypes.func.isRequired,
 };
+
+function int(value) {
+  return value == null ? "—" : Math.round(value).toLocaleString();
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes < 0) return "—";
+  const units = ["B", "KB", "MB", "GB"];
+  let n = bytes;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i += 1;
+  }
+  return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
+}
 
 function formatDate(value) {
   if (!value) return "—";
