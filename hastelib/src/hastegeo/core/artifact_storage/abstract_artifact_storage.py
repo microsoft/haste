@@ -50,6 +50,41 @@ class AbstractArtifactStorage(ABC):
     def get_base_url(self):
         pass
 
+    @abstractmethod
+    def resolve_artifact_path(self, location: str) -> str:
+        pass
+
+    @abstractmethod
+    def copy_artifact(
+        self,
+        source_path: str,
+        destination_path: str,
+        source_etag: str,
+    ) -> str:
+        pass
+
+    @abstractmethod
+    def delete_prefix(self, prefix: str) -> int:
+        pass
+
+    @abstractmethod
+    def artifact_exists(self, artifact_path: str) -> bool:
+        pass
+
+    @abstractmethod
+    def get_artifact_size(self, artifact_path: str) -> int:
+        pass
+
+    @abstractmethod
+    def get_artifact_etag(self, artifact_path: str) -> str:
+        pass
+
+    @abstractmethod
+    def get_scoped_download_url(
+        self, artifact_path: str, expires_minutes: int = 15
+    ) -> str:
+        pass
+
     def is_json(self, data):
         """Check if data can be serialized as JSON.
 

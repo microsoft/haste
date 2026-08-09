@@ -125,6 +125,36 @@ class MetadataProcessor:
             metadata.append(each_metadata)
         return metadata
 
+    def load_bounded(
+        self, max_records: int, data_format: str = "json"
+    ) -> list[dict]:
+        return self.storage.load_bounded(
+            data_type=self.data_type,
+            max_records=max_records,
+            data_format=data_format,
+        )
+
+    def load_page(
+        self,
+        page: int,
+        page_size: int,
+        data_format: str = "json",
+        target: str = None,
+        status: str = None,
+        project_id: str = None,
+        max_records: int = None,
+    ) -> tuple[list[dict], int]:
+        return self.storage.load_page(
+            data_type=self.data_type,
+            page=page,
+            page_size=page_size,
+            data_format=data_format,
+            target=target,
+            status=status,
+            project_id=project_id,
+            max_records=max_records,
+        )
+
     def load_and_combine_sub_data_types(self, key, data_types):
         """
         Load and combine metadata from multiple data types.
