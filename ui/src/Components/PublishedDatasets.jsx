@@ -223,7 +223,7 @@ const PublishedDatasets = () => {
                       <th>{sortHeader("status", "Status")}</th>
                       <th>{sortHeader("publishedByUser", "Published by")}</th>
                       <th>{sortHeader("publishedDate", "Published date")}</th>
-                      <th className="pgrid-th-actions" />
+                      <th className="pgrid-th-actions">Actions</th>
                     </tr>
                   </thead>
                   <tbody>

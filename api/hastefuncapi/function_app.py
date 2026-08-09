@@ -235,7 +235,7 @@ async def _get_active_publishing_caller(
             or principal.get("userDetails")
             or "development@local"
         )
-        return {"id": str(caller_id).lower(), "roles": roles}, None
+        return {"id": str(caller_id).lower(), "roles": roles, "name": principal.get("userDetails")}, None
 
     if principal is None:
         return None, _publishing_error_response(
@@ -286,7 +286,7 @@ async def _get_active_publishing_caller(
         if isinstance(role, str)
     }
     caller_id = principal_id or user_details
-    return {"id": str(caller_id).lower(), "roles": roles}, None
+    return {"id": str(caller_id).lower(), "roles": roles, "name": (active_user.name or active_user.email or user_details)}, None
 
 
 def _publishing_json_response(
@@ -4596,6 +4596,7 @@ async def PutPublishDatasetQueueMessage(
             processor.prepare_create,
             request,
             caller["id"],
+            caller.get("name"),
         )
         if prepared.existing is not None:
             record = prepared.existing

@@ -8,9 +8,9 @@
 @font-face {
   font-family: "SegoeUI";
   src: local("Segoe UI"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/normal/latest.woff2") format("woff2"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/normal/latest.woff") format("woff"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/normal/latest.ttf") format("ttf");
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/normal/latest.woff2") format("woff2"),
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/normal/latest.woff") format("woff"),
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/normal/latest.ttf") format("ttf");
   font-weight: 400;
 }
 
@@ -18,36 +18,36 @@
 @font-face {
   font-family: "SegoeUI";
   src: local("Segoe UI"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/light/latest.woff2") format("woff2"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/light/latest.woff") format("woff"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/light/latest.ttf") format("ttf");
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/light/latest.woff2") format("woff2"),
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/light/latest.woff") format("woff"),
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/light/latest.ttf") format("ttf");
   font-weight: 100;
 }
 
 @font-face {
   font-family: "SegoeUI";
   src: local("Segoe UI"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/semilight/latest.woff2") format("woff2"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/semilight/latest.woff") format("woff"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/semilight/latest.ttf") format("ttf");
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/semilight/latest.woff2") format("woff2"),
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/semilight/latest.woff") format("woff"),
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/semilight/latest.ttf") format("ttf");
   font-weight: 200;
 }
 
 @font-face {
   font-family: "SegoeUI";
   src: local("Segoe UI"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/semibold/latest.woff2") format("woff2"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/semibold/latest.woff") format("woff"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/semibold/latest.ttf") format("ttf");
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/semibold/latest.woff2") format("woff2"),
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/semibold/latest.woff") format("woff"),
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/semibold/latest.ttf") format("ttf");
   font-weight: 600;
 }
 
 @font-face {
   font-family: "SegoeUI";
   src: local("Segoe UI"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/bold/latest.woff2") format("woff2"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/bold/latest.woff") format("woff"),
-    url("//c.s-microsoft.com/static/fonts/segoe-ui/west-european/bold/latest.ttf") format("ttf");
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/bold/latest.woff2") format("woff2"),
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/bold/latest.woff") format("woff"),
+    url("https://c.s-microsoft.com/static/fonts/segoe-ui/west-european/bold/latest.ttf") format("ttf");
   font-weight: 700;
 }
 
@@ -4473,4 +4473,27 @@ html[data-theme="dark"] .lcard-actions .lcard-icon-btn {
 
 html[data-theme="dark"] .lcard-actions .lcard-icon-btn:hover:not(:disabled) {
   background-color: var(--brand-40);
+}
+/* Published Datasets: fixed column widths on desktop only. Below 993px the
+   shared .pgrid-page--model-catalog card layout takes over (see the mobile
+   card block), so these must not apply on mobile. */
+@media (min-width: 993px) {
+  .pgrid-page--published-datasets .pgrid-table {
+    table-layout: fixed;
+    width: 100%;
+  }
+  .pgrid-page--published-datasets .pgrid-table th:nth-child(1),
+  .pgrid-page--published-datasets .pgrid-table td:nth-child(1) { width: 24%; }
+  .pgrid-page--published-datasets .pgrid-table th:nth-child(2),
+  .pgrid-page--published-datasets .pgrid-table td:nth-child(2) { width: 22%; }
+  .pgrid-page--published-datasets .pgrid-table th:nth-child(3),
+  .pgrid-page--published-datasets .pgrid-table td:nth-child(3) { width: 9%; }
+  .pgrid-page--published-datasets .pgrid-table th:nth-child(4),
+  .pgrid-page--published-datasets .pgrid-table td:nth-child(4) { width: 11%; }
+  .pgrid-page--published-datasets .pgrid-table th:nth-child(5),
+  .pgrid-page--published-datasets .pgrid-table td:nth-child(5) { width: 12%; }
+  .pgrid-page--published-datasets .pgrid-table th:nth-child(6),
+  .pgrid-page--published-datasets .pgrid-table td:nth-child(6) { width: 12%; }
+  .pgrid-page--published-datasets .pgrid-table th:nth-child(7),
+  .pgrid-page--published-datasets .pgrid-table td:nth-child(7) { width: 10%; }
 }

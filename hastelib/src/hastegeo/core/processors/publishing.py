@@ -51,6 +51,7 @@ class PreparedPublish:
     publisher_id: str
     dataset_id: Any
     request_fingerprint: str
+    publisher_name: Optional[str] = None
     existing: Optional[PublishedDataset] = None
     options: Optional[PublishDatasetOptions] = None
     bundle: Optional[ArtifactBundle] = None
@@ -134,14 +135,18 @@ class PublishingProcessor:
         request: PublishRequest,
         publisher_id: str,
         assessment_summary: Optional[Dict[str, Any]] = None,
+        publisher_name: Optional[str] = None,
     ) -> PublishedDataset:
-        prepared = self.prepare_create(request, publisher_id)
+        prepared = self.prepare_create(
+            request, publisher_id, publisher_name
+        )
         return self.create_prepared(prepared, assessment_summary)
 
     def prepare_create(
         self,
         request: PublishRequest,
         publisher_id: str,
+        publisher_name: Optional[str] = None,
     ) -> PreparedPublish:
         self._require_enabled()
         dataset_id = derive_dataset_id(request.projectId, request.requestId)
@@ -165,6 +170,7 @@ class PublishingProcessor:
                 publisher_id=publisher_id,
                 dataset_id=dataset_id,
                 request_fingerprint=request_fingerprint,
+                publisher_name=publisher_name,
                 existing=existing,
             )
 
@@ -205,6 +211,7 @@ class PublishingProcessor:
             publisher_id=publisher_id,
             dataset_id=dataset_id,
             request_fingerprint=request_fingerprint,
+            publisher_name=publisher_name,
             options=options,
             bundle=bundle,
         )
@@ -241,6 +248,7 @@ class PublishingProcessor:
             target=request.target,
             status=PublishStatus.PENDING,
             publishedByUser=prepared.publisher_id.strip().lower(),
+            publishedByName=prepared.publisher_name,
             createdDate=now,
             updatedDate=now,
             queueDispatchedAt=now,
