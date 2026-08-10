@@ -99,7 +99,7 @@ TEMP_DATA_PATH = "haste_test_tmp"
 METADATA_STORAGE_TYPE = "blob"
 ARTIFACT_STORAGE_TYPE = "blob"
 # Azurite Storage Emulator connection string
-BLOB_CONNECTION_STRING = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"  # pragma: allowlist secret # gitleaks:allow
+BLOB_CONNECTION_STRING = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;"  # pragma: allowlist secret # gitleaks:allow
 BLOB_CONTAINER = "haste-unittests"
 
 [tool.coverage.run]
