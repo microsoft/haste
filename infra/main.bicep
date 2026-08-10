@@ -120,6 +120,9 @@ param useSas bool = false
 @description('Runner auto-creates/resizes its pool. False for pre-created autoscale pools.')
 param managePools bool = true
 
+@description('Enable the data publishing feature (Published Datasets section + Publish action).')
+param publishingEnabled bool = false
+
 // ---------------------------------------------------------------------------
 // Computed names — mirror the bash naming scheme exactly.
 // ---------------------------------------------------------------------------
@@ -293,6 +296,7 @@ module functions 'modules/functions.bicep' = {
     imageryprepPoolIds: imageryprepPoolIds
     useSas: useSas
     managePools: managePools
+    publishingEnabled: publishingEnabled
     tags: tags
   }
   dependsOn: [
