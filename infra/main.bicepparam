@@ -45,6 +45,9 @@ param imageryprepPoolIds = readEnvironmentVariable('HASTE_BATCH_IMAGERYPREP_POOL
 param useSas = bool(readEnvironmentVariable('HASTE_BATCH_USE_SAS', 'false'))
 param managePools = bool(readEnvironmentVariable('HASTE_BATCH_MANAGE_POOLS', 'true'))
 
+// Data publishing feature flag (Local target). Default off.
+param publishingEnabled = bool(readEnvironmentVariable('HASTE_PUBLISHING_ENABLED', 'false'))
+
 // Shared hub batch-subnet the multi-tenant pools live in; this env's storage
 // allowlists it so those pools can reach its blobs. Empty for single-tenant prod.
 param sharedBatchSubnetId = readEnvironmentVariable('HASTE_SHARED_BATCH_SUBNET_ID', '')
