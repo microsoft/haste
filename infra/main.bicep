@@ -123,6 +123,24 @@ param managePools bool = true
 @description('Enable the data publishing feature (Published Datasets section + Publish action).')
 param publishingEnabled bool = false
 
+@description('Register/expose the Planetary Computer publishing provider.')
+param pcProviderEnabled bool = false
+
+@description('MPC Pro GeoCatalog base URL (no trailing slash). Operator-provisioned.')
+param pcGeocatalogUrl string = ''
+
+@description('GeoCatalog Explorer base URL used to build published-dataset links.')
+param pcExplorerUrl string = ''
+
+@description('GeoCatalog ingestion-source name for private HASTE containers. Empty for public containers.')
+param pcIngestionSource string = ''
+
+@description('STAC Collection id prefix (one collection per project/event).')
+param pcCollectionPrefix string = 'haste-'
+
+@description('Object id of the GeoCatalog managed identity to grant Storage Blob Data Reader on HASTE storage (asset ingestion). Empty = skip.')
+param pcGeoCatalogIngestPrincipalId string = ''
+
 // ---------------------------------------------------------------------------
 // Computed names — mirror the bash naming scheme exactly.
 // ---------------------------------------------------------------------------
@@ -297,6 +315,11 @@ module functions 'modules/functions.bicep' = {
     useSas: useSas
     managePools: managePools
     publishingEnabled: publishingEnabled
+    pcProviderEnabled: pcProviderEnabled
+    pcGeocatalogUrl: pcGeocatalogUrl
+    pcExplorerUrl: pcExplorerUrl
+    pcIngestionSource: pcIngestionSource
+    pcCollectionPrefix: pcCollectionPrefix
     tags: tags
   }
   dependsOn: [
@@ -347,6 +370,8 @@ module roles 'modules/roles.bicep' = {
     staticWebAppName: staticWebAppName
     mapsAccountName: mapsAccountName
     functionSystemPrincipalId: functions.outputs.apiSystemPrincipalId
+    storageAccountName: storageAccountName
+    pcGeoCatalogIngestPrincipalId: pcGeoCatalogIngestPrincipalId
   }
   // frontend is ordered before roles transitively (roles -> functions ->
   // frontend, since functions reads the SWA hostname for STATIC_APP_DOMAIN).

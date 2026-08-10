@@ -13,6 +13,12 @@ param mapsAccountName string
 @description('System-assigned principal id of the API function app.')
 param functionSystemPrincipalId string
 
+@description('HASTE storage account name (source of publishable artifacts).')
+param storageAccountName string
+
+@description('Object (principal) id of the Planetary Computer GeoCatalog managed identity, to grant read access on HASTE storage for asset ingestion. Empty = skip (public containers or SasToken ingestion source).')
+param pcGeoCatalogIngestPrincipalId string = ''
+
 resource staticWebApp 'Microsoft.Web/staticSites@2024-04-01' existing = {
   name: staticWebAppName
 }
@@ -65,6 +71,32 @@ resource mapsDataReaderAssignment 'Microsoft.Authorization/roleAssignments@2022-
       '423170ca-a8f6-4b0f-8487-9e4eb8f49bfa'
     )
     principalId: functionSystemPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Planetary Computer publishing: the GeoCatalog ingests published assets by
+// reading them from HASTE blob storage. When ingestion uses the GeoCatalog's
+// managed identity (rather than a SasToken ingestion source), that identity
+// needs Storage Blob Data Reader on the HASTE storage account. Conditional and
+// off by default — supply the GeoCatalog identity's object id to enable it.
+// (The complementary grant — the function app's identity on the external
+// GeoCatalog data plane — is on the operator-owned GeoCatalog resource and is
+// configured out-of-band; verify the exact GeoCatalog RBAC role against a live
+// catalog before wiring it here.)
+resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: storageAccountName
+}
+
+resource pcIngestBlobReaderAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(pcGeoCatalogIngestPrincipalId)) {
+  name: guid(storageAccount.id, pcGeoCatalogIngestPrincipalId, 'StorageBlobDataReader')
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
+    )
+    principalId: pcGeoCatalogIngestPrincipalId
     principalType: 'ServicePrincipal'
   }
 }

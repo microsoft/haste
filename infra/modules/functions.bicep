@@ -94,6 +94,21 @@ param managePools bool = true
 @description('Enable the Published Datasets section + Publish action (feature flag).')
 param publishingEnabled bool = false
 
+@description('Register/expose the Planetary Computer publishing provider.')
+param pcProviderEnabled bool = false
+
+@description('MPC Pro GeoCatalog base URL (no trailing slash). Operator-provisioned.')
+param pcGeocatalogUrl string = ''
+
+@description('GeoCatalog Explorer base URL used to build published-dataset links.')
+param pcExplorerUrl string = ''
+
+@description('GeoCatalog ingestion-source name for private HASTE containers (SasToken source). Empty for public containers.')
+param pcIngestionSource string = ''
+
+@description('STAC Collection id prefix (one collection per project/event).')
+param pcCollectionPrefix string = 'haste-'
+
 @description('Resource tags.')
 param tags object = {}
 
@@ -157,10 +172,19 @@ var appConfigSettings = [
   { name: 'AZURE_BATCH_USE_SAS', value: useSas ? 'true' : 'false' }
   { name: 'AZURE_BATCH_MANAGE_POOLS', value: managePools ? 'true' : 'false' }
   // Data publishing feature flag (Local target). The queue + publishing-locks
-  // container are auto-created at runtime; PC-target settings are added by the
-  // planetary-computer wiring. Other Local knobs (PUBLISH_MAX_TOTAL_BYTES,
-  // PUBLISHED_DOWNLOAD_SAS_MINUTES, PUBLISHING_LOCK_CONTAINER) use code defaults.
+  // container are auto-created at runtime. Other Local knobs
+  // (PUBLISH_MAX_TOTAL_BYTES, PUBLISHED_DOWNLOAD_SAS_MINUTES,
+  // PUBLISHING_LOCK_CONTAINER) use code defaults.
   { name: 'PUBLISHING_ENABLED', value: publishingEnabled ? 'true' : 'false' }
+  // Planetary Computer target. Auth is managed-identity only (Entra token,
+  // scope https://geocatalog.spatio.azure.com/.default); the api-version and
+  // token scope are code constants, not settings. PC_INGESTION_SOURCE is only
+  // needed for private HASTE containers (SasToken ingestion source).
+  { name: 'PC_PROVIDER_ENABLED', value: pcProviderEnabled ? 'true' : 'false' }
+  { name: 'PC_GEOCATALOG_URL', value: pcGeocatalogUrl }
+  { name: 'PC_EXPLORER_URL', value: pcExplorerUrl }
+  { name: 'PC_INGESTION_SOURCE', value: pcIngestionSource }
+  { name: 'PC_COLLECTION_PREFIX', value: pcCollectionPrefix }
 ]
 
 module apiApp 'functionApp.bicep' = {
