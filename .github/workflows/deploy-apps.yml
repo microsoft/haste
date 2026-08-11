@@ -111,6 +111,10 @@ jobs:
           # Non-sensitive UI feature flag, baked into the Vite bundle at build time.
           # Set as a GitHub Environment variable; defaults to false when unset.
           VITE_SHOW_FOOTER: ${{ vars.VITE_SHOW_FOOTER }}
+          # Non-sensitive data-publishing feature flag, mirroring the
+          # `publishingEnabled` param on the Bicep path. Set as a GitHub
+          # Environment variable; defaults to false when unset.
+          PUBLISHING_ENABLED: ${{ vars.PUBLISHING_ENABLED }}
           # hastegeo wheel pinned into the function-app requirements before
           # `func publish` (deploy_apps.sh); the editable default can't resolve
           # on Azure's remote build.
