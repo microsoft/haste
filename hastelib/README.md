@@ -29,8 +29,10 @@ version when it builds an RC or stable wheel.
 
 `hatch build` is build-only. GitHub Actions resolves the version, builds and
 tests without write credentials, then passes the wheel to a separate trusted
-publisher behind the protected `hastegeo-release` environment. Stable releases
-create a `hastegeo-vX.Y.Z` source tag so reruns are idempotent.
+publisher that runs from the default branch. Merging a PR into `main` that
+touches `hastelib/` publishes the next stable patch wheel — the review required
+to land the commit is the release approval. Stable releases create a
+`hastegeo-vX.Y.Z` source tag so reruns are idempotent.
 
 ## License
 

@@ -17,15 +17,19 @@ This directory contains GitHub Actions workflows for the HASTE project, focused 
    `training_image_tag`, and `imageprep_image_tag` on the PR.
 
 Stable releases create `hastegeo-vX.Y.Z` tags, making reruns of the same source
-commit a no-op. Stable publication additionally requires repository variables
-`HASTEGEO_PUBLISH_ENABLED=true` and
-`HASTEGEO_RELEASE_APPROVAL_CONFIGURED=true`.
+commit a no-op. Stable publication is automatic: merging a PR into `main` that
+touches `hastelib/` publishes the next patch wheel, because the review required
+to land that commit is the release approval. Set `HASTEGEO_PUBLISH_ENABLED=true`
+to enable it; set it to anything else to halt stable publication. Use
+`workflow_dispatch` with an explicit `bump` or `set_version` for minor/major
+releases.
 
 RC publication is automatic unless `HASTEGEO_RC_PUBLISH_ENABLED=false`.
 Fork PRs remain build-only. The RC image environment is selected through
 `HASTEGEO_RC_ENVIRONMENT`, keeping environment names out of the workflow.
-Before enabling stable publication, repository administrators must configure a
-protected release environment with required reviewers and self-review disabled.
+The protected `hastegeo-release` environment and the
+`HASTEGEO_RELEASE_APPROVAL_CONFIGURED` variable still gate the destructive RC
+deletion job in `rc-cleanup.yml`.
 
 ## Docker Build and Push Workflow
 
