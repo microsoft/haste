@@ -56,6 +56,9 @@ BATCH_INFERENCE_POOL_IDS="${BATCH_INFERENCE_POOL_IDS:-}"
 BATCH_IMAGERYPREP_POOL_IDS="${BATCH_IMAGERYPREP_POOL_IDS:-}"
 BATCH_USE_SAS="${BATCH_USE_SAS:-false}"
 BATCH_MANAGE_POOLS="${BATCH_MANAGE_POOLS:-true}"
+# Data publishing feature flag. Mirrors the `publishingEnabled` param in
+# infra/modules/functions.bicep so both deploy paths agree; defaults off.
+PUBLISHING_ENABLED="${PUBLISHING_ENABLED:-false}"
 MAPS_ACCOUNT="${RESOURCE_PREFIX}haste${RANDOM_SUFFIX}maps"
 API_MANAGEMENT="${RESOURCE_PREFIX}-haste-${RANDOM_SUFFIX}-apim"
 FIXED_TAGS="project=haste created_by=deploy_apps"
@@ -135,6 +138,7 @@ deploy_function() {
             "STATIC_APP_DOMAIN=${STATIC_APP_DOMAIN}" \
             "EMAIL_CONNECTION_STRING=${EMAIL_CONNECTION_STRING}" \
             "EMAIL_SENDER=${EMAIL_SENDER}" \
+            "PUBLISHING_ENABLED=${PUBLISHING_ENABLED}" \
             --output none
     fi
 
