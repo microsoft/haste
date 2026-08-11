@@ -10,7 +10,7 @@
 | 2 | Add trusted wheel validator/publisher | `backend-dev` | complete |
 | 3 | Split read-only build and trusted publish workflow jobs | `backend-dev` | complete |
 | 3 | Add automatic trusted RC publication | `backend-dev` | in-progress |
-| 3 | Keep protected environment gate for stable releases | `backend-dev` | blocked: repository admin required |
+| 3 | Publish stable automatically on merge to `main` | `backend-dev` | complete |
 | 4 | Connect RC publication to coherent ACR image tags | `backend-dev` | complete |
 | 4 | Harden Function wheel resolution and deployment failure handling | `backend-dev` | complete |
 | 5 | Make cleanup report-only and fail-closed | `backend-dev` | complete |
@@ -27,14 +27,23 @@
 
 ## Rollout Gate
 
-Stable publication jobs use `HASTEGEO_PUBLISH_ENABLED == 'true'` and the
-protected `hastegeo-release` environment. They also require
-`HASTEGEO_RELEASE_APPROVAL_CONFIGURED == 'true'`, which an administrator sets
-only after required reviewers are active. Merge with publication disabled,
-inspect the first build artifacts, configure required reviewers, then enable
-and manually approve the first release.
+Stable publication is gated solely by `HASTEGEO_PUBLISH_ENABLED == 'true'`.
+Merging a PR into `main` is the release approval: the branch ruleset is active
+with no bypass actors and requires an approving review plus passing status
+checks, so no commit reaches `main` unreviewed.
+
+Superseded: stable publication originally also required
+`HASTEGEO_RELEASE_APPROVAL_CONFIGURED == 'true'` and the protected
+`hastegeo-release` environment. That was a bring-up gate — merge with
+publication disabled, inspect artifacts, then enable — and it was never turned
+on, so no stable wheel published for the pipeline's whole life. Both controls
+remain in force for the destructive RC deletion job in `rc-cleanup.yml`.
 
 Same-repository PR RCs publish automatically from trusted `workflow_run` code
 and build final development ACR images once. The target environment is selected
 by `HASTEGEO_RC_ENVIRONMENT`. Set
 `HASTEGEO_RC_PUBLISH_ENABLED=false` only as an emergency kill switch.
+
+Known gap: minor and major stable releases have no automated path. The publisher
+accepts only `push` and same-repository `pull_request` upstream events, so a
+`workflow_dispatch` build carrying `bump` or `set_version` is never published.

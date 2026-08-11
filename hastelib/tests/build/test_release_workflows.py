@@ -91,7 +91,7 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn("PR head changed after the wheel build", workflow)
         self.assertIn("PR #$PR_NUMBER is not open", workflow)
 
-    def test_rc_is_automatic_but_stable_is_approval_gated(self):
+    def test_rc_and_stable_are_both_automatic_but_kill_switched(self):
         workflow = (
             REPO_ROOT / ".github/workflows/hastegeo-publish.yml"
         ).read_text(encoding="utf-8")
@@ -107,8 +107,14 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         )[0]
         self.assertNotIn("environment:", rc_block)
         self.assertIn("HASTEGEO_RC_PUBLISH_ENABLED", rc_block)
-        self.assertIn("environment: hastegeo-release", stable_block)
-        self.assertIn("environment: hastegeo-release", workflow)
+        # Merging to the default branch is the release approval, so stable
+        # publication carries no protected environment.
+        # HASTEGEO_PUBLISH_ENABLED stays as the kill switch.
+        self.assertNotIn("environment:", stable_block)
+        self.assertIn("HASTEGEO_PUBLISH_ENABLED", stable_block)
+        self.assertNotIn(
+            "HASTEGEO_RELEASE_APPROVAL_CONFIGURED", stable_block
+        )
         self.assertIn("contents: write", workflow)
         self.assertNotIn("--clobber", publisher)
 

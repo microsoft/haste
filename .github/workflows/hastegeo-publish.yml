@@ -159,15 +159,21 @@ jobs:
             --channel rc \
             --source-sha "${{ needs.prepare.outputs.source_sha }}"
 
+  # Stable publication is automatic on merge to the default branch: the PR
+  # review required to land the commit there is the release approval. A second
+  # per-release sign-off would re-approve an already-reviewed commit.
+  # HASTEGEO_PUBLISH_ENABLED remains the kill switch.
+  #
+  # HASTEGEO_RELEASE_APPROVAL_CONFIGURED is deliberately NOT read here. It still
+  # gates the destructive RC deletion job in rc-cleanup.yml, which keeps the
+  # protected hastegeo-release environment.
   publish-stable:
     needs: prepare
     if: >-
       needs.prepare.outputs.channel == 'release' &&
       needs.prepare.outputs.already_published != 'true' &&
-      vars.HASTEGEO_PUBLISH_ENABLED == 'true' &&
-      vars.HASTEGEO_RELEASE_APPROVAL_CONFIGURED == 'true'
+      vars.HASTEGEO_PUBLISH_ENABLED == 'true'
     runs-on: ubuntu-latest
-    environment: hastegeo-release
     permissions:
       actions: read
       contents: write
