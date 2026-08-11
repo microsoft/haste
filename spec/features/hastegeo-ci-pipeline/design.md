@@ -5,8 +5,9 @@
 The pipeline separates untrusted source execution from trusted repository and
 Azure mutations. A read-only job builds and validates the wheel, passes it as
 an Actions artifact, and a trusted default-branch workflow validates and
-automatically publishes same-repository PR RCs. Stable releases remain
-approval-gated.
+automatically publishes same-repository PR RCs. Stable releases publish
+automatically on merge to `main`, gated only by the `HASTEGEO_PUBLISH_ENABLED`
+kill switch — the branch ruleset's required PR review is the release approval.
 
 ## Architecture
 
@@ -36,7 +37,7 @@ Trusted publish job [contents:write, trusted base ref only]
   +--> deploy workflow uses the same wheel + both image tags
 
 Stable push:
-  protected hastegeo-release approval
+  HASTEGEO_PUBLISH_ENABLED kill switch
   -> publish X.Y.Z + create/reconcile hastegeo-vX.Y.Z tag
 ```
 
@@ -140,8 +141,8 @@ retain file must exist, and any GitHub query/delete failure aborts the run.
 |---|---|
 | `HASTEGEO_RC_ENVIRONMENT` repository variable | Selects the environment providing RC ACR OIDC/secrets |
 | `HASTEGEO_RC_PUBLISH_ENABLED` repository variable | RC kill switch (`false` disables; absent enables) |
-| `hastegeo-release` environment | Required reviewer approval for stable releases |
-| `HASTEGEO_PUBLISH_ENABLED` repository variable | Stable publication enablement |
-| `HASTEGEO_RELEASE_APPROVAL_CONFIGURED` repository variable | Admin confirmation that required reviewers are active |
+| `hastegeo-release` environment | Required reviewer approval for destructive RC deletion (`rc-cleanup.yml`) |
+| `HASTEGEO_PUBLISH_ENABLED` repository variable | Stable publication enablement / kill switch |
+| `HASTEGEO_RELEASE_APPROVAL_CONFIGURED` repository variable | Admin confirmation that required reviewers are active; gates RC deletion only |
 | `HASTE_BUMP` | Patch(default), minor, or major target |
 | `HASTE_SET_VERSION` | Exact version override |

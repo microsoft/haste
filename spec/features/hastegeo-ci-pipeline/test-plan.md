@@ -47,7 +47,8 @@
 - Build job permissions are `contents: read`.
 - Build checkout sets `persist-credentials: false`.
 - Build job receives no `GH_TOKEN`, Azure secrets, or OIDC permission.
-- Publish job uses `contents: write`, protected environment, and no PR checkout.
+- Publish job uses `contents: write` and no PR checkout. Stable publication
+  carries no protected environment; the destructive RC deletion job does.
 - Image job executes trusted inline Azure commands rather than PR shell scripts.
 - Fork PR condition skips publish and image jobs.
 - Every external action is pinned to a full SHA.

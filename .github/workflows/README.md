@@ -18,11 +18,15 @@ This directory contains GitHub Actions workflows for the HASTE project, focused 
 
 Stable releases create `hastegeo-vX.Y.Z` tags, making reruns of the same source
 commit a no-op. Stable publication is automatic: merging a PR into `main` that
-touches `hastelib/` publishes the next patch wheel, because the review required
-to land that commit is the release approval. Set `HASTEGEO_PUBLISH_ENABLED=true`
-to enable it; set it to anything else to halt stable publication. Use
-`workflow_dispatch` with an explicit `bump` or `set_version` for minor/major
-releases.
+touches `hastelib/` publishes the next **patch** wheel, because the review
+required to land that commit is the release approval. Set
+`HASTEGEO_PUBLISH_ENABLED=true` to enable it; set it to anything else to halt
+stable publication.
+
+Minor and major stable releases have no automated path today. The publisher only
+accepts `push` and same-repository `pull_request` upstream events, so a
+`workflow_dispatch` build is not published even though `hastegeo-build.yml`
+accepts `bump` and `set_version` inputs.
 
 RC publication is automatic unless `HASTEGEO_RC_PUBLISH_ENABLED=false`.
 Fork PRs remain build-only. The RC image environment is selected through

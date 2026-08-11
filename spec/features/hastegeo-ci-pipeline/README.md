@@ -73,5 +73,7 @@ Function deployments can be reported as successful.
 | Stable source tags | Main workflow reruns are idempotent |
 | PEP 440 `rcN` | `rc01` is normalized to `rc1` by Python packaging |
 | Automatic trusted RC publication | Fast dev/test handoff without exposing PR jobs to credentials |
-| Protected stable environment | Human approval limits stable-release blast radius |
+| Stable publishes on merge to `main` | The branch ruleset's required review is the release approval; a second per-release sign-off re-approves an already-reviewed commit |
+| `HASTEGEO_PUBLISH_ENABLED` kill switch | Stable publication can be halted without a code change |
+| Protected environment retained for RC deletion | Human approval limits destructive-automation blast radius |
 | Scheduled cleanup is report-only | Destructive automation is deferred until observed safely |
