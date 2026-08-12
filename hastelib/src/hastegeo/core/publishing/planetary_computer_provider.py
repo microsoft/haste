@@ -119,7 +119,10 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
     def info(self) -> ProviderInfo:
         settings = self.config.publishing_config
         enabled = bool(settings.get("pc_provider_enabled"))
-        configured = bool(self.endpoint and self.ingestion_source)
+        # The GeoCatalog URL is what makes the target configurable. An ingestion
+        # source is only required for private containers; public containers
+        # publish without one (verified against a live GeoCatalog).
+        configured = bool(self.endpoint)
         if not enabled:
             disabled_reason = "Disabled by the operator"
         elif not configured:
@@ -191,7 +194,8 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
     ) -> PublishResult:
         self._require_configuration()
         self._validate_bundle(source)
-        self._validate_ingestion_source()
+        if self.ingestion_source:
+            self._validate_ingestion_source()
         projection_codes = self._projection_codes(dataset, source)
         collection_id = build_collection_id(dataset, self.collection_prefix)
         item_id = build_item_id(dataset)
@@ -1128,11 +1132,13 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
                 self.info.disabledReason
                 or "Planetary Computer provider is unavailable"
             )
-        if not re.fullmatch(r"[A-Za-z0-9._-]{1,256}", self.ingestion_source):
+        if self.ingestion_source and not re.fullmatch(
+            r"[A-Za-z0-9._-]{1,256}", self.ingestion_source
+        ):
             raise PlanetaryComputerProviderError(
                 "Planetary Computer ingestion source ID is invalid"
             )
-        if not 1 <= self.max_verify_attempts <= 20:
+        if not 1 <= self.max_verify_attempts <= 60:
             raise PlanetaryComputerProviderError(
                 "Planetary Computer verification limit is invalid"
             )
