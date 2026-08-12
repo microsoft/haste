@@ -31,6 +31,7 @@ class TestExecuteImagePreprocessConfigDict(unittest.TestCase):
         image_data.sourceTypePostEvent = "url"
         image_data.autoFineTune = False
         image_data.userBuildingFootprintsUrl = user_url
+        image_data.clipBbox = None
 
         with patch(
             "hastegeo.core.processors.imagery.UnifiedDataLayer",

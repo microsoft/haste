@@ -1279,7 +1279,7 @@ class LocalRunner(BaseRunner):
         output_container_url: str,
         output_prefix: str,
         resource_files: list,
-        file_pattern: str,
+        file_pattern,
     ):
         """Upload task output files to blob storage."""
         if not self.blob_client:
@@ -1290,16 +1290,26 @@ class LocalRunner(BaseRunner):
             files_to_upload = []
 
             if file_pattern:
-                normalized_pattern = file_pattern.replace("\\", "/")
-                try:
-                    files_to_upload = [
-                        Path(p)
-                        for p in glob.glob(normalized_pattern, recursive=True)
-                    ]
-                except Exception as e:
-                    self.logger.warning(
-                        f"Failed globbing output pattern {file_pattern}: {e}. Falling back to task_dir search"
-                    )
+                # Mirror AzureBatchJob.add_task: a workload may supply several
+                # patterns when its outputs span more than one directory.
+                patterns = (
+                    [file_pattern]
+                    if isinstance(file_pattern, str)
+                    else [p for p in file_pattern if p]
+                )
+                for pattern in patterns:
+                    normalized_pattern = pattern.replace("\\", "/")
+                    try:
+                        files_to_upload += [
+                            Path(p)
+                            for p in glob.glob(
+                                normalized_pattern, recursive=True
+                            )
+                        ]
+                    except Exception as e:
+                        self.logger.warning(
+                            f"Failed globbing output pattern {pattern}: {e}. Falling back to task_dir search"
+                        )
 
             if not files_to_upload:
                 outputs_dir = task_dir / "outputs"

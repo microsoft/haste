@@ -29,6 +29,7 @@ from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.processors.stats import StatsPostProcessor
 from hastegeo.core.processors.train import TrainPostprocessor
 from hastegeo.core.utils.data import convert_json_to_geojson
+from hastegeo.core.utils.errors import describe_exception
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
 from pydantic import ValidationError  # type: ignore
@@ -215,7 +216,13 @@ async def GetProcessImageLayerQueueMessage(msg: func.QueueMessage) -> None:
         try:
             if "output" in locals():
                 output.status = config.get_status_types().FAILED.value
-                output.statusMessage = str(e)
+                # Append rather than assign: the status dialog shows this
+                # field, and overwriting it discards the whole progress
+                # history the user needs to see what actually ran.
+                output.statusMessage = MetadataUtils.append_status_message(
+                    output.statusMessage,
+                    f"Image layer processing failed: {describe_exception(e)}",
+                )
                 await asyncio.to_thread(
                     MetadataProcessor(
                         data_type=config.get_metadata_types().IMAGELAYER.value,
@@ -226,7 +233,10 @@ async def GetProcessImageLayerQueueMessage(msg: func.QueueMessage) -> None:
                 )
             elif "image_data" in locals():
                 image_data.status = config.get_status_types().FAILED.value
-                image_data.statusMessage = str(e)
+                image_data.statusMessage = MetadataUtils.append_status_message(
+                    image_data.statusMessage,
+                    f"Image layer processing failed: {describe_exception(e)}",
+                )
                 await asyncio.to_thread(
                     MetadataProcessor(
                         data_type=config.get_metadata_types().IMAGELAYER.value,
@@ -408,7 +418,7 @@ async def GetCreateModelRunQueueMessage(msg: func.QueueMessage) -> None:
             model_data.status = config.get_status_types().FAILED.value
             model_data.statusMessage = MetadataUtils.append_status_message(
                 model_data.statusMessage,
-                f"Training job failed: {str(e)}",
+                f"Training job failed: {describe_exception(e)}",
             )
             output = model_data
             await asyncio.to_thread(
@@ -571,7 +581,7 @@ async def GetRunEmbeddingQueueMessage(msg: func.QueueMessage) -> None:
                 model_data.status = config.get_status_types().FAILED.value
                 model_data.statusMessage = MetadataUtils.append_status_message(
                     model_data.statusMessage,
-                    f"Embedding job failed: {str(e)}",
+                    f"Embedding job failed: {describe_exception(e)}",
                 )
                 await asyncio.to_thread(
                     MetadataProcessor(
@@ -741,7 +751,7 @@ async def GetRunInferenceQueueMessage(msg: func.QueueMessage) -> None:
         model_data.inferenceStatusMessage = (
             MetadataUtils.append_status_message(
                 model_data.inferenceStatusMessage or "",
-                f"Inference job failed: {str(e)}",
+                f"Inference job failed: {describe_exception(e)}",
             )
         )
         output = model_data

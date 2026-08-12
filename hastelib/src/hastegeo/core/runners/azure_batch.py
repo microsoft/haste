@@ -62,6 +62,18 @@ from tenacity import (
 
 from .base import BaseRunner
 
+# Node-scoped Batch file APIs (list/get/delete_from_task) are answered by the
+# compute node that ran the task, so they fail once that node goes away. On
+# autoscale pools with `$NodeDeallocationOption = taskcompletion` (and on
+# low-priority/spot nodes that get preempted) the node is torn down at exactly
+# the moment the caller reads the task's outputs back.
+#
+# NodeNotReady is a 409, not a 5xx, so the server-error retry never covered it.
+# A node that is starting/rebooting recovers, so those codes are retried; a node
+# that is gone never will, so those are surfaced as a non-fatal "unavailable".
+TRANSIENT_NODE_ERROR_CODES = frozenset({"NodeNotReady", "NodeStateInvalid"})
+TERMINAL_NODE_ERROR_CODES = frozenset({"NodeNotFound"})
+
 
 class AzureBatchRunner(BaseRunner):
     def __init__(
@@ -92,14 +104,32 @@ class AzureBatchRunner(BaseRunner):
     def get_filecontent_from_task(
         self, job_id, task_id, filename, as_chunk=False
     ):
-        full_file_name = self.batch_cluster.get_file_by_match_from_task(
-            job_id, task_id, filename
-        )
-        if full_file_name is None:
+        try:
+            full_file_name = self.batch_cluster.get_file_by_match_from_task(
+                job_id, task_id, filename
+            )
+            if full_file_name is None:
+                return None
+            output = self.batch_cluster.get_file_from_task(
+                job_id, task_id, full_file_name
+            )
+        except BatchErrorException as e:
+            # The node that ran the task is gone (deallocated, preempted or
+            # rebooting), so its copy of the file is unreachable. Report it as
+            # a missing file rather than a failure: the task's outputs were
+            # already uploaded to blob on completion, so callers can recover
+            # from there.
+            if not is_node_unavailable_error(e):
+                raise
+            self.logger.warning(
+                "Node serving task %s (job %s) is unavailable (%s); "
+                "cannot read %s from the node.",
+                task_id,
+                job_id,
+                batch_error_code(e),
+                filename,
+            )
             return None
-        output = self.batch_cluster.get_file_from_task(
-            job_id, task_id, full_file_name
-        )
         if output is None:
             return None
         if as_chunk:
@@ -218,7 +248,21 @@ class AzureBatchRunner(BaseRunner):
         return job_id, task_id
 
     def cleanup_task(self, job_id, task_id):
-        self.batch_cluster.delete_files_from_task(job_id, task_id)
+        try:
+            self.batch_cluster.delete_files_from_task(job_id, task_id)
+        except BatchErrorException as e:
+            # Deleting the working directory of a node that no longer exists is
+            # already a no-op, and the task's `retention_time` reclaims the disk
+            # anyway — never fail the workload over it.
+            if not is_node_unavailable_error(e):
+                raise
+            self.logger.warning(
+                "Node serving task %s (job %s) is unavailable (%s); "
+                "skipping working-directory cleanup.",
+                task_id,
+                job_id,
+                batch_error_code(e),
+            )
         self.batch_cluster.disable_job(job_id)
 
     def cancel_task(self, job_id, task_id):
@@ -233,11 +277,47 @@ def is_server_error(exception):
     return False
 
 
+def batch_error_code(exception):
+    """Return the Batch error code of ``exception``, or None."""
+    if not isinstance(exception, BatchErrorException):
+        return None
+    return getattr(getattr(exception, "error", None), "code", None)
+
+
+def is_transient_node_error(exception):
+    """True when the node may still recover and serve the request.
+
+    The node-scoped file APIs are answered by the compute node itself, so a
+    node that is starting, rebooting or otherwise mid-transition rejects them
+    with a 409 rather than a 5xx. Those are worth another attempt.
+    """
+    return batch_error_code(exception) in TRANSIENT_NODE_ERROR_CODES
+
+
+def is_terminal_node_error(exception):
+    """True when the node is gone for good and retrying cannot help."""
+    return batch_error_code(exception) in TERMINAL_NODE_ERROR_CODES
+
+
+def is_node_unavailable_error(exception):
+    """True for any node-loss error, transient or terminal."""
+    return is_transient_node_error(exception) or is_terminal_node_error(
+        exception
+    )
+
+
+def is_retryable_batch_error(exception):
+    return is_server_error(exception) or is_transient_node_error(exception)
+
+
 def retry_on_server_error():
     return retry(
-        retry=retry_if_exception(is_server_error),
+        retry=retry_if_exception(is_retryable_batch_error),
         wait=wait_exponential(multiplier=1, min=4, max=10),
         stop=stop_after_attempt(5),
+        # Surface the underlying BatchErrorException once the budget is spent,
+        # instead of tenacity's RetryError, so callers can still classify it.
+        reraise=True,
     )
 
 
@@ -562,6 +642,13 @@ class AzureBatchJob:
             output_prefix = "output"
         if file_pattern is None:
             file_pattern = "$AZ_BATCH_TASK_WORKING_DIR/**/*"
+        # A pattern only ever matches one directory level, so a workload whose
+        # outputs live in more than one directory (e.g. imagery writes results
+        # to outputs/ and its progress log to logs/) has to supply several.
+        if isinstance(file_pattern, str):
+            file_patterns = [file_pattern]
+        else:
+            file_patterns = [p for p in file_pattern if p]
 
         if resource_files_for_upload is not None:
             resource_files = [
@@ -596,6 +683,25 @@ class AzureBatchJob:
         output_sas_url = self._maybe_sas(output_container_url, "racwl")
         output_identity = self._blob_identity()
 
+        def _output_file(pattern):
+            return OutputFile(
+                file_pattern=pattern,
+                destination=OutputFileDestination(
+                    container=OutputFileBlobContainerDestination(
+                        container_url=output_sas_url,
+                        path=output_prefix,
+                        identity_reference=output_identity,
+                    )
+                ),
+                upload_options=OutputFileUploadOptions(
+                    upload_condition=OutputFileUploadCondition.task_completion
+                ),
+            )
+
+        # Data files, then stdout, stderr, fileuploadout and fileuploaderr.
+        output_files = [_output_file(p) for p in file_patterns]
+        output_files.append(_output_file("../*.txt"))
+
         task = TaskAddParameter(
             id=task_id,
             constraints=task_constraints,
@@ -609,36 +715,7 @@ class AzureBatchJob:
                     elevation_level=ElevationLevel.admin,
                 )
             ),
-            output_files=[
-                # Data files
-                OutputFile(
-                    file_pattern=file_pattern,
-                    destination=OutputFileDestination(
-                        container=OutputFileBlobContainerDestination(
-                            container_url=output_sas_url,
-                            path=output_prefix,
-                            identity_reference=output_identity,
-                        )
-                    ),
-                    upload_options=OutputFileUploadOptions(
-                        upload_condition=OutputFileUploadCondition.task_completion
-                    ),
-                ),
-                # grabs stdout, stderr, fileuploadout and fileuploaderr
-                OutputFile(
-                    file_pattern="../*.txt",
-                    destination=OutputFileDestination(
-                        container=OutputFileBlobContainerDestination(
-                            container_url=output_sas_url,
-                            path=output_prefix,
-                            identity_reference=output_identity,
-                        )
-                    ),
-                    upload_options=OutputFileUploadOptions(
-                        upload_condition=OutputFileUploadCondition.task_completion
-                    ),
-                ),
-            ],
+            output_files=output_files,
         )
         self.batch_client.task.add(job_id, task)
 
