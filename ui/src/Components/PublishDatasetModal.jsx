@@ -222,6 +222,14 @@ const PublishDatasetModal = ({
         target,
         artifacts: effectiveSelectedArtifacts,
       });
+      // apiPut returns the numeric status (409) on conflict instead of throwing;
+      // surface it as an error rather than reporting a false success.
+      if (response === 409) {
+        setError(
+          "A dataset with this name is already being published for this project and layer."
+        );
+        return;
+      }
       onStarted?.(response.publishedDataset);
       onDismiss();
     } catch (submitError) {
@@ -235,7 +243,6 @@ const PublishDatasetModal = ({
     <Dialog open onOpenChange={(_, data) => !data.open && onDismiss()}>
       <DialogSurface
         className={styles.surface}
-        aria-modal={false}
         aria-describedby={undefined}
       >
         <form onSubmit={handleSubmit}>

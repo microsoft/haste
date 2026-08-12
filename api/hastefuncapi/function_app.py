@@ -286,7 +286,9 @@ async def _get_active_publishing_caller(
         if isinstance(role, str)
     }
     caller_id = principal_id or user_details
-    return {"id": str(caller_id).lower(), "roles": roles, "name": (active_user.name or active_user.email or user_details)}, None
+    # Persist the email/login as the publisher identifier, never the display
+    # name (privacy: display names are resolved from Entra at read time).
+    return {"id": str(caller_id).lower(), "roles": roles, "name": (active_user.email or user_details)}, None
 
 
 def _publishing_json_response(
