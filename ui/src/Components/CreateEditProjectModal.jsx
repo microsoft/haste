@@ -83,9 +83,7 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
       primaryClasses
     );
 
-    // Only validate event types if creating a new project. Old projects may not have any.
-    var eventTypesError = "";
-    validateEventTypes(
+    const eventTypesError = validateEventTypes(
       eventTypes
     );
 
@@ -428,19 +426,21 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
                 className="col-auto d-flex align-items-center mb-1 pb-1 pt-1 ps-0 pe-0"
                 style={{ borderBottom: "1px solid #eaeaea" }}
               >
-                <Button
-                  appearance="subtle"
-                  aria-label="RemoveEventType"
-                  icon={<FluentIcon name="Delete" />}
-                  onClick={() =>
-                    removeEventType(
-                      eventType,
-                      setComponentState,
-                      componentState,
-                      setSelectedCountry
-                    )
-                  }
-                />
+                {projectId === undefined && (
+                  <Button
+                    appearance="subtle"
+                    aria-label="RemoveEventType"
+                    icon={<FluentIcon name="Delete" />}
+                    onClick={() =>
+                      removeEventType(
+                        eventType,
+                        setComponentState,
+                        componentState,
+                        setSelectedCountry
+                      )
+                    }
+                  />
+                )}
               </div>
             </div>
           ))}
