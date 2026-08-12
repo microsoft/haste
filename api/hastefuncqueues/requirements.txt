@@ -14,7 +14,6 @@ azure-mgmt-web
 azure-batch==14.2.0
 azure-core==1.39.0
 azure-identity==1.18.0
-azure-planetarycomputer==1.0.0
 email_validator==2.3.0
 psycopg2-binary==2.9.9
 requests==2.33.0

@@ -59,6 +59,13 @@ BATCH_MANAGE_POOLS="${BATCH_MANAGE_POOLS:-true}"
 # Data publishing feature flag. Mirrors the `publishingEnabled` param in
 # infra/modules/functions.bicep so both deploy paths agree; defaults off.
 PUBLISHING_ENABLED="${PUBLISHING_ENABLED:-false}"
+# Planetary Computer publishing target. Mirrors the pc* params in
+# infra/modules/functions.bicep; default off / unset.
+PC_PROVIDER_ENABLED="${PC_PROVIDER_ENABLED:-false}"
+PC_GEOCATALOG_URL="${PC_GEOCATALOG_URL:-}"
+PC_EXPLORER_URL="${PC_EXPLORER_URL:-}"
+PC_INGESTION_SOURCE="${PC_INGESTION_SOURCE:-}"
+PC_COLLECTION_PREFIX="${PC_COLLECTION_PREFIX:-haste-}"
 MAPS_ACCOUNT="${RESOURCE_PREFIX}haste${RANDOM_SUFFIX}maps"
 API_MANAGEMENT="${RESOURCE_PREFIX}-haste-${RANDOM_SUFFIX}-apim"
 FIXED_TAGS="project=haste created_by=deploy_apps"
@@ -139,6 +146,11 @@ deploy_function() {
             "EMAIL_CONNECTION_STRING=${EMAIL_CONNECTION_STRING}" \
             "EMAIL_SENDER=${EMAIL_SENDER}" \
             "PUBLISHING_ENABLED=${PUBLISHING_ENABLED}" \
+            "PC_PROVIDER_ENABLED=${PC_PROVIDER_ENABLED}" \
+            "PC_GEOCATALOG_URL=${PC_GEOCATALOG_URL}" \
+            "PC_EXPLORER_URL=${PC_EXPLORER_URL}" \
+            "PC_INGESTION_SOURCE=${PC_INGESTION_SOURCE}" \
+            "PC_COLLECTION_PREFIX=${PC_COLLECTION_PREFIX}" \
             --output none
     fi
 

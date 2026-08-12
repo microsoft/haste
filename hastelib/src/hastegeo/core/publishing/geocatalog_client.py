@@ -108,9 +108,11 @@ class GeoCatalogClient:
         absolute: bool = False,
     ) -> requests.Response:
         target = url if absolute else f"{self.endpoint}{url}"
-        query = {"api-version": self.api_version}
-        if params:
-            query.update(params)
+        query = dict(params or {})
+        # Absolute operation/continuation URLs already carry api-version in their
+        # query string; adding it again would produce a duplicate parameter.
+        if "api-version" not in query and "api-version=" not in target:
+            query["api-version"] = self.api_version
         headers = self.auth.headers()
         try:
             response = self._session.request(
