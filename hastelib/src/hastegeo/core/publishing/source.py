@@ -112,12 +112,16 @@ class PublishingSourceResolver:
             raise PublishingSourceNotFoundError(
                 "Model does not belong to the requested project and image layer"
             )
-        if (
-            model.inferenceStatus
-            != self.config.get_status_types().COMPLETED.value
-        ):
+        completed = self.config.get_status_types().COMPLETED.value
+        # Embedding models signal completion via `status`; trained/inference
+        # models via `inferenceStatus`. Gate on the field that actually applies.
+        if model.modelType == "embedding":
+            is_complete = model.status == completed
+        else:
+            is_complete = model.inferenceStatus == completed
+        if not is_complete:
             raise PublishingSourceNotEligibleError(
-                "Model inference must be Processed before publishing"
+                "Model must be Processed before publishing"
             )
         return project, image_layer, model
 

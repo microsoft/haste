@@ -26,9 +26,10 @@ class PublishingProviderRegistry:
         settings = self.config.publishing_config
         publishing_enabled = settings["publishing_enabled"]
         pc_enabled = settings["pc_provider_enabled"]
-        pc_configured = bool(
-            settings["pc_geocatalog_url"] and settings["pc_ingestion_source"]
-        )
+        # The GeoCatalog URL is what makes the target configurable; the
+        # ingestion source is only needed for private containers (public
+        # containers publish without one), so it must not be required here.
+        pc_configured = bool(settings["pc_geocatalog_url"])
         return {
             "local": ProviderInfo(
                 id="local",

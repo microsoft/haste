@@ -32,6 +32,9 @@ export async function apiValidateUser(setAppParams) {
           setAppParams((prevParams) => ({
             ...prevParams,
             userId: upsertUserObject.userId,
+            // SWA principal object id — matches PublishedDataset.publishedByUser
+            // so non-admin publishers are recognized as owners.
+            identityId: staticAppUserStatus.clientPrincipal.userId,
             userRoles: upsertUserObject.userRoles,
             userSettings: upsertUserObject.settings,
             userStatus: upsertUserObject.status
@@ -41,6 +44,7 @@ export async function apiValidateUser(setAppParams) {
         setAppParams((prevParams) => ({
           ...prevParams,
           userId: response.userId,
+          identityId: staticAppUserStatus.clientPrincipal.userId,
           userRoles: response.userRoles,
           userSettings: response.settings,
           userStatus: response.status

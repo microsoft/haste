@@ -1,4 +1,4 @@
-import { useContext, useDeferredValue, useEffect, useState } from "react";
+import { useContext, useDeferredValue, useEffect, useRef, useState } from "react";
 import {
   Dropdown,
   MessageBar,
@@ -81,12 +81,21 @@ const PublishedDatasets = () => {
     isPublishingStatusActive(item.status),
   );
 
+  // Keep a ref to the latest fetchDatasets so the polling interval always uses
+  // the current page/filters/search/sort instead of the values captured when
+  // polling first started (which would overwrite fresh results with a stale
+  // query).
+  const fetchDatasetsRef = useRef(fetchDatasets);
+  fetchDatasetsRef.current = fetchDatasets;
+
   useEffect(() => {
-    if (!hasActiveItems) return undefined;
-    const interval = window.setInterval(() => fetchDatasets(false), 5000);
+    if (!hasActiveItems || !searchReady) return undefined;
+    const interval = window.setInterval(
+      () => fetchDatasetsRef.current(false),
+      5000,
+    );
     return () => window.clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasActiveItems]);
+  }, [hasActiveItems, searchReady]);
 
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const page = Math.min(currentPage, totalPages);

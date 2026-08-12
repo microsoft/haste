@@ -153,8 +153,7 @@ const EmbeddingModelRow = ({
               key: "publishDataset",
               text: "Publish dataset…",
               icon: <FluentIcon name="Upload" />,
-              disabled:
-                model.inferenceStatus !== "Processed" || !hasPredictions,
+              disabled: !isProcessed || !hasPredictions,
               onClick: () => setShowPublishDataset(true),
             },
           ]
