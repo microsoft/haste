@@ -55,6 +55,7 @@ from hastegeo.core.processors.publishing import (
     PublishingStateConflictError,
 )
 from hastegeo.core.processors.stats import StatsPreProcessor
+from hastegeo.core.processors.train import TrainPreprocessor
 from hastegeo.core.processors.uploader import FileUploader
 from hastegeo.core.publishing.lease import LeaseUnavailableError
 from hastegeo.core.publishing.registry import (
@@ -2954,8 +2955,6 @@ async def PutArtifactsZipQueueMessage(
 async def PutCancelModelQueueMessage(
     req: func.HttpRequest,
 ) -> func.HttpResponse:
-    from hastegeo.core.processors.train import TrainPreprocessor
-
     logger.info(
         "PutCancelModelQueueMessage HTTP trigger function processed a request."
     )
