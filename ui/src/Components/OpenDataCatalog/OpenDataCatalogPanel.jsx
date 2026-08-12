@@ -27,6 +27,7 @@ import {
   Tab,
   TabList,
   Text,
+  Tooltip,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
@@ -565,13 +566,17 @@ const OpenDataCatalogPanel = ({
                     </Button>
                   </span>
                 ) : (
-                  <Button
-                    icon={<FluentIcon name="Crop" />}
-                    onClick={() => setClipMode(true)}
-                    className={styles.floatingButton}
+                  <Tooltip
+                    content="For large scenes, selecting a smaller area can reduce processing time and output size."
+                    relationship="description"
                   >
-                    Set clip area
-                  </Button>
+                    <Button
+                      icon={<FluentIcon name="Crop" />}
+                      onClick={() => setClipMode(true)}
+                    >
+                      Set clip area
+                    </Button>
+                  </Tooltip>
                 )}
               </div>
             )}

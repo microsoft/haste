@@ -59,7 +59,7 @@ const HelpDocsImageLayers = ({ anchor }) => {
         <li>Select a disaster event.</li>
         <li>Filter scenes by provider (<strong>Vantor</strong> or <strong>Planet</strong>) and phase (<strong>Pre</strong> or <strong>Post</strong>).</li>
         <li>Select a scene to preview its footprint and imagery on the map. The scene details include capture time, sensor, ground sample distance (GSD), cloud cover, off-nadir angle, sun elevation, and file size when the provider supplies them.</li>
-        <li>Optionally select <strong>Set clip area</strong> and draw a box on the map. HASTE applies this area to both pre- and post-event mosaics during processing. You can also filter the catalog to scenes that overlap the clip area.</li>
+        <li>Optionally select <strong>Set clip area</strong> and draw a box on the map. HASTE applies this area to both pre- and post-event mosaics during processing. You can also filter the catalog to scenes that overlap the clip area. If you skip this step, HASTE processes the full scene. For large scenes, selecting a smaller area can reduce processing time and output size.</li>
         <li>Select <strong>+ Pre-event</strong> or <strong>+ Post-event</strong> to add the scene to the corresponding imagery section.</li>
       </ol>
       <p>Adding a catalog scene also fills in that section&apos;s imagery capture date and source type when the catalog provides them. Review the populated values before creating the layer, especially when combining multiple scenes.</p>

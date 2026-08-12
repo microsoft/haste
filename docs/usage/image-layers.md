@@ -89,7 +89,9 @@ finding and copying source URLs manually. On the Create Image Layer form, select
   angle, sun elevation, and file size when the provider supplies them.
 4. Optionally select **Set clip area** and draw a box on the map. HASTE applies this
   area to both pre- and post-event mosaics during processing. You can also filter the
-  catalog to scenes that overlap the clip area.
+  catalog to scenes that overlap the clip area. If you skip this step, HASTE processes
+  the full scene. For large scenes, selecting a smaller area can reduce processing time
+  and output size.
 5. Select **+ Pre-event** or **+ Post-event** to add the scene to the corresponding
   imagery section.
 
