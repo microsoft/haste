@@ -44,8 +44,9 @@ Your browser does not support the video tag.
 
 ## Edit a Project
 
-You can update the name and description for a project after it was created from the
-Projects page.
+From the Projects page, you can update a project's name, description, event date, and
+affected countries after creation. Event types and primary classes cannot be changed
+after the project is created, so review them carefully before creating the project.
 
 <video controls width="100%" src="../_static/usage/projects/projects-edit-a-project.mp4">
 Your browser does not support the video tag.

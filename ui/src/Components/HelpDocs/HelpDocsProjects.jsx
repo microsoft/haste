@@ -67,7 +67,7 @@ const HelpDocsProjects = ({ anchor }) => {
       <a name="edit-a-project"></a>
       <h2 className='pt-4'>Edit a Project</h2>
 
-      <p>You can update the name and description for a project after it was created from the Projects page.
+      <p>From the Projects page, you can update a project&apos;s name, description, event date, and affected countries after creation. Event types and primary classes cannot be changed after the project is created, so review them carefully before creating the project.
 
 
       <video src={editAProjectVideo} controls className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
