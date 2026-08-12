@@ -12,7 +12,6 @@ from ..models.publishing import (
     PublishRequest,
     PublishResult,
 )
-from ..utils.metadata import MetadataUtils
 from .base import PublishingProvider
 
 
@@ -107,5 +106,10 @@ class LocalPublishingProvider(PublishingProvider):
 
     @staticmethod
     def _dataset_prefix(dataset: PublishedDataset) -> str:
-        project_hash = MetadataUtils.hash_string(str(dataset.projectId))
-        return f"{project_hash}/published/{dataset.datasetId}"
+        # Flat `published/<datasetId>` prefix (datasetId is a UUID, so globally
+        # unique). Keeping the blob path to three in-container segments
+        # (published/<datasetId>/<file>) lets the UI serve downloads through the
+        # existing managed-identity storage proxy (get-artifacts), which the
+        # VNet-only storage account requires — a direct blob SAS from the browser
+        # is denied by the storage firewall.
+        return f"published/{dataset.datasetId}"

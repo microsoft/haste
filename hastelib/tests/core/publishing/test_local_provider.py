@@ -14,7 +14,6 @@ from hastegeo.core.models.publishing import (
     SourceArtifact,
 )
 from hastegeo.core.publishing.local_provider import LocalPublishingProvider
-from hastegeo.core.utils.metadata import MetadataUtils
 
 
 class FakeConfig:
@@ -101,10 +100,7 @@ class TestLocalPublishingProvider(unittest.TestCase):
 
         self.assertEqual(len(result.artifacts), 1)
         self.assertEqual(result.artifacts[0].kind.value, "gpkg")
-        prefix = (
-            f"{MetadataUtils.hash_string(str(self.project_id))}/published/"
-            f"{self.dataset.datasetId}"
-        )
+        prefix = f"published/{self.dataset.datasetId}"
         self.assertTrue(
             self.storage.artifact_exists(result.artifacts[0].publishedPath)
         )
