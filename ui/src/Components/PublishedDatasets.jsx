@@ -72,8 +72,11 @@ const PublishedDatasets = () => {
   useEffect(() => {
     if (!searchReady) return;
     // State updates occur after the awaited API response, not synchronously.
+    // Show the full-page loading overlay only on the first load (items === null,
+    // catalog pattern); later filter/search/sort/page changes refetch silently
+    // so the overlay doesn't flash on every keystroke.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchDatasets(false);
+    fetchDatasets(items === null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, pageSize, targetFilter, statusFilter, normalizedSearchText, searchReady, sort]);
 
