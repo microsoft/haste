@@ -84,6 +84,23 @@ template). Two grants are required and are **not** created by the app deploy:
    storage account by setting `HASTE_PC_GEOCATALOG_INGEST_PRINCIPAL_ID` to that
    identity's object id (the deploy then makes the assignment; empty = skip).
 
+### Function App host id (required — avoids Singleton-lock failures)
+
+Publishing adds a **timer trigger** (`ReconcilePublishingOperations`, every 5
+minutes) to the queues Function App — the app's first timer trigger. Timer
+triggers acquire a **host-scoped Singleton lock**, so if the Function App's
+auto-generated host id collides with another deployment slot or another app
+sharing the same storage account, the timer (and the host) can fail with
+*"Unable to acquire Singleton lock"* and *"No script host available"* /
+`NoScriptHost` — the app goes unhealthy.
+
+Set a unique **`AzureFunctionsWebHost__hostId`** app setting (≤ 32 chars,
+lowercase alphanumeric + hyphens) on **each** Function App **and each deployment
+slot** — e.g. `haste-queues-<env>`, `haste-api-<env>`, `haste-titiler-<env>`.
+See <https://aka.ms/functions-hostid>. This applies wherever publishing is
+enabled (Local *or* PC), since the reconciler timer ships with the Local
+feature; it is unrelated to the publishing code itself.
+
 ## Rollout Phases
 
 ### Phase 1: Dev1 Environment — [date]
