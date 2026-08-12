@@ -11,6 +11,7 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  Toaster,
 } from "@fluentui/react-components";
 import { AppContext } from "./AppContext";
 import { apiValidateUser, apiLogout, apiGet } from "./util/api";
@@ -213,6 +214,11 @@ function App() {
           <GuidedTour />
         }
         {modalComponent}
+        <Toaster
+          toasterId="job-completion-toaster"
+          position="top-end"
+          pauseOnWindowBlur
+        />
         {appParams.userId !== null && <AppFooter />}
       </div>
     </>
