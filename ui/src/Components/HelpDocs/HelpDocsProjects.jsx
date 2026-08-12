@@ -44,14 +44,16 @@ const HelpDocsProjects = ({ anchor }) => {
         <li>Description -any additional information about the project </li>
         <li>Event Date – date that the disaster occurred. This date is stored for informational purposes and does not affect any processing</li>
         <li>Affected Countries – from the dropdown, select the country (or multiple countries) that were affected by the disaster. This data is stored for informational purposes and does not affect any downstream processing</li>
+        <li>Event Types – select one or more event types: General, Earthquake, Fire, or Flood. This field is required and defaults to General.</li>
         <li>Primary Classes – these are the classes of labels that you will add to an image layer to help train the model.</li>
       </ol>
 
       <p>The classes of labels that the model needs to be trained on are:</p>
       <ul>
         <li>Background</li>
-        <li>Buildings</li>
+        <li>Building</li>
         <li>Damaged Building</li>
+        <li>Cloud</li>
       </ul>
       <p>These classes are provided by default on the project creation form. You can keep the default colors or change them to suit your need.</p>
 
