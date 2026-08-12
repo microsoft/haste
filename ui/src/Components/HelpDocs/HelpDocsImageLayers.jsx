@@ -52,6 +52,19 @@ const HelpDocsImageLayers = ({ anchor }) => {
       <a name="create-a-new-imageLayer"></a> 
       <h2 className=''>Create a New Image Layer </h2>
       <p>To create an Image Layer, you must first create a project. Once this is done, select the desired project from the list of projects. The project details will be displayed, which includes a button called "Create Image Layer." Clicking this will take you to the Image Layer creation form. </p>
+
+      <h3 className='pt-4'>Browse the Open Data Catalog</h3>
+      <p>The <strong>Open Data Catalog</strong> is the fastest way to add public disaster imagery without finding and copying source URLs manually. On the Create Image Layer form, select <strong>Browse Open Data Catalog</strong>, then:</p>
+      <ol>
+        <li>Select a disaster event.</li>
+        <li>Filter scenes by provider (<strong>Vantor</strong> or <strong>Planet</strong>) and phase (<strong>Pre</strong> or <strong>Post</strong>).</li>
+        <li>Select a scene to preview its footprint and imagery on the map. The scene details include capture time, sensor, ground sample distance (GSD), cloud cover, off-nadir angle, sun elevation, and file size when the provider supplies them.</li>
+        <li>Optionally select <strong>Set clip area</strong> and draw a box on the map. HASTE applies this area to both pre- and post-event mosaics during processing. You can also filter the catalog to scenes that overlap the clip area.</li>
+        <li>Select <strong>+ Pre-event</strong> or <strong>+ Post-event</strong> to add the scene to the corresponding imagery section.</li>
+      </ol>
+      <p>Adding a catalog scene also fills in that section&apos;s imagery capture date and source type when the catalog provides them. Review the populated values before creating the layer, especially when combining multiple scenes.</p>
+      <p>The catalog currently browses the Vantor Open Data Program (formerly Maxar) and Planet Disaster Data. You can still add imagery manually by URL or file upload when the scene you need is not available in the catalog.</p>
+
       <p>Add imagery files by providing publicly accessible URLs or uploading files from a local directory that show the Area of Interest (AOI). You can also combine files from both a URL and a local directory. If multiple files are provided in a section, they will be merged into a single GeoTIFF image; therefore, all files in each section must correspond to the same AOI. All files must be valid GeoTIFF (.tif) files. </p>
 
       <video src={createANewImageLayerVideo} controls className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
