@@ -83,9 +83,9 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
       primaryClasses
     );
 
-    const eventTypesError = validateEventTypes(
-      eventTypes
-    );
+    const eventTypesError = projectId === undefined
+      ? validateEventTypes(eventTypes)
+      : "";
 
     if (nameError || eventTypesError || eventDateError || affectedCountriesError || primaryClassesError) {
       setComponentState({
