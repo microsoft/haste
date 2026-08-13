@@ -63,6 +63,7 @@ Function App): `PUBLISH_MAX_TOTAL_BYTES` (5 GiB), `PUBLISHED_DOWNLOAD_SAS_MINUTE
 | `HASTE_PC_EXPLORER_URL` | `PC_EXPLORER_URL` | (unset) | Explorer base URL for published-dataset links |
 | `HASTE_PC_INGESTION_SOURCE` | `PC_INGESTION_SOURCE` | (unset) | Ingestion-source name for **private** HASTE containers (`SasToken`); unset for public |
 | `HASTE_PC_COLLECTION_PREFIX` | `PC_COLLECTION_PREFIX` | `haste-` | STAC Collection id prefix (one per project/event) |
+| `HASTE_PC_PUBLISHING_LICENSE` | `PC_PUBLISHING_LICENSE` | `CC-BY-4.0` | STAC `license` id applied to published collections/items |
 
 The STAC `api-version` and the Entra token scope
 (`https://geocatalog.spatio.azure.com/.default`) are **code constants**, not

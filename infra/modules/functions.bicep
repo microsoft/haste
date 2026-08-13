@@ -109,6 +109,9 @@ param pcIngestionSource string = ''
 @description('STAC Collection id prefix (one collection per project/event).')
 param pcCollectionPrefix string = 'haste-'
 
+@description('STAC license id applied to published PC collections/items (e.g. CC-BY-4.0).')
+param pcPublishingLicense string = 'CC-BY-4.0'
+
 @description('Resource tags.')
 param tags object = {}
 
@@ -185,6 +188,7 @@ var appConfigSettings = [
   { name: 'PC_EXPLORER_URL', value: pcExplorerUrl }
   { name: 'PC_INGESTION_SOURCE', value: pcIngestionSource }
   { name: 'PC_COLLECTION_PREFIX', value: pcCollectionPrefix }
+  { name: 'PC_PUBLISHING_LICENSE', value: pcPublishingLicense }
 ]
 
 module apiApp 'functionApp.bicep' = {

@@ -108,6 +108,9 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
         self.explorer_url = str(
             settings.get("pc_explorer_url") or self.endpoint
         ).rstrip("/")
+        self.license_id = str(
+            settings.get("pc_publishing_license") or "CC-BY-4.0"
+        )
         self.max_verify_attempts = int(settings.get("pc_verify_attempts") or 5)
         self.artifact_storage = artifact_storage or UnifiedArtifactStorage(
             storage_type=self.config.artifact_storage_type,
@@ -1177,6 +1180,7 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             valid_mask_crs=self._valid_mask_crs(valid_mask),
             existing_collection=existing_collection,
             collection_prefix=self.collection_prefix,
+            license_id=self.license_id,
             thumbnail_href=thumbnail_href,
             thumbnail_media_type=thumbnail_media_type,
         )
