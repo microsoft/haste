@@ -1347,10 +1347,14 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             "connectionInfo",
             "connection_info",
         )
+        # MPC Pro returns the blob container as `containerUri` (camelCase);
+        # accept the other spellings defensively.
         container_url = self._mapping_value(
             connection,
+            "containerUri",
             "containerUrl",
             "container_uri",
+            "container_url",
         )
         expected_url = str(self.artifact_storage.get_base_url()).rstrip("/")
         if not isinstance(container_url, str) or not self._same_url(
