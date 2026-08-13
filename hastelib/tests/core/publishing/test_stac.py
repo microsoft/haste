@@ -326,6 +326,66 @@ class TestStacObjects(unittest.TestCase):
         self.assertEqual(item["properties"]["ai4g:validation_ci_upper"], 24.0)
         self.assertGreater(item["properties"]["ai4g:aoi_area_km2"], 0)
 
+    def test_collection_description_is_a_rolling_dataset_summary(
+        self,
+    ) -> None:
+        first = self._build(
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            )
+        )
+        first_collection = serialize_stac_objects(first).collection
+
+        self.assertIn(
+            "1 published dataset.", first_collection["description"]
+        )
+        self.assertIn(
+            "Caracas damage assessment", first_collection["description"]
+        )
+        self.assertIn(
+            "18 of 100 buildings assessed as damaged",
+            first_collection["description"],
+        )
+        entries = first_collection["ai4g:datasets"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["id"], str(self.dataset.datasetId))
+        self.assertEqual(entries[0]["buildings_damaged"], 18)
+        self.assertEqual(entries[0]["buildings_total"], 100)
+
+        second_dataset = self.dataset.model_copy(
+            update={
+                "datasetId": uuid.UUID(
+                    "55555555-5555-4555-8555-555555555555"
+                ),
+                "name": "Second layer assessment",
+            }
+        )
+        second = build_stac_objects(
+            second_dataset,
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            ),
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
+            existing_collection=first_collection,
+        )
+        second_collection = serialize_stac_objects(second).collection
+
+        self.assertIn(
+            "2 published datasets.", second_collection["description"]
+        )
+        self.assertIn(
+            "Caracas damage assessment", second_collection["description"]
+        )
+        self.assertIn(
+            "Second layer assessment", second_collection["description"]
+        )
+        self.assertEqual(len(second_collection["ai4g:datasets"]), 2)
+
     def test_collection_extent_merges_existing_project_items(self) -> None:
         existing_collection = {
             "id": build_collection_id(self.dataset),
