@@ -85,8 +85,9 @@ class FakeSdkAdapter:
         return {
             "id": source_id,
             "kind": "BlobManagedIdentity",
+            # MPC Pro returns the container as `containerUri` (camelCase).
             "connectionInfo": {
-                "containerUrl": "https://source.blob.core.windows.net/container"
+                "containerUri": "https://source.blob.core.windows.net/container"
             },
         }
 
