@@ -356,6 +356,30 @@ def render_collection_description(
     return "\n".join(lines)
 
 
+def rebuild_collection_after_removal(
+    existing_collection: Mapping[str, Any],
+    dataset: PublishedDataset,
+) -> Dict[str, Any]:
+    """Drop ``dataset`` from the collection's rolling summary (for unpublish).
+
+    Returns a copy of the existing collection document with this dataset removed
+    from ``ai4g:datasets`` and the description re-rendered from what remains.
+    """
+    updated = dict(existing_collection)
+    stored = updated.get(COLLECTION_DATASETS_FIELD)
+    entries: list = []
+    if isinstance(stored, list):
+        entries = [
+            dict(entry)
+            for entry in stored
+            if isinstance(entry, Mapping)
+            and entry.get("id") != str(dataset.datasetId)
+        ]
+    updated[COLLECTION_DATASETS_FIELD] = entries
+    updated["description"] = render_collection_description(dataset, entries)
+    return updated
+
+
 def build_collection(
     dataset: PublishedDataset,
     item: Any,
