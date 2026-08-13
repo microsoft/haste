@@ -204,6 +204,7 @@ const Project = ({ setModalComponent }) => {
     }
     await apiGet("GetProjectDetails?projectId=" + projectId + "&includeModels=True")
       .then((response) => {
+        defaultProjectDetailsRef.current = response;
         const currentJobStates = collectProjectJobStates(response);
         const previousJobState = projectJobStatesRef.current;
         const previousJobs =
