@@ -255,7 +255,7 @@ export const AppProvider = ({ children }) => {
     userSettings: null,
     userStatus: null,
     identityId: null,
-    publishingEnabled: false,
+    publishingEnabled: null,
     publishingProviders: [],
     isLoading: false,
     loadingMessage: "",

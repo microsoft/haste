@@ -27,11 +27,13 @@ import { AppContext } from "../AppContext";
 
 const AppBody = ({ setModalComponent }) => {
   const { appParams } = useContext(AppContext);
+  const routesReady =
+    appParams.userRoles !== null && appParams.publishingEnabled !== null;
 
   return (
     <div className="app-body-shell d-flex flex-grow-1 justify-content-center">
       {appParams.isLoading && <Loading />}
-      <Routes>
+      {routesReady && <Routes>
         {appParams.userRoles !== null && appParams.publishingEnabled && (
           <Route path="/published-datasets" element={<PublishedDatasets />} />
         )}
@@ -101,7 +103,7 @@ const AppBody = ({ setModalComponent }) => {
           )}
 
         <Route path="*" element={<Error404 />} />
-      </Routes>
+      </Routes>}
     </div>
   );
 };
