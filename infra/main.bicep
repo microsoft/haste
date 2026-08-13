@@ -120,8 +120,8 @@ param useSas bool = false
 @description('Runner auto-creates/resizes its pool. False for pre-created autoscale pools.')
 param managePools bool = true
 
-@description('Enable the data publishing feature (Published Datasets section + Publish action).')
-param publishingEnabled bool = false
+@description('Enable the data publishing feature (Published Datasets section + Publish action). On by default.')
+param publishingEnabled bool = true
 
 // ---------------------------------------------------------------------------
 // Computed names — mirror the bash naming scheme exactly.

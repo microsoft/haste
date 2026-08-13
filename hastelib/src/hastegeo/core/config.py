@@ -328,7 +328,7 @@ class Config:
         """Get publishing feature and provider configuration."""
         return {
             "publishing_enabled": _get_bool_env(
-                "PUBLISHING_ENABLED", False
+                "PUBLISHING_ENABLED", True
             ),
             "pc_provider_enabled": _get_bool_env(
                 "PC_PROVIDER_ENABLED", False
