@@ -88,6 +88,11 @@ class PublishDatasetOptions(BaseModel):
 class ArtifactBundle(BaseModel):
     selectedArtifacts: List[SourceArtifact] = Field(default_factory=list)
     supportingArtifacts: List[SourceArtifact] = Field(default_factory=list)
+    # Optional post-event preview used as a STAC thumbnail. Stored as the URL
+    # HASTE holds for the image layer's preview (may carry a SAS); the PC
+    # provider resolves it to a plain blob path, copies it into the published
+    # prefix, and attaches it as a best-effort thumbnail asset.
+    thumbnailUrl: Optional[str] = None
 
     def get(self, kind: ArtifactKind) -> Optional[SourceArtifact]:
         for artifact in self.selectedArtifacts + self.supportingArtifacts:

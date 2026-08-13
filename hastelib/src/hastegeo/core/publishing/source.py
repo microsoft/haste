@@ -441,7 +441,19 @@ class PublishingSourceResolver:
                 )
             if kind not in selected_kinds:
                 supporting.append(available[kind])
+        _, image_layer, _ = self._load_source(
+            str(request.projectId), request.imageLayerId, request.modelId
+        )
         return ArtifactBundle(
             selectedArtifacts=selected,
             supportingArtifacts=supporting,
+            thumbnailUrl=self._first_preview_url(image_layer),
         )
+
+    @staticmethod
+    def _first_preview_url(image_layer: ImageLayer) -> Optional[str]:
+        urls = getattr(image_layer, "postEventPreviewUrls", None) or []
+        for url in urls:
+            if isinstance(url, str) and url.strip():
+                return url.strip()
+        return None

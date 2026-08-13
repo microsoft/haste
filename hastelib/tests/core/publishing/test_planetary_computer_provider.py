@@ -42,12 +42,25 @@ class FakeArtifactStorage:
         base_url: str = "https://source.blob.core.windows.net/container",
     ) -> None:
         self.base_url = base_url
+        self.blobs: set = set()
+        self.copied: list = []
 
     def get_base_url(self) -> str:
         return self.base_url
 
     def resolve_artifact_path(self, path: str) -> str:
         return path
+
+    def artifact_exists(self, path: str) -> bool:
+        return path in self.blobs
+
+    def get_artifact_etag(self, path: str) -> str:
+        return f"etag-{path}"
+
+    def copy_artifact(self, source: str, destination: str, etag: str) -> str:
+        self.copied.append((source, destination))
+        self.blobs.add(destination)
+        return destination
 
 
 class FakeSdkAdapter:
@@ -702,6 +715,47 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "must use HTTPS"):
             strict_provider.validate(self.request, self.bundle)
+
+    def test_thumbnail_is_copied_into_published_prefix(self) -> None:
+        self.storage.blobs.add("hash/task/preview_post_event.png")
+        bundle = ArtifactBundle(
+            selectedArtifacts=[self.damage],
+            supportingArtifacts=[self.mask],
+            thumbnailUrl=(
+                "https://source.blob.core.windows.net/container/"
+                "hash/task/preview_post_event.png"
+            ),
+        )
+
+        href, media_type = self.provider._resolve_thumbnail_href(
+            self.dataset, bundle
+        )
+
+        self.assertEqual(media_type, "image/png")
+        self.assertEqual(
+            href,
+            "https://source.blob.core.windows.net/container/"
+            f"published/{self.dataset.datasetId}/thumbnail.png",
+        )
+        self.assertIn(
+            (
+                "hash/task/preview_post_event.png",
+                f"published/{self.dataset.datasetId}/thumbnail.png",
+            ),
+            self.storage.copied,
+        )
+
+    def test_thumbnail_from_a_foreign_container_is_skipped(self) -> None:
+        bundle = ArtifactBundle(
+            selectedArtifacts=[self.damage],
+            supportingArtifacts=[self.mask],
+            thumbnailUrl="https://other.blob.core.windows.net/data/x.png",
+        )
+
+        href, _ = self.provider._resolve_thumbnail_href(self.dataset, bundle)
+
+        self.assertIsNone(href)
+        self.assertEqual(self.storage.copied, [])
 
     def test_valid_mask_crs_is_explicit_and_validated(self) -> None:
         projected = copy.deepcopy(self.valid_mask)
