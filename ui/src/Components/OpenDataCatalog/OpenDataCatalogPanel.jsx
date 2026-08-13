@@ -575,6 +575,8 @@ const OpenDataCatalogPanel = ({
                       icon={<FluentIcon name="Crop" />}
                       onClick={() => setClipMode(true)}
                     >
+                      Set clip area
+                    </Button>
                   </Tooltip>
                 )}
               </div>
