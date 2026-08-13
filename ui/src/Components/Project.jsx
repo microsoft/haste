@@ -205,9 +205,15 @@ const Project = ({ setModalComponent }) => {
     await apiGet("GetProjectDetails?projectId=" + projectId + "&includeModels=True")
       .then((response) => {
         const currentJobStates = collectProjectJobStates(response);
-        if (projectJobStatesRef.current) {
+        const previousJobState = projectJobStatesRef.current;
+        const previousJobs =
+          previousJobState?.projectId === projectId
+            ? previousJobState.jobs
+            : null;
+
+        if (previousJobs) {
           for (const transition of findJobStatusTransitions(
-            projectJobStatesRef.current,
+            previousJobs,
             currentJobStates
           )) {
             const succeeded = transition.status === "Processed";
@@ -223,8 +229,7 @@ const Project = ({ setModalComponent }) => {
             );
           }
         }
-        projectJobStatesRef.current = currentJobStates;
-        defaultProjectDetailsRef.current = response;
+        projectJobStatesRef.current = { projectId, jobs: currentJobStates };
         setComponentState((prevState) => ({
           ...prevState,
           project: response,
