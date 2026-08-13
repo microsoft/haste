@@ -98,7 +98,19 @@ export async function apiPut(endpoint, data) {
     // Accept any 2xx (e.g. 202 Accepted for async queue-message endpoints),
     // not just 200. Backward-compatible: existing 200 callers are unaffected.
     if (!response.ok) {
-      throw new Error(response);
+      // Surface the server's message instead of stringifying the Response
+      // object (which renders as the useless "[object Response]"). Error
+      // bodies are JSON `{ error: { code, message } }` (publishing routes) or
+      // `{ error }` / `{ message }` elsewhere; fall back to the status code.
+      let message = `Request failed (status ${response.status}).`;
+      try {
+        const body = await response.json();
+        message =
+          body?.error?.message || body?.error || body?.message || message;
+      } catch {
+        // Non-JSON error body — keep the status-based message.
+      }
+      throw new Error(message);
     }
     if (response.status === 204) {
       return null;
