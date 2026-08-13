@@ -152,6 +152,11 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
                     account_url=self._publish_account_url,
                     container=self._publish_container,
                     connection_string=None,
+                    # Write-only target: HASTE only copies assets here; the
+                    # GeoCatalog reads them via its own identity. Skips the
+                    # delegation-key / stored-policy calls, so the function-app
+                    # MI needs only Storage Blob Data Contributor here.
+                    serves_read_sas=False,
                 )
             else:
                 self._publish_storage = self.artifact_storage
