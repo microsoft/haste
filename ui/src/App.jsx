@@ -65,6 +65,11 @@ function App() {
         }));
       } catch (error) {
         console.error("Error loading publishing capabilities:", error);
+        setAppParams((previous) => ({
+          ...previous,
+          publishingEnabled: false,
+          publishingProviders: [],
+        }));
       }
       setIsLoading(false);
     };

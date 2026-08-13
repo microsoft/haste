@@ -194,7 +194,12 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
     <tr>
       <td data-label="Name">
         <Tooltip content={item.name} relationship="label">
-          <Text id={`publishedDatasetName${index}`}>{item.name}</Text>
+          <Text
+            id={`publishedDatasetName${index}`}
+            className="published-dataset-value"
+          >
+            {item.name}
+          </Text>
         </Tooltip>
       </td>
       <td data-label="Project / Layer">
@@ -203,16 +208,25 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
             content="Open the source project and layer"
             relationship="label"
           >
-            <Link href={sourceHref} onClick={openSource}>
+            <Link
+              className="published-dataset-value"
+              href={sourceHref}
+              onClick={openSource}
+            >
               {item.projectName || item.projectId}
             </Link>
           </Tooltip>
         ) : (
           <Text>{item.projectName || item.projectId}</Text>
         )}
-        <div className="pgrid-muted">
+        <div className="pgrid-muted published-dataset-value">
           {sourceHref ? (
-            <Link href={sourceHref} onClick={openSource} appearance="subtle">
+            <Link
+              className="published-dataset-value"
+              href={sourceHref}
+              onClick={openSource}
+              appearance="subtle"
+            >
               {item.imageLayerName || item.imageLayerId}
             </Link>
           ) : (
@@ -221,7 +235,9 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
         </div>
       </td>
       <td data-label="Target">
-        {item.target === "local" ? "Local" : "Planetary Computer"}
+        <span className="published-dataset-value">
+          {item.target === "local" ? "Local" : "Planetary Computer"}
+        </span>
       </td>
       <td data-label="Status">
         <Tooltip content={item.statusMessage || status.label} relationship="description">
@@ -232,25 +248,27 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
       </td>
       <td data-label="Published by">
         <Tooltip content={publishedBy || ""} relationship="label">
-          <Text>
+          <Text className="published-dataset-value">
             {publishedBy ? limitTextLength(publishedBy, false, 30) : "User"}
           </Text>
         </Tooltip>
       </td>
       <td data-label="Published date">
-        {formatDate(item.publishedDate || item.createdDate)}
+        <span className="published-dataset-value">
+          {formatDate(item.publishedDate || item.createdDate)}
+        </span>
       </td>
-      <td data-label="Actions">
+      <td className="pgrid-td-numeric" data-label="Actions">
         <Menu positioning="below-end">
           <MenuTrigger disableButtonEnhancement>
             <Button
-              appearance="primary"
-              size="small"
-              aria-label={`Actions for ${item.name}`}
+              appearance="subtle"
+              className="no-dropdown-icon"
+              icon={<FluentIcon name="More" />}
+              title="Menu"
+              aria-label={`Menu for ${item.name}`}
               disabled={menuItems.length === 0}
-            >
-              Actions
-            </Button>
+            />
           </MenuTrigger>
           <MenuPopover>
             <MenuList>

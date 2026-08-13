@@ -3036,6 +3036,15 @@ tr.model-mobile-row:not(:last-child) td {
   justify-content: space-between;
 }
 
+.pgrid-page--published-datasets .published-dataset-value {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pgrid-empty {
   display: flex;
   flex: 1 1 auto;
@@ -3121,6 +3130,11 @@ tr.model-mobile-row:not(:last-child) td {
 
   .pgrid-search {
     width: 100%;
+  }
+
+  .pgrid-page--published-datasets .pgrid-search {
+    width: 100% !important;
+    max-width: none !important;
   }
 
   .pgrid-view-toggle {
@@ -3334,6 +3348,16 @@ tr.model-mobile-row:not(:last-child) td {
 
   .pgrid-page--model-catalog .pgrid-table tbody td:last-child::before {
     content: "";
+    min-width: 0;
+  }
+
+  .pgrid-page--published-datasets .pgrid-table {
+    width: 100%;
+    max-width: 100%;
+    table-layout: fixed;
+  }
+
+  .pgrid-page--published-datasets .pgrid-table tbody td {
     min-width: 0;
   }
 
@@ -3606,6 +3630,19 @@ tr.model-mobile-row:not(:last-child) td {
 
   .pgrid-footer-rows {
     justify-content: space-between;
+  }
+}
+
+@media (max-width: 480px) {
+  .pgrid-page--published-datasets .pgrid-table tbody td {
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .pgrid-page--published-datasets .pgrid-table tbody td::before {
+    min-width: 88px;
+    width: 88px;
+    max-width: 88px;
   }
 }
 
@@ -4473,27 +4510,4 @@ html[data-theme="dark"] .lcard-actions .lcard-icon-btn {
 
 html[data-theme="dark"] .lcard-actions .lcard-icon-btn:hover:not(:disabled) {
   background-color: var(--brand-40);
-}
-/* Published Datasets: fixed column widths on desktop only. Below 993px the
-   shared .pgrid-page--model-catalog card layout takes over (see the mobile
-   card block), so these must not apply on mobile. */
-@media (min-width: 993px) {
-  .pgrid-page--published-datasets .pgrid-table {
-    table-layout: fixed;
-    width: 100%;
-  }
-  .pgrid-page--published-datasets .pgrid-table th:nth-child(1),
-  .pgrid-page--published-datasets .pgrid-table td:nth-child(1) { width: 24%; }
-  .pgrid-page--published-datasets .pgrid-table th:nth-child(2),
-  .pgrid-page--published-datasets .pgrid-table td:nth-child(2) { width: 22%; }
-  .pgrid-page--published-datasets .pgrid-table th:nth-child(3),
-  .pgrid-page--published-datasets .pgrid-table td:nth-child(3) { width: 9%; }
-  .pgrid-page--published-datasets .pgrid-table th:nth-child(4),
-  .pgrid-page--published-datasets .pgrid-table td:nth-child(4) { width: 11%; }
-  .pgrid-page--published-datasets .pgrid-table th:nth-child(5),
-  .pgrid-page--published-datasets .pgrid-table td:nth-child(5) { width: 12%; }
-  .pgrid-page--published-datasets .pgrid-table th:nth-child(6),
-  .pgrid-page--published-datasets .pgrid-table td:nth-child(6) { width: 12%; }
-  .pgrid-page--published-datasets .pgrid-table th:nth-child(7),
-  .pgrid-page--published-datasets .pgrid-table td:nth-child(7) { width: 10%; }
 }

@@ -235,7 +235,7 @@ const PublishedDatasets = () => {
                       <th>{sortHeader("status", "Status")}</th>
                       <th>{sortHeader("publishedByUser", "Published by")}</th>
                       <th>{sortHeader("publishedDate", "Published date")}</th>
-                      <th className="pgrid-th-actions">Actions</th>
+                      <th className="pgrid-th-actions" aria-label="Actions" />
                     </tr>
                   </thead>
                   <tbody>
@@ -282,6 +282,8 @@ const PublishedDatasets = () => {
                 <span>Rows per page:</span>
                 <Dropdown
                   className="pgrid-rows-dropdown"
+                  style={{ minWidth: "72px" }}
+                  size="small"
                   value={String(pageSize)}
                   selectedOptions={[String(pageSize)]}
                   onOptionSelect={(_, data) => {
@@ -294,7 +296,7 @@ const PublishedDatasets = () => {
                 >
                   {PAGE_SIZE_OPTIONS.map((size) => (
                     <Option key={size} value={String(size)}>
-                      {size}
+                      {String(size)}
                     </Option>
                   ))}
                 </Dropdown>
