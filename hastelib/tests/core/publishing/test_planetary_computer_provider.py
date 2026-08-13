@@ -716,6 +716,31 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must use HTTPS"):
             strict_provider.validate(self.request, self.bundle)
 
+    def test_configured_license_is_applied_to_stac_documents(self) -> None:
+        self.config.publishing_config["pc_publishing_license"] = "CC-BY-SA-4.0"
+        provider = PlanetaryComputerPublishingProvider(
+            config=self.config,
+            artifact_storage=self.storage,
+            sdk_adapter=self.sdk,
+            json_reader=lambda artifact: self.valid_mask,
+            projection_resolver=lambda artifact: "EPSG:4326",
+            asset_reachability_checker=lambda href: None,
+        )
+
+        documents = provider._build_documents(
+            self.dataset,
+            self.bundle,
+            provider._projection_codes(self.dataset, self.bundle),
+            None,
+        )
+
+        self.assertEqual(documents.collection["license"], "CC-BY-SA-4.0")
+        self.assertEqual(
+            documents.item["properties"]["license"], "CC-BY-SA-4.0"
+        )
+        # Default when unset is CC-BY-4.0 (not the old hardcoded "proprietary").
+        self.assertEqual(self.provider.license_id, "CC-BY-4.0")
+
     def test_thumbnail_is_copied_into_published_prefix(self) -> None:
         self.storage.blobs.add("hash/task/preview_post_event.png")
         bundle = ArtifactBundle(

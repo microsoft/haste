@@ -138,6 +138,9 @@ param pcIngestionSource string = ''
 @description('STAC Collection id prefix (one collection per project/event).')
 param pcCollectionPrefix string = 'haste-'
 
+@description('STAC license id applied to published PC collections/items (e.g. CC-BY-4.0).')
+param pcPublishingLicense string = 'CC-BY-4.0'
+
 @description('Object id of the GeoCatalog managed identity to grant Storage Blob Data Reader on HASTE storage (asset ingestion). Empty = skip.')
 param pcGeoCatalogIngestPrincipalId string = ''
 
@@ -320,6 +323,7 @@ module functions 'modules/functions.bicep' = {
     pcExplorerUrl: pcExplorerUrl
     pcIngestionSource: pcIngestionSource
     pcCollectionPrefix: pcCollectionPrefix
+    pcPublishingLicense: pcPublishingLicense
     tags: tags
   }
   dependsOn: [

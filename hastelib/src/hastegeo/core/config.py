@@ -345,6 +345,9 @@ class Config:
                 "PC_COLLECTION_PREFIX", "haste-"
             ),
             "pc_explorer_url": os.getenv("PC_EXPLORER_URL", ""),
+            "pc_publishing_license": os.getenv(
+                "PC_PUBLISHING_LICENSE", "CC-BY-4.0"
+            ),
             "pc_verify_attempts": _get_bounded_int_env(
                 "PC_VERIFY_ATTEMPTS", 20, 1, 60
             ),
