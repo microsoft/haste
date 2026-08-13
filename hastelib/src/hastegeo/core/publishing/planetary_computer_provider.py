@@ -1143,7 +1143,13 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
                 "Planetary Computer verification limit is invalid"
             )
         self._safe_https_url(self.endpoint, allow_path=False)
-        self._safe_https_url(self.explorer_url, allow_path=True)
+        # The Explorer URL is a display-only link surfaced on the dataset row.
+        # MPC Pro's real Explorer links carry a query string
+        # (e.g. ?geocatalogname=...&c=...&z=...), so allow query/fragment here
+        # while keeping the GeoCatalog and asset URLs strict.
+        self._safe_https_url(
+            self.explorer_url, allow_path=True, allow_query=True
+        )
 
     def _validate_ingestion_source(self) -> None:
         source = self.sdk.get_ingestion_source(self.ingestion_source)
@@ -1334,7 +1340,9 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
         )
 
     @staticmethod
-    def _safe_https_url(value: str, *, allow_path: bool):
+    def _safe_https_url(
+        value: str, *, allow_path: bool, allow_query: bool = False
+    ):
         parsed = urlparse(value)
         try:
             port = parsed.port
@@ -1345,8 +1353,7 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             or not parsed.hostname
             or parsed.username is not None
             or parsed.password is not None
-            or parsed.fragment
-            or parsed.query
+            or (not allow_query and (parsed.fragment or parsed.query))
             or (port is not None and not 1 <= port <= 65535)
             or (not allow_path and parsed.path not in {"", "/"})
         ):

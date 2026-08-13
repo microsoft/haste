@@ -591,6 +591,46 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
                 ArtifactBundle(selectedArtifacts=[self.damage]),
             )
 
+    def test_explorer_url_allows_query_but_geocatalog_stays_strict(
+        self,
+    ) -> None:
+        # MPC Pro Explorer links carry a query string
+        # (?geocatalogname=...&c=...&z=...); the display-only Explorer URL must
+        # accept it, while the GeoCatalog URL stays scheme + host only.
+        explorer = (
+            "https://explorer.geocatalog.spatio.azure.com/explorer"
+            "?geocatalogname=damage-assessment-gc.eastus&c=30.05%2C29.99&z=2"
+        )
+        config = FakeConfig()
+        config.publishing_config["pc_explorer_url"] = explorer
+        provider = PlanetaryComputerPublishingProvider(
+            config=config,
+            artifact_storage=self.storage,
+            sdk_adapter=self.sdk,
+            json_reader=lambda artifact: self.valid_mask,
+            projection_resolver=lambda artifact: "EPSG:4326",
+            asset_reachability_checker=self._record_reachable_asset,
+        )
+
+        provider.validate(self.request, self.bundle)
+        self.assertEqual(provider.explorer_url, explorer)
+
+        # A query string (or path) on the GeoCatalog URL is still rejected.
+        strict_config = FakeConfig()
+        strict_config.publishing_config["pc_geocatalog_url"] = (
+            "https://catalog.test/stac?foo=bar"
+        )
+        strict_provider = PlanetaryComputerPublishingProvider(
+            config=strict_config,
+            artifact_storage=self.storage,
+            sdk_adapter=self.sdk,
+            json_reader=lambda artifact: self.valid_mask,
+            projection_resolver=lambda artifact: "EPSG:4326",
+            asset_reachability_checker=self._record_reachable_asset,
+        )
+        with self.assertRaisesRegex(ValueError, "must use HTTPS"):
+            strict_provider.validate(self.request, self.bundle)
+
     def test_valid_mask_crs_is_explicit_and_validated(self) -> None:
         projected = copy.deepcopy(self.valid_mask)
         projected["crs"] = {
