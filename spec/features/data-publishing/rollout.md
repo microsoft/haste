@@ -64,6 +64,8 @@ Function App): `PUBLISH_MAX_TOTAL_BYTES` (5 GiB), `PUBLISHED_DOWNLOAD_SAS_MINUTE
 | `HASTE_PC_INGESTION_SOURCE` | `PC_INGESTION_SOURCE` | (unset) | Ingestion-source name for **private** HASTE containers (`SasToken`); unset for public |
 | `HASTE_PC_COLLECTION_PREFIX` | `PC_COLLECTION_PREFIX` | `haste-` | STAC Collection id prefix (one per project/event) |
 | `HASTE_PC_PUBLISHING_LICENSE` | `PC_PUBLISHING_LICENSE` | `CC-BY-4.0` | STAC `license` id applied to published collections/items |
+| `HASTE_PUBLISH_STORAGE_ACCOUNT_URL` | `PUBLISH_STORAGE_ACCOUNT_URL` | (unset) | Network-reachable storage account the GeoCatalog ingests from (see below) |
+| `HASTE_PUBLISH_BLOB_CONTAINER` | `PUBLISH_BLOB_CONTAINER` | (unset) | Container on that account HASTE copies published PC assets into |
 
 The STAC `api-version` and the Entra token scope
 (`https://geocatalog.spatio.azure.com/.default`) are **code constants**, not
@@ -85,6 +87,31 @@ template). Two grants are required and are **not** created by the app deploy:
    the GeoCatalog's managed identity *Storage Blob Data Reader* on the HASTE
    storage account by setting `HASTE_PC_GEOCATALOG_INGEST_PRINCIPAL_ID` to that
    identity's object id (the deploy then makes the assignment; empty = skip).
+
+### Network-restricted HASTE storage (dedicated publish container)
+
+The GeoCatalog is a Microsoft-managed service outside your network boundary and
+is **not** in the Azure Storage firewall's trusted-services or resource-instance
+lists, so it can't reach a VNet/IP-locked storage account. When HASTE's primary
+storage is firewalled, publish PC assets through a **separate, network-reachable
+container** instead:
+
+1. Provide an existing storage account/container that the GeoCatalog can reach
+   (public endpoint, still RBAC-gated) via `HASTE_PUBLISH_STORAGE_ACCOUNT_URL`
+   (e.g. `https://<acct>.blob.core.windows.net`) and `HASTE_PUBLISH_BLOB_CONTAINER`.
+   When set, the PC provider copies each published asset (and the thumbnail) out
+   of the firewalled primary store into `published/<datasetId>/…` on this
+   container and points the STAC hrefs there. Unset ⇒ assets are referenced in
+   place (only works if the primary store is reachable by the GeoCatalog).
+2. Grant the **function-app managed identity** *Storage Blob Data Contributor*
+   (write) on the publish account — the in-VNet function app streams the copies.
+3. Grant the **GeoCatalog managed identity** *Storage Blob Data Reader* on the
+   publish account, and register the **ingestion source at the publish container
+   URL** (`HASTE_PC_INGESTION_SOURCE`). The provider validates the ingestion
+   source's container against the publish container.
+
+These grants are operator-owned (the publish account is external to this
+template); the deploy only threads the two app settings.
 
 ### Function App host id (required — avoids Singleton-lock failures)
 

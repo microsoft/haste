@@ -88,6 +88,7 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
         self,
         config: Optional[Config] = None,
         artifact_storage: Optional[UnifiedArtifactStorage] = None,
+        publish_storage: Optional[UnifiedArtifactStorage] = None,
         sdk_adapter: Optional[PlanetaryComputerRestAdapter] = None,
         json_reader: Optional[
             Callable[[SourceArtifact], Mapping[str, Any]]
@@ -116,6 +117,13 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             storage_type=self.config.artifact_storage_type,
             **self.config.artifact_storage_config,
         )
+        self._publish_storage = publish_storage
+        self._publish_account_url = str(
+            settings.get("publish_storage_account_url") or ""
+        )
+        self._publish_container = str(
+            settings.get("publish_blob_container") or ""
+        )
         self.sdk = sdk_adapter or PlanetaryComputerRestAdapter(
             self.endpoint
         )
@@ -128,6 +136,30 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             asset_reachability_checker or self._read_signed_asset
         )
         self.logger = Logger.get_logger(__name__)
+
+    @property
+    def publish_storage(self) -> UnifiedArtifactStorage:
+        """Container the GeoCatalog ingests from.
+
+        When a dedicated publish account/container is configured, assets are
+        copied there (out of the firewalled primary store); otherwise this is
+        the primary artifact store and assets are referenced in place.
+        """
+        if self._publish_storage is None:
+            if self._publish_account_url and self._publish_container:
+                self._publish_storage = UnifiedArtifactStorage(
+                    storage_type="blob",
+                    account_url=self._publish_account_url,
+                    container=self._publish_container,
+                    connection_string=None,
+                )
+            else:
+                self._publish_storage = self.artifact_storage
+        return self._publish_storage
+
+    @property
+    def _stages_to_publish(self) -> bool:
+        return self.publish_storage is not self.artifact_storage
 
     @property
     def info(self) -> ProviderInfo:
@@ -1162,10 +1194,7 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
         if mask is None:
             raise ValueError("Planetary Computer requires a valid-area mask")
         valid_mask = self.json_reader(mask)
-        asset_hrefs = {
-            artifact.sourcePath: self._artifact_href(artifact)
-            for artifact in source.selectedArtifacts
-        }
+        asset_hrefs = self._published_asset_hrefs(dataset, source)
         collection_id = build_collection_id(dataset, self.collection_prefix)
         thumbnail_href, thumbnail_media_type = self._resolve_thumbnail_href(
             dataset, source
@@ -1207,6 +1236,13 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             media_type = _THUMBNAIL_MEDIA_TYPES.get(
                 extension, DEFAULT_THUMBNAIL_MEDIA_TYPE
             )
+            if self._stages_to_publish:
+                published_path = self._stage_to_publish(
+                    relative_path,
+                    f"thumbnail{extension}",
+                    dataset.datasetId,
+                )
+                return self._publish_href(published_path), media_type
             destination = (
                 f"published/{dataset.datasetId}/thumbnail{extension}"
             )
@@ -1356,7 +1392,7 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             "container_uri",
             "container_url",
         )
-        expected_url = str(self.artifact_storage.get_base_url()).rstrip("/")
+        expected_url = str(self.publish_storage.get_base_url()).rstrip("/")
         if not isinstance(container_url, str) or not self._same_url(
             expected_url,
             container_url.rstrip("/"),
@@ -1365,6 +1401,59 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
                 "Planetary Computer ingestion source container does not "
                 "match HASTE storage"
             )
+
+    def _published_asset_hrefs(
+        self, dataset: PublishedDataset, source: ArtifactBundle
+    ) -> dict[str, str]:
+        # With a dedicated publish container, copy each selected asset out of
+        # the (firewalled) primary store into published/<datasetId>/ so the
+        # GeoCatalog can read it; otherwise reference it in place.
+        if not self._stages_to_publish:
+            return {
+                artifact.sourcePath: self._artifact_href(artifact)
+                for artifact in source.selectedArtifacts
+            }
+        hrefs = {}
+        for artifact in source.selectedArtifacts:
+            file_name = PurePosixPath(artifact.sourcePath).name
+            published_path = self._stage_to_publish(
+                artifact.sourcePath,
+                f"{artifact.kind.value}_{file_name}",
+                dataset.datasetId,
+            )
+            hrefs[artifact.sourcePath] = self._publish_href(published_path)
+        return hrefs
+
+    def _stage_to_publish(
+        self, source_path: str, dest_name: str, dataset_id: Any
+    ) -> str:
+        """Copy one asset from the primary store into the publish container."""
+        source_relative = self.artifact_storage.resolve_artifact_path(
+            source_path
+        )
+        destination = f"published/{dataset_id}/{dest_name}"
+        if self.publish_storage.artifact_exists(destination):
+            return destination
+        with tempfile.TemporaryDirectory() as staging_dir:
+            self.artifact_storage.fetch_artifact(
+                src_path=source_relative, dst_path=staging_dir
+            )
+            local_file = str(Path(staging_dir, source_relative))
+            return self.publish_storage.store_artifact(
+                artifact_name=dest_name,
+                src_path=local_file,
+                namespace=["published", str(dataset_id)],
+            )
+
+    def _publish_href(self, published_path: str) -> str:
+        base_url = str(self.publish_storage.get_base_url()).rstrip("/")
+        parsed = self._safe_https_url(base_url, allow_path=True)
+        if not self._is_azure_blob_host(str(parsed.hostname)):
+            raise ValueError(
+                "Planetary Computer publish store must use Azure Blob Storage"
+            )
+        resolved = self.publish_storage.resolve_artifact_path(published_path)
+        return f"{base_url}/{quote(resolved, safe='/-_.~')}"
 
     def _artifact_href(self, artifact: SourceArtifact) -> str:
         base_url = str(self.artifact_storage.get_base_url()).rstrip("/")

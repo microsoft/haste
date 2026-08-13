@@ -348,6 +348,14 @@ class Config:
             "pc_publishing_license": os.getenv(
                 "PC_PUBLISHING_LICENSE", "CC-BY-4.0"
             ),
+            # Network-reachable container the GeoCatalog ingests from. When set,
+            # the PC provider copies published assets here (out of the
+            # firewalled data store) and points STAC hrefs at it. Empty =
+            # reference assets in place from the primary artifact store.
+            "publish_storage_account_url": os.getenv(
+                "PUBLISH_STORAGE_ACCOUNT_URL", ""
+            ),
+            "publish_blob_container": os.getenv("PUBLISH_BLOB_CONTAINER", ""),
             "pc_verify_attempts": _get_bounded_int_env(
                 "PC_VERIFY_ATTEMPTS", 20, 1, 60
             ),

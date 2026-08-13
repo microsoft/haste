@@ -1,4 +1,5 @@
 import copy
+import os
 import unittest
 import uuid
 
@@ -44,6 +45,7 @@ class FakeArtifactStorage:
         self.base_url = base_url
         self.blobs: set = set()
         self.copied: list = []
+        self.stored: list = []
 
     def get_base_url(self) -> str:
         return self.base_url
@@ -61,6 +63,24 @@ class FakeArtifactStorage:
         self.copied.append((source, destination))
         self.blobs.add(destination)
         return destination
+
+    def fetch_artifact(
+        self, identifier=None, extra_partition_keys=None,
+        src_path=None, dst_path=None,
+    ) -> str:
+        target = os.path.join(dst_path, src_path)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write("staged")
+        return dst_path
+
+    def store_artifact(
+        self, artifact_name, data=None, src_path=None, namespace=None,
+    ) -> str:
+        path = "/".join([*(namespace or []), artifact_name])
+        self.stored.append(path)
+        self.blobs.add(path)
+        return path
 
 
 class FakeSdkAdapter:
@@ -741,6 +761,63 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
         )
         # Default when unset is CC-BY-4.0 (not the old hardcoded "proprietary").
         self.assertEqual(self.provider.license_id, "CC-BY-4.0")
+
+    def test_assets_are_staged_into_the_publish_container(self) -> None:
+        publish = FakeArtifactStorage(
+            "https://publishsa.blob.core.windows.net/publish"
+        )
+        provider = PlanetaryComputerPublishingProvider(
+            config=self.config,
+            artifact_storage=self.storage,
+            publish_storage=publish,
+            sdk_adapter=self.sdk,
+            json_reader=lambda artifact: self.valid_mask,
+            projection_resolver=lambda artifact: "EPSG:4326",
+            asset_reachability_checker=lambda href: None,
+        )
+
+        documents = provider._build_documents(
+            self.dataset,
+            self.bundle,
+            provider._projection_codes(self.dataset, self.bundle),
+            None,
+        )
+
+        damage_href = documents.item["assets"]["damage"]["href"]
+        self.assertEqual(
+            damage_href,
+            "https://publishsa.blob.core.windows.net/publish/"
+            f"published/{self.dataset.datasetId}/gpkg_damage.gpkg",
+        )
+        # The asset was copied into the publish container, not referenced in the
+        # (firewalled) primary store.
+        self.assertIn(
+            f"published/{self.dataset.datasetId}/gpkg_damage.gpkg",
+            publish.stored,
+        )
+
+    def test_ingestion_source_validates_against_publish_container(
+        self,
+    ) -> None:
+        publish = FakeArtifactStorage(
+            "https://publishsa.blob.core.windows.net/publish"
+        )
+        # The GeoCatalog source points at the primary store, not the publish
+        # container, so validation must reject it.
+        provider = PlanetaryComputerPublishingProvider(
+            config=self.config,
+            artifact_storage=self.storage,
+            publish_storage=publish,
+            sdk_adapter=self.sdk,
+            json_reader=lambda artifact: self.valid_mask,
+            projection_resolver=lambda artifact: "EPSG:4326",
+            asset_reachability_checker=lambda href: None,
+        )
+
+        with self.assertRaisesRegex(
+            PlanetaryComputerProviderError, "does not"
+        ):
+            provider.start_publish(self.dataset, self.bundle)
 
     def test_thumbnail_is_copied_into_published_prefix(self) -> None:
         self.storage.blobs.add("hash/task/preview_post_event.png")

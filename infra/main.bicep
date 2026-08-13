@@ -141,6 +141,12 @@ param pcCollectionPrefix string = 'haste-'
 @description('STAC license id applied to published PC collections/items (e.g. CC-BY-4.0).')
 param pcPublishingLicense string = 'CC-BY-4.0'
 
+@description('Network-reachable storage account URL the GeoCatalog ingests published assets from. Empty = reference assets in place from the primary store.')
+param publishStorageAccountUrl string = ''
+
+@description('Blob container (on the publish storage account) that HASTE copies published PC assets into.')
+param publishBlobContainer string = ''
+
 @description('Object id of the GeoCatalog managed identity to grant Storage Blob Data Reader on HASTE storage (asset ingestion). Empty = skip.')
 param pcGeoCatalogIngestPrincipalId string = ''
 
@@ -324,6 +330,8 @@ module functions 'modules/functions.bicep' = {
     pcIngestionSource: pcIngestionSource
     pcCollectionPrefix: pcCollectionPrefix
     pcPublishingLicense: pcPublishingLicense
+    publishStorageAccountUrl: publishStorageAccountUrl
+    publishBlobContainer: publishBlobContainer
     tags: tags
   }
   dependsOn: [

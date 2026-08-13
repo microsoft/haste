@@ -57,6 +57,8 @@ param pcExplorerUrl = readEnvironmentVariable('HASTE_PC_EXPLORER_URL', '')
 param pcIngestionSource = readEnvironmentVariable('HASTE_PC_INGESTION_SOURCE', '')
 param pcCollectionPrefix = readEnvironmentVariable('HASTE_PC_COLLECTION_PREFIX', 'haste-')
 param pcPublishingLicense = readEnvironmentVariable('HASTE_PC_PUBLISHING_LICENSE', 'CC-BY-4.0')
+param publishStorageAccountUrl = readEnvironmentVariable('HASTE_PUBLISH_STORAGE_ACCOUNT_URL', '')
+param publishBlobContainer = readEnvironmentVariable('HASTE_PUBLISH_BLOB_CONTAINER', '')
 param pcGeoCatalogIngestPrincipalId = readEnvironmentVariable('HASTE_PC_GEOCATALOG_INGEST_PRINCIPAL_ID', '')
 
 // Shared hub batch-subnet the multi-tenant pools live in; this env's storage
