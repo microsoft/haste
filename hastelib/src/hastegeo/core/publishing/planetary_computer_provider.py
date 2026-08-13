@@ -7,7 +7,7 @@ from enum import Enum
 from http.client import HTTPSConnection
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterator, Mapping, Optional
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 from pyproj import CRS
 from pyproj.exceptions import CRSError
@@ -35,6 +35,8 @@ from .planetary_computer_transport import (
 )
 from .stac import (
     ASSET_KEYS,
+    DEFAULT_THUMBNAIL_MEDIA_TYPE,
+    THUMBNAIL_ASSET_KEY,
     StacObjects,
     build_collection_id,
     build_item_id,
@@ -50,6 +52,12 @@ AZURE_BLOB_HOST_SUFFIXES = (
     ".blob.core.windows.net",
     ".blob.core.usgovcloudapi.net",
 )
+_THUMBNAIL_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
 
 
 class PlanetaryComputerProviderError(RuntimeError):
@@ -1045,8 +1053,11 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             raise PlanetaryComputerProviderError(
                 "Planetary Computer item assets are invalid"
             )
-        expected_asset_keys = set(expected_assets)
-        if set(actual_assets) != expected_asset_keys:
+        # The thumbnail is a best-effort preview: don't fail verification (or
+        # the whole publish) if the GeoCatalog drops or adds it.
+        expected_asset_keys = set(expected_assets) - {THUMBNAIL_ASSET_KEY}
+        actual_asset_keys = set(actual_assets) - {THUMBNAIL_ASSET_KEY}
+        if actual_asset_keys != expected_asset_keys:
             raise PlanetaryComputerProviderError(
                 "Planetary Computer selected assets changed"
             )
@@ -1153,6 +1164,9 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             for artifact in source.selectedArtifacts
         }
         collection_id = build_collection_id(dataset, self.collection_prefix)
+        thumbnail_href, thumbnail_media_type = self._resolve_thumbnail_href(
+            dataset, source
+        )
         objects = build_stac_objects(
             dataset,
             source,
@@ -1163,9 +1177,71 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             valid_mask_crs=self._valid_mask_crs(valid_mask),
             existing_collection=existing_collection,
             collection_prefix=self.collection_prefix,
+            thumbnail_href=thumbnail_href,
+            thumbnail_media_type=thumbnail_media_type,
         )
         self.stac_validator(objects)
         return serialize_stac_objects(objects)
+
+    def _resolve_thumbnail_href(
+        self, dataset: PublishedDataset, source: ArtifactBundle
+    ) -> tuple[Optional[str], str]:
+        # Copy the post-event preview into the dataset's published prefix (the
+        # ingestion-source container the GeoCatalog can read) and return a plain
+        # blob href for it. Best-effort: any failure yields no thumbnail rather
+        # than breaking the publish.
+        preview_url = getattr(source, "thumbnailUrl", None)
+        if not preview_url:
+            return None, DEFAULT_THUMBNAIL_MEDIA_TYPE
+        try:
+            relative_path = self._preview_relative_path(preview_url)
+            if not relative_path or not self.artifact_storage.artifact_exists(
+                relative_path
+            ):
+                return None, DEFAULT_THUMBNAIL_MEDIA_TYPE
+            extension = PurePosixPath(relative_path).suffix.lower() or ".png"
+            media_type = _THUMBNAIL_MEDIA_TYPES.get(
+                extension, DEFAULT_THUMBNAIL_MEDIA_TYPE
+            )
+            destination = (
+                f"published/{dataset.datasetId}/thumbnail{extension}"
+            )
+            etag = self.artifact_storage.get_artifact_etag(relative_path)
+            published_path = self.artifact_storage.copy_artifact(
+                relative_path, destination, etag
+            )
+            resolved = self.artifact_storage.resolve_artifact_path(
+                published_path
+            )
+            base_url = str(self.artifact_storage.get_base_url()).rstrip("/")
+            href = f"{base_url}/{quote(resolved, safe='/-_.~')}"
+            return href, media_type
+        except Exception as error:
+            self.logger.warning(
+                "Skipping Planetary Computer thumbnail: %s",
+                type(error).__name__,
+            )
+            return None, DEFAULT_THUMBNAIL_MEDIA_TYPE
+
+    def _preview_relative_path(self, preview_url: str) -> Optional[str]:
+        # A preview URL is only usable if it lives in the same account+container
+        # as the published artifacts (the container the ingestion source reads).
+        base = urlparse(str(self.artifact_storage.get_base_url()))
+        parsed = urlparse(preview_url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.hostname != base.hostname
+        ):
+            return None
+        base_path = base.path.rstrip("/")
+        if base_path:
+            if not parsed.path.startswith(base_path + "/"):
+                return None
+            relative = parsed.path[len(base_path) + 1 :]
+        else:
+            relative = parsed.path.lstrip("/")
+        return unquote(relative) or None
 
     @staticmethod
     def _valid_mask_crs(valid_mask: Mapping[str, Any]) -> str:
