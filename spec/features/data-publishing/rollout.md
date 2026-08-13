@@ -43,10 +43,11 @@ secret is entered or stored by the app).
 
 | `azd` env var | App Setting | Default | Purpose |
 |---|---|---|---|
-| `HASTE_PUBLISHING_ENABLED` | `PUBLISHING_ENABLED` | `false` | Master flag: Published Datasets section + Publish action |
+| `HASTE_PUBLISHING_ENABLED` | `PUBLISHING_ENABLED` | `true` | Master flag: Published Datasets section + Publish action |
 | — | `PUBLISH_QUEUE_NAME` | `publish-queue` | Publish job queue (auto-created at runtime) |
 
-Enabling Local publishing needs only `HASTE_PUBLISHING_ENABLED=true`. The
+Publishing is **on by default** (the deploy writes `PUBLISHING_ENABLED=true`);
+set `HASTE_PUBLISHING_ENABLED=false` to disable it. The
 `publish-queue` and the `publishing-locks` blob container are auto-created on
 first use, so no queue/container resources are provisioned. The remaining Local
 knobs use code defaults and are only set to override them (directly on the

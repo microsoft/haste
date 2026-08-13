@@ -91,8 +91,8 @@ param managePools bool = true
 
 // --- data publishing ---------------------------------------------------------
 
-@description('Enable the Published Datasets section + Publish action (feature flag).')
-param publishingEnabled bool = false
+@description('Enable the Published Datasets section + Publish action (feature flag). On by default.')
+param publishingEnabled bool = true
 
 @description('Resource tags.')
 param tags object = {}
