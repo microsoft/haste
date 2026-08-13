@@ -54,6 +54,7 @@ from hastegeo.core.utils.batch_config import (
 )
 from hastegeo.core.utils.logs import Logger
 from tenacity import (
+    RetryError,
     retry,
     retry_if_exception,
     stop_after_attempt,
@@ -113,20 +114,21 @@ class AzureBatchRunner(BaseRunner):
             output = self.batch_cluster.get_file_from_task(
                 job_id, task_id, full_file_name
             )
-        except BatchErrorException as e:
+        except (BatchErrorException, RetryError) as e:
             # The node that ran the task is gone (deallocated, preempted or
             # rebooting), so its copy of the file is unreachable. Report it as
             # a missing file rather than a failure: the task's outputs were
             # already uploaded to blob on completion, so callers can recover
             # from there.
-            if not is_node_unavailable_error(e):
+            cause = unwrap_retry_error(e)
+            if not is_node_unavailable_error(cause):
                 raise
             self.logger.warning(
                 "Node serving task %s (job %s) is unavailable (%s); "
                 "cannot read %s from the node.",
                 task_id,
                 job_id,
-                batch_error_code(e),
+                batch_error_code(cause),
                 filename,
             )
             return None
@@ -250,18 +252,19 @@ class AzureBatchRunner(BaseRunner):
     def cleanup_task(self, job_id, task_id):
         try:
             self.batch_cluster.delete_files_from_task(job_id, task_id)
-        except BatchErrorException as e:
+        except (BatchErrorException, RetryError) as e:
             # Deleting the working directory of a node that no longer exists is
             # already a no-op, and the task's `retention_time` reclaims the disk
             # anyway — never fail the workload over it.
-            if not is_node_unavailable_error(e):
+            cause = unwrap_retry_error(e)
+            if not is_node_unavailable_error(cause):
                 raise
             self.logger.warning(
                 "Node serving task %s (job %s) is unavailable (%s); "
                 "skipping working-directory cleanup.",
                 task_id,
                 job_id,
-                batch_error_code(e),
+                batch_error_code(cause),
             )
         self.batch_cluster.disable_job(job_id)
 
@@ -306,6 +309,24 @@ def is_node_unavailable_error(exception):
     )
 
 
+def unwrap_retry_error(exception):
+    """Return the exception tenacity was retrying, or ``exception`` itself.
+
+    ``retry_on_server_error`` leaves ``reraise`` at its default, so an exhausted
+    budget surfaces as ``RetryError``. Unwrapping it at the runner boundary lets
+    callers classify the underlying Batch error without making an exhausted
+    error look retryable to an *outer* wrapper — ``apply_retry_to_methods``
+    decorates every ``AzureBatchJob`` method, and several of them call one
+    another, so a re-raised retryable error would multiply the budget (five
+    outer attempts each spending a five-attempt inner budget).
+    """
+    if isinstance(exception, RetryError):
+        last_attempt = exception.last_attempt
+        if last_attempt is not None and last_attempt.failed:
+            return last_attempt.exception()
+    return exception
+
+
 def is_retryable_batch_error(exception):
     return is_server_error(exception) or is_transient_node_error(exception)
 
@@ -315,9 +336,6 @@ def retry_on_server_error():
         retry=retry_if_exception(is_retryable_batch_error),
         wait=wait_exponential(multiplier=1, min=4, max=10),
         stop=stop_after_attempt(5),
-        # Surface the underlying BatchErrorException once the budget is spent,
-        # instead of tenacity's RetryError, so callers can still classify it.
-        reraise=True,
     )
 
 

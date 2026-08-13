@@ -8,7 +8,7 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 from azure.storage.blob import BlobClient, BlobServiceClient
@@ -1279,7 +1279,7 @@ class LocalRunner(BaseRunner):
         output_container_url: str,
         output_prefix: str,
         resource_files: list,
-        file_pattern,
+        file_pattern: Optional[Union[str, List[str]]],
     ):
         """Upload task output files to blob storage."""
         if not self.blob_client:

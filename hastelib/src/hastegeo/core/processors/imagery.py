@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 import json
 import os
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 from hastegeo.core.runners.unified_runner import UnifiedRunner
 
@@ -382,7 +382,7 @@ class ImageryPostProcessor:
         )
         return self.image_data
 
-    def _read_task_output(self, filename: str):
+    def _read_task_output(self, filename: str) -> Optional[str]:
         """Return the text of a task output file, or ``None``.
 
         Reads the copy on the compute node first, then falls back to the copy

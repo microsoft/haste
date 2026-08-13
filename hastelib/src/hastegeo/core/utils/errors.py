@@ -20,12 +20,14 @@ The Azure error shape is matched structurally (``.error.code`` /
 utility with no SDK import.
 """
 
+from typing import Any, Optional
+
 # RequestId/Time are appended by the service to the message body; they are
 # useful in logs but noise in a UI status message.
 _SERVICE_TRAILER_MARKERS = ("\nRequestId:", "\nTime:")
 
 
-def _unwrap_message(message):
+def _unwrap_message(message: Any) -> Optional[str]:
     """Return the human-readable text of an Azure ``ErrorMessage``-like value."""
     value = getattr(message, "value", None)
     if isinstance(value, str):
@@ -33,7 +35,7 @@ def _unwrap_message(message):
     return message if isinstance(message, str) else None
 
 
-def _strip_service_trailer(text):
+def _strip_service_trailer(text: str) -> str:
     for marker in _SERVICE_TRAILER_MARKERS:
         index = text.find(marker)
         if index != -1:
@@ -41,7 +43,7 @@ def _strip_service_trailer(text):
     return text.strip()
 
 
-def describe_exception(exc):
+def describe_exception(exc: BaseException) -> str:
     """Return a short, user-facing description of ``exc``.
 
     Azure-style errors become ``"<Code>: <message>"``; everything else falls

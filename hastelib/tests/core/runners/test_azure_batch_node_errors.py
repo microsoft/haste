@@ -25,8 +25,9 @@ from hastegeo.core.runners.azure_batch import (
     is_terminal_node_error,
     is_transient_node_error,
     retry_on_server_error,
+    unwrap_retry_error,
 )
-from tenacity import wait_none
+from tenacity import RetryError, wait_none
 
 
 def _batch_error(code, status_code=409, value="node is busy"):
@@ -43,6 +44,14 @@ def _runner():
     runner.batch_cluster = MagicMock()
     runner.logger = MagicMock()
     return runner
+
+
+def _retry_error(exc):
+    """A tenacity RetryError wrapping ``exc``, as an exhausted budget raises."""
+    attempt = MagicMock()
+    attempt.failed = True
+    attempt.exception.return_value = exc
+    return RetryError(attempt)
 
 
 class TestBatchErrorClassification(unittest.TestCase):
@@ -103,16 +112,55 @@ class TestRetryOnServerError(unittest.TestCase):
         self.assertEqual(self._no_wait(flaky)(), "ok")
         self.assertEqual(calls["n"], 3)
 
-    def test_reraises_the_batch_error_not_a_retry_error(self):
+    def test_exhausted_budget_raises_retry_error(self):
         @retry_on_server_error()
         def always_failing():
             raise _batch_error("NodeNotReady")
 
-        # reraise=True keeps the error classifiable by callers instead of
-        # burying it in tenacity's RetryError.
-        with self.assertRaises(BatchErrorException) as ctx:
+        # NOT reraise=True: an exhausted budget must not surface as a
+        # retryable BatchErrorException, or an outer wrapped method would spend
+        # a fresh budget on it (see test_nested_retries_do_not_multiply).
+        with self.assertRaises(RetryError):
             self._no_wait(always_failing)()
-        self.assertEqual(ctx.exception.error.code, "NodeNotReady")
+
+    def test_unwrap_retry_error_recovers_the_batch_error(self):
+        @retry_on_server_error()
+        def always_failing():
+            raise _batch_error("NodeNotReady")
+
+        try:
+            self._no_wait(always_failing)()
+        except RetryError as e:
+            cause = unwrap_retry_error(e)
+            self.assertIsInstance(cause, BatchErrorException)
+            self.assertEqual(cause.error.code, "NodeNotReady")
+        else:  # pragma: no cover - the call above always raises
+            self.fail("expected RetryError")
+
+    def test_unwrap_passes_through_a_plain_exception(self):
+        exc = _batch_error("NodeNotReady")
+        self.assertIs(unwrap_retry_error(exc), exc)
+
+    def test_nested_retries_do_not_multiply_the_budget(self):
+        # apply_retry_to_methods wraps every AzureBatchJob method, and several
+        # call one another. An exhausted inner budget must not look retryable
+        # to the outer wrapper, or 5 attempts silently becomes 25.
+        calls = {"n": 0}
+
+        @retry_on_server_error()
+        def inner():
+            calls["n"] += 1
+            raise _batch_error("NodeNotReady")
+
+        inner = self._no_wait(inner)
+
+        @retry_on_server_error()
+        def outer():
+            return inner()
+
+        with self.assertRaises(RetryError):
+            self._no_wait(outer)()
+        self.assertEqual(calls["n"], 5)
 
     def test_does_not_retry_unrelated_errors(self):
         calls = {"n": 0}
@@ -162,6 +210,26 @@ class TestGetFileContentFromTask(unittest.TestCase):
         with self.assertRaises(BatchErrorException):
             runner.get_filecontent_from_task("job-1", "task-1", "any.json")
 
+    def test_returns_none_for_an_exhausted_node_not_ready_budget(self):
+        # What the runner actually sees once the retries are spent.
+        runner = _runner()
+        runner.batch_cluster.get_file_by_match_from_task.side_effect = (
+            _retry_error(_batch_error("NodeNotReady"))
+        )
+        self.assertIsNone(
+            runner.get_filecontent_from_task(
+                "job-1", "task-1", "imagery_manifest.json"
+            )
+        )
+
+    def test_propagates_an_exhausted_budget_for_unrelated_errors(self):
+        runner = _runner()
+        runner.batch_cluster.get_file_by_match_from_task.side_effect = (
+            _retry_error(_batch_error("InternalServerError", status_code=500))
+        )
+        with self.assertRaises(RetryError):
+            runner.get_filecontent_from_task("job-1", "task-1", "any.json")
+
     def test_reads_content_when_the_node_answers(self):
         runner = _runner()
         runner.batch_cluster.get_file_by_match_from_task.return_value = (
@@ -198,6 +266,14 @@ class TestCleanupTask(unittest.TestCase):
         with self.assertRaises(BatchErrorException):
             runner.cleanup_task("job-1", "task-1")
         runner.batch_cluster.disable_job.assert_not_called()
+
+    def test_skips_cleanup_for_an_exhausted_node_not_ready_budget(self):
+        runner = _runner()
+        runner.batch_cluster.delete_files_from_task.side_effect = _retry_error(
+            _batch_error("NodeNotReady")
+        )
+        runner.cleanup_task("job-1", "task-1")
+        runner.batch_cluster.disable_job.assert_called_once_with("job-1")
 
 
 if __name__ == "__main__":

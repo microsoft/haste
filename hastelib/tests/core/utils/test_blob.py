@@ -1,7 +1,12 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-"""Tests for hastegeo.core.utils.blob.split_blob_url.
+"""Tests for hastegeo.core.utils.blob.
+
+``split_blob_url`` and ``parse_byte_range`` are pure helpers. ``fetch_url_text``
+is covered with a mocked ``requests`` because its whole contract is that it
+never raises — it backs the task-output fallback, where an exception would mask
+the original reason a file could not be read from the compute node.
 
 The async download_blob_to_tempfile helper isn't covered here because it
 needs a live blob backend (Azurite); the integration is exercised by the
@@ -9,8 +14,13 @@ existing test_artifacts.py.
 """
 
 import unittest
+from unittest.mock import MagicMock, patch
 
-from hastegeo.core.utils.blob import parse_byte_range, split_blob_url
+from hastegeo.core.utils.blob import (
+    fetch_url_text,
+    parse_byte_range,
+    split_blob_url,
+)
 
 
 class TestSplitBlobUrl(unittest.TestCase):
@@ -94,6 +104,63 @@ class TestParseByteRange(unittest.TestCase):
     def test_inverted_bounds_raise(self):
         with self.assertRaises(ValueError):
             parse_byte_range("bytes=200-100")
+
+
+class TestFetchUrlText(unittest.TestCase):
+    """The fallback used to recover task outputs from blob storage.
+
+    Its contract is that it never raises: a failure here must not replace the
+    original reason the compute node could not serve the file.
+    """
+
+    def _patched_requests(self, **kwargs):
+        return patch.dict(
+            "sys.modules", {"requests": MagicMock(**kwargs)}, clear=False
+        )
+
+    def test_returns_the_response_body(self):
+        response = MagicMock(text="manifest-contents")
+        requests = MagicMock()
+        requests.get.return_value = response
+        with self._patched_requests(get=requests.get):
+            self.assertEqual(
+                fetch_url_text("https://acct.blob.core.windows.net/c/b?sas"),
+                "manifest-contents",
+            )
+        response.raise_for_status.assert_called_once()
+
+    def test_passes_the_timeout_through(self):
+        requests = MagicMock()
+        requests.get.return_value = MagicMock(text="x")
+        with self._patched_requests(get=requests.get):
+            fetch_url_text("https://host/blob", timeout=5)
+        self.assertEqual(requests.get.call_args.kwargs["timeout"], 5)
+
+    def test_http_error_returns_none(self):
+        response = MagicMock()
+        response.raise_for_status.side_effect = RuntimeError("404")
+        requests = MagicMock()
+        requests.get.return_value = response
+        with self._patched_requests(get=requests.get):
+            self.assertIsNone(fetch_url_text("https://host/missing"))
+
+    def test_transport_error_returns_none(self):
+        requests = MagicMock()
+        requests.get.side_effect = OSError("connection reset")
+        with self._patched_requests(get=requests.get):
+            self.assertIsNone(fetch_url_text("https://host/blob"))
+
+    def test_non_http_url_is_not_fetched(self):
+        requests = MagicMock()
+        with self._patched_requests(get=requests.get):
+            # A data layer resolving to a local filesystem path (docker dev
+            # stack) must not be handed to requests.
+            self.assertIsNone(fetch_url_text("/mnt/data/outputs/file.json"))
+        requests.get.assert_not_called()
+
+    def test_empty_url_returns_none(self):
+        self.assertIsNone(fetch_url_text(None))
+        self.assertIsNone(fetch_url_text(""))
 
 
 if __name__ == "__main__":
