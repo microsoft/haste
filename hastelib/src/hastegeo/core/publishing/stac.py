@@ -52,6 +52,11 @@ ASSET_TITLES = {
     ArtifactKind.FOOTPRINTS: "Building footprints",
 }
 
+# Compact per-dataset summaries persisted on the (project-level) collection so
+# its description can be rendered as a rolling summary of every dataset it
+# holds. Read back from the existing collection on the next publish/unpublish.
+COLLECTION_DATASETS_FIELD = "ai4g:datasets"
+
 
 @dataclass(frozen=True)
 class ValidMaskGeometry:
@@ -271,6 +276,86 @@ def build_vector_item(
     return item
 
 
+def _collection_dataset_entry(
+    dataset: PublishedDataset, item: Any
+) -> Dict[str, Any]:
+    """Compact summary of one dataset for the collection's rolling description."""
+    properties = getattr(item, "properties", None) or {}
+    entry: Dict[str, Any] = {
+        "id": str(dataset.datasetId),
+        "name": dataset.name,
+    }
+    for source_key, target_key in (
+        ("ai4g:buildings_damaged", "buildings_damaged"),
+        ("ai4g:buildings_total", "buildings_total"),
+        ("ai4g:aoi_area_km2", "area_km2"),
+    ):
+        value = properties.get(source_key)
+        if value is not None:
+            entry[target_key] = value
+    return entry
+
+
+def merge_collection_datasets(
+    existing_collection: Optional[Mapping[str, Any]],
+    entry: Mapping[str, Any],
+) -> list:
+    """Upsert ``entry`` into the datasets persisted on the existing collection."""
+    existing: list = []
+    if existing_collection:
+        stored = existing_collection.get(COLLECTION_DATASETS_FIELD)
+        if isinstance(stored, list):
+            existing = [
+                dict(item)
+                for item in stored
+                if isinstance(item, Mapping) and item.get("id")
+            ]
+    merged = [item for item in existing if item.get("id") != entry.get("id")]
+    merged.append(dict(entry))
+    merged.sort(
+        key=lambda item: (str(item.get("name") or ""), str(item.get("id")))
+    )
+    return merged
+
+
+def _format_count(value: Any) -> Optional[str]:
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return None
+
+
+def render_collection_description(
+    dataset: PublishedDataset, entries: Sequence[Mapping[str, Any]]
+) -> str:
+    """Render a rolling summary of every dataset held by the collection."""
+    project = dataset.projectName or str(dataset.projectId)
+    count = len(entries)
+    noun = "dataset" if count == 1 else "datasets"
+    lines = [
+        f"HASTE disaster assessment for {project}. "
+        f"This collection contains {count} published {noun}."
+    ]
+    for entry in entries:
+        name = entry.get("name") or entry.get("id")
+        details = []
+        damaged = _format_count(entry.get("buildings_damaged"))
+        total = _format_count(entry.get("buildings_total"))
+        area = entry.get("area_km2")
+        if damaged is not None and total is not None:
+            details.append(f"{damaged} of {total} buildings assessed as damaged")
+        elif damaged is not None:
+            details.append(f"{damaged} buildings assessed as damaged")
+        if area is not None:
+            try:
+                details.append(f"{float(area):.1f} km² assessed")
+            except (TypeError, ValueError):
+                pass
+        suffix = f" — {'; '.join(details)}" if details else ""
+        lines.append(f"- {name}{suffix}.")
+    return "\n".join(lines)
+
+
 def build_collection(
     dataset: PublishedDataset,
     item: Any,
@@ -287,13 +372,14 @@ def build_collection(
         item,
         existing_collection,
     )
+    datasets = merge_collection_datasets(
+        existing_collection,
+        _collection_dataset_entry(dataset, item),
+    )
     collection = pystac.Collection(
         id=collection_id,
         title=dataset.projectName or collection_id,
-        description=(
-            f"HASTE disaster assessment datasets for "
-            f"{dataset.projectName or dataset.projectId}."
-        ),
+        description=render_collection_description(dataset, datasets),
         license=license_id,
         keywords=[
             "HASTE",
@@ -314,7 +400,10 @@ def build_collection(
             {"ai4g:project_id": [str(dataset.projectId)]}
         ),
         stac_extensions=[ITEM_ASSETS_EXTENSION],
-        extra_fields={"item_assets": _collection_item_assets()},
+        extra_fields={
+            "item_assets": _collection_item_assets(),
+            COLLECTION_DATASETS_FIELD: datasets,
+        },
     )
     collection.add_link(
         pystac.Link(
