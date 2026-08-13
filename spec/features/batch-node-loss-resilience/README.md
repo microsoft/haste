@@ -74,19 +74,30 @@ Three layers, all in code — the pool configuration is unchanged.
 
 `is_retryable_batch_error` = 5xx **or** transient node code, and is now the
 predicate behind `retry_on_server_error()`. The retry budget is unchanged
-(5 attempts, exponential 4–10s) and `reraise=True` was added so the original
-`BatchErrorException` survives an exhausted budget instead of being buried in
-tenacity's `RetryError`.
+(5 attempts, exponential 4–10s), and `reraise` is deliberately left at its
+default: `apply_retry_to_methods` decorates every `AzureBatchJob` method and
+several call one another, so re-raising a retryable error from an exhausted
+inner budget would let the outer wrapper spend a fresh one (5 attempts becoming
+25). Callers recover the underlying error with `unwrap_retry_error` instead.
 
 ### 2. Degrade instead of failing
 
 | Method | Behavior on node loss |
 |---|---|
 | `AzureBatchRunner.get_filecontent_from_task` | logs a warning, returns `None` — matching its existing "file not found" contract |
-| `AzureBatchRunner.cleanup_task` | skips the working-directory delete, still disables the job (`task_retention_time=P2D` reclaims the disk) |
+| `AzureBatchRunner.cleanup_task` | skips the working-directory delete, then disables the job (`task_retention_time=P2D` reclaims the disk) |
 
 This applies to every workload on the runner: imagery, train, inference,
-artifacts, embedding.
+artifacts and embedding.
+
+It does **not** mean every workload now survives node loss. `train`, `inference`
+and `artifacts` treat a missing task file as absent progress/logs and continue,
+so they do. `EmbeddingPostprocessor._update_results_from_job` raises
+`FileNotFoundError` on a falsy `embedding_manifest.json`, so an embedding job
+whose node vanished still fails — with a clearer error than before, but it
+fails. That is a known gap, not a regression: previously the same case failed
+with the raw `BatchErrorException`. Closing it means giving embedding the same
+blob fallback as imagery (step 3), which is deliberately out of scope here.
 
 ### 3. Recover the outputs from blob (imagery)
 
@@ -121,7 +132,10 @@ utility.
   are untouched; this change makes the race survivable, not impossible.
 - **Raising `maxDequeueCount`.** Redelivery would re-run whole tasks.
 - **Blob fallback for other workloads.** The runner-level fixes cover them; only
-  imagery reads a required output file back.
+  imagery reads a required output file back. `EmbeddingPostprocessor` also
+  treats its manifest as required, so an embedding job whose node vanished still
+  fails — a known gap, tracked in [plan.md](plan.md#open-questions), not a
+  regression.
 
 ## Agent assignment
 
@@ -160,7 +174,7 @@ utility.
 | Decision | Rationale |
 |---|---|
 | Widen the retry predicate rather than add a second decorator | `apply_retry_to_methods` already wraps every `AzureBatchJob` method |
-| `reraise=True` | callers must still be able to classify the error after the budget is spent |
+| Leave `reraise` at its default and unwrap `RetryError` at the boundary | wrapped methods call one another; re-raising a retryable error would multiply the budget 5× |
 | Return `None` for an unreachable file | matches the existing contract; callers already branch on falsy content |
 | Fall back via `get_file_remote_path` + HTTP | resolves the exact path Batch uploaded to, with no data-layer signature changes |
 | `file_pattern` accepts a list | targeted; avoids a `**/*` upload of raw imagery |

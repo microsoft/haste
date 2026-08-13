@@ -22,10 +22,11 @@ outputs from blob storage.
 | Unit tests: runner node errors | `backend-dev` | runner tasks | US-001, US-004 | done |
 | Unit tests: imagery fallback + upload patterns | `backend-dev` | imagery tasks | US-001, US-002 | done |
 | Unit tests: exception formatter | `backend-dev` | `utils/errors.py` | US-003 | done |
+| Unit tests: `fetch_url_text` never-raise contract | `backend-dev` | `utils/blob.py` | US-001 | done |
 | Repair the `clipBbox` fixture gap in `test_imagery_preprocess_config.py` | `backend-dev` | — | — | done |
 
 **Exit Criteria:**
-- [x] All new unit tests pass (31)
+- [x] All new unit tests pass (43)
 - [x] No new failures in the `hastelib` suite versus a clean worktree at HEAD
 - [x] Core logic works without any API-layer involvement
 
@@ -91,3 +92,8 @@ the recorded cause readable.
 - [ ] Should node loss *during* a task (rather than after it) be surfaced
       distinctly? Batch requeues such tasks itself today; no evidence yet that it
       needs handling.
+- [ ] Should `EmbeddingPostprocessor` get the same blob fallback as imagery? It
+      treats `embedding_manifest.json` as required, so an embedding job whose
+      node vanished still fails. Not a regression (it failed before too, with a
+      worse error), and the fallback is the same four-line pattern — but it was
+      left out of this change's agreed scope.

@@ -17,6 +17,7 @@ mocked. What is verified is HASTE's *reaction* to those codes.
 |---|---|
 | `hastelib/tests/core/runners/test_azure_batch_node_errors.py` | US-001 (retry), US-004 (cleanup), runner degradation |
 | `hastelib/tests/core/processors/test_imagery_output_fallback.py` | US-001 (fallback), US-002 (log + upload patterns) |
+| `hastelib/tests/core/utils/test_blob.py` | US-001 (`fetch_url_text` never-raise contract) |
 | `hastelib/tests/core/utils/test_errors.py` | US-003 (message formatting) |
 
 ## Coverage matrix
@@ -37,48 +38,71 @@ mocked. What is verified is HASTE's *reaction* to those codes.
 | ID | Case | Expected | Story |
 |---|---|---|---|
 | UT-007 | `NodeNotReady` twice, then success | succeeds; 3 attempts | US-001 |
-| UT-008 | `NodeNotReady` beyond the budget | raises `BatchErrorException`, **not** `RetryError` | US-001 |
-| UT-009 | `TaskNotFound` | raises after exactly 1 attempt | US-001 |
+| UT-008 | `NodeNotReady` beyond the budget | raises `RetryError` (not `reraise=True`) | US-001 |
+| UT-009 | `unwrap_retry_error` on that `RetryError` | recovers the `BatchErrorException` and its code | US-001 |
+| UT-010 | `unwrap_retry_error` on a plain exception | returns it unchanged | US-001 |
+| UT-011 | Wrapped method calling another wrapped method | inner SDK call attempted **5** times, not 25 | US-001 |
+| UT-012 | `TaskNotFound` | raises after exactly 1 attempt | US-001 |
 
 > The backoff is removed with `retry_with(wait=wait_none())`, so the real
 > predicate and stop policy are exercised without the 4–10s sleeps.
+>
+> UT-011 guards the budget-multiplication regression: `apply_retry_to_methods`
+> decorates every `AzureBatchJob` method, and `get_file_by_match_from_task`
+> calls the separately wrapped `is_task_running` / `is_task_completed`. Using
+> `reraise=True` made an exhausted inner budget look retryable to the outer
+> wrapper, turning 5 attempts into 25 (measured).
 
 ### Runner degradation
 
 | ID | Case | Expected | Story |
 |---|---|---|---|
-| UT-010 | Node gone during file listing | `get_filecontent_from_task` returns `None` and warns | US-001 |
-| UT-011 | Node gone during file download | returns `None` | US-001 |
-| UT-012 | Unrelated Batch error (`JobNotFound`) | propagates | US-001 |
-| UT-013 | Node answers normally | chunks are decoded and joined | US-001 |
-| UT-014 | Cleanup against a dead node | delete skipped; `disable_job` still called | US-004 |
-| UT-015 | Cleanup fails with `OperationTimedOut` | propagates; `disable_job` not called | US-004 |
+| UT-013 | Node gone during file listing | `get_filecontent_from_task` returns `None` and warns | US-001 |
+| UT-014 | Node gone during file download | returns `None` | US-001 |
+| UT-015 | Unrelated Batch error (`JobNotFound`) | propagates | US-001 |
+| UT-016 | Exhausted `NodeNotReady` budget (`RetryError`) | returns `None` | US-001 |
+| UT-017 | Exhausted 5xx budget (`RetryError`) | propagates | US-001 |
+| UT-018 | Node answers normally | chunks are decoded and joined | US-001 |
+| UT-019 | Cleanup against a dead node | delete skipped; `disable_job` still called | US-004 |
+| UT-020 | Cleanup with an exhausted `NodeNotReady` budget | delete skipped; `disable_job` still called | US-004 |
+| UT-021 | Cleanup fails with `OperationTimedOut` | propagates; `disable_job` not called | US-004 |
+
+### Blob fallback transport (`fetch_url_text`)
+
+| ID | Case | Expected | Story |
+|---|---|---|---|
+| UT-022 | Successful response | returns the body; `raise_for_status` called | US-001 |
+| UT-023 | Custom timeout | passed through to `requests.get` | US-001 |
+| UT-024 | HTTP error | returns `None` | US-001 |
+| UT-025 | Transport error | returns `None` | US-001 |
+| UT-026 | Non-`http(s)` path | returns `None`; `requests` never called | US-001 |
+| UT-027 | Empty/`None` URL | returns `None` | US-001 |
 
 ### Imagery fallback
 
 | ID | Case | Expected | Story |
 |---|---|---|---|
-| UT-016 | Node copy available | node copy used; blob never fetched | US-001 |
-| UT-017 | Node copy unavailable | blob copy used; identifier/`taskId`/format passed correctly | US-001 |
-| UT-018 | Neither copy available | returns `None` | US-001 |
-| UT-019 | Fallback itself raises | returns `None`, does not propagate | US-001 |
-| UT-020 | Manifest recovered from blob | `_update_results_from_job` populates the layer | US-001 |
-| UT-021 | Manifest lost everywhere | raises `FileNotFoundError` | US-001 |
-| UT-022 | Log unavailable everywhere | returns `[]`; no exception | US-002 |
-| UT-023 | Log recovered from blob | parsed into `ImageryLogRecord`s | US-002 |
-| UT-024 | Submitted output patterns | list containing both `outputs/*.*` and `logs/*.*` | US-002 |
+| UT-028 | Node copy available | node copy used; blob never fetched | US-001 |
+| UT-029 | Node copy unavailable | blob copy used; identifier/`taskId`/format passed correctly | US-001 |
+| UT-030 | Neither copy available | returns `None` | US-001 |
+| UT-031 | Fallback itself raises | returns `None`, does not propagate | US-001 |
+| UT-032 | Manifest recovered from blob | `_update_results_from_job` populates the layer | US-001 |
+| UT-033 | Manifest lost everywhere | raises `FileNotFoundError` | US-001 |
+| UT-034 | Log unavailable everywhere | returns `[]`; no exception | US-002 |
+| UT-035 | Log recovered from blob | parsed into `ImageryLogRecord`s | US-002 |
+| UT-036 | Submitted output patterns | list containing both `outputs/*.*` and `logs/*.*` | US-002 |
 
 ### Message formatting
 
 | ID | Case | Expected | Story |
 |---|---|---|---|
-| UT-025 | Azure-style error with code + message | `"<Code>: <message>"` | US-003 |
-| UT-026 | Message with `RequestId:`/`Time:` trailer | trailer stripped | US-003 |
-| UT-027 | Any Azure-style error | no `additional_properties` / `'lang'` leakage | US-003 |
-| UT-028 | Code with no message | just the code | US-003 |
-| UT-029 | Plain `ValueError` | `str(exc)` | US-003 |
-| UT-030 | Exception with no text | the type name; never empty | US-003 |
-| UT-031 | Plain-string message | `"<Code>: <message>"` | US-003 |
+| UT-037 | Azure-style error with code + message | `"<Code>: <message>"` | US-003 |
+| UT-038 | Message with `RequestId:`/`Time:` trailer | trailer stripped | US-003 |
+| UT-039 | Any Azure-style error | no `additional_properties` / `'lang'` leakage | US-003 |
+| UT-040 | Code with no message | just the code | US-003 |
+| UT-041 | Plain `ValueError` | `str(exc)` | US-003 |
+| UT-042 | Exception with no text | the type name; never empty | US-003 |
+| UT-043 | Plain-string message | `"<Code>: <message>"` | US-003 |
 
 ## Regression guard
 
@@ -90,7 +114,7 @@ env (`tests/workflows/test_prepare_imagery.py` needs `osgeo`;
 | Run | Passed | Failed |
 |---|---|---|
 | Baseline (HEAD) | 155 | 2 |
-| With this change | 188 | 0 |
+| With this change | 200 | 0 |
 
 The two baseline failures were in
 `test_imagery_preprocess_config.py`, which exercises

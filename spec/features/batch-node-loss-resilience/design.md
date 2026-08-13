@@ -41,24 +41,34 @@ is_transient_node_error(exc) -> bool
 is_terminal_node_error(exc) -> bool
 is_node_unavailable_error(exc) -> bool   # transient or terminal
 is_retryable_batch_error(exc) -> bool    # 5xx or transient node error
+unwrap_retry_error(exc) -> BaseException # the error tenacity was retrying
 ```
 
 `retry_on_server_error()` keeps its name (it is applied to every `AzureBatchJob`
 method by `apply_retry_to_methods`) but now retries on
-`is_retryable_batch_error` and sets `reraise=True`.
+`is_retryable_batch_error`. Its `reraise` setting is deliberately left at the
+default — see the runner contract below.
 
 | Aspect | Before | After |
 |---|---|---|
 | Retried | 5xx only | 5xx + transient node errors |
 | Budget | 5 attempts, exponential 4–10s | unchanged |
-| On exhaustion | `tenacity.RetryError` | the original `BatchErrorException` |
+| On exhaustion | `tenacity.RetryError` | unchanged — callers unwrap it with `unwrap_retry_error` |
 
 ### `AzureBatchRunner`
 
 | Method | Contract |
 |---|---|
 | `get_filecontent_from_task` | returns file text, or `None` when the file is missing **or** the node cannot serve it. Unrelated `BatchErrorException`s propagate. |
-| `cleanup_task` | best-effort working-directory delete; always disables the job. Unrelated `BatchErrorException`s propagate. |
+| `cleanup_task` | best-effort working-directory delete: node-unavailability is swallowed and the job is then disabled. Any other error propagates **before** `disable_job` is reached, so callers must not treat the job as guaranteed disabled. |
+
+An exhausted retry budget surfaces as `tenacity.RetryError`, not the underlying
+error, so both methods classify through `unwrap_retry_error` before deciding.
+`reraise=True` was deliberately **not** used: `apply_retry_to_methods` decorates
+every `AzureBatchJob` method and several call one another
+(`get_file_by_match_from_task` → `is_task_running` / `is_task_completed`), so
+re-raising a retryable error from an exhausted inner budget would let the outer
+wrapper spend a fresh one — 5 attempts silently becoming 25.
 
 ### `AzureBatchJob.add_task`
 
@@ -73,8 +83,11 @@ capture is appended as before. Existing string callers are unaffected.
 | inference | `$AZ_BATCH_TASK_WORKING_DIR/inference/**/*` |
 | train | `$AZ_BATCH_TASK_WORKING_DIR/**/*` |
 
-`LocalRunner._upload_task_outputs` normalizes the same way so the docker dev
-stack stays consistent.
+`LocalRunner._upload_task_outputs` normalizes the same way, so a list pattern
+cannot break it. Note this helper currently has **no call sites** —
+`LocalRunner.add_task` accepts `file_pattern` but never consumes it, and the
+docker dev stack uploads by walking the task directory. The normalization is
+defensive only; it is not what keeps the local stack consistent today.
 
 ### `ImageryPostProcessor._read_task_output(filename) -> str | None`
 
