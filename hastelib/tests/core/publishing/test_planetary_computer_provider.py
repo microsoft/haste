@@ -64,6 +64,8 @@ class FakeSdkAdapter:
         self.materialize_items = True
         self.complete_collection_operations = True
         self.ingestion_source_calls = 0
+        self.delete_collection_calls = 0
+        self.pending_collection_delete = None
 
     def get_ingestion_source(self, source_id):
         self.ingestion_source_calls += 1
@@ -161,6 +163,34 @@ class FakeSdkAdapter:
             PlanetaryComputerOperationKind.DELETE_ITEM,
             collection_id,
             item_id,
+            None,
+            True,
+        )
+
+    def list_item_ids(self, collection_id, limit=100):
+        return [
+            item_id
+            for (cid, item_id) in self.items
+            if cid == collection_id
+        ]
+
+    def start_delete_collection(self, collection_id):
+        self.delete_collection_calls += 1
+        self.pending_collection_delete = collection_id
+        return self._operation(
+            PlanetaryComputerOperationKind.DELETE_COLLECTION,
+            collection_id,
+            None,
+            "https://catalog.test/operations/delete-collection",
+            False,
+        )
+
+    def continue_delete_collection(self, collection_id, token):
+        self.collections.pop(self.pending_collection_delete, None)
+        return self._operation(
+            PlanetaryComputerOperationKind.DELETE_COLLECTION,
+            collection_id,
+            None,
             None,
             True,
         )
@@ -450,14 +480,52 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
 
         delete_pending = self.provider.start_unpublish(published)
         deleting = self._continued(published, delete_pending)
-        deleted = self.provider.continue_unpublish(deleting)
+        item_deleted = self.provider.continue_unpublish(deleting)
+        collection_deleting = self._continued(deleting, item_deleted)
+        deleted = self.provider.continue_unpublish(collection_deleting)
         repeated = self.provider.start_unpublish(published)
 
         self.assertFalse(delete_pending.isComplete)
+        # Item delete completes, then the now-empty collection is deleted.
+        self.assertFalse(item_deleted.isComplete)
+        self.assertEqual(
+            item_deleted.providerMetadata["phase"],
+            PlanetaryComputerPhase.DELETE_COLLECTION_OPERATION.value,
+        )
         self.assertTrue(deleted.isComplete)
         self.assertTrue(repeated.isComplete)
-        self.assertIn(collection_id, self.sdk.collections)
+        self.assertNotIn(collection_id, self.sdk.collections)
         self.assertEqual(self.sdk.delete_item_calls, 1)
+        self.assertEqual(self.sdk.delete_collection_calls, 1)
+
+    def test_unpublish_keeps_collection_with_remaining_datasets(self) -> None:
+        first = self.provider.start_publish(self.dataset, self.bundle)
+        current = self._continued(self.dataset, first)
+        second = self.provider.continue_publish(current, self.bundle)
+        current = self._continued(current, second)
+        completed = self.provider.continue_publish(current, self.bundle)
+        published = self.dataset.model_copy(
+            update={"providerMetadata": completed.providerMetadata}
+        )
+        collection_id = completed.providerMetadata["collectionId"]
+        # A second dataset still lives in the same (project-level) collection.
+        self.sdk.items[(collection_id, "other-item")] = {"id": "other-item"}
+
+        delete_pending = self.provider.start_unpublish(published)
+        deleting = self._continued(published, delete_pending)
+        deleted = self.provider.continue_unpublish(deleting)
+
+        self.assertTrue(deleted.isComplete)
+        self.assertEqual(self.sdk.delete_item_calls, 1)
+        # Collection survives because another dataset remains; no delete.
+        self.assertEqual(self.sdk.delete_collection_calls, 0)
+        self.assertIn(collection_id, self.sdk.collections)
+        # Its rolling summary drops the unpublished dataset.
+        remaining = self.sdk.collections[collection_id]["ai4g:datasets"]
+        self.assertNotIn(
+            str(self.dataset.datasetId),
+            [entry["id"] for entry in remaining],
+        )
 
     def test_unpublish_drains_inflight_item_before_deleting_it(self) -> None:
         first = self.provider.start_publish(self.dataset, self.bundle)
@@ -467,7 +535,9 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
 
         delete_pending = self.provider.start_unpublish(failed)
         deleting = self._continued(failed, delete_pending)
-        deleted = self.provider.continue_unpublish(deleting)
+        item_deleted = self.provider.continue_unpublish(deleting)
+        collection_deleting = self._continued(deleting, item_deleted)
+        deleted = self.provider.continue_unpublish(collection_deleting)
 
         self.assertEqual(
             delete_pending.providerMetadata["phase"],
@@ -475,9 +545,11 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
         )
         self.assertTrue(deleted.isComplete)
         self.assertEqual(self.sdk.delete_item_calls, 1)
+        self.assertEqual(self.sdk.delete_collection_calls, 1)
         collection_id = failed.providerMetadata["collectionId"]
         item_id = failed.providerMetadata["itemIds"][0]
         self.assertNotIn((collection_id, item_id), self.sdk.items)
+        self.assertNotIn(collection_id, self.sdk.collections)
 
     def test_unpublish_collection_crash_window_requires_item_discovery(
         self,

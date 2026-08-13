@@ -39,6 +39,7 @@ from .stac import (
     build_collection_id,
     build_item_id,
     build_stac_objects,
+    rebuild_collection_after_removal,
     serialize_stac_objects,
     validate_stac_objects,
 )
@@ -68,6 +69,8 @@ class PlanetaryComputerPhase(str, Enum):
     DRAIN_ITEM = "drain_item"
     DRAIN_DELETE = "drain_delete"
     DELETE_DISCOVER = "delete_discover"
+    DELETE_COLLECTION_OPERATION = "delete_collection_operation"
+    DELETE_COLLECTION_VERIFY = "delete_collection_verify"
 
 
 class PlanetaryComputerPublishingProvider(PublishingProvider):
@@ -375,6 +378,8 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             PlanetaryComputerPhase.DRAIN_ITEM.value,
             PlanetaryComputerPhase.DRAIN_DELETE.value,
             PlanetaryComputerPhase.DELETE_DISCOVER.value,
+            PlanetaryComputerPhase.DELETE_COLLECTION_OPERATION.value,
+            PlanetaryComputerPhase.DELETE_COLLECTION_VERIFY.value,
         }:
             return self.continue_unpublish(dataset)
 
@@ -508,6 +513,32 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
                 item_id,
             )
 
+        if phase == PlanetaryComputerPhase.DELETE_COLLECTION_OPERATION:
+            try:
+                operation = self.sdk.continue_delete_collection(
+                    collection_id,
+                    self._continuation_token(metadata),
+                )
+            except PlanetaryComputerOperationError:
+                return self._collection_delete_complete_or_pending(
+                    dataset, metadata, collection_id
+                )
+            if not operation.is_complete:
+                return self._operation_pending(
+                    metadata,
+                    PlanetaryComputerPhase.DELETE_COLLECTION_OPERATION,
+                    operation.continuation_token,
+                    count_attempt=True,
+                )
+            return self._collection_delete_complete_or_pending(
+                dataset, metadata, collection_id
+            )
+
+        if phase == PlanetaryComputerPhase.DELETE_COLLECTION_VERIFY:
+            return self._collection_delete_complete_or_pending(
+                dataset, metadata, collection_id
+            )
+
         raise PlanetaryComputerProviderError(
             "Planetary Computer unpublish phase is invalid"
         )
@@ -614,15 +645,13 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
         item_id: str,
     ) -> PublishResult:
         if self.sdk.get_item(collection_id, item_id) is None:
-            return PublishResult(
-                providerMetadata=self._stable_metadata(dataset)
-            )
+            return self._cleanup_collection_or_complete(dataset, collection_id)
         try:
             operation = self.sdk.start_delete_item(collection_id, item_id)
         except Exception as error:
             if self._is_status(error, 404):
-                return PublishResult(
-                    providerMetadata=self._stable_metadata(dataset)
+                return self._cleanup_collection_or_complete(
+                    dataset, collection_id
                 )
             if self._is_status(error, 409):
                 return self._verification_pending(
@@ -674,6 +703,79 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
         updated["verificationAttempts"] = 0
         updated["cleanupDiscoveryRequired"] = True
         return updated
+
+    def _cleanup_collection_or_complete(
+        self,
+        dataset: PublishedDataset,
+        collection_id: str,
+    ) -> PublishResult:
+        # The dataset's item is gone. Collections are per-project and may still
+        # hold other datasets, so only delete the collection once no items
+        # remain; otherwise refresh its rolling summary to drop this dataset.
+        existing = self.sdk.get_collection(collection_id)
+        if existing is None:
+            return PublishResult(
+                providerMetadata=self._stable_metadata(dataset)
+            )
+        if self.sdk.list_item_ids(collection_id):
+            self.sdk.replace_collection(
+                collection_id,
+                rebuild_collection_after_removal(existing, dataset),
+            )
+            return PublishResult(
+                providerMetadata=self._stable_metadata(dataset)
+            )
+        return self._start_delete_collection_or_complete(
+            dataset,
+            self._stable_metadata(dataset),
+            collection_id,
+        )
+
+    def _start_delete_collection_or_complete(
+        self,
+        dataset: PublishedDataset,
+        metadata: Mapping[str, Any],
+        collection_id: str,
+    ) -> PublishResult:
+        try:
+            operation = self.sdk.start_delete_collection(collection_id)
+        except Exception as error:
+            if self._is_status(error, 404):
+                return PublishResult(
+                    providerMetadata=self._stable_metadata(dataset)
+                )
+            if self._is_status(error, 409):
+                return self._verification_pending(
+                    metadata,
+                    PlanetaryComputerPhase.DELETE_COLLECTION_VERIFY,
+                    self._collection_href(collection_id),
+                )
+            raise
+        if operation.is_complete:
+            return self._collection_delete_complete_or_pending(
+                dataset, metadata, collection_id
+            )
+        return self._operation_pending(
+            metadata,
+            PlanetaryComputerPhase.DELETE_COLLECTION_OPERATION,
+            operation.continuation_token,
+        )
+
+    def _collection_delete_complete_or_pending(
+        self,
+        dataset: PublishedDataset,
+        metadata: Mapping[str, Any],
+        collection_id: str,
+    ) -> PublishResult:
+        if self.sdk.get_collection(collection_id) is None:
+            return PublishResult(
+                providerMetadata=self._stable_metadata(dataset)
+            )
+        return self._verification_pending(
+            metadata,
+            PlanetaryComputerPhase.DELETE_COLLECTION_VERIFY,
+            self._collection_href(collection_id),
+        )
 
     def _collection_ready_or_pending(
         self,
@@ -875,9 +977,7 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
         item_id: str,
     ) -> PublishResult:
         if self.sdk.get_item(collection_id, item_id) is None:
-            return PublishResult(
-                providerMetadata=self._stable_metadata(dataset)
-            )
+            return self._cleanup_collection_or_complete(dataset, collection_id)
         return self._verification_pending(
             metadata,
             PlanetaryComputerPhase.DELETE_VERIFY,

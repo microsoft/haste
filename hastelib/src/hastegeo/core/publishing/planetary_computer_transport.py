@@ -33,6 +33,7 @@ class PlanetaryComputerOperationKind(str, Enum):
     CREATE_COLLECTION = "create_collection"
     CREATE_ITEM = "create_item"
     DELETE_ITEM = "delete_item"
+    DELETE_COLLECTION = "delete_collection"
 
 
 class PlanetaryComputerOperationError(RuntimeError):
@@ -145,6 +146,55 @@ class PlanetaryComputerRestAdapter:
             None,
             continuation_token,
         )
+
+    def start_delete_collection(
+        self,
+        collection_id: str,
+    ) -> PlanetaryComputerOperationStep:
+        response = self.client.request(
+            "DELETE",
+            f"/stac/collections/{collection_id}",
+            expected=(200, 202, 204),
+        )
+        return self._start_from_response(
+            response,
+            PlanetaryComputerOperationKind.DELETE_COLLECTION,
+            collection_id,
+        )
+
+    def continue_delete_collection(
+        self,
+        collection_id: str,
+        continuation_token: str,
+    ) -> PlanetaryComputerOperationStep:
+        return self._continue(
+            PlanetaryComputerOperationKind.DELETE_COLLECTION,
+            collection_id,
+            None,
+            continuation_token,
+        )
+
+    def list_item_ids(
+        self, collection_id: str, limit: int = 100
+    ) -> list:
+        """Return the ids of items currently in the collection (bounded)."""
+        response = self.client.request(
+            "GET",
+            f"/stac/collections/{collection_id}/items",
+            params={"limit": limit},
+            expected=(200, 404),
+        )
+        if response.status_code == 404:
+            return []
+        payload = response.json()
+        features = []
+        if isinstance(payload, Mapping):
+            features = payload.get("features") or []
+        return [
+            str(feature["id"])
+            for feature in features
+            if isinstance(feature, Mapping) and feature.get("id")
+        ]
 
     # ------------------------------------------------------------------ items
 
