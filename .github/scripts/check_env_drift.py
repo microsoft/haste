@@ -52,6 +52,7 @@ ENV_HELPER = re.compile(r"^_get_[a-z0-9_]*env$")
 # each one is exempt. Anything not listed here that the code marks required must
 # be emitted by both deploy paths.
 ALLOWLIST = {
+    "AzureFunctionsWebHost__hostId": "consumed by the Functions host runtime",
     # Alternative metadata/storage backends. Azure deployments use blob storage
     # (METADATA_STORAGE_TYPE=blob), so these are never read there.
     "COSMOS_ENDPOINT": "cosmos backend only",

@@ -95,12 +95,14 @@ sharing the same storage account, the timer (and the host) can fail with
 *"Unable to acquire Singleton lock"* and *"No script host available"* /
 `NoScriptHost` — the app goes unhealthy.
 
-Set a unique **`AzureFunctionsWebHost__hostId`** app setting (≤ 32 chars,
-lowercase alphanumeric + hyphens) on **each** Function App **and each deployment
-slot** — e.g. `haste-queues-<env>`, `haste-api-<env>`, `haste-titiler-<env>`.
-See <https://aka.ms/functions-hostid>. This applies wherever publishing is
-enabled (Local *or* PC), since the reconciler timer ships with the Local
-feature; it is unrelated to the publishing code itself.
+A unique **`AzureFunctionsWebHost__hostId`** app setting (≤ 32 chars, lowercase
+alphanumeric + hyphens) is required on **each** Function App **and each
+deployment slot**. Both deploy paths now set it automatically from the app name
+(`infra/modules/functions.bicep` for `azd`, `.github/scripts/deploy_apps.sh` for
+the GitHub Actions path); override only for extra slots. See
+<https://aka.ms/functions-hostid>. This applies wherever publishing is enabled
+(Local *or* PC), since the reconciler timer ships with the Local feature; it is
+unrelated to the publishing code itself.
 
 ## Rollout Phases
 

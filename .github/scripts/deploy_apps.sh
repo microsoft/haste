@@ -82,6 +82,11 @@ deploy_function() {
     echo "Deploying function app: $FUNCTION_NAME"
     echo "+--------------------------------------------------+"
 
+    # Unique, stable host id per app/slot (<=32 lowercase alnum/hyphen) so the
+    # publishing reconciler TimerTrigger's host-scoped Singleton lock does not
+    # collide across apps sharing storage. See data-publishing/rollout.md.
+    HOST_ID=$(printf '%s' "$FUNCTION_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-32)
+
     if [ "${SET_APPSETTINGS:-true}" = "true" ]; then
         # Get storage account connection string with error handling
         echo "Retrieving storage account connection string..."
@@ -139,6 +144,7 @@ deploy_function() {
             "EMAIL_CONNECTION_STRING=${EMAIL_CONNECTION_STRING}" \
             "EMAIL_SENDER=${EMAIL_SENDER}" \
             "PUBLISHING_ENABLED=${PUBLISHING_ENABLED}" \
+            "AzureFunctionsWebHost__hostId=${HOST_ID}" \
             --output none
     fi
 

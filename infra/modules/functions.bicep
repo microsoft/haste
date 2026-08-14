@@ -176,7 +176,14 @@ module apiApp 'functionApp.bicep' = {
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
     logAnalyticsId: logAnalyticsId
-    appSettings: appConfigSettings
+    // Unique host id per app so the publishing reconciler TimerTrigger's
+    // host-scoped Singleton lock doesn't collide across apps sharing storage.
+    appSettings: concat(appConfigSettings, [
+      {
+        name: 'AzureFunctionsWebHost__hostId'
+        value: toLower(substring(functionApiName, 0, min(32, length(functionApiName))))
+      }
+    ])
     tags: tags
   }
 }
@@ -217,7 +224,12 @@ module queueApp 'functionApp.bicep' = {
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
     logAnalyticsId: logAnalyticsId
-    appSettings: appConfigSettings
+    appSettings: concat(appConfigSettings, [
+      {
+        name: 'AzureFunctionsWebHost__hostId'
+        value: toLower(substring(functionQueueName, 0, min(32, length(functionQueueName))))
+      }
+    ])
     tags: tags
   }
   dependsOn: [
