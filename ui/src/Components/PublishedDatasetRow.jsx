@@ -8,13 +8,18 @@ import {
   DialogSurface,
   DialogTitle,
   Divider,
+  Field,
+  Input,
   Link,
   Menu,
   MenuItem,
   MenuList,
   MenuPopover,
   MenuTrigger,
+  MessageBar,
+  MessageBarBody,
   Text,
+  Textarea,
   Tooltip,
 } from "@fluentui/react-components";
 import PropTypes from "prop-types";
@@ -33,6 +38,12 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
   const { appParams, setDialog, setIsLoading } = useContext(AppContext);
   const navigate = useNavigate();
   const [showDetails, setShowDetails] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editViewer, setEditViewer] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState("");
   const preds = item.assessmentSummary?.predictions;
   const status = getPublishingStatusDisplay(item.status);
 
@@ -80,6 +91,36 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
       setDialog("Download failed", error.message);
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  function openMetadata(edit) {
+    setEditName(item.name || "");
+    setEditDescription(item.description || "");
+    setEditViewer(item.interactiveViewerUrl || "");
+    setEditError("");
+    setEditing(!!edit);
+    setShowDetails(true);
+  }
+
+  async function saveMetadata() {
+    setSaving(true);
+    setEditError("");
+    try {
+      await apiPut("PutUpdatePublishedDataset", {
+        projectId: item.projectId,
+        datasetId: item.datasetId,
+        name: editName.trim(),
+        description: editDescription.trim(),
+        interactiveViewerUrl: editViewer.trim() || null,
+      });
+      setEditing(false);
+      setShowDetails(false);
+      await onRefresh();
+    } catch (error) {
+      setEditError(error.message || "Unable to save changes.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -140,8 +181,16 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
     key: "details",
     text: "View details",
     icon: "Info",
-    onClick: () => setShowDetails(true),
+    onClick: () => openMetadata(false),
   });
+  if (canManage) {
+    menuItems.push({
+      key: "edit",
+      text: "Edit metadata",
+      icon: "Edit",
+      onClick: () => openMetadata(true),
+    });
+  }
   if (item.status === "PUBLISHED" && item.target === "local") {
     for (const artifact of item.artifacts || []) {
       menuItems.push({
@@ -288,23 +337,85 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
           <Dialog
             open
             onOpenChange={(_, data) => {
-              if (!data.open) setShowDetails(false);
+              if (!data.open) {
+                setShowDetails(false);
+                setEditing(false);
+              }
             }}
           >
             <DialogSurface aria-describedby={undefined}>
               <DialogBody>
-                <DialogTitle>{item.name}</DialogTitle>
+                <DialogTitle>
+                  {editing ? "Edit metadata" : item.name}
+                </DialogTitle>
                 <DialogContent>
-                  {item.description && (
-                    <p
+                  {editing ? (
+                    <div
                       style={{
-                        marginTop: 0,
-                        whiteSpace: "pre-wrap",
-                        lineHeight: 1.4,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 12,
+                        margin: "4px 0 12px",
                       }}
                     >
-                      {item.description}
-                    </p>
+                      {editError && (
+                        <MessageBar intent="error">
+                          <MessageBarBody>{editError}</MessageBarBody>
+                        </MessageBar>
+                      )}
+                      <Field label="Dataset name" required>
+                        <Input
+                          value={editName}
+                          onChange={(_, d) => setEditName(d.value)}
+                          disabled={saving}
+                        />
+                      </Field>
+                      <Field label="Description">
+                        <Textarea
+                          value={editDescription}
+                          resize="vertical"
+                          onChange={(_, d) => setEditDescription(d.value)}
+                          disabled={saving}
+                        />
+                      </Field>
+                      <Field
+                        label="Interactive viewer URL"
+                        hint="Optional https link shown as a preview."
+                      >
+                        <Input
+                          type="url"
+                          placeholder="https://…"
+                          value={editViewer}
+                          onChange={(_, d) => setEditViewer(d.value)}
+                          disabled={saving}
+                        />
+                      </Field>
+                    </div>
+                  ) : (
+                    <>
+                      {item.description && (
+                        <p
+                          style={{
+                            marginTop: 0,
+                            whiteSpace: "pre-wrap",
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          {item.description}
+                        </p>
+                      )}
+                      {item.interactiveViewerUrl && (
+                        <p style={{ marginTop: 0 }}>
+                          <Link
+                            href={item.interactiveViewerUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            Open interactive viewer
+                          </Link>
+                        </p>
+                      )}
+                    </>
                   )}
                   <Divider />
                   <div
@@ -384,12 +495,41 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
                   )}
                 </DialogContent>
                 <DialogActions>
-                  <Button
-                    appearance="secondary"
-                    onClick={() => setShowDetails(false)}
-                  >
-                    Close
-                  </Button>
+                  {editing ? (
+                    <>
+                      <Button
+                        appearance="secondary"
+                        onClick={() => setEditing(false)}
+                        disabled={saving}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        appearance="primary"
+                        onClick={saveMetadata}
+                        disabled={saving || !editName.trim()}
+                      >
+                        {saving ? "Saving…" : "Save"}
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      {canManage && (
+                        <Button
+                          appearance="secondary"
+                          onClick={() => openMetadata(true)}
+                        >
+                          Edit
+                        </Button>
+                      )}
+                      <Button
+                        appearance="secondary"
+                        onClick={() => setShowDetails(false)}
+                      >
+                        Close
+                      </Button>
+                    </>
+                  )}
                 </DialogActions>
               </DialogBody>
             </DialogSurface>

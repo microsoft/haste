@@ -109,6 +109,7 @@ const PublishDatasetModal = ({
   const [providers, setProviders] = useState([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [interactiveViewerUrl, setInteractiveViewerUrl] = useState("");
   const [target, setTarget] = useState("");
   const [selectedArtifacts, setSelectedArtifacts] = useState([]);
   const [submitting, setSubmitting] = useState(false);
@@ -219,6 +220,7 @@ const PublishDatasetModal = ({
         modelId,
         name: name.trim(),
         description: description.trim(),
+        interactiveViewerUrl: interactiveViewerUrl.trim() || null,
         target,
         artifacts: effectiveSelectedArtifacts,
       });
@@ -292,6 +294,20 @@ const PublishDatasetModal = ({
                         descriptionTouched.current = true;
                         setDescription(data.value);
                       }}
+                      disabled={submitting}
+                    />
+                  </Field>
+                  <Field
+                    label="Interactive viewer URL"
+                    hint="Optional https link shown as a preview on the dataset."
+                  >
+                    <Input
+                      type="url"
+                      placeholder="https://…"
+                      value={interactiveViewerUrl}
+                      onChange={(_, data) =>
+                        setInteractiveViewerUrl(data.value)
+                      }
                       disabled={submitting}
                     />
                   </Field>
