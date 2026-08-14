@@ -407,8 +407,6 @@ def build_collection(
     existing_collection: Optional[Mapping[str, Any]] = None,
     collection_prefix: str = "haste-",
     license_id: str = "proprietary",
-    thumbnail_href: Optional[str] = None,
-    thumbnail_media_type: str = DEFAULT_THUMBNAIL_MEDIA_TYPE,
 ) -> Any:
     pystac = _load_pystac()
     collection_id = build_collection_id(dataset, collection_prefix)
@@ -459,16 +457,9 @@ def build_collection(
             media_type=pystac.MediaType.JSON,
         )
     )
-    if thumbnail_href:
-        collection.add_asset(
-            THUMBNAIL_ASSET_KEY,
-            pystac.Asset(
-                href=_require_https_url(thumbnail_href, "thumbnail"),
-                media_type=thumbnail_media_type,
-                title="Preview",
-                roles=list(THUMBNAIL_ROLES),
-            ),
-        )
+    # No collection-level assets: MPC Pro rejects `assets` in the collection
+    # POST ("must be added using the GeoCatalog Collection Asset API"). The
+    # thumbnail lives on the item, which is what drives the Explorer preview.
     return collection
 
 
@@ -507,8 +498,6 @@ def build_stac_objects(
         existing_collection=existing_collection,
         collection_prefix=collection_prefix,
         license_id=license_id,
-        thumbnail_href=thumbnail_href,
-        thumbnail_media_type=thumbnail_media_type,
     )
     return StacObjects(collection=collection, item=item)
 

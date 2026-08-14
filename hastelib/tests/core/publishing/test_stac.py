@@ -326,9 +326,7 @@ class TestStacObjects(unittest.TestCase):
         self.assertEqual(item["properties"]["ai4g:validation_ci_upper"], 24.0)
         self.assertGreater(item["properties"]["ai4g:aoi_area_km2"], 0)
 
-    def test_thumbnail_asset_is_attached_to_item_and_collection(
-        self,
-    ) -> None:
+    def test_thumbnail_asset_is_attached_to_item_only(self) -> None:
         objects = self._build(
             ArtifactBundle(
                 selectedArtifacts=[self.damage],
@@ -348,11 +346,9 @@ class TestStacObjects(unittest.TestCase):
             item_thumb["href"],
             "https://storage.test/published/thumb/thumbnail.png",
         )
-        collection_assets = documents.collection.get("assets") or {}
-        self.assertIn("thumbnail", collection_assets)
-        self.assertEqual(
-            collection_assets["thumbnail"]["roles"], ["thumbnail"]
-        )
+        # MPC Pro rejects assets in the collection POST, so the collection
+        # carries no thumbnail asset.
+        self.assertNotIn("thumbnail", documents.collection.get("assets") or {})
 
     def test_no_thumbnail_asset_without_a_preview(self) -> None:
         objects = self._build(
