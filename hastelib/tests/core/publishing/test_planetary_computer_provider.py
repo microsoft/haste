@@ -929,6 +929,31 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
         self.provider.update_published_metadata(self.dataset)
         self.assertEqual(self.sdk.item_updates, [])
 
+    def test_viewer_url_changes_the_request_fingerprint(self) -> None:
+        from hastegeo.core.models.publishing import (
+            compute_request_fingerprint,
+        )
+
+        base = dict(
+            requestId=self.request.requestId,
+            projectId=self.request.projectId,
+            imageLayerId="layer-1",
+            modelId="42",
+            name="X",
+            target="planetary_computer",
+            artifacts=["gpkg"],
+        )
+        without = compute_request_fingerprint(
+            PublishRequest(**base), "user@example.com"
+        )
+        with_viewer = compute_request_fingerprint(
+            PublishRequest(
+                **base, interactiveViewerUrl="https://viewer.example.com/a"
+            ),
+            "user@example.com",
+        )
+        self.assertNotEqual(without, with_viewer)
+
     def test_interactive_viewer_url_must_be_https(self) -> None:
         base = dict(
             requestId=self.request.requestId,

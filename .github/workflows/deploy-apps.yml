@@ -111,10 +111,20 @@ jobs:
           # Non-sensitive UI feature flag, baked into the Vite bundle at build time.
           # Set as a GitHub Environment variable; defaults to false when unset.
           VITE_SHOW_FOOTER: ${{ vars.VITE_SHOW_FOOTER }}
-          # Data-publishing feature flag, mirroring the `publishingEnabled`
-          # param on the Bicep path. Non-sensitive, so a GitHub Environment
-          # variable; deploy_apps.sh defaults it to false when unset.
+          # Data-publishing config, mirroring the publishing/PC params on the
+          # Bicep path. Non-sensitive flags/prefix are Environment variables;
+          # the URLs, ingestion source, license, and publish-storage target are
+          # Environment *secrets* (masked in logs). Each defaults to off/unset
+          # in deploy_apps.sh when absent.
           PUBLISHING_ENABLED: ${{ vars.PUBLISHING_ENABLED }}
+          PC_PROVIDER_ENABLED: ${{ vars.PC_PROVIDER_ENABLED }}
+          PC_COLLECTION_PREFIX: ${{ vars.PC_COLLECTION_PREFIX }}
+          PC_GEOCATALOG_URL: ${{ secrets.PC_GEOCATALOG_URL }}
+          PC_EXPLORER_URL: ${{ secrets.PC_EXPLORER_URL }}
+          PC_INGESTION_SOURCE: ${{ secrets.PC_INGESTION_SOURCE }}
+          PC_PUBLISHING_LICENSE: ${{ secrets.PC_PUBLISHING_LICENSE }}
+          PUBLISH_STORAGE_ACCOUNT_URL: ${{ secrets.PUBLISH_STORAGE_ACCOUNT_URL }}
+          PUBLISH_BLOB_CONTAINER: ${{ secrets.PUBLISH_BLOB_CONTAINER }}
           # hastegeo wheel pinned into the function-app requirements before
           # `func publish` (deploy_apps.sh); the editable default can't resolve
           # on Azure's remote build.

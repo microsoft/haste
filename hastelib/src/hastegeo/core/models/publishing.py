@@ -267,6 +267,7 @@ def compute_request_fingerprint(
         "modelId": request.modelId,
         "name": request.name,
         "description": request.description or "",
+        "interactiveViewerUrl": request.interactiveViewerUrl or "",
         "target": request.target.value,
         "artifacts": [artifact.value for artifact in request.artifacts],
         "publisherId": normalized_publisher,
