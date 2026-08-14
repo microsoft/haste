@@ -1037,6 +1037,7 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             actual_item,
         )
         collection_id, _ = self._ids(dataset)
+        self._upload_collection_tile(dataset, source, collection_id)
         metadata = self._stable_metadata(dataset)
         metadata["assetsCopiedToManagedStorage"] = True
         return PublishResult(
@@ -1047,6 +1048,78 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             },
             providerMetadata=metadata,
         )
+
+    def _upload_collection_tile(
+        self,
+        dataset: PublishedDataset,
+        source: ArtifactBundle,
+        collection_id: str,
+    ) -> None:
+        # Render a damage-assessment map from the published buildings + AOI and
+        # attach it as the collection thumbnail via the Collection Asset API.
+        # Best-effort: never fail the publish over a tile.
+        try:
+            import geopandas as gpd
+
+            from .tile import render_collection_tile
+
+            mask = source.get(ArtifactKind.VALID_MASK)
+            if mask is None:
+                return
+            valid_mask = self.json_reader(mask)
+            aoi_gdf = gpd.GeoDataFrame.from_features(
+                valid_mask.get("features") or [], crs="EPSG:4326"
+            )
+            if aoi_gdf.empty:
+                return
+            buildings_artifact = source.get(ArtifactKind.GPKG) or source.get(
+                ArtifactKind.FOOTPRINTS
+            )
+            if buildings_artifact is not None:
+                with self._materialized_artifact(
+                    buildings_artifact
+                ) as local_path:
+                    buildings_gdf = gpd.read_file(local_path)
+            else:
+                buildings_gdf = aoi_gdf.iloc[0:0]
+            png = render_collection_tile(
+                buildings_gdf,
+                aoi_gdf,
+                title=dataset.projectName or dataset.name,
+                subtitle=self._tile_subtitle(dataset),
+            )
+            self.sdk.upload_collection_asset(
+                collection_id,
+                key="thumbnail",
+                data=png,
+                filename="thumbnail.png",
+                media_type="image/png",
+                roles=["thumbnail"],
+                title="Collection thumbnail",
+            )
+        except Exception as error:
+            self.logger.warning(
+                "Skipping Planetary Computer collection tile: %s",
+                type(error).__name__,
+            )
+
+    @staticmethod
+    def _tile_subtitle(dataset: PublishedDataset) -> str:
+        summary = dataset.assessmentSummary or {}
+        predictions = summary.get("predictions") or {}
+        total = predictions.get("total") or summary.get("buildingsTotal")
+        damaged = predictions.get("predictedDamaged") or summary.get(
+            "predictedDamaged"
+        )
+        parts = []
+        try:
+            if total is not None:
+                parts.append(f"{int(total):,} buildings assessed")
+            if damaged is not None:
+                parts.append(f"{int(damaged):,} flagged as damaged")
+        except (TypeError, ValueError):
+            return ""
+        return "  |  ".join(parts)
 
     def _verify_item(
         self,

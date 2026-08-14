@@ -99,6 +99,7 @@ class FakeSdkAdapter:
         self.ingestion_source_calls = 0
         self.delete_collection_calls = 0
         self.pending_collection_delete = None
+        self.collection_asset_uploads = []
 
     def get_ingestion_source(self, source_id):
         self.ingestion_source_calls += 1
@@ -227,6 +228,21 @@ class FakeSdkAdapter:
             None,
             None,
             True,
+        )
+
+    def upload_collection_asset(
+        self, collection_id, key, data, filename, media_type,
+        roles=None, title=None,
+    ):
+        self.collection_asset_uploads.append(
+            {
+                "collection_id": collection_id,
+                "key": key,
+                "data": data,
+                "media_type": media_type,
+                "roles": roles,
+                "title": title,
+            }
         )
 
     @staticmethod
@@ -818,6 +834,35 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
             PlanetaryComputerProviderError, "does not"
         ):
             provider.start_publish(self.dataset, self.bundle)
+
+    def test_collection_tile_rendered_and_uploaded_best_effort(self) -> None:
+        # Bundle with only the AOI mask (no readable buildings GPKG) renders an
+        # AOI-only tile and uploads it as the collection thumbnail.
+        bundle = ArtifactBundle(supportingArtifacts=[self.mask])
+
+        self.provider._upload_collection_tile(self.dataset, bundle, "haste-c")
+
+        self.assertEqual(len(self.sdk.collection_asset_uploads), 1)
+        upload = self.sdk.collection_asset_uploads[0]
+        self.assertEqual(upload["collection_id"], "haste-c")
+        self.assertEqual(upload["key"], "thumbnail")
+        self.assertEqual(upload["roles"], ["thumbnail"])
+        self.assertTrue(upload["data"].startswith(b"\x89PNG"))
+
+    def test_collection_tile_failure_never_raises(self) -> None:
+        # An empty mask (no features) can't render; must be swallowed.
+        provider = PlanetaryComputerPublishingProvider(
+            config=self.config,
+            artifact_storage=self.storage,
+            sdk_adapter=self.sdk,
+            json_reader=lambda artifact: {"type": "FeatureCollection", "features": []},
+            projection_resolver=lambda artifact: "EPSG:4326",
+            asset_reachability_checker=lambda href: None,
+        )
+        provider._upload_collection_tile(
+            self.dataset, ArtifactBundle(supportingArtifacts=[self.mask]), "c"
+        )
+        self.assertEqual(self.sdk.collection_asset_uploads, [])
 
     def test_interactive_viewer_url_must_be_https(self) -> None:
         base = dict(
