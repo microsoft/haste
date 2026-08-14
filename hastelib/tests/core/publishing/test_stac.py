@@ -326,31 +326,37 @@ class TestStacObjects(unittest.TestCase):
         self.assertEqual(item["properties"]["ai4g:validation_ci_upper"], 24.0)
         self.assertGreater(item["properties"]["ai4g:aoi_area_km2"], 0)
 
-    def test_thumbnail_asset_is_attached_to_item_only(self) -> None:
-        objects = self._build(
+    def test_interactive_viewer_link_added_when_set(self) -> None:
+        dataset = self.dataset.model_copy(
+            update={"interactiveViewerUrl": "https://viewer.example.com/x"}
+        )
+        objects = build_stac_objects(
+            dataset,
             ArtifactBundle(
                 selectedArtifacts=[self.damage],
                 supportingArtifacts=[self.mask],
             ),
-            thumbnail_href=(
-                "https://storage.test/published/thumb/thumbnail.png"
-            ),
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
         )
         validate_stac_objects(objects)
         documents = serialize_stac_objects(objects)
 
-        item_thumb = documents.item["assets"]["thumbnail"]
-        self.assertEqual(item_thumb["roles"], ["thumbnail"])
-        self.assertEqual(item_thumb["type"], "image/png")
-        self.assertEqual(
-            item_thumb["href"],
-            "https://storage.test/published/thumb/thumbnail.png",
-        )
-        # MPC Pro rejects assets in the collection POST, so the collection
-        # carries no thumbnail asset.
+        preview = [
+            link
+            for link in documents.item["links"]
+            if link.get("rel") == "preview"
+        ]
+        self.assertEqual(len(preview), 1)
+        self.assertEqual(preview[0]["href"], "https://viewer.example.com/x")
+        self.assertEqual(preview[0]["type"], "text/html")
+        # No image thumbnail on the item or the collection.
+        self.assertNotIn("thumbnail", documents.item.get("assets") or {})
         self.assertNotIn("thumbnail", documents.collection.get("assets") or {})
 
-    def test_no_thumbnail_asset_without_a_preview(self) -> None:
+    def test_no_preview_link_without_a_viewer_url(self) -> None:
         objects = self._build(
             ArtifactBundle(
                 selectedArtifacts=[self.damage],
@@ -358,7 +364,13 @@ class TestStacObjects(unittest.TestCase):
             )
         )
         documents = serialize_stac_objects(objects)
-        self.assertNotIn("thumbnail", documents.item["assets"])
+        preview = [
+            link
+            for link in (documents.item.get("links") or [])
+            if link.get("rel") == "preview"
+        ]
+        self.assertFalse(preview)
+        self.assertNotIn("thumbnail", documents.item.get("assets") or {})
 
     def test_collection_description_is_a_rolling_dataset_summary(
         self,

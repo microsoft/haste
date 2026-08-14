@@ -819,46 +819,28 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
         ):
             provider.start_publish(self.dataset, self.bundle)
 
-    def test_thumbnail_is_copied_into_published_prefix(self) -> None:
-        self.storage.blobs.add("hash/task/preview_post_event.png")
-        bundle = ArtifactBundle(
-            selectedArtifacts=[self.damage],
-            supportingArtifacts=[self.mask],
-            thumbnailUrl=(
-                "https://source.blob.core.windows.net/container/"
-                "hash/task/preview_post_event.png"
-            ),
+    def test_interactive_viewer_url_must_be_https(self) -> None:
+        base = dict(
+            requestId=self.request.requestId,
+            projectId=self.request.projectId,
+            imageLayerId="layer-1",
+            modelId="42",
+            name="X",
+            target="planetary_computer",
+            artifacts=["gpkg"],
         )
-
-        href, media_type = self.provider._resolve_thumbnail_href(
-            self.dataset, bundle
+        ok = PublishRequest(
+            **base, interactiveViewerUrl="https://viewer.example.com/a"
         )
-
-        self.assertEqual(media_type, "image/png")
         self.assertEqual(
-            href,
-            "https://source.blob.core.windows.net/container/"
-            f"published/{self.dataset.datasetId}/thumbnail.png",
+            ok.interactiveViewerUrl, "https://viewer.example.com/a"
         )
-        self.assertIn(
-            (
-                "hash/task/preview_post_event.png",
-                f"published/{self.dataset.datasetId}/thumbnail.png",
-            ),
-            self.storage.copied,
+        # Blank normalizes to None; non-https is rejected.
+        self.assertIsNone(
+            PublishRequest(**base, interactiveViewerUrl="   ").interactiveViewerUrl
         )
-
-    def test_thumbnail_from_a_foreign_container_is_skipped(self) -> None:
-        bundle = ArtifactBundle(
-            selectedArtifacts=[self.damage],
-            supportingArtifacts=[self.mask],
-            thumbnailUrl="https://other.blob.core.windows.net/data/x.png",
-        )
-
-        href, _ = self.provider._resolve_thumbnail_href(self.dataset, bundle)
-
-        self.assertIsNone(href)
-        self.assertEqual(self.storage.copied, [])
+        with self.assertRaises(Exception):
+            PublishRequest(**base, interactiveViewerUrl="http://insecure.test")
 
     def test_valid_mask_crs_is_explicit_and_validated(self) -> None:
         projected = copy.deepcopy(self.valid_mask)

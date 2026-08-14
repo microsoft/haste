@@ -239,6 +239,7 @@ class PublishingProcessor:
             requestFingerprint=request_fingerprint,
             name=request.name,
             description=request.description or "",
+            interactiveViewerUrl=request.interactiveViewerUrl,
             projectId=request.projectId,
             projectName=options.projectName,
             imageLayerId=request.imageLayerId,

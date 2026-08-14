@@ -4,8 +4,23 @@ import unicodedata
 import uuid
 from enum import Enum
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def normalize_https_url(value: Optional[str]) -> Optional[str]:
+    """Trim and require an https URL; empty/None becomes None."""
+    if value is None:
+        return None
+    normalized = unicodedata.normalize("NFC", value).strip()
+    if not normalized:
+        return None
+    parsed = urlparse(normalized)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("value must be an https URL")
+    return normalized
+
 
 PUBLISHING_UUID_NAMESPACE = uuid.NAMESPACE_URL
 PUBLISHING_UUID_NAME_PREFIX = (
@@ -88,11 +103,6 @@ class PublishDatasetOptions(BaseModel):
 class ArtifactBundle(BaseModel):
     selectedArtifacts: List[SourceArtifact] = Field(default_factory=list)
     supportingArtifacts: List[SourceArtifact] = Field(default_factory=list)
-    # Optional post-event preview used as a STAC thumbnail. Stored as the URL
-    # HASTE holds for the image layer's preview (may carry a SAS); the PC
-    # provider resolves it to a plain blob path, copies it into the published
-    # prefix, and attaches it as a best-effort thumbnail asset.
-    thumbnailUrl: Optional[str] = None
 
     def get(self, kind: ArtifactKind) -> Optional[SourceArtifact]:
         for artifact in self.selectedArtifacts + self.supportingArtifacts:
@@ -118,6 +128,7 @@ class PublishRequest(BaseModel):
     )
     name: str = Field(min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=4000)
+    interactiveViewerUrl: Optional[str] = Field(default=None, max_length=2000)
     target: PublishTarget
     artifacts: List[ArtifactKind] = Field(min_length=1)
 
@@ -135,6 +146,11 @@ class PublishRequest(BaseModel):
         if value is None:
             return None
         return unicodedata.normalize("NFC", value).strip()
+
+    @field_validator("interactiveViewerUrl")
+    @classmethod
+    def normalize_viewer_url(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_https_url(value)
 
     @field_validator("artifacts")
     @classmethod
@@ -160,6 +176,7 @@ class PublishedDataset(BaseModel):
     requestFingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     name: str
     description: str = ""
+    interactiveViewerUrl: Optional[str] = None
     projectId: uuid.UUID
     projectName: str = ""
     imageLayerId: str

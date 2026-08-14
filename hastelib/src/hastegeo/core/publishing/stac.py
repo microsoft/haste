@@ -57,12 +57,6 @@ ASSET_TITLES = {
 # holds. Read back from the existing collection on the next publish/unpublish.
 COLLECTION_DATASETS_FIELD = "ai4g:datasets"
 
-# Best-effort preview asset (post-event imagery) so the GeoCatalog shows a
-# thumbnail for the otherwise download-only vector item.
-THUMBNAIL_ASSET_KEY = "thumbnail"
-THUMBNAIL_ROLES = ["thumbnail"]
-DEFAULT_THUMBNAIL_MEDIA_TYPE = "image/png"
-
 
 @dataclass(frozen=True)
 class ValidMaskGeometry:
@@ -209,8 +203,6 @@ def build_vector_item(
     valid_mask_crs: str = "EPSG:4326",
     collection_prefix: str = "haste-",
     license_id: str = "proprietary",
-    thumbnail_href: Optional[str] = None,
-    thumbnail_media_type: str = DEFAULT_THUMBNAIL_MEDIA_TYPE,
 ) -> Any:
     pystac = _load_pystac()
     if not source.selectedArtifacts:
@@ -282,15 +274,18 @@ def build_vector_item(
             item.properties["proj:code"] = selected_projections[kind]
             break
 
-    if thumbnail_href:
-        item.add_asset(
-            THUMBNAIL_ASSET_KEY,
-            pystac.Asset(
-                href=_require_https_url(thumbnail_href, "thumbnail"),
-                media_type=thumbnail_media_type,
-                title="Preview",
-                roles=list(THUMBNAIL_ROLES),
-            ),
+    # Optional operator-provided link to an interactive web viewer for this
+    # dataset (rel=preview, text/html) — the vendored pattern, in place of an
+    # image thumbnail on the item.
+    viewer_url = getattr(dataset, "interactiveViewerUrl", None)
+    if viewer_url:
+        item.add_link(
+            pystac.Link(
+                rel="preview",
+                target=_require_https_url(viewer_url, "interactive viewer"),
+                media_type="text/html",
+                title="Interactive viewer",
+            )
         )
     return item
 
@@ -475,8 +470,6 @@ def build_stac_objects(
     existing_collection: Optional[Mapping[str, Any]] = None,
     collection_prefix: str = "haste-",
     license_id: str = "proprietary",
-    thumbnail_href: Optional[str] = None,
-    thumbnail_media_type: str = DEFAULT_THUMBNAIL_MEDIA_TYPE,
 ) -> StacObjects:
     item = build_vector_item(
         dataset,
@@ -488,8 +481,6 @@ def build_stac_objects(
         valid_mask_crs=valid_mask_crs,
         collection_prefix=collection_prefix,
         license_id=license_id,
-        thumbnail_href=thumbnail_href,
-        thumbnail_media_type=thumbnail_media_type,
     )
     collection = build_collection(
         dataset,
