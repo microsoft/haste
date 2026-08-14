@@ -76,6 +76,12 @@ class TestTileRenderer(unittest.TestCase):
             detect_damage_mask(self.buildings.drop(columns=["damaged"]))
         )
 
+        # Generic classification columns must NOT be treated as damage.
+        footprints = self.buildings.drop(columns=["damaged"]).assign(
+            **{"class": ["residential", "commercial", "residential", "shed"]}
+        )
+        self.assertIsNone(detect_damage_mask(footprints))
+
     def test_rejects_degenerate_aoi_bounds(self) -> None:
         empty_aoi = self.aoi.iloc[0:0]
         with self.assertRaises(ValueError):

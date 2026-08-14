@@ -20,17 +20,14 @@ _DAMAGED = "#ff4d4d"
 _TITLE_COLOR = "#e8f1ff"
 _SUBTITLE_COLOR = "#9fb5cc"
 
-# Column names that may carry a per-building damage flag (truthy = damaged).
+# Column names that carry a per-building damage flag (truthy = damaged). Kept
+# specific on purpose: generic names like `class`/`label`/`prediction` collide
+# with building-classification columns (e.g. footprints), so they're excluded.
 _DAMAGE_COLUMNS = (
     "damaged",
     "is_damaged",
-    "damage",
     "damage_class",
     "predicted_damage",
-    "prediction",
-    "predicted",
-    "label",
-    "class",
 )
 _DAMAGED_STRINGS = {"1", "true", "yes", "damaged", "destroyed", "major", "minor"}
 
