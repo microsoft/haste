@@ -17,10 +17,11 @@ OP_URL = f"{ENDPOINT}/inma/operations/op-1?api-version=2026-04-15"
 
 
 class FakeResponse:
-    def __init__(self, status_code, headers=None, payload=None):
+    def __init__(self, status_code, headers=None, payload=None, text=""):
         self.status_code = status_code
         self.headers = headers or {}
         self._payload = payload
+        self.text = text
 
     def json(self):
         return self._payload
@@ -85,12 +86,21 @@ class TestGeoCatalogClient(unittest.TestCase):
         client.request("GET", OP_URL, absolute=True)
         self.assertEqual(client._session.last["url"], OP_URL)
 
-    def test_unexpected_status_raises_without_body(self):
-        client = self._client(FakeResponse(409, payload={"secret": "x"}))
+    def test_unexpected_status_surfaces_redacted_body(self):
+        body = (
+            "Invalid collection: asset href "
+            "https://acct.blob.core.windows.net/c/x?sig=SECRETTOKEN not allowed"
+        )
+        client = self._client(FakeResponse(400, text=body))
         with self.assertRaises(GeoCatalogError) as ctx:
             client.request("POST", "/stac/collections", expected=(201,))
-        self.assertEqual(ctx.exception.status_code, 409)
-        self.assertNotIn("secret", str(ctx.exception))
+        message = str(ctx.exception)
+        self.assertEqual(ctx.exception.status_code, 400)
+        # The validation detail is surfaced for diagnosis...
+        self.assertIn("Invalid collection", message)
+        # ...but URLs and tokens in the body are redacted.
+        self.assertNotIn("SECRETTOKEN", message)
+        self.assertNotIn("blob.core.windows.net", message)
 
 
 class TestRestAdapter(unittest.TestCase):

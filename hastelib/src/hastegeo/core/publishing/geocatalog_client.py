@@ -20,10 +20,34 @@ converts the async 202 + operation-location flow into resumable steps.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Iterable, Optional
 
 import requests
+
+# Redact anything URL- or credential-like before surfacing a server error body.
+_REDACT_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+_REDACT_TOKEN_RE = re.compile(
+    r"(?i)\b(sig|se|sv|sp|st|sr|skoid|sig|token|bearer|authorization)"
+    r"[=:]\s*[^&\s\"']+"
+)
+
+
+def _safe_error_detail(response: requests.Response) -> str:
+    """A short, URL/token-redacted snippet of a server error body."""
+    try:
+        text = response.text or ""
+    except Exception:
+        return ""
+    text = _REDACT_TOKEN_RE.sub(r"\1=[redacted]", text)
+    text = _REDACT_URL_RE.sub("[url]", text)
+    text = " ".join(text.split())
+    if not text:
+        return ""
+    if len(text) > 400:
+        text = text[:400] + "…"
+    return f": {text}"
 
 API_VERSION = "2026-04-15"
 _TOKEN_SCOPE = "https://geocatalog.spatio.azure.com/.default"
@@ -34,8 +58,9 @@ _EXPIRY_SKEW_SECONDS = 300
 class GeoCatalogError(RuntimeError):
     """Raised when the GeoCatalog API returns an unexpected response.
 
-    Carries only the HTTP status code; server response text is never embedded,
-    to avoid leaking tokens/SAS present in error bodies.
+    Carries the HTTP status code plus a short, URL/token-redacted snippet of the
+    server error body (via ``_safe_error_detail``) so validation failures are
+    diagnosable without leaking tokens/SAS present in error bodies.
     """
 
     def __init__(
@@ -130,7 +155,8 @@ class GeoCatalogClient:
             ) from error
         if response.status_code not in tuple(expected):
             raise GeoCatalogError(
-                f"{method} {url} returned HTTP {response.status_code}",
+                f"{method} {url} returned HTTP {response.status_code}"
+                f"{_safe_error_detail(response)}",
                 status_code=response.status_code,
             )
         return response
