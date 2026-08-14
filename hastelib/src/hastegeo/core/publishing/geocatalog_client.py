@@ -128,6 +128,8 @@ class GeoCatalogClient:
         url: str,
         *,
         json: Any = None,
+        data: Any = None,
+        files: Any = None,
         params: Optional[dict[str, Any]] = None,
         expected: Iterable[int] = (200, 201, 202, 204),
         absolute: bool = False,
@@ -140,11 +142,15 @@ class GeoCatalogClient:
             query["api-version"] = self.api_version
         headers = self.auth.headers()
         try:
+            # `data`/`files` drive multipart/form-data uploads (collection
+            # assets); requests sets the boundary Content-Type itself.
             response = self._session.request(
                 method,
                 target,
                 params=query,
                 json=json,
+                data=data,
+                files=files,
                 headers=headers,
                 timeout=self.timeout,
                 allow_redirects=False,

@@ -1,3 +1,4 @@
+import json
 import unittest
 from typing import Any, Optional
 
@@ -41,12 +42,21 @@ class FakeClient:
         url,
         *,
         json=None,
+        data=None,
+        files=None,
         params=None,
         expected=(200, 201, 202, 204),
         absolute=False,
     ):
         self.calls.append(
-            {"method": method, "url": url, "json": json, "absolute": absolute}
+            {
+                "method": method,
+                "url": url,
+                "json": json,
+                "data": data,
+                "files": files,
+                "absolute": absolute,
+            }
         )
         response = self.handler(method, url)
         if response.status_code not in tuple(expected):
@@ -86,6 +96,21 @@ class TestGeoCatalogClient(unittest.TestCase):
         client.request("GET", OP_URL, absolute=True)
         self.assertEqual(client._session.last["url"], OP_URL)
 
+    def test_multipart_data_and_files_pass_through(self):
+        client = self._client(FakeResponse(201, payload={}))
+        client.request(
+            "POST",
+            "/stac/collections/c/assets",
+            data={"data": "{}"},
+            files={"file": ("t.png", b"x", "image/png")},
+            expected=(201,),
+        )
+        self.assertEqual(client._session.last["data"], {"data": "{}"})
+        self.assertEqual(
+            client._session.last["files"]["file"],
+            ("t.png", b"x", "image/png"),
+        )
+
     def test_unexpected_status_surfaces_redacted_body(self):
         body = (
             "Invalid collection: asset href "
@@ -104,6 +129,31 @@ class TestGeoCatalogClient(unittest.TestCase):
 
 
 class TestRestAdapter(unittest.TestCase):
+    def test_upload_collection_asset_posts_multipart(self):
+        client = FakeClient(lambda m, u: FakeResponse(201, payload={}))
+        rest = PlanetaryComputerRestAdapter(ENDPOINT, client=client)
+        rest.upload_collection_asset(
+            "haste-c",
+            key="thumbnail",
+            data=b"\x89PNG",
+            filename="thumbnail.png",
+            media_type="image/png",
+            roles=["thumbnail"],
+            title="Collection thumbnail",
+        )
+        call = client.calls[-1]
+        self.assertEqual(call["method"], "POST")
+        self.assertEqual(call["url"], "/stac/collections/haste-c/assets")
+        metadata = json.loads(call["data"]["data"])
+        self.assertEqual(metadata["key"], "thumbnail")
+        self.assertEqual(metadata["roles"], ["thumbnail"])
+        self.assertEqual(metadata["type"], "image/png")
+        self.assertEqual(metadata["title"], "Collection thumbnail")
+        self.assertEqual(
+            call["files"]["file"],
+            ("thumbnail.png", b"\x89PNG", "image/png"),
+        )
+
     def test_start_collection_async_202_pins_operation_url(self):
         step = adapter(
             lambda m, u: FakeResponse(202, {"operation-location": OP_URL})

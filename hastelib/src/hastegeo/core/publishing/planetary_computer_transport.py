@@ -20,6 +20,7 @@ live in ``GeoCatalogClient``.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -195,6 +196,37 @@ class PlanetaryComputerRestAdapter:
             for feature in features
             if isinstance(feature, Mapping) and feature.get("id")
         ]
+
+    def upload_collection_asset(
+        self,
+        collection_id: str,
+        key: str,
+        data: bytes,
+        filename: str,
+        media_type: str,
+        roles: Optional[list] = None,
+        title: Optional[str] = None,
+    ) -> None:
+        """Attach a collection-level asset via the Collection Asset API.
+
+        MPC Pro rejects assets in the collection POST; they must be uploaded
+        here as multipart/form-data (a JSON `data` part + the file part).
+        """
+        metadata: dict[str, Any] = {
+            "key": key,
+            "href": "",
+            "type": media_type,
+            "roles": roles or [key],
+        }
+        if title:
+            metadata["title"] = title
+        self.client.request(
+            "POST",
+            f"/stac/collections/{collection_id}/assets",
+            data={"data": json.dumps(metadata)},
+            files={"file": (filename, data, media_type)},
+            expected=(200, 201),
+        )
 
     # ------------------------------------------------------------------ items
 
