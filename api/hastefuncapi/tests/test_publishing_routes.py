@@ -622,6 +622,55 @@ class TestPublishingRoutes(unittest.IsolatedAsyncioTestCase):
             "PUBLISHED_DATASETS_EXIST",
         )
 
+    async def test_update_route_applies_only_supplied_fields(self) -> None:
+        caller = {"id": "publisher-object-id", "roles": {"contributors"}}
+        processor = Mock()
+        processor.update_metadata.return_value = make_dataset("PUBLISHED")
+        with patch.object(
+            function_app,
+            "_get_active_publishing_caller",
+            new=AsyncMock(return_value=(caller, None)),
+        ), patch.object(
+            function_app, "_publishing_processor", return_value=processor
+        ):
+            response = await function_app.PutUpdatePublishedDataset(
+                make_request(
+                    method="PUT",
+                    body={
+                        "projectId": str(PROJECT_ID),
+                        "datasetId": str(DATASET_ID),
+                        "interactiveViewerUrl": "https://viewer.example.com/x",
+                    },
+                )
+            )
+
+        self.assertEqual(response.status_code, 200)
+        args = processor.update_metadata.call_args.args
+        self.assertEqual(
+            args[4],
+            {"interactiveViewerUrl": "https://viewer.example.com/x"},
+        )
+
+    async def test_update_route_rejects_non_https_viewer(self) -> None:
+        caller = {"id": "publisher-object-id", "roles": {"contributors"}}
+        with patch.object(
+            function_app,
+            "_get_active_publishing_caller",
+            new=AsyncMock(return_value=(caller, None)),
+        ):
+            response = await function_app.PutUpdatePublishedDataset(
+                make_request(
+                    method="PUT",
+                    body={
+                        "projectId": str(PROJECT_ID),
+                        "datasetId": str(DATASET_ID),
+                        "interactiveViewerUrl": "http://insecure.example",
+                    },
+                )
+            )
+
+        self.assertEqual(response.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

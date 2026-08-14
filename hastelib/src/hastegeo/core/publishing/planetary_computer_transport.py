@@ -244,6 +244,20 @@ class PlanetaryComputerRestAdapter:
             return None
         return self._as_mapping(response.json())
 
+    def update_item(
+        self,
+        collection_id: str,
+        item_id: str,
+        body: Mapping[str, Any],
+    ) -> None:
+        """Replace an existing item document (STAC transactions PUT)."""
+        self.client.request(
+            "PUT",
+            f"/stac/collections/{collection_id}/items/{item_id}",
+            json=dict(body),
+            expected=(200, 201, 202, 204),
+        )
+
     def start_create_item(
         self,
         collection_id: str,

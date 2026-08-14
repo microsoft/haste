@@ -100,6 +100,7 @@ class FakeSdkAdapter:
         self.delete_collection_calls = 0
         self.pending_collection_delete = None
         self.collection_asset_uploads = []
+        self.item_updates = []
 
     def get_ingestion_source(self, source_id):
         self.ingestion_source_calls += 1
@@ -155,6 +156,10 @@ class FakeSdkAdapter:
 
     def get_item(self, collection_id, item_id):
         return copy.deepcopy(self.items.get((collection_id, item_id)))
+
+    def update_item(self, collection_id, item_id, body):
+        self.item_updates.append((collection_id, item_id, copy.deepcopy(body)))
+        self.items[(collection_id, item_id)] = copy.deepcopy(body)
 
     def start_create_item(self, collection_id, item_id, body):
         self.create_item_calls += 1
@@ -863,6 +868,66 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
             self.dataset, ArtifactBundle(supportingArtifacts=[self.mask]), "c"
         )
         self.assertEqual(self.sdk.collection_asset_uploads, [])
+
+    def _seed_published_item(self, links=None):
+        collection_id, item_id = self.provider._ids(self.dataset)
+        self.sdk.items[(collection_id, item_id)] = {
+            "type": "Feature",
+            "id": item_id,
+            "collection": collection_id,
+            "properties": {"title": "Old", "description": "Old desc"},
+            "links": links
+            if links is not None
+            else [
+                {
+                    "rel": "preview",
+                    "href": "https://old.example.com",
+                    "type": "text/html",
+                }
+            ],
+            "assets": {},
+        }
+        return collection_id, item_id
+
+    def test_update_published_metadata_patches_item(self) -> None:
+        self._seed_published_item()
+        edited = self.dataset.model_copy(
+            update={
+                "name": "New name",
+                "description": "New description",
+                "interactiveViewerUrl": "https://viewer.example.com/x",
+            }
+        )
+
+        self.provider.update_published_metadata(edited)
+
+        self.assertEqual(len(self.sdk.item_updates), 1)
+        _, _, body = self.sdk.item_updates[0]
+        self.assertEqual(body["properties"]["title"], "New name")
+        self.assertEqual(body["properties"]["description"], "New description")
+        preview = [
+            link for link in body["links"] if link.get("rel") == "preview"
+        ]
+        self.assertEqual(len(preview), 1)
+        self.assertEqual(preview[0]["href"], "https://viewer.example.com/x")
+
+    def test_update_published_metadata_clears_viewer_link(self) -> None:
+        self._seed_published_item()
+        edited = self.dataset.model_copy(
+            update={"name": "N", "interactiveViewerUrl": None, "description": ""}
+        )
+
+        self.provider.update_published_metadata(edited)
+
+        _, _, body = self.sdk.item_updates[0]
+        self.assertFalse(
+            [link for link in body["links"] if link.get("rel") == "preview"]
+        )
+        self.assertNotIn("description", body["properties"])
+
+    def test_update_published_metadata_noops_when_item_missing(self) -> None:
+        self.provider.update_published_metadata(self.dataset)
+        self.assertEqual(self.sdk.item_updates, [])
 
     def test_interactive_viewer_url_must_be_https(self) -> None:
         base = dict(

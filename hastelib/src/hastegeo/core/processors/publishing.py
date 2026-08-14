@@ -366,6 +366,39 @@ class PublishingProcessor:
             ) from error
         return updated
 
+    def update_metadata(
+        self,
+        project_id: str,
+        dataset_id: str,
+        caller_id: str,
+        is_admin: bool,
+        fields: dict,
+    ) -> PublishedDataset:
+        """Edit user-authored metadata; push to the live target if published.
+
+        ``fields`` carries only the keys the caller supplied (name /
+        description / interactiveViewerUrl), already validated/normalized.
+        """
+        self._require_enabled()
+        dataset = self.repository.load(project_id, dataset_id)
+        self._require_owner(dataset, caller_id, is_admin)
+        editable = {"name", "description", "interactiveViewerUrl"}
+        updates = {k: v for k, v in fields.items() if k in editable}
+        if updates.get("description") is None and "description" in updates:
+            updates["description"] = ""
+        if not updates:
+            return dataset
+        updates["updatedDate"] = _utc_timestamp()
+        edited = dataset.model_copy(update=updates)
+        saved = self.repository.update(
+            edited, expected_revision=dataset.revision
+        )
+        if saved.status == PublishStatus.PUBLISHED:
+            provider = self.registry.resolve(saved.target.value)
+            provider.update_published_metadata(saved)
+        self._audit(saved, "metadata_updated", caller_id)
+        return saved
+
     def request_unpublish(
         self,
         project_id: str,

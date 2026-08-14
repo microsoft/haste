@@ -24,6 +24,7 @@ from hastegeo.core.models.projects import (
 )
 from hastegeo.core.models.publishing import (
     ArtifactKind,
+    PublishMetadataUpdate,
     PublishRequest,
     PublishStatus,
     PublishTarget,
@@ -4655,6 +4656,41 @@ async def PutRetryPublishedDatasetQueueMessage(
         )
         return _publishing_json_response(
             {"publishedDataset": record.model_dump(mode="json")}, 202
+        )
+    except Exception as error:
+        return _publishing_exception_response(error)
+
+
+@app.route(
+    route="PutUpdatePublishedDataset",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutUpdatePublishedDataset(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    caller, auth_error = await _get_active_publishing_caller(req)
+    if auth_error:
+        return auth_error
+    try:
+        body = req.get_json()
+        update = PublishMetadataUpdate(**body)
+        # Only apply the fields the caller actually supplied.
+        fields = {
+            key: getattr(update, key)
+            for key in ("name", "description", "interactiveViewerUrl")
+            if key in body
+        }
+        record = await asyncio.to_thread(
+            _publishing_processor().update_metadata,
+            str(update.projectId),
+            str(update.datasetId),
+            caller["id"],
+            "administrators" in caller["roles"],
+            fields,
+        )
+        return _publishing_json_response(
+            {"publishedDataset": record.model_dump(mode="json")}, 200
         )
     except Exception as error:
         return _publishing_exception_response(error)

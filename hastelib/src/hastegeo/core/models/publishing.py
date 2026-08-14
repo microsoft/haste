@@ -160,6 +160,40 @@ class PublishRequest(BaseModel):
         return sorted(set(value), key=lambda artifact: artifact.value)
 
 
+class PublishMetadataUpdate(BaseModel):
+    """Editable, user-authored metadata for an already-created dataset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    projectId: uuid.UUID
+    datasetId: uuid.UUID
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=4000)
+    interactiveViewerUrl: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = unicodedata.normalize("NFC", value).strip()
+        if not normalized:
+            raise ValueError("name must not be empty")
+        return normalized
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return unicodedata.normalize("NFC", value).strip()
+
+    @field_validator("interactiveViewerUrl")
+    @classmethod
+    def normalize_viewer_url(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_https_url(value)
+
+
 class PublishResult(BaseModel):
     artifacts: List[PublishedArtifact] = Field(default_factory=list)
     links: Dict[str, str] = Field(default_factory=dict)

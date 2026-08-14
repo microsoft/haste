@@ -583,6 +583,46 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             "Planetary Computer unpublish phase is invalid"
         )
 
+    def update_published_metadata(self, dataset: PublishedDataset) -> None:
+        # Patch the live STAC item: refresh title/description and the
+        # rel=preview interactive-viewer link. Fetch-and-replace so the managed
+        # asset hrefs (rewritten by the GeoCatalog on ingest) are preserved.
+        self._require_configuration()
+        collection_id, item_id = self._ids(dataset)
+        item = self.sdk.get_item(collection_id, item_id)
+        if item is None:
+            return
+        item = dict(item)
+        properties = dict(item.get("properties") or {})
+        properties["title"] = dataset.name
+        if dataset.description:
+            properties["description"] = dataset.description
+        else:
+            properties.pop("description", None)
+        item["properties"] = properties
+        links = [
+            link
+            for link in (item.get("links") or [])
+            if not (
+                isinstance(link, Mapping) and link.get("rel") == "preview"
+            )
+        ]
+        if dataset.interactiveViewerUrl:
+            links.append(
+                {
+                    "rel": "preview",
+                    "href": self._safe_https_url(
+                        dataset.interactiveViewerUrl,
+                        allow_path=True,
+                        allow_query=True,
+                    ).geturl(),
+                    "type": "text/html",
+                    "title": "Interactive viewer",
+                }
+            )
+        item["links"] = links
+        self.sdk.update_item(collection_id, item_id, item)
+
     def _drain_collection_operation(
         self,
         dataset: PublishedDataset,
