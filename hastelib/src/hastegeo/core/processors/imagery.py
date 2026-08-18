@@ -2,13 +2,14 @@
 # Licensed under the MIT License.
 import json
 import os
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 from hastegeo.core.runners.unified_runner import UnifiedRunner
 
 from ..config import ArtifactTypes, Config
 from ..data_layer.unified import UnifiedDataLayer
 from ..models.projects import ImageLayer, ImageryPreprocessJob
+from ..utils.blob import fetch_url_text
 from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
@@ -346,7 +347,12 @@ class ImageryPostProcessor:
             task_id=task_id,
             output_prefix=imagery_output_prefix,
             resource_files_for_upload=imagery_input_files,
-            file_pattern=f"${BATCH_JOB_WORKDIR}/outputs/*.*",
+            file_pattern=[
+                f"${BATCH_JOB_WORKDIR}/outputs/*.*",
+                # Progress log, so it survives the node being deallocated or
+                # preempted once the task completes.
+                f"${BATCH_JOB_WORKDIR}/logs/*.*",
+            ],
             command=command,
             # TODO: maybe this needs to be encapsulated in the batch runner and not be part of the processor
             image_name=self.config.get_azure_batch_config()[
@@ -376,12 +382,59 @@ class ImageryPostProcessor:
         )
         return self.image_data
 
-    def _get_image_preprocess_logs(self):
+    def _read_task_output(self, filename: str) -> Optional[str]:
+        """Return the text of a task output file, or ``None``.
+
+        Reads the copy on the compute node first, then falls back to the copy
+        Azure Batch uploaded to blob storage on task completion. The node-local
+        copy disappears as soon as the node is deallocated or preempted — which
+        on autoscale pools happens the moment the task completes — so the blob
+        copy is often the only one left by the time we look.
+        """
         content = self.runner.get_filecontent_from_task(
             job_id=self.image_data.preprocessJob.jobId,
             task_id=self.image_data.preprocessJob.taskId,
-            filename="imagery_friendly.log",
+            filename=filename,
         )
+        if content:
+            return content
+
+        task_id = self.image_data.preprocessJob.taskId
+        self.logger.info(
+            "%s not available from the node for task %s; "
+            "falling back to the uploaded copy in storage.",
+            filename,
+            task_id,
+        )
+        try:
+            url = self.storage.get_file_remote_path(
+                identifier=filename,
+                extra_partition_keys=task_id,
+                data_format=os.path.splitext(filename)[1].strip("."),
+            )
+            content = fetch_url_text(url)
+        except Exception as e:
+            # The fallback must never replace the original reason the file was
+            # unreadable — callers decide whether a miss is fatal.
+            self.logger.warning(
+                "Fallback read of %s for task %s failed: %s",
+                filename,
+                task_id,
+                e,
+            )
+            return None
+        if not content:
+            self.logger.warning(
+                "%s for task %s is not available from the node or storage.",
+                filename,
+                task_id,
+            )
+        return content
+
+    def _get_image_preprocess_logs(self):
+        # Best-effort: the progress log is a nicety for the status dialog, so a
+        # node that went away must not fail an otherwise successful layer.
+        content = self._read_task_output("imagery_friendly.log")
         logs = []
         if content:
             try:
@@ -419,11 +472,7 @@ class ImageryPostProcessor:
         """
         Update the image layer object with imagery processing results from the processed manifest file
         """
-        content = self.runner.get_filecontent_from_task(
-            job_id=self.image_data.preprocessJob.jobId,
-            task_id=self.image_data.preprocessJob.taskId,
-            filename="imagery_manifest.json",
-        )
+        content = self._read_task_output("imagery_manifest.json")
         if not content:
             raise FileNotFoundError(
                 f"Processed manifest file not found for image layer id: {self.image_data.imageLayerId}"

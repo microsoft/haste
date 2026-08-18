@@ -60,6 +60,32 @@ def split_blob_url(url: str) -> Tuple[str, str]:
     return parts[1], "/".join(parts[2:])
 
 
+def fetch_url_text(url: str, timeout: int = 30) -> Optional[str]:
+    """Return the text body at ``url``, or ``None`` if it cannot be read.
+
+    Used to recover a task's output files from the copy Azure Batch uploaded to
+    blob storage when the compute node that ran the task is no longer able to
+    serve them. Callers treat this as a best-effort fallback, so transport and
+    HTTP errors are reported as ``None`` rather than raised — a failure here
+    must never mask the original reason the node read failed.
+
+    Only ``http(s)`` locations are fetched; a data layer that resolves to a
+    local filesystem path (the docker dev stack) returns ``None``.
+    """
+    if not url or not urlparse(url).scheme.startswith("http"):
+        return None
+    # Imported lazily to keep this module cheap for callers that only need
+    # split_blob_url().
+    import requests
+
+    try:
+        response = requests.get(url, timeout=timeout)
+        response.raise_for_status()
+        return response.text
+    except Exception:
+        return None
+
+
 async def download_blob_to_tempfile(url: str, suffix: str = "") -> str:
     """Download the blob at ``url`` to a NamedTemporaryFile and return the path.
 

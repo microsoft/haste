@@ -53,11 +53,19 @@ Each pool runs tasks as Docker containers pulled from Azure Container Registry u
 
 Preprocesses a newly uploaded geospatial image layer. On each invocation:
 - **PENDING** → submits a Batch task via `ImageryPostProcessor`; task runs `prepare-imagery` CLI inside the container
-- **IN_PROGRESS** → reads `imagery_friendly.log` from the task working directory for progress, then re-queues
+- **IN_PROGRESS** → reads `imagery_friendly.log` for progress, then re-queues
 - **COMPLETED** → reads `imagery_manifest.json` for output paths (mosaics, COGs, building footprints, valid-area mask); generates label project files, converts to GeoJSON, stores artifacts
 - **FAILED** → saves the layer with a FAILED status and error message
 
 If the layer was deleted before processing starts, the message is silently skipped.
+
+Both files are read from the compute node first and, if that node is no longer
+able to serve them, from the copy Azure Batch uploaded to blob storage on task
+completion (`outputs/` and `logs/` under `<projectHash>/<taskId>/`). On
+autoscale pools the node is deallocated the moment the task completes — and
+low-priority nodes can be preempted — so the node-local copy is frequently gone
+by the time the trigger looks for it. The manifest is required (a layer with no
+manifest in either place fails); the progress log is best-effort.
 
 ---
 
