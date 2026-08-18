@@ -29,10 +29,10 @@ export function validateEmptyOrInvalid(isRequired = true, key, value) {
 
 
   if (error === "") {
-    const regex = /^[a-zA-Z0-9 ,._-]+$/;
+    const regex = /^[a-zA-Z0-9 ,.&_-]+$/;
 
     if (!regex.test(value)) {
-      error = `${key} only allows letters, numbers, spaces, underscores, and hyphens`;
+      error = `${key} only allows letters, numbers, spaces, commas, periods, ampersands, underscores, and hyphens`;
     }
   }
 

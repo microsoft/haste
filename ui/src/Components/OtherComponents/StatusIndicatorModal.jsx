@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   OverlayDrawer,
   DrawerHeader,
@@ -12,6 +12,7 @@ import {
 import { FluentIcon } from "../../util/icons";
 import { useDrawerAnimation } from "../../util/useDrawerAnimation";
 import proptypes from "prop-types";
+import { normalizeStatusMessages } from "./statusMessages";
 
 const StatusIndicatorModal = ({
   statusMessages,
@@ -21,6 +22,10 @@ const StatusIndicatorModal = ({
 }) => {
   const modalBodyRef = useRef(null);
   const { open, requestClose } = useDrawerAnimation(onClose);
+  const normalizedStatusMessages = useMemo(
+    () => normalizeStatusMessages(statusMessages),
+    [statusMessages]
+  );
 
   StatusIndicatorModal.propTypes = {
     statusMessages: proptypes.array.isRequired,
@@ -40,14 +45,14 @@ const StatusIndicatorModal = ({
     onClose: proptypes.func.isRequired,
   };
 
-  // Scroll to the bottom when statusMessages updates
+  // Scroll to the newest chronological message when the live log updates.
   useEffect(() => {
     if (modalBodyRef.current) {
       modalBodyRef.current.scrollTop = modalBodyRef.current.scrollHeight;
     }
-  }, [statusMessages]);
+  }, [normalizedStatusMessages]);
 
-  if (statusMessages.length === 0 && (!infoMetadata || infoMetadata.length === 0)) {
+  if (normalizedStatusMessages.length === 0 && (!infoMetadata || infoMetadata.length === 0)) {
     return null;
   }
 
@@ -143,13 +148,7 @@ const StatusIndicatorModal = ({
               </tr>
             </thead>
             <tbody>
-              {statusMessages
-                .filter(
-                  (message) =>
-                    (message.timestamp && message.timestamp.trim()) ||
-                    (message.message && message.message.trim())
-                )
-                .map((message, index) => {
+              {normalizedStatusMessages.map((message, index) => {
                   return (
                     <tr key={index}>
                       <td

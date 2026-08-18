@@ -14,6 +14,10 @@ import {
   MenuItemCheckbox,
   Dropdown,
   Option,
+  Toast,
+  ToastBody,
+  ToastTitle,
+  useToastController,
 } from "@fluentui/react-components";
 import { useParams } from "react-router-dom";
 import { useState, useEffect } from "react";
@@ -30,6 +34,10 @@ import { setGuidedTourState, initGuidedTourState } from "./GuidedTourHelper";
 
 import { AppContext } from "../AppContext";
 import { updateUserSettings } from "../AppHelper";
+import {
+  collectProjectJobStates,
+  findJobStatusTransitions,
+} from "../util/jobNotifications";
 
 import PropType from "prop-types";
 
@@ -124,6 +132,8 @@ const Project = ({ setModalComponent }) => {
   };
 
   const defaultProjectDetailsRef = useRef(null);
+  const projectJobStatesRef = useRef(null);
+  const { dispatchToast } = useToastController("job-completion-toaster");
 
 
   useEffect(() => {
@@ -195,6 +205,32 @@ const Project = ({ setModalComponent }) => {
     await apiGet("GetProjectDetails?projectId=" + projectId + "&includeModels=True")
       .then((response) => {
         defaultProjectDetailsRef.current = response;
+        const currentJobStates = collectProjectJobStates(response);
+        const previousJobState = projectJobStatesRef.current;
+        const previousJobs =
+          previousJobState?.projectId === projectId
+            ? previousJobState.jobs
+            : null;
+
+        if (previousJobs) {
+          for (const transition of findJobStatusTransitions(
+            previousJobs,
+            currentJobStates
+          )) {
+            const succeeded = transition.status === "Processed";
+            dispatchToast(
+              <Toast>
+                <ToastTitle>{`${transition.title} ${succeeded ? "completed" : transition.status.toLowerCase()}`}</ToastTitle>
+                <ToastBody>{transition.subject}</ToastBody>
+              </Toast>,
+              {
+                intent: succeeded ? "success" : "error",
+                timeout: 10000,
+              }
+            );
+          }
+        }
+        projectJobStatesRef.current = { projectId, jobs: currentJobStates };
         setComponentState((prevState) => ({
           ...prevState,
           project: response,

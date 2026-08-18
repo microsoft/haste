@@ -44,14 +44,16 @@ const HelpDocsProjects = ({ anchor }) => {
         <li>Description -any additional information about the project </li>
         <li>Event Date – date that the disaster occurred. This date is stored for informational purposes and does not affect any processing</li>
         <li>Affected Countries – from the dropdown, select the country (or multiple countries) that were affected by the disaster. This data is stored for informational purposes and does not affect any downstream processing</li>
+        <li>Event Types – select one or more event types: General, Earthquake, Fire, or Flood. This field is required and defaults to General.</li>
         <li>Primary Classes – these are the classes of labels that you will add to an image layer to help train the model.</li>
       </ol>
 
       <p>The classes of labels that the model needs to be trained on are:</p>
       <ul>
         <li>Background</li>
-        <li>Buildings</li>
+        <li>Building</li>
         <li>Damaged Building</li>
+        <li>Cloud</li>
       </ul>
       <p>These classes are provided by default on the project creation form. You can keep the default colors or change them to suit your need.</p>
 
@@ -65,7 +67,7 @@ const HelpDocsProjects = ({ anchor }) => {
       <a name="edit-a-project"></a>
       <h2 className='pt-4'>Edit a Project</h2>
 
-      <p>You can update the name and description for a project after it was created from the Projects page.
+      <p>From the Projects page, you can update a project&apos;s name, description, event date, and affected countries after creation. Event types and primary classes cannot be changed after the project is created, so review them carefully before creating the project.
 
 
       <video src={editAProjectVideo} controls className='w-100 mt-5 mb-3 help-docs-video-wrapper'>

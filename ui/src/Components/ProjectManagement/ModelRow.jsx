@@ -132,7 +132,7 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
         if (model.modelType === "embedding") {
           return (
             <EmbeddingModelRow
-              key={index}
+              key={model.modelId || index}
               model={model}
               projectId={projectId}
               imageLayerId={imageLayerId}
@@ -152,7 +152,7 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
         const isInference = !!model.inferenceStatus;
 
         return (
-          <div className="lmodel" key={index}>
+          <div className="lmodel" key={model.modelId || index}>
             <div className="lmodel-info">
               <div className="lmodel-name-row">
                 <Tooltip content={model.name} relationship="label">

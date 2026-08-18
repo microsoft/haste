@@ -76,6 +76,33 @@ layer:
 
 ![The workflow selector on the Create Image Layer form](../_static/usage/imageLayers/image-layers-workflow-selector.png)
 
+### Browse the Open Data Catalog
+
+The **Open Data Catalog** is the fastest way to add public disaster imagery without
+finding and copying source URLs manually. On the Create Image Layer form, select
+**Browse Open Data Catalog**, then:
+
+1. Select a disaster event.
+2. Filter scenes by provider (**Vantor** or **Planet**) and phase (**Pre** or **Post**).
+3. Select a scene to preview its footprint and imagery on the map. The scene details
+  include capture time, sensor, ground sample distance (GSD), cloud cover, off-nadir
+  angle, sun elevation, and file size when the provider supplies them.
+4. Optionally select **Set clip area** and draw a box on the map. HASTE applies this
+  area to both pre- and post-event mosaics during processing. You can also filter the
+  catalog to scenes that overlap the clip area. If you skip this step, HASTE processes
+  the full scene. For large scenes, selecting a smaller area can reduce processing time
+  and output size.
+5. Select **+ Pre-event** or **+ Post-event** to add the scene to the corresponding
+  imagery section.
+
+Adding a catalog scene also fills in that section's imagery capture date and source
+type when the catalog provides them. Review the populated values before creating the
+layer, especially when combining multiple scenes.
+
+The catalog currently browses the Vantor Open Data Program (formerly Maxar) and Planet
+Disaster Data. You can still add imagery manually by URL or file upload when the scene
+you need is not available in the catalog.
+
 Add imagery files by providing publicly accessible URLs or uploading files from a local
 directory that show the Area of Interest (AOI). You can also combine files from both a
 URL and a local directory. If multiple files are provided in a section, they will be

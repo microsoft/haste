@@ -23,14 +23,17 @@ Project creation requires the following information:
 4. **Affected Countries** – from the dropdown, select the country (or multiple
    countries) that were affected by the disaster. This data is stored for informational
    purposes and does not affect any downstream processing.
-5. **Primary Classes** – these are the classes of labels that you will add to an image
+5. **Event Types** – select one or more event types: General, Earthquake, Fire, or
+   Flood. This field is required and defaults to General.
+6. **Primary Classes** – these are the classes of labels that you will add to an image
    layer to help train the model.
 
 The classes of labels that the model needs to be trained on are:
 
 - Background
-- Buildings
+- Building
 - Damaged Building
+- Cloud
 
 These classes are provided by default on the project creation form. You can keep the
 default colors or change them to suit your needs.
@@ -41,8 +44,9 @@ Your browser does not support the video tag.
 
 ## Edit a Project
 
-You can update the name and description for a project after it was created from the
-Projects page.
+From the Projects page, you can update a project's name, description, event date, and
+affected countries after creation. Event types and primary classes cannot be changed
+after the project is created, so review them carefully before creating the project.
 
 <video controls width="100%" src="../_static/usage/projects/projects-edit-a-project.mp4">
 Your browser does not support the video tag.

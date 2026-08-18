@@ -17,6 +17,7 @@ import { apiPut } from "../util/api";
 import { validateInt } from "../util/validation";
 import { AppContext } from "../AppContext";
 import SectionModal from "./SectionModal";
+import { createDefaultEmbeddingName } from "./CreateEditEmbeddingModalHelper";
 
 // Keep this list in sync with build_embedding_model() in
 // hastelib/src/hastegeo/workflows/embed_buildings.py — the backend rejects
@@ -56,16 +57,21 @@ const CreateEditEmbeddingModal = ({
   };
 
   const { setDialog, appParams, setIsLoading } = useContext(AppContext);
-  const [state, setState] = useState({
-    name: "embedding-" + Date.now(),
-    nameError: "",
-    embeddingModel: "mosaiks",
-    numFeatures: "1024",
-    numFeaturesError: "",
-    resizeFactor: "4",
-    resizeFactorError: "",
-    batchSize: "16",
-    batchSizeError: "",
+  const [state, setState] = useState(() => {
+    const nameCreatedAt = new Date();
+    return {
+      name: createDefaultEmbeddingName("mosaiks", "1024", nameCreatedAt),
+      nameCreatedAt,
+      nameCustomized: false,
+      nameError: "",
+      embeddingModel: "mosaiks",
+      numFeatures: "1024",
+      numFeaturesError: "",
+      resizeFactor: "4",
+      resizeFactorError: "",
+      batchSize: "16",
+      batchSizeError: "",
+    };
   });
 
   const isMosaiks = state.embeddingModel === "mosaiks";
@@ -77,7 +83,19 @@ const CreateEditEmbeddingModal = ({
   );
 
   function onField(value, key) {
-    setState((s) => ({ ...s, [key]: value }));
+    setState((s) => {
+      const nextState = { ...s, [key]: value };
+      if (key === "name") {
+        nextState.nameCustomized = true;
+      } else if (key === "numFeatures" && !s.nameCustomized) {
+        nextState.name = createDefaultEmbeddingName(
+          s.embeddingModel,
+          value,
+          s.nameCreatedAt
+        );
+      }
+      return nextState;
+    });
   }
 
   function onModelChange(_e, data) {
@@ -86,19 +104,29 @@ const CreateEditEmbeddingModal = ({
     // Switching to DINOv2 picks per-backbone defaults that match what the
     // server-side preprocessor would fill in (resizeFactor=1, no num_feats).
     setState((s) => {
+      let nextState;
       if (key === "mosaiks") {
-        return {
+        nextState = {
           ...s,
           embeddingModel: "mosaiks",
           resizeFactor: s.resizeFactor || "4",
           numFeatures: s.numFeatures || "1024",
         };
+      } else {
+        nextState = {
+          ...s,
+          embeddingModel: key,
+          resizeFactor: "1",
+        };
       }
-      return {
-        ...s,
-        embeddingModel: key,
-        resizeFactor: "1",
-      };
+      if (!s.nameCustomized) {
+        nextState.name = createDefaultEmbeddingName(
+          key,
+          nextState.numFeatures,
+          s.nameCreatedAt
+        );
+      }
+      return nextState;
     });
   }
 
