@@ -112,9 +112,9 @@ jobs:
           # Set as a GitHub Environment variable; defaults to false when unset.
           VITE_SHOW_FOOTER: ${{ vars.VITE_SHOW_FOOTER }}
           # Data-publishing feature flag, mirroring the `publishingEnabled`
-          # param on the Bicep path. Stored as a GitHub Environment *secret*
-          # (masked in logs); deploy_apps.sh defaults it to false when unset.
-          PUBLISHING_ENABLED: ${{ secrets.PUBLISHING_ENABLED }}
+          # param on the Bicep path. Non-sensitive, so a GitHub Environment
+          # variable; deploy_apps.sh defaults it to false when unset.
+          PUBLISHING_ENABLED: ${{ vars.PUBLISHING_ENABLED }}
           # hastegeo wheel pinned into the function-app requirements before
           # `func publish` (deploy_apps.sh); the editable default can't resolve
           # on Azure's remote build.
