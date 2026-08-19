@@ -69,9 +69,9 @@ Fluent UI **Dialog** (small form → `Dialog`/`DialogSurface`/`DialogBody`, as i
 │                                                      │
 │  Target publishing location *                        │
 │  ┌────────────────────────────────────────────────┐ │
-│  │ Local (HASTE storage)                     ▾    │ │  ← Dropdown; options from
+│  │ Local (In App storage)                    ▾    │ │  ← Dropdown; options from
 │  └────────────────────────────────────────────────┘ │     GetPublishingProviders
-│    • Local (HASTE storage)                           │
+│    • Local (In App storage)                           │
 │    • Planetary Computer   (disabled if not configured)│
 │                                                      │
 │  [provider hint / validation message]                │

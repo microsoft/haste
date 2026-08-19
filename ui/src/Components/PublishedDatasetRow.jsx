@@ -334,7 +334,7 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
                     <Text weight="semibold">Target</Text>
                     <div>
                       {item.target === "local"
-                        ? "Local (HASTE storage)"
+                        ? "Local (In App storage)"
                         : "Planetary Computer"}
                     </div>
                     <Text weight="semibold">Status</Text>

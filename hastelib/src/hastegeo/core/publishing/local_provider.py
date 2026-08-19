@@ -34,7 +34,7 @@ class LocalPublishingProvider(PublishingProvider):
         enabled = self.config.publishing_config["publishing_enabled"]
         return ProviderInfo(
             id="local",
-            displayName="Local (HASTE storage)",
+            displayName="Local (In App storage)",
             description="Immutable copy in HASTE-managed storage",
             isEnabled=enabled,
             isConfigured=True,

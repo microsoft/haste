@@ -33,7 +33,7 @@ class PublishingProviderRegistry:
         return {
             "local": ProviderInfo(
                 id="local",
-                displayName="Local (HASTE storage)",
+                displayName="Local (In App storage)",
                 description="Immutable copy in HASTE-managed storage",
                 isEnabled=publishing_enabled,
                 isConfigured=True,
