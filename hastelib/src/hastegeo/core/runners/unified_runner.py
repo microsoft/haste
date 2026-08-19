@@ -4,6 +4,7 @@ import importlib
 import logging
 
 from ..config import Config
+from .resource_files import redact_resource_files
 
 
 class UnifiedRunner:
@@ -61,7 +62,8 @@ class UnifiedRunner:
         )
         if "resource_files_for_upload" in kwargs:
             logger.info(
-                f"resource_files_for_upload present: {kwargs['resource_files_for_upload']}"
+                "resource_files_for_upload present: "
+                f"{redact_resource_files(kwargs['resource_files_for_upload'])}"
             )
         else:
             logger.info("resource_files_for_upload NOT present in kwargs")

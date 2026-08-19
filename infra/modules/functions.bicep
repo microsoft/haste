@@ -89,6 +89,12 @@ param useSas bool = false
 @description('Runner auto-creates/resizes its pool. False for pre-created autoscale pools.')
 param managePools bool = true
 
+@description('Blob prefix containing the approved DINOv3-SAT snapshot.')
+param dinov3SatModelBlobPrefix string = ''
+
+@description('Optional Blob container URL override for the DINOv3-SAT snapshot.')
+param dinov3SatModelContainerUrl string = ''
+
 @description('Resource tags.')
 param tags object = {}
 
@@ -150,6 +156,8 @@ var appConfigSettings = [
   { name: 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', value: imageryprepPoolIds }
   { name: 'AZURE_BATCH_USE_SAS', value: useSas ? 'true' : 'false' }
   { name: 'AZURE_BATCH_MANAGE_POOLS', value: managePools ? 'true' : 'false' }
+  { name: 'DINOV3_SAT_MODEL_BLOB_PREFIX', value: dinov3SatModelBlobPrefix }
+  { name: 'DINOV3_SAT_MODEL_CONTAINER_URL', value: dinov3SatModelContainerUrl }
 ]
 
 module apiApp 'functionApp.bicep' = {

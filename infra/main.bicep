@@ -120,6 +120,12 @@ param useSas bool = false
 @description('Runner auto-creates/resizes its pool. False for pre-created autoscale pools.')
 param managePools bool = true
 
+@description('Blob prefix containing the approved DINOv3-SAT snapshot.')
+param dinov3SatModelBlobPrefix string = ''
+
+@description('Optional Blob container URL override for the DINOv3-SAT snapshot.')
+param dinov3SatModelContainerUrl string = ''
+
 // ---------------------------------------------------------------------------
 // Computed names — mirror the bash naming scheme exactly.
 // ---------------------------------------------------------------------------
@@ -293,6 +299,8 @@ module functions 'modules/functions.bicep' = {
     imageryprepPoolIds: imageryprepPoolIds
     useSas: useSas
     managePools: managePools
+    dinov3SatModelBlobPrefix: dinov3SatModelBlobPrefix
+    dinov3SatModelContainerUrl: dinov3SatModelContainerUrl
     tags: tags
   }
   dependsOn: [

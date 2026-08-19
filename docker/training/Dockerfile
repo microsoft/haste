@@ -83,6 +83,17 @@ ENV GDAL_DATA=/opt/conda/envs/bda/share/gdal
 ENV PYTHONPATH=/app
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+
+# Fail the image build if the pinned runtime or native DINOv3 AutoModel
+# registration drifts. This is configuration-only and never loads weights.
+RUN python -c "import transformers; \
+from transformers import AutoConfig, AutoModel, DINOv3ViTConfig, DINOv3ViTModel; \
+config = AutoConfig.for_model('dinov3_vit'); \
+assert transformers.__version__ == '5.3.0'; \
+assert isinstance(config, DINOv3ViTConfig); \
+assert AutoModel._model_mapping[type(config)] is DINOv3ViTModel"
 
 # Refuse the GDAL drivers carrying the deferred CVEs (HDF4/HDF-EOS heap
 # overflow CVE-2026-8087 et al.) at the GDAL level, so subprocess CLI tools

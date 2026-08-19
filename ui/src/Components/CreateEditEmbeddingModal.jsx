@@ -3,7 +3,7 @@
 // Modal to customize and launch a building-embedding job (building labeling
 // workflow). Mirrors CreateEditModelTrainingModal — collects the embedding
 // backbone + per-backbone parameters and POSTs to PutRunEmbeddingQueueMessage.
-import { useContext, useMemo, useState } from "react";
+import { useContext, useId, useMemo, useState } from "react";
 import {
   Dropdown,
   Option,
@@ -27,18 +27,41 @@ const EMBEDDING_MODEL_OPTIONS = [
     text: "MOSAIKS (random conv features)",
     description:
       "Fast, untrained random convolution features. Output dim is configurable.",
+    defaults: {
+      resizeFactor: "4",
+      numFeatures: "1024",
+    },
   },
   {
     key: "dinov2_vits14",
     text: "DINOv2 ViT-S/14 (384-dim)",
     description:
       "Self-supervised ViT trained by Meta — strong general-purpose visual features. ~22M params, 384-dim output.",
+    defaults: {
+      resizeFactor: "1",
+    },
+    resetOnSelect: ["resizeFactor"],
   },
   {
     key: "dinov2_vitb14",
     text: "DINOv2 ViT-B/14 (768-dim)",
     description:
       "Larger DINOv2 variant. ~86M params, 768-dim output — slower but often more discriminative than ViT-S.",
+    defaults: {
+      resizeFactor: "1",
+    },
+    resetOnSelect: ["resizeFactor"],
+  },
+  {
+    key: "dinov3_sat",
+    text: "DINOv3-SAT ViT-L/16 (1024-dim)",
+    description:
+      "Satellite-pretrained SAT-493M features; slower and more GPU-intensive than DINOv2.",
+    defaults: {
+      resizeFactor: "1",
+      batchSize: "1",
+    },
+    resetOnSelect: ["resizeFactor", "batchSize"],
   },
 ];
 
@@ -48,16 +71,10 @@ const CreateEditEmbeddingModal = ({
   imageLayer,
   fetchProjectDetails,
 }) => {
-  CreateEditEmbeddingModal.propTypes = {
-    onClose: proptypes.func.isRequired,
-    projectId: proptypes.string.isRequired,
-    imageLayer: proptypes.object.isRequired,
-    fetchProjectDetails: proptypes.func,
-  };
-
   const { setDialog, appParams, setIsLoading } = useContext(AppContext);
+  const embeddingId = useId().replaceAll(":", "");
   const [state, setState] = useState({
-    name: "embedding-" + Date.now(),
+    name: "embedding-" + embeddingId,
     nameError: "",
     embeddingModel: "mosaiks",
     numFeatures: "1024",
@@ -83,21 +100,22 @@ const CreateEditEmbeddingModal = ({
   function onModelChange(_e, data) {
     const key = data.optionValue;
     if (!key) return;
-    // Switching to DINOv2 picks per-backbone defaults that match what the
-    // server-side preprocessor would fill in (resizeFactor=1, no num_feats).
+    const option = EMBEDDING_MODEL_OPTIONS.find((item) => item.key === key);
+    if (!option) return;
+
+    // Reset fields that are model constraints and otherwise only fill empty
+    // values, preserving the existing MOSAIKS and DINOv2 switching behavior.
     setState((s) => {
-      if (key === "mosaiks") {
-        return {
-          ...s,
-          embeddingModel: "mosaiks",
-          resizeFactor: s.resizeFactor || "4",
-          numFeatures: s.numFeatures || "1024",
-        };
-      }
+      const defaults = Object.fromEntries(
+        Object.entries(option.defaults).map(([field, value]) => [
+          field,
+          option.resetOnSelect?.includes(field) ? value : s[field] || value,
+        ])
+      );
       return {
         ...s,
+        ...defaults,
         embeddingModel: key,
-        resizeFactor: "1",
       };
     });
   }
@@ -130,9 +148,8 @@ const CreateEditEmbeddingModal = ({
         batchSize: state.batchSize,
         userId: appParams.userId,
       };
-      // num_feats is MOSAIKS-only. DINOv2 variants have a fixed output dim
-      // determined by the variant — sending a value would be misleading
-      // since the workflow ignores it.
+      // num_feats is MOSAIKS-only. Transformer backbones have a fixed output
+      // dim determined by the variant, so sending a value would be misleading.
       if (isMosaiks) {
         body.numFeatures = parseInt(state.numFeatures, 10);
       }
@@ -260,6 +277,13 @@ const CreateEditEmbeddingModal = ({
       }
     />
   );
+};
+
+CreateEditEmbeddingModal.propTypes = {
+  onClose: proptypes.func.isRequired,
+  projectId: proptypes.string.isRequired,
+  imageLayer: proptypes.object.isRequired,
+  fetchProjectDetails: proptypes.func,
 };
 
 export default CreateEditEmbeddingModal;

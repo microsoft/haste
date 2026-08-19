@@ -5,8 +5,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.45.15.27210",
-      "templateHash": "7848471694437751621"
+      "version": "0.46.1.21595",
+      "templateHash": "14913297205905007438"
     }
   },
   "parameters": {
@@ -209,6 +209,20 @@
       "metadata": {
         "description": "Runner auto-creates/resizes its pool. False for pre-created autoscale pools."
       }
+    },
+    "dinov3SatModelBlobPrefix": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Blob prefix containing the approved DINOv3-SAT snapshot."
+      }
+    },
+    "dinov3SatModelContainerUrl": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional Blob container URL override for the DINOv3-SAT snapshot."
+      }
     }
   },
   "variables": {
@@ -280,8 +294,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "6467876281697702392"
+              "version": "0.46.1.21595",
+              "templateHash": "11064455677118594323"
             }
           },
           "parameters": {
@@ -363,8 +377,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "12082330447741191629"
+              "version": "0.46.1.21595",
+              "templateHash": "4809665072443009441"
             }
           },
           "parameters": {
@@ -457,8 +471,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "5477339931418214373"
+              "version": "0.46.1.21595",
+              "templateHash": "18111911747360907655"
             }
           },
           "parameters": {
@@ -672,8 +686,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "15711586232981596113"
+              "version": "0.46.1.21595",
+              "templateHash": "5742332482666125630"
             }
           },
           "parameters": {
@@ -923,8 +937,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "11423466976742084469"
+              "version": "0.46.1.21595",
+              "templateHash": "15694273866306326963"
             }
           },
           "parameters": {
@@ -1076,8 +1090,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "2129528397301155805"
+              "version": "0.46.1.21595",
+              "templateHash": "8822775095973828812"
             }
           },
           "parameters": {
@@ -1305,6 +1319,12 @@
           "managePools": {
             "value": "[parameters('managePools')]"
           },
+          "dinov3SatModelBlobPrefix": {
+            "value": "[parameters('dinov3SatModelBlobPrefix')]"
+          },
+          "dinov3SatModelContainerUrl": {
+            "value": "[parameters('dinov3SatModelContainerUrl')]"
+          },
           "tags": {
             "value": "[parameters('tags')]"
           }
@@ -1315,8 +1335,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "11668276010925679796"
+              "version": "0.46.1.21595",
+              "templateHash": "11471991921815036376"
             }
           },
           "parameters": {
@@ -1486,6 +1506,20 @@
               "defaultValue": true,
               "metadata": {
                 "description": "Runner auto-creates/resizes its pool. False for pre-created autoscale pools."
+              }
+            },
+            "dinov3SatModelBlobPrefix": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Blob prefix containing the approved DINOv3-SAT snapshot."
+              }
+            },
+            "dinov3SatModelContainerUrl": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional Blob container URL override for the DINOv3-SAT snapshot."
               }
             },
             "tags": {
@@ -1702,6 +1736,14 @@
                       {
                         "name": "AZURE_BATCH_MANAGE_POOLS",
                         "value": "[if(parameters('managePools'), 'true', 'false')]"
+                      },
+                      {
+                        "name": "DINOV3_SAT_MODEL_BLOB_PREFIX",
+                        "value": "[parameters('dinov3SatModelBlobPrefix')]"
+                      },
+                      {
+                        "name": "DINOV3_SAT_MODEL_CONTAINER_URL",
+                        "value": "[parameters('dinov3SatModelContainerUrl')]"
                       }
                     ]
                   },
@@ -1715,8 +1757,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.45.15.27210",
-                      "templateHash": "11828726585656867764"
+                      "version": "0.46.1.21595",
+                      "templateHash": "3022688711020356921"
                     }
                   },
                   "parameters": {
@@ -2013,8 +2055,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.45.15.27210",
-                      "templateHash": "11828726585656867764"
+                      "version": "0.46.1.21595",
+                      "templateHash": "3022688711020356921"
                     }
                   },
                   "parameters": {
@@ -2469,6 +2511,14 @@
                       {
                         "name": "AZURE_BATCH_MANAGE_POOLS",
                         "value": "[if(parameters('managePools'), 'true', 'false')]"
+                      },
+                      {
+                        "name": "DINOV3_SAT_MODEL_BLOB_PREFIX",
+                        "value": "[parameters('dinov3SatModelBlobPrefix')]"
+                      },
+                      {
+                        "name": "DINOV3_SAT_MODEL_CONTAINER_URL",
+                        "value": "[parameters('dinov3SatModelContainerUrl')]"
                       }
                     ]
                   },
@@ -2482,8 +2532,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.45.15.27210",
-                      "templateHash": "11828726585656867764"
+                      "version": "0.46.1.21595",
+                      "templateHash": "3022688711020356921"
                     }
                   },
                   "parameters": {
@@ -2798,8 +2848,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "7962398216361329093"
+              "version": "0.46.1.21595",
+              "templateHash": "5532319181004507698"
             }
           },
           "parameters": {
@@ -2931,8 +2981,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "13617399659586966284"
+              "version": "0.46.1.21595",
+              "templateHash": "583350182862945455"
             }
           },
           "parameters": {
@@ -3017,7 +3067,7 @@
               "name": "[format('{0}/{1}/{2}', parameters('apimName'), parameters('functionApiName'), 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__BID__', parameters('functionApiName'))]"
+                "value": "[replace('<policies>\n  <inbound>\n    <base />\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__BID__', parameters('functionApiName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionApiName'))]",
@@ -3066,7 +3116,7 @@
               "name": "[format('{0}/{1}/{2}', parameters('apimName'), parameters('functionTitilerName'), 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__BID__', parameters('functionTitilerName'))]"
+                "value": "[replace('<policies>\n  <inbound>\n    <base />\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__BID__', parameters('functionTitilerName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionTitilerName'))]",
@@ -3169,7 +3219,7 @@
               "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'hastestorageapi', 'get-artifacts', 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\r\n  <inbound>\r\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\r\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"modelDir\"]+ \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\r\n      <set-method>GET</set-method>\r\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\r\n        <value>2019-07-07</value>\r\n      </set-header>\r\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\r\n    </send-request>\r\n    <return-response response-variable-name=\"blobdata\" />\r\n    <base />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__SA__', parameters('storageAccountName'))]"
+                "value": "[replace('<policies>\n  <inbound>\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"modelDir\"]+ \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\n      <set-method>GET</set-method>\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\n        <value>2019-07-07</value>\n      </set-header>\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\n    </send-request>\n    <return-response response-variable-name=\"blobdata\" />\n    <base />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__SA__', parameters('storageAccountName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'hastestorageapi', 'get-artifacts')]"
@@ -3211,7 +3261,7 @@
               "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'hastestorageapi', 'get-project-artifacts', 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\r\n  <inbound>\r\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\r\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\r\n      <set-method>GET</set-method>\r\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\r\n        <value>2019-07-07</value>\r\n      </set-header>\r\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\r\n    </send-request>\r\n    <return-response response-variable-name=\"blobdata\" />\r\n    <base />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__SA__', parameters('storageAccountName'))]"
+                "value": "[replace('<policies>\n  <inbound>\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\n      <set-method>GET</set-method>\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\n        <value>2019-07-07</value>\n      </set-header>\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\n    </send-request>\n    <return-response response-variable-name=\"blobdata\" />\n    <base />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__SA__', parameters('storageAccountName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'hastestorageapi', 'get-project-artifacts')]"
@@ -3253,8 +3303,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "10647381514548241981"
+              "version": "0.46.1.21595",
+              "templateHash": "12847299943019626239"
             }
           },
           "parameters": {
@@ -3368,8 +3418,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "16042433164648747777"
+              "version": "0.46.1.21595",
+              "templateHash": "6727294718729000805"
             }
           },
           "parameters": {
@@ -3467,8 +3517,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "13664756888266805551"
+              "version": "0.46.1.21595",
+              "templateHash": "17197306363257697796"
             }
           },
           "parameters": {
@@ -3624,8 +3674,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "17391401701000584075"
+              "version": "0.46.1.21595",
+              "templateHash": "10615611227258247138"
             }
           },
           "parameters": {
@@ -3692,8 +3742,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "3909520050142538177"
+              "version": "0.46.1.21595",
+              "templateHash": "17045354249437602171"
             }
           },
           "parameters": {

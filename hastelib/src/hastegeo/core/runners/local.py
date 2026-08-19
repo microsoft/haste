@@ -7,7 +7,7 @@ import os
 import shutil
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
@@ -20,6 +20,7 @@ from hastegeo.core.utils.logs import Logger
 import docker
 
 from .base import BaseRunner
+from .resource_files import redact_resource_files, redact_url
 
 
 def _normalize_azurite_url(url: Optional[str]) -> Optional[str]:
@@ -34,8 +35,55 @@ def _normalize_azurite_url(url: Optional[str]) -> Optional[str]:
     return normalized
 
 
+def _resolve_path_within(
+    root: Path, relative_path: str, description: str
+) -> Path:
+    """Resolve a relative path without permitting root-directory escape."""
+    if not relative_path:
+        raise ValueError(f"{description} must not be empty.")
+    posix_path = PurePosixPath(relative_path)
+    windows_path = PureWindowsPath(relative_path)
+    has_windows_drive_segment = any(
+        len(part) == 2 and part[0].isalpha() and part[1] == ":"
+        for part in windows_path.parts
+    )
+    if (
+        posix_path.is_absolute()
+        or windows_path.is_absolute()
+        or ".." in posix_path.parts
+        or ".." in windows_path.parts
+        or has_windows_drive_segment
+    ):
+        raise ValueError(
+            f"{description} must stay within its destination directory: "
+            f"{relative_path}"
+        )
+
+    resolved_root = root.resolve()
+    destination = (resolved_root / relative_path).resolve()
+    try:
+        destination.relative_to(resolved_root)
+    except ValueError as e:
+        raise ValueError(
+            f"{description} resolves outside its destination directory: "
+            f"{relative_path}"
+        ) from e
+    return destination
+
+
+def _resolve_resource_destination(task_dir: Path, file_path: str) -> Path:
+    """Resolve a task resource path without permitting task-dir escape."""
+    return _resolve_path_within(task_dir, file_path, "Resource file_path")
+
+
 class LocalRunner(BaseRunner):
     """Local runner that executes containers using Docker instead of Azure Batch."""
+
+    def _log_resource_files(self, resource_files: dict) -> None:
+        self.logger.info(
+            "[PIPELINE-TRACE] Resource files to download: "
+            f"{redact_resource_files(resource_files)}"
+        )
 
     def __init__(
         self, config: Config = None, pool_id=None, candidate_pool_ids=None
@@ -225,9 +273,7 @@ class LocalRunner(BaseRunner):
             self.logger.info(
                 "[PIPELINE-TRACE] Starting resource file download..."
             )
-            self.logger.info(
-                f"[PIPELINE-TRACE] Resource files to download: {resource_files_for_upload}"
-            )
+            self._log_resource_files(resource_files_for_upload)
             self._download_resource_files(task_dir, resource_files_for_upload)
             self.logger.info(
                 "[PIPELINE-TRACE] Resource file download completed"
@@ -793,9 +839,11 @@ class LocalRunner(BaseRunner):
                             "config_present": (
                                 task_dir / "config.json"
                             ).exists(),
-                            "output_log_size": os.path.getsize(output_log_path)
-                            if output_log_path.exists()
-                            else -1,
+                            "output_log_size": (
+                                os.path.getsize(output_log_path)
+                                if output_log_path.exists()
+                                else -1
+                            ),
                             "command": container_command,
                         }
                         with open(
@@ -1001,7 +1049,8 @@ class LocalRunner(BaseRunner):
                 candidates.append(BlobClient.from_blob_url(blob_url))
         except Exception as blob_url_err:
             self.logger.debug(
-                f"BlobClient.from_blob_url failed; will try fallbacks: {blob_url_err}"
+                "BlobClient.from_blob_url failed; will try fallbacks "
+                f"({type(blob_url_err).__name__})"
             )
 
         parsed = urlparse(blob_url)
@@ -1012,7 +1061,8 @@ class LocalRunner(BaseRunner):
         # not rely on undocumented downstream behavior.
         if any(part == ".." or "\x00" in part for part in path_parts):
             self.logger.warning(
-                f"Rejecting blob URL with unsafe path segments: {blob_url}"
+                "Rejecting blob URL with unsafe path segments: "
+                f"{redact_url(blob_url)}"
             )
             return candidates
 
@@ -1059,13 +1109,15 @@ class LocalRunner(BaseRunner):
                         )
                         continue
 
+                    local_file_path = _resolve_resource_destination(
+                        task_dir, target_rel_path
+                    )
                     if not self.blob_client:
                         self.logger.warning(
                             "No blob client available for downloading resource files"
                         )
                         continue
 
-                    local_file_path = task_dir / target_rel_path
                     local_file_path.parent.mkdir(parents=True, exist_ok=True)
 
                     download_succeeded = False
@@ -1096,7 +1148,9 @@ class LocalRunner(BaseRunner):
                         )
                     else:
                         self.logger.error(
-                            f"Failed to download resource '{file_key}' from {blob_url}: {last_error}"
+                            f"Failed to download resource '{file_key}' from "
+                            f"{redact_url(blob_url)} "
+                            f"({type(last_error).__name__})"
                         )
                     continue
 
@@ -1105,21 +1159,25 @@ class LocalRunner(BaseRunner):
                     and "blob_prefix" in file_info
                     and "file_path" in file_info
                 ):
-                    if not self.blob_client:
-                        self.logger.warning(
-                            "No blob client available for downloading resource files"
-                        )
-                        continue
-
                     container_url = file_info.get("storage_container_url")
                     blob_prefix = (file_info.get("blob_prefix") or "").lstrip(
                         "/"
                     )
+                    blob_prefix = blob_prefix.rstrip("/")
                     target_rel_path = file_info.get("file_path") or ""
 
                     if not container_url or not blob_prefix:
                         self.logger.warning(
                             f"Skipping resource '{file_key}' due to missing container URL or blob prefix"
+                        )
+                        continue
+
+                    dest_root = _resolve_resource_destination(
+                        task_dir, target_rel_path
+                    )
+                    if not self.blob_client:
+                        self.logger.warning(
+                            "No blob client available for downloading resource files"
                         )
                         continue
 
@@ -1133,7 +1191,6 @@ class LocalRunner(BaseRunner):
                         )
                         continue
 
-                    dest_root = task_dir / target_rel_path
                     dest_root.mkdir(parents=True, exist_ok=True)
 
                     try:
@@ -1143,13 +1200,24 @@ class LocalRunner(BaseRunner):
                             )
                         )
                         blob_count = 0
+                        prefix_boundary = f"{blob_prefix}/"
                         for blob in container_client.list_blobs(
-                            name_starts_with=blob_prefix
+                            name_starts_with=prefix_boundary
                         ):
+                            # Validate every returned name independently rather
+                            # than trusting a storage emulator/client to honor
+                            # the requested prefix boundary.
+                            local_blob_path = _resolve_path_within(
+                                dest_root, blob.name, "Resource blob name"
+                            )
+                            if not blob.name.startswith(prefix_boundary):
+                                self.logger.warning(
+                                    f"Skipping blob outside resource prefix: {blob.name}"
+                                )
+                                continue
                             blob_count += 1
                             # For local runs, preserve the full blob path structure
                             # so that INPUT_DIR (which includes the hash prefix) works correctly
-                            local_blob_path = dest_root / blob.name
                             if blob_count <= 3:
                                 self.logger.info(
                                     f"[ZIP-DEBUG] blob.name={blob.name}, dest_root={dest_root}, local_blob_path={local_blob_path}"
@@ -1167,12 +1235,20 @@ class LocalRunner(BaseRunner):
                         self.logger.info(
                             f"Synced resource '{file_key}' from prefix {blob_prefix} to {dest_root}"
                         )
+                    except ValueError:
+                        raise
                     except Exception as download_err:
                         self.logger.error(
-                            f"Failed to download resource '{file_key}' from prefix {blob_prefix}: {download_err}"
+                            f"Failed to download resource '{file_key}' from "
+                            f"prefix {redact_url(blob_prefix)} "
+                            f"({type(download_err).__name__})"
                         )
+        except ValueError:
+            raise
         except Exception as e:
-            self.logger.error(f"Failed to download resource files: {e}")
+            self.logger.error(
+                "Failed to download resource files " f"({type(e).__name__})"
+            )
 
     def _upload_blob_data(self, local_dir: Path, blob_path: str):
         """Upload data from local directory to blob storage."""

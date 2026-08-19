@@ -130,7 +130,7 @@ class ArtifactTypes(Enum):
     MODEL_ARTIFACTS_ZIP = Template("artifacts_${modelName}")
     TRAINING_ARTIFACTS_ZIP = Template("training_artifacts_${modelName}")
     INFERENCE_ARTIFACTS_ZIP = Template("inference_artifacts_${modelName}")
-    # Building labeling workflow: per-building MOSAIKS / DINOv2 embeddings
+    # Building labeling workflow: per-building MOSAIKS / DINO embeddings
     # (footprints + f_* feature columns), the matching PMTiles vector tiles
     # (geometry + id only), the binary HFTR sidecar (id -> feature vector),
     # and the per-building predictions written by the interactive labeler.
@@ -255,6 +255,12 @@ class Config:
             "ARTIFACT_STORAGE_TYPE", "local"
         ).lower()
         self.runner_type = os.getenv("RUNNER_TYPE", "azure_batch").lower()
+        self.DINOV3_SAT_MODEL_BLOB_PREFIX = os.getenv(
+            "DINOV3_SAT_MODEL_BLOB_PREFIX"
+        )
+        self.DINOV3_SAT_MODEL_CONTAINER_URL = os.getenv(
+            "DINOV3_SAT_MODEL_CONTAINER_URL"
+        )
         self.storage_config = self._get_storage_config(self.storage_type)
         self.artifact_storage_config = self._get_storage_config(
             self.artifact_storage_type

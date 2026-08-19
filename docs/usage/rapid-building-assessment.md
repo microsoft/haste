@@ -50,8 +50,11 @@ On the image layer, click the **Embed** button:
 
 In the **New Embedding** dialog, configure:
 
-- **Embedding backbone** — **MOSAIKS** (random convolutional features) or **DINOv2**
-  (ViT-S/14 or ViT-B/14). MOSAIKS is the lightweight default.
+- **Embedding backbone** — **MOSAIKS** (random convolutional features),
+  **DINOv2** (ViT-S/14 or ViT-B/14), or the satellite-pretrained
+  **DINOv3-SAT** ViT-L/16. MOSAIKS is the lightweight default. Administrators
+  must [configure the gated DINOv3-SAT snapshot](dinov3-sat-embeddings.md)
+  before users select it.
 - **Output dimensions** — features per building (MOSAIKS only; default 1024).
 - **Resize factor** — how much to upscale the crop around each footprint (default 4 for MOSAIKS).
 - **Batch size** — how many buildings to process at once.

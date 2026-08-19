@@ -504,13 +504,23 @@ async def GetRunEmbeddingQueueMessage(msg: func.QueueMessage) -> None:
     EmbeddingPostprocessor state machine (submit -> poll -> finalize). No
     zip/inference follow-on. Re-enqueues itself while in progress.
     """
-    logger.info(
-        "GetRunEmbeddingQueueTrigger function processed a message: "
-        f'{msg.get_body().decode("utf-8")}'
-    )
     model_data = None
     try:
-        model_data = Model(**json.loads(msg.get_body().decode("utf-8")))
+        message_body = msg.get_body().decode("utf-8")
+        message_data = json.loads(message_body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        logger.error(
+            f"GetRunEmbeddingQueueTrigger: Invalid JSON: {e}\n"
+            f"{traceback.format_exc()}"
+        )
+        return
+
+    logger.info(
+        "GetRunEmbeddingQueueTrigger function processed a message: "
+        f"{message_body}"
+    )
+    try:
+        model_data = Model(**message_data)
         try:
             existing_model = await asyncio.to_thread(
                 MetadataProcessor(
@@ -553,11 +563,6 @@ async def GetRunEmbeddingQueueMessage(msg: func.QueueMessage) -> None:
     except ValidationError as e:
         logger.error(
             f"GetRunEmbeddingQueueTrigger: Validation error: {e}\n"
-            f"{traceback.format_exc()}"
-        )
-    except ValueError as e:
-        logger.error(
-            f"GetRunEmbeddingQueueTrigger: Invalid JSON: {e}\n"
             f"{traceback.format_exc()}"
         )
     except Exception as e:

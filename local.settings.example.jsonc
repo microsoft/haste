@@ -47,6 +47,13 @@
     "ZIP_QUEUE_NAME": "my-local-zip-queue",
     "EMBEDDING_QUEUE_NAME": "my-local-embedding-queue",
 
+    // ===== OPTIONAL: Gated DINOv3-SAT Embedding Model =====
+    // Upload the approved snapshot before setting this prefix. See
+    // docs/usage/dinov3-sat-embeddings.md.
+    "DINOV3_SAT_MODEL_BLOB_PREFIX": "",
+    // Omit or leave empty to use the configured artifact-storage container.
+    "DINOV3_SAT_MODEL_CONTAINER_URL": "",
+
     // ===== REQUIRED: Docker Images =====
     "AZURE_BATCH_DOCKER_IMAGE": "<ACR_NAME>.azurecr.io/hastetraining:<TAG>",
     "AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE": "<ACR_NAME>.azurecr.io/hasteimageryprep:<TAG>",

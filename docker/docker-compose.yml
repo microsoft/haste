@@ -150,6 +150,8 @@ services:
       ZIP_QUEUE_NAME: "local-zip-queue"
       INFERENCE_QUEUE_NAME: "local-inference-queue"
       EMBEDDING_QUEUE_NAME: "local-embedding-queue"
+      DINOV3_SAT_MODEL_BLOB_PREFIX: "${DINOV3_SAT_MODEL_BLOB_PREFIX:-}"
+      DINOV3_SAT_MODEL_CONTAINER_URL: "${DINOV3_SAT_MODEL_CONTAINER_URL:-}"
       BLOB_CONTAINER: "data"
       METADATA_STORAGE_TYPE: "blob"
       IMAGERY_STORAGE_TYPE: "blob"

@@ -23,6 +23,8 @@ The `Config` class reads from these key environment variables (see `local.settin
 | `IMAGERY_STORAGE_TYPE` | Backend for imagery files |
 | `ARTIFACT_STORAGE_TYPE` | Backend for model artifacts |
 | `IMAGE_QUEUE`, `TRAIN_QUEUE`, etc. | Queue names for async processing |
+| `DINOV3_SAT_MODEL_BLOB_PREFIX` | Blob prefix containing the approved local DINOv3-SAT snapshot |
+| `DINOV3_SAT_MODEL_CONTAINER_URL` | Optional container override for the DINOv3-SAT snapshot |
 
 ```{eval-rst}
 .. automodule:: hastegeo.core.config

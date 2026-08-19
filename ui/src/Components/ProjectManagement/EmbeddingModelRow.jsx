@@ -39,6 +39,7 @@ const EMBEDDING_MODEL_LABELS = {
   dinov2_vits14: "DINOv2 ViT-S/14",
   dinov2_vitb14: "DINOv2 ViT-B/14",
   dinov2_vitl14: "DINOv2 ViT-L/14",
+  dinov3_sat: "DINOv3-SAT ViT-L/16",
 };
 
 function embeddingModelLabel(model) {
@@ -48,7 +49,7 @@ function embeddingModelLabel(model) {
 
 // Run parameters surfaced in the Status Messages info box. MOSAIKS has a
 // configurable output dim that is not implied by the backbone label, so it
-// gets the extra Number-of-features row; DINOv2 variants have a fixed
+// gets the extra Number-of-features row; transformer backbones have a fixed
 // per-variant dim so they don't.
 function embeddingInfoMetadata(model) {
   const items = [
@@ -75,16 +76,6 @@ const EmbeddingModelRow = ({
   validationLabelCount = 0,
   mobile = false,
 }) => {
-  EmbeddingModelRow.propTypes = {
-    model: PropTypes.object.isRequired,
-    projectId: PropTypes.string.isRequired,
-    imageLayerId: PropTypes.string.isRequired,
-    index: PropTypes.number.isRequired,
-    fetchProjectDetails: PropTypes.func.isRequired,
-    validationLabelCount: PropTypes.number,
-    mobile: PropTypes.bool,
-  };
-
   const { setDialog, setIsLoading } = useContext(AppContext);
   const navigate = useNavigate();
   const [showValidationReport, setShowValidationReport] = useState(false);
@@ -450,6 +441,16 @@ const EmbeddingModelRow = ({
       {reportModals}
     </div>
   );
+};
+
+EmbeddingModelRow.propTypes = {
+  model: PropTypes.object.isRequired,
+  projectId: PropTypes.string.isRequired,
+  imageLayerId: PropTypes.string.isRequired,
+  index: PropTypes.number.isRequired,
+  fetchProjectDetails: PropTypes.func.isRequired,
+  validationLabelCount: PropTypes.number,
+  mobile: PropTypes.bool,
 };
 
 export default EmbeddingModelRow;

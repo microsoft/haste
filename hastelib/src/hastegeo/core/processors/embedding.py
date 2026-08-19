@@ -13,7 +13,9 @@ the model so the interactive labeler can load them.
 
 import json
 import os
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
+from ..artifact_storage.unified_artifact_storage import UnifiedArtifactStorage
 from ..config import ArtifactTypes, Config
 from ..data_layer.unified import UnifiedDataLayer
 from ..models.projects import ImageLayer, Model, TrainingJob
@@ -26,6 +28,48 @@ from ..utils.queues import AzureQueueHandler
 # Do not prefix with '$'. Replaced at runtime with the task working directory.
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 EMBEDDING_PREFIX = "emb"
+
+
+def _model_blob_url(
+    container_url: str, blob_prefix: str, filename: str
+) -> str:
+    """Append an encoded blob path while preserving container URL queries."""
+    parsed = urlsplit(container_url)
+    decoded_segments = [
+        unquote(segment)
+        for segment in blob_prefix.strip("/").split("/")
+        if segment
+    ]
+    if any(segment in (".", "..") for segment in decoded_segments):
+        raise ValueError(
+            "DINOV3_SAT_MODEL_BLOB_PREFIX must not contain traversal segments."
+        )
+    encoded_segments = [
+        quote(segment, safe="") for segment in decoded_segments
+    ]
+    encoded_segments.append(quote(filename, safe=""))
+    path = "/".join([parsed.path.rstrip("/"), *encoded_segments])
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment)
+    )
+
+
+def _validate_model_container_url(container_url: str) -> None:
+    """Require a credential-free HTTPS container URL."""
+    parsed = urlsplit(container_url)
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(
+            "DINOV3_SAT_MODEL_CONTAINER_URL must be a bare HTTPS container "
+            "URL without credentials, query parameters, or fragments. Use "
+            "managed identity or runner-generated SAS for access."
+        )
 
 
 class EmbeddingPreprocessor:
@@ -69,6 +113,11 @@ class EmbeddingPostprocessor:
             storage_type=config.storage_type,
             partition_key=model.projectId,
             **config.storage_config,
+        )
+        self.artifact_storage = UnifiedArtifactStorage(
+            storage_type=config.artifact_storage_type,
+            partition_key=model.projectId,
+            **config.artifact_storage_config,
         )
         self.logger = Logger.get_logger(__name__)
         self.runner = UnifiedRunner(
@@ -270,6 +319,38 @@ class EmbeddingPostprocessor:
                 "batch_size": int(self.model_data.batchSize or 16),
             },
         }
+        model_name = self.model_data.embeddingModel
+        model_resources = {}
+        if model_name == "dinov3_sat":
+            blob_prefix = (
+                self.config.DINOV3_SAT_MODEL_BLOB_PREFIX or ""
+            ).strip()
+            if not blob_prefix:
+                raise ValueError(
+                    "DINOV3_SAT_MODEL_BLOB_PREFIX must be configured for "
+                    "DINOv3-SAT embedding jobs."
+                )
+            model_path = "inputs/models/dinov3_sat"
+            embedding_config["files"]["model"] = model_path
+            container_url = (
+                self.config.DINOV3_SAT_MODEL_CONTAINER_URL
+                or self.artifact_storage.get_base_url()
+            )
+            _validate_model_container_url(container_url)
+            model_resources = {
+                "dinov3_sat_config": {
+                    "http_url": _model_blob_url(
+                        container_url, blob_prefix, "config.json"
+                    ),
+                    "file_path": f"{model_path}/config.json",
+                },
+                "dinov3_sat_weights": {
+                    "http_url": _model_blob_url(
+                        container_url, blob_prefix, "model.safetensors"
+                    ),
+                    "file_path": f"{model_path}/model.safetensors",
+                },
+            }
         self.storage.save(
             identifier=self.model_data.modelId,
             data=embedding_config,
@@ -300,6 +381,7 @@ class EmbeddingPostprocessor:
                 "file_path": footprints_fn,
             },
         }
+        input_files.update(model_resources)
         return input_files
 
     def _update_results_from_job(self):

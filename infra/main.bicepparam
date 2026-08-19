@@ -45,6 +45,10 @@ param imageryprepPoolIds = readEnvironmentVariable('HASTE_BATCH_IMAGERYPREP_POOL
 param useSas = bool(readEnvironmentVariable('HASTE_BATCH_USE_SAS', 'false'))
 param managePools = bool(readEnvironmentVariable('HASTE_BATCH_MANAGE_POOLS', 'true'))
 
+// Approved DINOv3-SAT snapshot location. Empty disables DINOv3-SAT jobs.
+param dinov3SatModelBlobPrefix = readEnvironmentVariable('DINOV3_SAT_MODEL_BLOB_PREFIX', '')
+param dinov3SatModelContainerUrl = readEnvironmentVariable('DINOV3_SAT_MODEL_CONTAINER_URL', '')
+
 // Shared hub batch-subnet the multi-tenant pools live in; this env's storage
 // allowlists it so those pools can reach its blobs. Empty for single-tenant prod.
 param sharedBatchSubnetId = readEnvironmentVariable('HASTE_SHARED_BATCH_SUBNET_ID', '')

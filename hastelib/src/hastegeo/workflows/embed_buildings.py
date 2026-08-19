@@ -1,18 +1,18 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-"""Per-building MOSAIKS embedding workflow for the building labeling workflow.
+"""Per-building embedding workflow for the building labeling workflow.
 
-Ported from ``interactive-building-labeler/embed_buildings.py`` (MOSAIKS path
-only) and adapted to the HASTE workflow contract used by
+Ported from ``interactive-building-labeler/embed_buildings.py`` and adapted
+to the HASTE workflow contract used by
 ``prepare_imagery.py``:
 
 * Driven by a single ``--config`` JSON file.
 * Reads the post-event mosaic COG and the cached building-footprints GeoPackage
   (both downloaded into the task working dir by the runner).
-* For each building footprint: crop the imagery around its bounding box, run a
-  MOSAIKS (torchgeo RCF) model on the crop, mask the building polygon into the
-  token grid, and average the token features into one vector per building.
+* For each building footprint: crop the imagery around its bounding box, run
+  the selected embedding model on the crop, mask the building polygon into
+  the token grid, and average the token features into one vector per building.
 * Writes three outputs to ``outputs/``: a GeoJSON of footprints + ``f_0..f_N``
   feature columns, a PMTiles vector-tile file (via tippecanoe), and a manifest.
 
@@ -26,6 +26,7 @@ CRITICAL — row-order invariant:
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -81,6 +82,25 @@ DEFAULT_MAX_CROP_PX = 192
 # down for large crops (keeps a batch's peak allocation in the low-GB range).
 MAX_ACT_ELEMENTS = 2.5e8
 
+# Administrator-approved immutable SAT-493M snapshot. Validation happens
+# before AutoModel allocates the model so a truncated, substituted, or unsafe
+# snapshot never reaches the deserializer.
+DINOV3_SAT_SNAPSHOT_MANIFEST = {
+    "config.json": {
+        "sha256": (
+            "135ecd23e34a70b6fbed8b083fdecb319b7e3a54e3d849258bbe4ddcf1783bb5"  # pragma: allowlist secret
+        ),
+        "size": 745,
+    },
+    "model.safetensors": {
+        "sha256": (
+            "4e6356d992c1301b5e7c275f465e47296c5c4ad17052e262b29fc21e82ccc698"  # pragma: allowlist secret
+        ),
+        "size": 1212559808,
+    },
+}
+UNSAFE_MODEL_SUFFIXES = {".bin", ".pt", ".pth", ".py"}
+
 # Where to look for pre-baked torch.hub assets (DINOv2 source + weights). The
 # training docker image populates this at build time so workflow runs don't
 # touch the internet. Falls back to the default torch.hub cache if missing
@@ -89,7 +109,7 @@ TORCH_HUB_CACHE_DIR = "/opt/torch-hub-cache/hub"
 
 
 # ---------------------------------------------------------------------------
-# Model wrappers (MOSAIKS / RCF only — DINO path dropped, no weights in image)
+# Model wrappers
 # ---------------------------------------------------------------------------
 class RCFPooled(RCF):
     """RCF with block-level average pooling (16x16 -> 1 token)."""
@@ -261,6 +281,172 @@ class _DinoV2PatchTokensWrapper(nn.Module):
         return out["x_norm_patchtokens"]
 
 
+class _DinoV3SatPatchTokensWrapper(nn.Module):
+    """Load staged DINOv3-SAT weights and return patch tokens only."""
+
+    PATCH_SIZE = 16
+    FEATURE_DIM = 1024
+    REQUIRED_FILES = ("config.json", "model.safetensors")
+
+    def __init__(self, model_path: Optional[str]):
+        super().__init__()
+        if not model_path:
+            raise ValueError(
+                "A local model_path is required for the dinov3_sat model."
+            )
+        if os.path.islink(model_path):
+            raise ValueError(
+                "DINOv3-SAT model directory must not be a symlink: "
+                f"{model_path}"
+            )
+        if not os.path.isdir(model_path):
+            raise FileNotFoundError(
+                f"DINOv3-SAT model directory not found: {model_path}"
+            )
+        self._validate_snapshot(model_path)
+
+        # Imported only for this model so existing embedding runtimes do not
+        # require transformers. The flags prohibit Hub/network fallback,
+        # executable repository code, and pickle weight deserialization.
+        from transformers import AutoModel
+
+        self.backbone = AutoModel.from_pretrained(
+            model_path,
+            local_files_only=True,
+            trust_remote_code=False,
+            use_safetensors=True,
+        ).eval()
+        config = self.backbone.config
+        if getattr(config, "model_type", None) != "dinov3_vit":
+            raise ValueError(
+                "Invalid DINOv3-SAT metadata: model_type must be "
+                "'dinov3_vit'."
+            )
+        if getattr(config, "patch_size", None) != self.PATCH_SIZE:
+            raise ValueError(
+                "Invalid DINOv3-SAT metadata: patch_size must be 16."
+            )
+        if getattr(config, "hidden_size", None) != self.FEATURE_DIM:
+            raise ValueError(
+                "Invalid DINOv3-SAT metadata: hidden_size must be 1024."
+            )
+        register_tokens = getattr(config, "num_register_tokens", None)
+        if (
+            not isinstance(register_tokens, int)
+            or isinstance(register_tokens, bool)
+            or not 0 <= register_tokens <= 256
+        ):
+            raise ValueError(
+                "Invalid DINOv3-SAT metadata: num_register_tokens must be "
+                "an integer between 0 and 256."
+            )
+        self.num_register_tokens = register_tokens
+
+    @classmethod
+    def _validate_snapshot(cls, model_path: str) -> None:
+        """Verify the staged snapshot against the approved two-file manifest."""
+        snapshot_root = os.path.abspath(model_path)
+        found_files = set()
+        for root, dirs, files in os.walk(snapshot_root, followlinks=False):
+            for name in dirs + files:
+                path = os.path.join(root, name)
+                relative_path = os.path.relpath(path, snapshot_root)
+                if os.path.islink(path):
+                    raise ValueError(
+                        "DINOv3-SAT model snapshot must not contain symlinks: "
+                        f"{relative_path}"
+                    )
+            if dirs:
+                relative_dirs = sorted(
+                    os.path.relpath(os.path.join(root, name), snapshot_root)
+                    for name in dirs
+                )
+                raise ValueError(
+                    "DINOv3-SAT model snapshot must not contain directories: "
+                    + ", ".join(relative_dirs)
+                )
+            for name in files:
+                path = os.path.join(root, name)
+                relative_path = os.path.relpath(path, snapshot_root)
+                if not os.path.isfile(path):
+                    raise ValueError(
+                        "DINOv3-SAT model snapshot entries must be regular "
+                        f"files: {relative_path}"
+                    )
+                found_files.add(relative_path)
+                if os.path.splitext(name)[1].lower() in UNSAFE_MODEL_SUFFIXES:
+                    raise ValueError(
+                        "DINOv3-SAT model snapshot contains an unsafe file: "
+                        f"{relative_path}"
+                    )
+
+        expected_files = set(DINOV3_SAT_SNAPSHOT_MANIFEST)
+        missing = [
+            filename
+            for filename in cls.REQUIRED_FILES
+            if filename not in found_files
+        ]
+        if missing:
+            raise FileNotFoundError(
+                "DINOv3-SAT model directory is missing required file(s): "
+                + ", ".join(missing)
+            )
+        unexpected = sorted(found_files - expected_files)
+        if unexpected:
+            raise ValueError(
+                "DINOv3-SAT model snapshot contains unexpected file(s): "
+                + ", ".join(unexpected)
+            )
+
+        for filename, expected in DINOV3_SAT_SNAPSHOT_MANIFEST.items():
+            path = os.path.join(snapshot_root, filename)
+            actual_size = os.path.getsize(path)
+            if actual_size != expected["size"]:
+                raise ValueError(
+                    f"DINOv3-SAT snapshot size mismatch for {filename}: "
+                    f"expected {expected['size']}, got {actual_size}."
+                )
+            digest = hashlib.sha256()
+            with open(path, "rb") as snapshot_file:
+                for chunk in iter(
+                    lambda: snapshot_file.read(1024 * 1024), b""
+                ):
+                    digest.update(chunk)
+            actual_sha256 = digest.hexdigest()
+            if actual_sha256 != expected["sha256"]:
+                raise ValueError(
+                    f"DINOv3-SAT snapshot SHA-256 mismatch for {filename}."
+                )
+
+    @torch.no_grad()
+    def forward(self, x: Tensor) -> Tensor:
+        if x.dim() == 3:
+            x = x.unsqueeze(0)
+        if x.dim() != 4 or x.size(1) != 3:
+            raise ValueError("DINOv3-SAT input must have shape (B, 3, H, W).")
+        if x.shape[-1] % self.PATCH_SIZE or x.shape[-2] % self.PATCH_SIZE:
+            raise ValueError(
+                f"DINOv3-SAT input dims must be multiples of {self.PATCH_SIZE}; "
+                f"got {tuple(x.shape[-2:])}"
+            )
+        hidden_state = self.backbone(pixel_values=x).last_hidden_state
+        patch_tokens = hidden_state[:, 1 + self.num_register_tokens :, :]
+        expected_patches = (x.shape[-2] // self.PATCH_SIZE) * (
+            x.shape[-1] // self.PATCH_SIZE
+        )
+        if patch_tokens.shape[1] != expected_patches:
+            raise ValueError(
+                "DINOv3-SAT output patch-token count does not match input: "
+                f"expected {expected_patches}, got {patch_tokens.shape[1]}."
+            )
+        if patch_tokens.shape[-1] != self.FEATURE_DIM:
+            raise ValueError(
+                "DINOv3-SAT output hidden dimension must be 1024; "
+                f"got {patch_tokens.shape[-1]}."
+            )
+        return patch_tokens
+
+
 # ---------------------------------------------------------------------------
 # Embedding-model factory (used by embed_footprints to dispatch on
 # pipeline.model). Returns a uniform handle so the cropping/masking/pooling
@@ -271,6 +457,7 @@ def build_embedding_model(
     *,
     num_feats: int = DEFAULT_MOSAIKS_FEATS,
     kernel_size: int = DEFAULT_MOSAIKS_KERNEL_SIZE,
+    model_path: Optional[str] = None,
 ) -> Dict[str, object]:
     """Build the embedding model and return its uniform inference handle.
 
@@ -283,6 +470,8 @@ def build_embedding_model(
       DINOv2 ViT patch tokens (14x14 patches). ``num_feats`` is ignored — the
       output dim is fixed by the variant (384 / 768 / 1024). Normalization is
       the ImageNet mean/std DINOv2 was trained with.
+    - ``"dinov3_sat"``: locally staged SAT-493M DINOv3 ViT-L/16 patch
+      tokens. ``model_path`` must contain the approved Hugging Face snapshot.
 
     Returns a dict with:
 
@@ -318,9 +507,20 @@ def build_embedding_model(
             "img_mean": torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1),
             "img_std": torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1),
         }
+    if model_name == "dinov3_sat":
+        backbone = _DinoV3SatPatchTokensWrapper(model_path)
+        return {
+            "model": backbone,
+            "patch_size": _DinoV3SatPatchTokensWrapper.PATCH_SIZE,
+            "feat_dim": _DinoV3SatPatchTokensWrapper.FEATURE_DIM,
+            # ImageNet stats match the repo-loaded dinov3_sat reference.
+            "img_mean": torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1),
+            "img_std": torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1),
+        }
     raise ValueError(
         f"Unknown embedding model {model_name!r}. "
-        "Supported: mosaiks, dinov2_vits14, dinov2_vitb14, dinov2_vitl14."
+        "Supported: mosaiks, dinov2_vits14, dinov2_vitb14, dinov2_vitl14, "
+        "dinov3_sat."
     )
 
 
@@ -543,6 +743,7 @@ def embed_footprints(
     resize_factor: int = DEFAULT_RESIZE_FACTOR,
     batch_size: int = DEFAULT_BATCH_SIZE,
     context_px: int = DEFAULT_CONTEXT_PX,
+    model_path: Optional[str] = None,
 ) -> gpd.GeoDataFrame:
     """Embed every building footprint and return a row-aligned GeoDataFrame.
 
@@ -553,8 +754,8 @@ def embed_footprints(
 
     ``model_name`` selects the embedding backbone — see ``build_embedding_model``
     for the supported list. ``num_feats`` and ``kernel_size`` only apply to
-    the MOSAIKS backbone; DINOv2 variants ignore them (output dim is fixed
-    per variant).
+    the MOSAIKS backbone; DINO variants ignore them (output dim is fixed by
+    the selected model).
     """
     log_progress(f"Reading footprints from {footprints_path}")
     footprints = gpd.read_file(footprints_path)
@@ -597,7 +798,10 @@ def embed_footprints(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log_progress(f"Loading {model_name} model on {device}...")
     handle = build_embedding_model(
-        model_name, num_feats=num_feats, kernel_size=kernel_size
+        model_name,
+        num_feats=num_feats,
+        kernel_size=kernel_size,
+        model_path=model_path,
     )
     model = handle["model"].to(device)
     patch_size = int(handle["patch_size"])
@@ -888,6 +1092,7 @@ def main():
                 pipeline.get("resize_factor", DEFAULT_RESIZE_FACTOR)
             ),
             batch_size=int(pipeline.get("batch_size", DEFAULT_BATCH_SIZE)),
+            model_path=files.get("model"),
         )
 
         embeddings_path = os.path.join(
