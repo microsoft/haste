@@ -34,7 +34,7 @@ class PublishingProviderRegistry:
             "local": ProviderInfo(
                 id="local",
                 displayName="Local (In App storage)",
-                description="Immutable copy in HASTE-managed storage",
+                description="Immutable copy in the app's storage",
                 isEnabled=publishing_enabled,
                 isConfigured=True,
                 disabledReason=(

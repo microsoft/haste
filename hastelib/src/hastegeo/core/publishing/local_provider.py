@@ -35,7 +35,7 @@ class LocalPublishingProvider(PublishingProvider):
         return ProviderInfo(
             id="local",
             displayName="Local (In App storage)",
-            description="Immutable copy in HASTE-managed storage",
+            description="Immutable copy in the app's storage",
             isEnabled=enabled,
             isConfigured=True,
             disabledReason=None if enabled else "Publishing is disabled",
