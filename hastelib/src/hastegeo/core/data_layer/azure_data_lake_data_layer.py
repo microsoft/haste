@@ -2,9 +2,10 @@
 # Licensed under the MIT License.
 import json
 
-from abstract_data_layer import AbstractDataLayer
 from azure.identity import DefaultAzureCredential  # type: ignore
 from azure.storage.filedatalake import DataLakeServiceClient  # type: ignore
+
+from .abstract_data_layer import AbstractDataLayer
 
 
 class AzureDataLakeDataLayer(AbstractDataLayer):
@@ -136,6 +137,31 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
 
     def load_all_from_partition(self, data_type):
         data = self.load_all(data_type)
+        return data
+
+    def load_bounded(self, data_type, max_records, data_format="json"):
+        if data_format != "json" or max_records < 1:
+            raise ValueError("Invalid bounded Data Lake read")
+        data = []
+        scanned_paths = 0
+        scan_limit = max_records * 10
+        for path in self.file_system_client.get_paths():
+            scanned_paths += 1
+            if scanned_paths > scan_limit:
+                raise ValueError("Metadata scan exceeds the bounded envelope")
+            parts = path.name.split("/")
+            if len(parts) > 2 or not parts[-1].startswith(f"{data_type}_"):
+                continue
+            file_contents = (
+                self.file_system_client.get_file_client(path.name)
+                .download_file()
+                .readall()
+            )
+            data.append(json.loads(file_contents))
+            if len(data) > max_records:
+                raise ValueError(
+                    f"Metadata exceeds the {max_records:,}-record limit"
+                )
         return data
 
     def delete(self, identifier, data_type, data_format="json"):

@@ -86,7 +86,11 @@ def fetch_url_text(url: str, timeout: int = 30) -> Optional[str]:
         return None
 
 
-async def download_blob_to_tempfile(url: str, suffix: str = "") -> str:
+async def download_blob_to_tempfile(
+    url: str,
+    suffix: str = "",
+    max_bytes: Optional[int] = None,
+) -> str:
     """Download the blob at ``url`` to a NamedTemporaryFile and return the path.
 
     Routes the download through the function-app-internal
@@ -103,15 +107,45 @@ async def download_blob_to_tempfile(url: str, suffix: str = "") -> str:
     conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
     container_name, blob_name = split_blob_url(url)
     bsc = BlobServiceClient.from_connection_string(conn_str)
-    blob_bytes = await asyncio.to_thread(
-        lambda: bsc.get_container_client(container_name)
-        .get_blob_client(blob_name)
-        .download_blob()
-        .readall()
-    )
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(blob_bytes)
-        return tmp.name
+    if max_bytes is not None and max_bytes < 1:
+        raise ValueError("max_bytes must be positive")
+
+    def download() -> str:
+        blob_client = bsc.get_container_client(container_name).get_blob_client(
+            blob_name
+        )
+        if max_bytes is not None:
+            size = blob_client.get_blob_properties().size
+            if size > max_bytes:
+                raise ValueError("Blob exceeds the allowed download size")
+
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=suffix, delete=False
+            ) as temp_file:
+                temp_path = temp_file.name
+                downloaded_bytes = 0
+                for chunk in blob_client.download_blob().chunks():
+                    downloaded_bytes += len(chunk)
+                    if (
+                        max_bytes is not None
+                        and downloaded_bytes > max_bytes
+                    ):
+                        raise ValueError(
+                            "Blob exceeds the allowed download size"
+                        )
+                    temp_file.write(chunk)
+            return temp_path
+        except Exception:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+            raise
+
+    return await asyncio.to_thread(download)
 
 
 class BlobRange(NamedTuple):

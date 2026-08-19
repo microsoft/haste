@@ -82,23 +82,27 @@ per publish/status transition — negligible, same profile as the model catalog.
 
 | Container | Access Level | Naming Convention | Content Type |
 |---|---|---|---|
-| existing artifacts/data container | private | `{hash(projectId)}/published/{datasetId}/{artifact_name}` | GPKG / GeoTIFF / GeoJSON / JSON |
+| existing artifacts/data container | private | `published/{datasetId}/{artifact_name}` | GPKG / GeoTIFF / GeoJSON / JSON |
 
 The Local provider copies the source model's artifacts into an **immutable
 published prefix** so the dataset survives re-run/deletion of the source model.
+The prefix is kept to three in-container segments (`published/{datasetId}/{file}`)
+so the UI can serve downloads through the existing managed-identity storage proxy
+(`get-artifacts`), which the VNet-only storage account requires — a direct blob
+SAS from the browser is denied by the storage firewall. `{datasetId}` is a UUID,
+so no project-hash prefix is needed for uniqueness.
 
 ### Blob Path Conventions
 
 ```
 {container}/
-  {hash(projectId)}/
-    published/
-      {datasetId}/
-        predicted_damage_{modelName}.gpkg
-        valid_area_mask_{projectId}_{layerId}.geojson
-        processed_imagery_post_event_cog_{projectId}_{layerId}.tif
-        building_footprints_{projectId}_{layerId}.gpkg
-        assessment_report_{datasetId}.json    # snapshot for provenance
+  published/
+    {datasetId}/
+      predicted_damage_{modelName}.gpkg
+      valid_area_mask_{projectId}_{layerId}.geojson
+      processed_imagery_post_event_cog_{projectId}_{layerId}.tif
+      building_footprints_{projectId}_{layerId}.gpkg
+      assessment_report_{datasetId}.json    # snapshot for provenance
 ```
 
 Names reuse the existing artifact templates (`config.py:69-141`); the `published/`
@@ -176,7 +180,7 @@ UI → PutPublishDatasetQueueMessage (validate + provider.validate)
         → PUBLISHED_DATASETS index doc (PENDING)
         → publish-queue (datasetId)
    hastefuncqueues → PublishingProcessor.run → provider.publish
-        Local: copy → {hash}/published/{datasetId}/… ; links=SAS
+        Local: copy → published/{datasetId}/… ; links=SAS (served via storage proxy)
         PC:    pystac/geopandas → POST /stac/collections(/items) → poll operations
         → PUBLISHED_DATASETS index doc (PUBLISHED | FAILED, links, providerMetadata)
 ```

@@ -184,6 +184,14 @@ class AbstractDataLayer(ABC):
         """
         pass
 
+    def load_bounded(
+        self, data_type, max_records, data_format="json"
+    ):
+        """Load no more than ``max_records`` or fail before full materialization."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support bounded reads"
+        )
+
     @abstractmethod
     def delete(self, identifier, data_type, data_format="json"):
         """Delete a specific data record from the storage backend.

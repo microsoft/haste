@@ -5,7 +5,8 @@ import os
 import shutil
 
 import yaml
-from abstract_data_layer import AbstractDataLayer
+
+from .abstract_data_layer import AbstractDataLayer
 
 
 class LocalFileSystemDataLayer(AbstractDataLayer):
@@ -289,6 +290,49 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
     def load_all_from_partition(self, data_type, data_format="json"):
         data = self.load_all(data_type=data_type, data_format=data_format)
         return data
+
+    def load_bounded(self, data_type, max_records, data_format="json"):
+        if max_records < 1 or data_format not in {"json", "yaml"}:
+            raise ValueError("Invalid bounded local metadata read")
+        records = []
+        scanned_paths = 0
+        scan_limit = max_records * 10
+        directories = [self.directory]
+        with os.scandir(self.directory) as root_entries:
+            for entry in root_entries:
+                scanned_paths += 1
+                if scanned_paths > scan_limit:
+                    raise ValueError(
+                        "Metadata scan exceeds the bounded envelope"
+                    )
+                if entry.is_dir(follow_symlinks=False):
+                    directories.append(entry.path)
+
+        for directory in directories:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    scanned_paths += 1
+                    if scanned_paths > scan_limit:
+                        raise ValueError(
+                            "Metadata scan exceeds the bounded envelope"
+                        )
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    if not entry.name.startswith(f"{data_type}_") or not entry.name.endswith(
+                        f".{data_format}"
+                    ):
+                        continue
+                    with open(entry.path, "r") as file:
+                        records.append(
+                            json.load(file)
+                            if data_format == "json"
+                            else yaml.safe_load(file)
+                        )
+                    if len(records) > max_records:
+                        raise ValueError(
+                            f"Metadata exceeds the {max_records:,}-record limit"
+                        )
+        return records
 
     def delete(self, identifier, data_type, data_format="json"):
         file_path = self.get_file_path(identifier, data_type, data_format)

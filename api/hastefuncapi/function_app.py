@@ -22,6 +22,12 @@ from hastegeo.core.models.projects import (
     ModelArtifacts,
     Project,
 )
+from hastegeo.core.models.publishing import (
+    ArtifactKind,
+    PublishRequest,
+    PublishStatus,
+    PublishTarget,
+)
 from hastegeo.core.models.stats import (
     ImageLayerStats,
     ProjectsSummary,
@@ -32,13 +38,42 @@ from hastegeo.core.models.training import CatalogModel
 from hastegeo.core.models.users import User
 from hastegeo.core.models.visualizer import Imagery, Visualizer
 from hastegeo.core.processors.artifacts import ArtifactProcessor
+from hastegeo.core.processors.assessment import (
+    AssessmentReportProcessor,
+    AssessmentSizeLimitError,
+)
 from hastegeo.core.processors.embedding import EmbeddingPreprocessor
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
 from hastegeo.core.processors.metadata import MetadataProcessor
+from hastegeo.core.processors.publishing import (
+    PublishingDependencyError,
+    PublishingDisabledError,
+    PublishingPermissionError,
+    PublishingProcessor,
+    PublishingSizeLimitError,
+    PublishingStateConflictError,
+)
 from hastegeo.core.processors.stats import StatsPreProcessor
 from hastegeo.core.processors.train import TrainPreprocessor
 from hastegeo.core.processors.uploader import FileUploader
+from hastegeo.core.publishing.lease import LeaseUnavailableError
+from hastegeo.core.publishing.registry import (
+    ProviderUnavailableError,
+    PublishingProviderRegistry,
+)
+from hastegeo.core.publishing.repository import (
+    PublishedDatasetsExistError,
+    PublishingConflictError,
+    PublishingRepository,
+    StaleRevisionError,
+)
+from hastegeo.core.publishing.source import (
+    PublishingArtifactUnavailableError,
+    PublishingSourceNotEligibleError,
+    PublishingSourceNotFoundError,
+    PublishingSourceResolver,
+)
 from hastegeo.core.utils.blob import (
     download_blob_to_tempfile,
     parse_byte_range,
@@ -52,7 +87,6 @@ from hastegeo.core.utils.url_allowlist import (
     validate_image_layer_imagery_urls,
     validate_image_layer_user_footprints_url,
 )
-from hastegeo.core.utils.user import InvitationManager, UserManager
 from pydantic import ValidationError  # type: ignore
 
 config = Config()
@@ -87,6 +121,7 @@ _EMAIL_RE = re.compile(
 # to leave room for the field to grow without ever admitting an unbounded
 # string into log lines or blob paths.
 _SHORT_INT_ID_RE = re.compile(r"^[0-9]{1,8}$")
+_PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES = 512 * 1024**2
 
 
 def _require_guid_param(req: func.HttpRequest, name: str) -> str:
@@ -178,6 +213,163 @@ def _require_roles(
         )
 
     return None
+
+
+async def _get_active_publishing_caller(
+    req: func.HttpRequest,
+) -> tuple[dict | None, func.HttpResponse | None]:
+    """Return the trusted active HASTE caller used by publishing routes."""
+    principal = _decode_client_principal(req)
+    if DEVELOPMENT_MODE:
+        principal = principal or {
+            "userId": "development@local",
+            "userDetails": "development@local",
+            "userRoles": ["authenticated", "contributors", "administrators"],
+        }
+        roles = {
+            role.lower().strip()
+            for role in principal.get("userRoles", [])
+            if isinstance(role, str)
+        }
+        caller_id = (
+            principal.get("userId")
+            or principal.get("userDetails")
+            or "development@local"
+        )
+        return {"id": str(caller_id).lower(), "roles": roles, "name": principal.get("userDetails")}, None
+
+    if principal is None:
+        return None, _publishing_error_response(
+            "UNAUTHENTICATED", "Authentication is required.", 401
+        )
+
+    principal_id = principal.get("userId")
+    user_details = principal.get("userDetails")
+    if not principal_id and not user_details:
+        return None, _publishing_error_response(
+            "UNAUTHENTICATED", "Authentication is required.", 401
+        )
+
+    try:
+        raw_users = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().USERS.value
+            ).load,
+            "acl",
+        )
+    except FileNotFoundError:
+        return None, _publishing_error_response(
+            "FORBIDDEN", "An active HASTE user is required.", 403
+        )
+
+    users = [User(**user) for user in raw_users]
+    active_user = next(
+        (
+            user
+            for user in users
+            if (
+                user.userId in {principal_id, user_details}
+                or user.objectId == principal_id
+            )
+            and user.status == config.get_user_statuses().ACTIVE.value
+            and not user.deleted
+        ),
+        None,
+    )
+    if active_user is None:
+        return None, _publishing_error_response(
+            "FORBIDDEN", "An active HASTE user is required.", 403
+        )
+
+    roles = {
+        role.lower().strip()
+        for role in principal.get("userRoles", [])
+        if isinstance(role, str)
+    }
+    caller_id = principal_id or user_details
+    # Persist the email/login as the publisher identifier, never the display
+    # name (privacy: display names are resolved from Entra at read time).
+    return {"id": str(caller_id).lower(), "roles": roles, "name": (active_user.email or user_details)}, None
+
+
+def _publishing_json_response(
+    payload: dict, status_code: int = 200
+) -> func.HttpResponse:
+    return func.HttpResponse(
+        json.dumps(payload),
+        status_code=status_code,
+        mimetype="application/json",
+    )
+
+
+def _publishing_error_response(
+    code: str, message: str, status_code: int
+) -> func.HttpResponse:
+    return _publishing_json_response(
+        {"error": {"code": code, "message": message}}, status_code
+    )
+
+
+def _publishing_exception_response(error: Exception) -> func.HttpResponse:
+    if isinstance(error, ValidationError):
+        return _publishing_error_response(
+            "VALIDATION_ERROR", "Invalid publishing request.", 400
+        )
+    if isinstance(error, PublishingPermissionError):
+        return _publishing_error_response("FORBIDDEN", str(error), 403)
+    if isinstance(error, PublishingSizeLimitError):
+        return _publishing_error_response(
+            "PUBLISH_SIZE_LIMIT_EXCEEDED", str(error), 413
+        )
+    if isinstance(
+        error,
+        (
+            PublishingConflictError,
+            PublishingStateConflictError,
+            PublishingSourceNotEligibleError,
+            StaleRevisionError,
+            LeaseUnavailableError,
+        ),
+    ):
+        return _publishing_error_response("CONFLICT", str(error), 409)
+    if isinstance(
+        error,
+        (
+            PublishingSourceNotFoundError,
+            PublishingArtifactUnavailableError,
+            FileNotFoundError,
+        ),
+    ):
+        return _publishing_error_response("NOT_FOUND", str(error), 404)
+    if isinstance(
+        error,
+        (
+            PublishingDependencyError,
+            PublishingDisabledError,
+            ProviderUnavailableError,
+        ),
+    ):
+        return _publishing_error_response(
+            "PUBLISHING_UNAVAILABLE", str(error), 503
+        )
+    if isinstance(error, ValueError):
+        return _publishing_error_response(
+            "VALIDATION_ERROR", str(error), 400
+        )
+    logger.error(
+        "Publishing request failed with %s", type(error).__name__
+    )
+    return _publishing_error_response(
+        "INTERNAL_ERROR", "Publishing request failed.", 500
+    )
+
+
+def _publishing_mutation_authorized(caller: dict) -> bool:
+    return bool(caller["roles"].intersection({"contributors", "administrators"}))
+
+
+def _publishing_processor() -> PublishingProcessor:
+    return PublishingProcessor(config=config)
 
 
 def add_cors_headers(response: func.HttpResponse) -> func.HttpResponse:
@@ -772,11 +964,18 @@ async def DeleteProject(req: func.HttpRequest) -> func.HttpResponse:
         except ValueError as ve:
             return _bad_request(f"DeleteProject: {ve}")
 
-        await asyncio.to_thread(
+        repository = PublishingRepository(config=config)
+
+        def delete_project_metadata() -> None:
             MetadataProcessor(
                 data_type=config.get_metadata_types().PROJECT.value,
                 partition_key=project_id,
-            ).delete_all_from_partition
+            ).delete_all_from_partition()
+
+        await asyncio.to_thread(
+            repository.delete_project_if_unpublished,
+            project_id,
+            delete_project_metadata,
         )
 
         request = StatsPreProcessor(
@@ -794,6 +993,16 @@ async def DeleteProject(req: func.HttpRequest) -> func.HttpResponse:
             status_code=200,
         )
 
+    except PublishedDatasetsExistError as e:
+        return _publishing_error_response(
+            "PUBLISHED_DATASETS_EXIST", str(e), 409
+        )
+    except LeaseUnavailableError:
+        return _publishing_error_response(
+            "PROJECT_PUBLISHING_ACTIVE",
+            "A publishing operation is active for this project.",
+            409,
+        )
     except FileNotFoundError as e:
         logger.error(f"Project not found: {e}\n{traceback.format_exc()}")
         return func.HttpResponse("Project not found.", status_code=404)
@@ -1472,6 +1681,8 @@ async def PutAdminSettings(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="GetUsers", auth_level=AUTH_LEVEL, methods=["GET"])
 async def GetUsers(req: func.HttpRequest) -> func.HttpResponse:
+    from hastegeo.core.utils.user import UserManager
+
     logger.info("GetUsers HTTP trigger function processed a request.")
     auth_error = _require_roles(req, {"administrators"})
     if auth_error:
@@ -1584,6 +1795,8 @@ async def GetUsers(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="PutUser", auth_level=AUTH_LEVEL, methods=["PUT"])
 async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
+    from hastegeo.core.utils.user import InvitationManager
+
     logger.info("PutUser HTTP trigger function processed a request.")
     try:
         req_body = req.get_json()
@@ -1776,6 +1989,8 @@ async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="DeleteUser", auth_level=AUTH_LEVEL, methods=["DELETE"])
 async def DeleteUser(req: func.HttpRequest) -> func.HttpResponse:
+    from hastegeo.core.utils.user import UserManager
+
     logger.info("DeleteUser HTTP trigger function processed a request.")
     auth_error = _require_roles(req, {"administrators"})
     if auth_error:
@@ -1828,6 +2043,8 @@ async def DeleteUser(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="GetUserById", auth_level=AUTH_LEVEL, methods=["GET"])
 async def GetUserById(req: func.HttpRequest) -> func.HttpResponse:
+    from hastegeo.core.utils.user import UserManager
+
     logger.info("GetUser HTTP trigger function processed a request.")
     try:
         user_id = req.params.get("userId")
@@ -4215,3 +4432,255 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             "Error generating assessment report.", status_code=500
         )
+@app.route(
+    route="GetPublishingProviders",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetPublishingProviders(req: func.HttpRequest) -> func.HttpResponse:
+    caller, auth_error = await _get_active_publishing_caller(req)
+    if auth_error:
+        return auth_error
+    registry = PublishingProviderRegistry(config=config)
+    return _publishing_json_response(
+        {
+            "publishingEnabled": config.publishing_config[
+                "publishing_enabled"
+            ],
+            "providers": [
+                info.model_dump(mode="json") for info in registry.list_infos()
+            ],
+        }
+    )
+
+
+@app.route(
+    route="GetPublishDatasetOptions",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetPublishDatasetOptions(req: func.HttpRequest) -> func.HttpResponse:
+    caller, auth_error = await _get_active_publishing_caller(req)
+    if auth_error:
+        return auth_error
+    if not _publishing_mutation_authorized(caller):
+        return _publishing_error_response(
+            "FORBIDDEN", "Contributor role required.", 403
+        )
+    try:
+        if not config.publishing_config["publishing_enabled"]:
+            raise PublishingDisabledError("Publishing is disabled")
+        project_id = _require_guid_param(req, "projectId")
+        image_layer_id = _require_guid_param(req, "imageLayerId")
+        model_id = _require_short_int_id_param(req, "modelId")
+        options = await asyncio.to_thread(
+            PublishingSourceResolver(config=config).resolve_options,
+            project_id,
+            image_layer_id,
+            model_id,
+        )
+        return _publishing_json_response(
+            {"publishDatasetOptions": options.model_dump(mode="json")}
+        )
+    except Exception as error:
+        return _publishing_exception_response(error)
+
+
+@app.route(
+    route="GetPublishedDatasets",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetPublishedDatasets(req: func.HttpRequest) -> func.HttpResponse:
+    caller, auth_error = await _get_active_publishing_caller(req)
+    if auth_error:
+        return auth_error
+    try:
+        try:
+            page = int(req.params.get("page", "1"))
+            page_size = int(req.params.get("pageSize", "20"))
+        except ValueError as error:
+            raise ValueError("page and pageSize must be integers") from error
+        project_id = req.params.get("projectId")
+        if project_id and not _GUID_RE.match(project_id):
+            raise ValueError("Invalid projectId")
+        search = req.params.get("search", "").strip()
+        if len(search) > 200:
+            raise ValueError("search must be at most 200 characters")
+        if search and len(search) < 3:
+            raise ValueError("search must be at least 3 characters")
+        target = (
+            PublishTarget(req.params["target"])
+            if req.params.get("target")
+            else None
+        )
+        status = (
+            PublishStatus(req.params["status"])
+            if req.params.get("status")
+            else None
+        )
+        records, total_count = await asyncio.to_thread(
+            PublishingRepository(config=config).list_page,
+            page=page,
+            page_size=page_size,
+            project_id=project_id,
+            target=target,
+            status=status,
+            search=search,
+            sort_key=req.params.get("sortKey", "publishedDate"),
+            sort_direction=req.params.get("sortDirection", "desc"),
+        )
+        return _publishing_json_response(
+            {
+                "publishedDatasets": [
+                    record.model_dump(mode="json") for record in records
+                ],
+                "pagination": {
+                    "page": page,
+                    "pageSize": page_size,
+                    "totalCount": total_count,
+                },
+            }
+        )
+    except Exception as error:
+        return _publishing_exception_response(error)
+
+
+@app.route(
+    route="GetPublishedDataset",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetPublishedDataset(req: func.HttpRequest) -> func.HttpResponse:
+    caller, auth_error = await _get_active_publishing_caller(req)
+    if auth_error:
+        return auth_error
+    try:
+        project_id = _require_guid_param(req, "projectId")
+        dataset_id = _require_guid_param(req, "datasetId")
+        processor = _publishing_processor()
+        record = await asyncio.to_thread(
+            processor.get_dataset, project_id, dataset_id
+        )
+        download_urls = await asyncio.to_thread(
+            processor.get_download_urls, project_id, dataset_id
+        )
+        return _publishing_json_response(
+            {
+                "publishedDataset": record.model_dump(mode="json"),
+                "downloadUrls": download_urls,
+            }
+        )
+    except Exception as error:
+        return _publishing_exception_response(error)
+
+
+@app.route(
+    route="PutPublishDatasetQueueMessage",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutPublishDatasetQueueMessage(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    caller, auth_error = await _get_active_publishing_caller(req)
+    if auth_error:
+        return auth_error
+    if not _publishing_mutation_authorized(caller):
+        return _publishing_error_response(
+            "FORBIDDEN", "Contributor role required.", 403
+        )
+    try:
+        request = PublishRequest(**req.get_json())
+        processor = _publishing_processor()
+        prepared = await asyncio.to_thread(
+            processor.prepare_create,
+            request,
+            caller["id"],
+            caller.get("name"),
+        )
+        if prepared.existing is not None:
+            record = prepared.existing
+        else:
+            try:
+                assessment_summary = await AssessmentReportProcessor(
+                    config=config
+                ).generate(
+                    str(request.projectId),
+                    request.imageLayerId,
+                    request.modelId,
+                    max_total_bytes=_PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES,
+                )
+            except Exception as assessment_error:
+                logger.warning(
+                    "Assessment snapshot unavailable for publish: %s",
+                    type(assessment_error).__name__,
+                )
+                assessment_summary = {}
+            record = await asyncio.to_thread(
+                processor.create_prepared,
+                prepared,
+                assessment_summary,
+            )
+        return _publishing_json_response(
+            {"publishedDataset": record.model_dump(mode="json")}, 202
+        )
+    except Exception as error:
+        return _publishing_exception_response(error)
+
+
+@app.route(
+    route="PutRetryPublishedDatasetQueueMessage",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutRetryPublishedDatasetQueueMessage(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    caller, auth_error = await _get_active_publishing_caller(req)
+    if auth_error:
+        return auth_error
+    try:
+        body = req.get_json()
+        project_id = str(body.get("projectId", ""))
+        dataset_id = str(body.get("datasetId", ""))
+        if not _GUID_RE.match(project_id) or not _GUID_RE.match(dataset_id):
+            raise ValueError("Valid projectId and datasetId are required")
+        record = await asyncio.to_thread(
+            _publishing_processor().retry,
+            project_id,
+            dataset_id,
+            caller["id"],
+            "administrators" in caller["roles"],
+        )
+        return _publishing_json_response(
+            {"publishedDataset": record.model_dump(mode="json")}, 202
+        )
+    except Exception as error:
+        return _publishing_exception_response(error)
+
+
+@app.route(
+    route="DeletePublishedDataset",
+    auth_level=AUTH_LEVEL,
+    methods=["DELETE"],
+)
+async def DeletePublishedDataset(req: func.HttpRequest) -> func.HttpResponse:
+    caller, auth_error = await _get_active_publishing_caller(req)
+    if auth_error:
+        return auth_error
+    try:
+        project_id = _require_guid_param(req, "projectId")
+        dataset_id = _require_guid_param(req, "datasetId")
+        record = await asyncio.to_thread(
+            _publishing_processor().request_unpublish,
+            project_id,
+            dataset_id,
+            caller["id"],
+            "administrators" in caller["roles"],
+        )
+        return _publishing_json_response(
+            {"publishedDataset": record.model_dump(mode="json")}, 202
+        )
+    except Exception as error:
+        return _publishing_exception_response(error)

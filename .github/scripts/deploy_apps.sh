@@ -56,6 +56,9 @@ BATCH_INFERENCE_POOL_IDS="${BATCH_INFERENCE_POOL_IDS:-}"
 BATCH_IMAGERYPREP_POOL_IDS="${BATCH_IMAGERYPREP_POOL_IDS:-}"
 BATCH_USE_SAS="${BATCH_USE_SAS:-false}"
 BATCH_MANAGE_POOLS="${BATCH_MANAGE_POOLS:-true}"
+# Data publishing feature flag. Mirrors the `publishingEnabled` param in
+# infra/modules/functions.bicep so both deploy paths agree; defaults off.
+PUBLISHING_ENABLED="${PUBLISHING_ENABLED:-false}"
 MAPS_ACCOUNT="${RESOURCE_PREFIX}haste${RANDOM_SUFFIX}maps"
 API_MANAGEMENT="${RESOURCE_PREFIX}-haste-${RANDOM_SUFFIX}-apim"
 FIXED_TAGS="project=haste created_by=deploy_apps"
@@ -78,6 +81,11 @@ deploy_function() {
     echo "+--------------------------------------------------+"
     echo "Deploying function app: $FUNCTION_NAME"
     echo "+--------------------------------------------------+"
+
+    # Unique, stable host id per app/slot (<=32 lowercase alnum/hyphen) so the
+    # publishing reconciler TimerTrigger's host-scoped Singleton lock does not
+    # collide across apps sharing storage. See data-publishing/rollout.md.
+    HOST_ID=$(printf '%s' "$FUNCTION_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-32)
 
     if [ "${SET_APPSETTINGS:-true}" = "true" ]; then
         # Get storage account connection string with error handling
@@ -135,6 +143,8 @@ deploy_function() {
             "STATIC_APP_DOMAIN=${STATIC_APP_DOMAIN}" \
             "EMAIL_CONNECTION_STRING=${EMAIL_CONNECTION_STRING}" \
             "EMAIL_SENDER=${EMAIL_SENDER}" \
+            "PUBLISHING_ENABLED=${PUBLISHING_ENABLED}" \
+            "AzureFunctionsWebHost__hostId=${HOST_ID}" \
             --output none
     fi
 

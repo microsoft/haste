@@ -89,6 +89,11 @@ param useSas bool = false
 @description('Runner auto-creates/resizes its pool. False for pre-created autoscale pools.')
 param managePools bool = true
 
+// --- data publishing ---------------------------------------------------------
+
+@description('Enable the Published Datasets section + Publish action (feature flag). On by default.')
+param publishingEnabled bool = true
+
 @description('Resource tags.')
 param tags object = {}
 
@@ -112,6 +117,7 @@ var appConfigSettings = [
   { name: 'TRAIN_QUEUE_NAME', value: 'train-queue' }
   { name: 'ZIP_QUEUE_NAME', value: 'zip-queue' }
   { name: 'EMBEDDING_QUEUE_NAME', value: 'embedding-queue' }
+  { name: 'PUBLISH_QUEUE_NAME', value: 'publish-queue' }
   { name: 'IMAGERY_STORAGE_TYPE', value: 'blob' }
   { name: 'METADATA_STORAGE_TYPE', value: 'blob' }
   { name: 'ARTIFACT_STORAGE_TYPE', value: 'blob' }
@@ -150,6 +156,11 @@ var appConfigSettings = [
   { name: 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', value: imageryprepPoolIds }
   { name: 'AZURE_BATCH_USE_SAS', value: useSas ? 'true' : 'false' }
   { name: 'AZURE_BATCH_MANAGE_POOLS', value: managePools ? 'true' : 'false' }
+  // Data publishing feature flag (Local target). The queue + publishing-locks
+  // container are auto-created at runtime; PC-target settings are added by the
+  // planetary-computer wiring. Other Local knobs (PUBLISH_MAX_TOTAL_BYTES,
+  // PUBLISHED_DOWNLOAD_SAS_MINUTES, PUBLISHING_LOCK_CONTAINER) use code defaults.
+  { name: 'PUBLISHING_ENABLED', value: publishingEnabled ? 'true' : 'false' }
 ]
 
 module apiApp 'functionApp.bicep' = {
@@ -165,7 +176,14 @@ module apiApp 'functionApp.bicep' = {
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
     logAnalyticsId: logAnalyticsId
-    appSettings: appConfigSettings
+    // Unique host id per app so the publishing reconciler TimerTrigger's
+    // host-scoped Singleton lock doesn't collide across apps sharing storage.
+    appSettings: concat(appConfigSettings, [
+      {
+        name: 'AzureFunctionsWebHost__hostId'
+        value: toLower(substring(functionApiName, 0, min(32, length(functionApiName))))
+      }
+    ])
     tags: tags
   }
 }
@@ -206,7 +224,12 @@ module queueApp 'functionApp.bicep' = {
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
     logAnalyticsId: logAnalyticsId
-    appSettings: appConfigSettings
+    appSettings: concat(appConfigSettings, [
+      {
+        name: 'AzureFunctionsWebHost__hostId'
+        value: toLower(substring(functionQueueName, 0, min(32, length(functionQueueName))))
+      }
+    ])
     tags: tags
   }
   dependsOn: [

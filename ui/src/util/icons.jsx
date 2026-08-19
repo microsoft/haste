@@ -4,6 +4,8 @@
 // Bridges the v8 string-based `iconName` pattern to v9 icon components
 // during the FluentUI v8 -> v9 migration. Use <FluentIcon name="Add" />
 // or getIcon("Add") wherever the old code passed an iconName string.
+import PropTypes from "prop-types";
+
 import {
   AddRegular,
   AppsRegular,
@@ -32,6 +34,7 @@ import {
   CursorRegular,
   CutRegular,
   DataTrendingRegular,
+  DatabaseRegular,
   DeleteRegular,
   DismissRegular,
   DocumentRegular,
@@ -89,6 +92,7 @@ const ICONS = {
   copy: CopyRegular,
   crop: CropRegular,
   cut: CutRegular,
+  database: DatabaseRegular,
   delete: DeleteRegular,
   download: ArrowDownloadRegular,
   edit: EditRegular,
@@ -133,13 +137,20 @@ const ICONS = {
 };
 
 /** Resolve a v8 iconName string to a v9 icon component (or null). */
+// eslint-disable-next-line react-refresh/only-export-components
 export function getIconComponent(name) {
   if (!name) return null;
   return ICONS[String(name).toLowerCase()] || null;
 }
 
 /** Render a v9 icon from a v8-style name. Extra props pass through. */
+/* eslint-disable react-hooks/static-components */
 export function FluentIcon({ name, ...rest }) {
   const Cmp = getIconComponent(name);
   return Cmp ? <Cmp {...rest} /> : null;
 }
+/* eslint-enable react-hooks/static-components */
+
+FluentIcon.propTypes = {
+  name: PropTypes.string.isRequired,
+};

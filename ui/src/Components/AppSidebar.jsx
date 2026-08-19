@@ -14,14 +14,6 @@ const AppSidebar = ({
   open,
   onItemSelected,
 }) => {
-  AppSidebar.propTypes = {
-    setModalComponent: PropTypes.func.isRequired,
-    collapsed: PropTypes.bool,
-    mobile: PropTypes.bool,
-    open: PropTypes.bool,
-    onItemSelected: PropTypes.func,
-  };
-
   const { appParams } = useContext(AppContext);
   const navigate = useNavigate();
   const location = useLocation();
@@ -82,6 +74,17 @@ const AppSidebar = ({
             pathname.startsWith("/projects") ||
             pathname.startsWith("/project/"),
         },
+        ...(appParams.publishingEnabled
+          ? [
+              {
+                key: "published-datasets",
+                label: "Published Datasets",
+                icon: "Database",
+                onClick: () => handleNavigate("/published-datasets"),
+                active: pathname.startsWith("/published-datasets"),
+              },
+            ]
+          : []),
       ],
     },
     ...(isAdmin
@@ -165,6 +168,14 @@ const AppSidebar = ({
       </div>
     </nav>
   );
+};
+
+AppSidebar.propTypes = {
+  setModalComponent: PropTypes.func.isRequired,
+  collapsed: PropTypes.bool,
+  mobile: PropTypes.bool,
+  open: PropTypes.bool,
+  onItemSelected: PropTypes.func,
 };
 
 export default AppSidebar;

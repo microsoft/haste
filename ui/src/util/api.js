@@ -32,6 +32,9 @@ export async function apiValidateUser(setAppParams) {
           setAppParams((prevParams) => ({
             ...prevParams,
             userId: upsertUserObject.userId,
+            // SWA principal object id — matches PublishedDataset.publishedByUser
+            // so non-admin publishers are recognized as owners.
+            identityId: staticAppUserStatus.clientPrincipal.userId,
             userRoles: upsertUserObject.userRoles,
             userSettings: upsertUserObject.settings,
             userStatus: upsertUserObject.status
@@ -41,6 +44,7 @@ export async function apiValidateUser(setAppParams) {
         setAppParams((prevParams) => ({
           ...prevParams,
           userId: response.userId,
+          identityId: staticAppUserStatus.clientPrincipal.userId,
           userRoles: response.userRoles,
           userSettings: response.settings,
           userStatus: response.status
@@ -91,8 +95,25 @@ export async function apiPut(endpoint, data) {
       return response.status;
     }
 
-    if (response.status !== 200 && response.status !== 409) {
-      throw new Error(response);
+    // Accept any 2xx (e.g. 202 Accepted for async queue-message endpoints),
+    // not just 200. Backward-compatible: existing 200 callers are unaffected.
+    if (!response.ok) {
+      // Surface the server's message instead of stringifying the Response
+      // object (which renders as the useless "[object Response]"). Error
+      // bodies are JSON `{ error: { code, message } }` (publishing routes) or
+      // `{ error }` / `{ message }` elsewhere; fall back to the status code.
+      let message = `Request failed (status ${response.status}).`;
+      try {
+        const body = await response.json();
+        message =
+          body?.error?.message || body?.error || body?.message || message;
+      } catch {
+        // Non-JSON error body — keep the status-based message.
+      }
+      throw new Error(message);
+    }
+    if (response.status === 204) {
+      return null;
     }
     const message = await response.json();
     return message;
@@ -126,7 +147,7 @@ export async function apiDelete(endpoint) {
     const response = await fetch(buildUrl(endpoint), {
       method: 'DELETE'
     });
-    if (response.status !== 200) {
+    if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     return response;

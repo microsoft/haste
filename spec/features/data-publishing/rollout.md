@@ -43,10 +43,11 @@ secret is entered or stored by the app).
 
 | `azd` env var | App Setting | Default | Purpose |
 |---|---|---|---|
-| `HASTE_PUBLISHING_ENABLED` | `PUBLISHING_ENABLED` | `false` | Master flag: Published Datasets section + Publish action |
+| `HASTE_PUBLISHING_ENABLED` | `PUBLISHING_ENABLED` | `true` | Master flag: Published Datasets section + Publish action |
 | — | `PUBLISH_QUEUE_NAME` | `publish-queue` | Publish job queue (auto-created at runtime) |
 
-Enabling Local publishing needs only `HASTE_PUBLISHING_ENABLED=true`. The
+Publishing is **on by default** (the deploy writes `PUBLISHING_ENABLED=true`);
+set `HASTE_PUBLISHING_ENABLED=false` to disable it. The
 `publish-queue` and the `publishing-locks` blob container are auto-created on
 first use, so no queue/container resources are provisioned. The remaining Local
 knobs use code defaults and are only set to override them (directly on the
@@ -83,6 +84,25 @@ template). Two grants are required and are **not** created by the app deploy:
    the GeoCatalog's managed identity *Storage Blob Data Reader* on the HASTE
    storage account by setting `HASTE_PC_GEOCATALOG_INGEST_PRINCIPAL_ID` to that
    identity's object id (the deploy then makes the assignment; empty = skip).
+
+### Function App host id (required — avoids Singleton-lock failures)
+
+Publishing adds a **timer trigger** (`ReconcilePublishingOperations`, every 5
+minutes) to the queues Function App — the app's first timer trigger. Timer
+triggers acquire a **host-scoped Singleton lock**, so if the Function App's
+auto-generated host id collides with another deployment slot or another app
+sharing the same storage account, the timer (and the host) can fail with
+*"Unable to acquire Singleton lock"* and *"No script host available"* /
+`NoScriptHost` — the app goes unhealthy.
+
+A unique **`AzureFunctionsWebHost__hostId`** app setting (≤ 32 chars, lowercase
+alphanumeric + hyphens) is required on **each** Function App **and each
+deployment slot**. Both deploy paths now set it automatically from the app name
+(`infra/modules/functions.bicep` for `azd`, `.github/scripts/deploy_apps.sh` for
+the GitHub Actions path); override only for extra slots. See
+<https://aka.ms/functions-hostid>. This applies wherever publishing is enabled
+(Local *or* PC), since the reconciler timer ships with the Local feature; it is
+unrelated to the publishing code itself.
 
 ## Rollout Phases
 

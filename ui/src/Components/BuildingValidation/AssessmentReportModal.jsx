@@ -18,6 +18,7 @@ import {
 import { FluentIcon } from "../../util/icons";
 import PropTypes from "prop-types";
 import { apiGet } from "../../util/api";
+import { buildAssessmentSummary } from "../../util/assessmentSummary";
 
 /* ── Theme-aware design tokens (follow light/dark via Fluent) ─── */
 const tokens = {
@@ -163,14 +164,6 @@ const AssessmentReportModal = ({
   modelName,
   onDismiss,
 }) => {
-  AssessmentReportModal.propTypes = {
-    projectId: PropTypes.string.isRequired,
-    imageLayerId: PropTypes.string.isRequired,
-    modelId: PropTypes.string.isRequired,
-    modelName: PropTypes.string,
-    onDismiss: PropTypes.func.isRequired,
-  };
-
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -194,7 +187,10 @@ const AssessmentReportModal = ({
   };
 
   useEffect(() => {
+    // State updates occur after the report request resolves.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, imageLayerId, modelId]);
 
   const preds = report?.predictions;
@@ -203,37 +199,7 @@ const AssessmentReportModal = ({
   const sample = report?.evaluationSample;
   const hasLabels = (report?.matched ?? 0) > 0;
 
-  function buildSummarySentence() {
-    if (!report || !preds) return "";
-    let s =
-      `Out of a total of ${int(preds.total)} building footprints in the study area, ` +
-      `${int(preds.cloudy)} were obscured by clouds; of the remaining ` +
-      `${int(preds.knownNonCloudy)} non-cloudy footprints, the model ` +
-      `predicted that ${int(preds.predictedDamaged)} ` +
-      `(${preds.predictedDamagedPctOfKnown ?? 0}%) were damaged to some extent.`;
-    if (!hasLabels) {
-      return (
-        s +
-        " No human validation labels are available for this image layer yet — " +
-        "labeling some via the Building Validation tool will populate the " +
-        "metrics and population estimate."
-      );
-    }
-    s +=
-      ` We independently labeled ${int(report.totalLabels)} footprints; ` +
-      `${int(report.sureLabels)} were sure-labeled. Estimated recall ` +
-      `${pct(metrics?.recall)} and precision ${pct(metrics?.precision)}.`;
-    if (pop && pop.N > 0) {
-      s +=
-        ` Extrapolating to all ${int(pop.N)} buildings with area > ` +
-        `${pop.minAreaM2.toFixed(0)} m², we estimate ` +
-        `${int(pop.estimatedDamaged)} damaged buildings ` +
-        `(${pct(pop.pHat)}) with a 95% CI of ` +
-        `[${int(pop.ciLower)}, ${int(pop.ciUpper)}].`;
-    }
-    return s;
-  }
-  const summarySentence = buildSummarySentence();
+  const summarySentence = buildAssessmentSummary(report);
 
   return (
     <Dialog
@@ -414,6 +380,14 @@ const AssessmentReportModal = ({
       </DialogSurface>
     </Dialog>
   );
+};
+
+AssessmentReportModal.propTypes = {
+  projectId: PropTypes.string.isRequired,
+  imageLayerId: PropTypes.string.isRequired,
+  modelId: PropTypes.string.isRequired,
+  modelName: PropTypes.string,
+  onDismiss: PropTypes.func.isRequired,
 };
 
 export default AssessmentReportModal;

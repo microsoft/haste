@@ -18,6 +18,7 @@ import { AppContext } from "../../AppContext";
 import ModelResultsStatusIndicator from "../OtherComponents/ModelResultsStatusIndicator";
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
+import PublishDatasetModal from "../PublishDatasetModal";
 
 
 function formatFileSize(bytes) {
@@ -31,18 +32,11 @@ function formatFileSize(bytes) {
 
 
 const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationLabelCount }) => {
-  ModelResultsButton.propTypes = {
-    model: PropTypes.object.isRequired,
-    projectId: PropTypes.string.isRequired,
-    imageLayerId: PropTypes.string.isRequired,
-    index: PropTypes.number.isRequired,
-    validationLabelCount: PropTypes.number,
-  };
-
-  const { setDialog } = useContext(AppContext);
+  const { appParams, setDialog } = useContext(AppContext);
   const navigate = useNavigate();
   const [showValidationReport, setShowValidationReport] = useState(false);
   const [showAssessmentReport, setShowAssessmentReport] = useState(false);
+  const [showPublishDataset, setShowPublishDataset] = useState(false);
 
   function evaluateViewResultsButtonState(model) {
     // Results button must be enabled if inference jobs exist and status is processed
@@ -67,7 +61,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
         );
       }
       fileDownload(url, setDialog);
-    } catch (error) {
+    } catch {
       setDialog({
         title: "Download Error",
         message: "An error occurred while downloading. Please try again later.",
@@ -146,6 +140,18 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
         disabled: model.inferenceStatus !== "Processed",
         onClick: () => setShowAssessmentReport(true),
       },
+      ...(appParams.publishingEnabled
+        ? [
+            {
+              key: "publishDataset",
+              text: "Publish dataset…",
+              icon: <FluentIcon name="Upload" />,
+              disabled:
+                model.inferenceStatus !== "Processed" || !model.gpkgUrl,
+              onClick: () => setShowPublishDataset(true),
+            },
+          ]
+        : []),
     ],
   });
 
@@ -204,8 +210,30 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
             onDismiss={() => setShowAssessmentReport(false)}
           />
         )}
+        {showPublishDataset && (
+          <PublishDatasetModal
+            projectId={projectId}
+            imageLayerId={imageLayerId}
+            modelId={model.modelId}
+            onDismiss={() => setShowPublishDataset(false)}
+            onStarted={() =>
+              setDialog(
+                "Publishing started",
+                "Track progress in Published Datasets.",
+              )
+            }
+          />
+        )}
       </React.Fragment>
     );
   };
+
+ModelResultsButton.propTypes = {
+  model: PropTypes.object.isRequired,
+  projectId: PropTypes.string.isRequired,
+  imageLayerId: PropTypes.string.isRequired,
+  index: PropTypes.number.isRequired,
+  validationLabelCount: PropTypes.number,
+};
 
   export default ModelResultsButton;

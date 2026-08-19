@@ -103,7 +103,7 @@ class PublishingProvider(ABC):
     def provider_id(self) -> str: ...          # "local" | "planetary_computer"
     @property
     @abstractmethod
-    def display_name(self) -> str: ...          # "Local (HASTE storage)"
+    def display_name(self) -> str: ...          # "Local (In App storage)"
     @property
     def description(self) -> str: return ""
     @property
@@ -176,7 +176,7 @@ Per `AGENTS.md`, these are thin wrappers in `function_app.py` delegating to
 ```json
 {
   "providers": [
-    { "id": "local", "displayName": "Local (HASTE storage)",
+    { "id": "local", "displayName": "Local (In App storage)",
       "description": "string", "isConfigured": true, "supportsAsync": true,
       "configRequirements": [] },
     { "id": "planetary_computer", "displayName": "Planetary Computer",

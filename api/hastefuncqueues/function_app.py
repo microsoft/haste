@@ -15,6 +15,7 @@ from hastegeo.core.models.projects import (
     ModelArtifacts,
     Project,
 )
+from hastegeo.core.models.publishing import PublishQueueMessage
 from hastegeo.core.models.stats import ProjectsSummary, StatsRequest
 from hastegeo.core.models.training import ExperimentConfig
 from hastegeo.core.processors.artifacts import ArtifactProcessor
@@ -26,6 +27,7 @@ from hastegeo.core.processors.inference import (
 )
 from hastegeo.core.processors.labels import LabelTaskGenerator
 from hastegeo.core.processors.metadata import MetadataProcessor
+from hastegeo.core.processors.publishing import PublishingProcessor
 from hastegeo.core.processors.stats import StatsPostProcessor
 from hastegeo.core.processors.train import TrainPostprocessor
 from hastegeo.core.utils.data import convert_json_to_geojson
@@ -998,3 +1000,75 @@ async def GetArtifactsZipQueueMessage(msg: func.QueueMessage) -> None:
                 f"ArtifactsZipQueueTrigger: Error saving failed status: {inner_e}\n{traceback.format_exc()}",
                 stack_info=True,
             )
+
+
+@app.function_name(name="PublishDatasetQueueTrigger")
+@app.queue_trigger(
+    arg_name="msg",
+    queue_name=config.get_queue_config()["publish_queue_name"],
+    connection="AzureWebJobsStorage",
+)
+async def GetPublishDatasetQueueMessage(msg: func.QueueMessage) -> None:
+    try:
+        message = PublishQueueMessage(
+            **json.loads(msg.get_body().decode("utf-8"))
+        )
+        await asyncio.to_thread(PublishingProcessor(config=config).run_step, message)
+    except Exception as error:
+        logger.error(
+            "PublishDatasetQueueTrigger failed with %s",
+            type(error).__name__,
+        )
+        raise RuntimeError(
+            f"Publishing queue step failed: {type(error).__name__}"
+        ) from None
+
+
+@app.function_name(name="PublishDatasetPoisonQueueTrigger")
+@app.queue_trigger(
+    arg_name="msg",
+    queue_name=f'{config.get_queue_config()["publish_queue_name"]}-poison',
+    connection="AzureWebJobsStorage",
+)
+async def GetPublishDatasetPoisonQueueMessage(msg: func.QueueMessage) -> None:
+    try:
+        message = PublishQueueMessage(
+            **json.loads(msg.get_body().decode("utf-8"))
+        )
+        await asyncio.to_thread(
+            PublishingProcessor(config=config).mark_poisoned, message
+        )
+    except FileNotFoundError:
+        logger.info("Ignoring poison message for a removed published dataset")
+    except Exception as error:
+        logger.error(
+            "PublishDatasetPoisonQueueTrigger failed with %s",
+            type(error).__name__,
+        )
+        raise RuntimeError(
+            f"Publishing poison step failed: {type(error).__name__}"
+        ) from None
+
+
+@app.function_name(name="ReconcilePublishingOperations")
+@app.timer_trigger(
+    arg_name="timer",
+    schedule="0 */5 * * * *",
+    run_on_startup=False,
+    use_monitor=True,
+)
+async def ReconcilePublishingOperations(timer: func.TimerRequest) -> None:
+    try:
+        requeued = await asyncio.to_thread(
+            PublishingProcessor(config=config).reconcile_stale
+        )
+        if requeued:
+            logger.info("Requeued %s stale publishing operations", requeued)
+    except Exception as error:
+        logger.error(
+            "ReconcilePublishingOperations failed with %s",
+            type(error).__name__,
+        )
+        raise RuntimeError(
+            f"Publishing reconciliation failed: {type(error).__name__}"
+        ) from None

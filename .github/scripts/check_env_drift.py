@@ -41,10 +41,18 @@ FUNCTIONS_BICEP = REPO / "infra" / "modules" / "functions.bicep"
 
 PLACEHOLDER = re.compile(r"<[^<>]+>")
 
+# Typed wrappers around os.getenv (e.g. `_get_bool_env`,
+# `_get_bounded_int_env` in hastegeo.core.config). They take the variable name
+# as the first argument and supply their own default in the signature, so a
+# call is a genuine read even when no default is passed at the call site.
+# Without this the scanner sees no reader and reports the setting as dead.
+ENV_HELPER = re.compile(r"^_get_[a-z0-9_]*env$")
+
 # Variables that are genuinely optional for an Azure deployment, with the reason
 # each one is exempt. Anything not listed here that the code marks required must
 # be emitted by both deploy paths.
 ALLOWLIST = {
+    "AzureFunctionsWebHost__hostId": "consumed by the Functions host runtime",
     # Alternative metadata/storage backends. Azure deployments use blob storage
     # (METADATA_STORAGE_TYPE=blob), so these are never read there.
     "COSMOS_ENDPOINT": "cosmos backend only",
@@ -126,6 +134,11 @@ def scan_code() -> tuple[dict[str, set[Path]], set[str]]:
                         and func.attr in ("getenv", "get")
                         and node.args
                     )
+                    is_helper = (
+                        isinstance(func, ast.Name)
+                        and ENV_HELPER.match(func.id)
+                        and node.args
+                    )
                     if is_getenv:
                         target = ast.unparse(func)
                         if target.endswith(
@@ -135,6 +148,13 @@ def scan_code() -> tuple[dict[str, set[Path]], set[str]]:
                             has_default = len(node.args) > 1
                             if has_default:
                                 default = _literal(node.args[1])
+                    elif is_helper:
+                        name = _literal(node.args[0])
+                        # The wrapper defines its own default, so the read is
+                        # optional even with no default at the call site.
+                        has_default = True
+                        if len(node.args) > 1:
+                            default = _literal(node.args[1])
 
                 elif isinstance(node, ast.Subscript):
                     value = node.value
