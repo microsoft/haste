@@ -28,11 +28,11 @@ import rasterio
 import shapely.geometry
 from rasterio.transform import from_origin
 
-# The script under test lives next to this file and is not installed as a
-# package, so make it importable by path.
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, SCRIPT_DIR)
+# The script under test lives in the parent directory and is not installed
+# as a package, so make it importable by path.
+CODE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if CODE_DIR not in sys.path:
+    sys.path.insert(0, CODE_DIR)
 
 import merge_with_building_footprints as merge  # noqa: E402
 

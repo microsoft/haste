@@ -17,10 +17,10 @@ import unittest
 import torch
 import torch.nn.functional as F
 
-# The `bda` package lives next to this file and is not installed.
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, SCRIPT_DIR)
+# The `bda` package lives in the parent directory and is not installed.
+CODE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if CODE_DIR not in sys.path:
+    sys.path.insert(0, CODE_DIR)
 
 from bda.trainers import constraint_segmentation_loss  # noqa: E402
 
