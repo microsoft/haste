@@ -205,15 +205,13 @@ const BuildingValidationRightPanel = ({
           onChange={(_e, data) => setShowFill(!!data.checked)}
         />
         <Switch
-label={
-  showPostImagery
-    ? hasPostImagery
-      ? "Imagery: Post event"
-      : "Imagery: Basemap"
-    : hasPreImagery
-      ? "Imagery: Pre event"
-      : "Imagery: Basemap"
-}
+          label={
+            showPostImagery
+              ? "Imagery: Post event"
+              : hasPreImagery
+                ? "Imagery: Pre event"
+                : "Imagery: Basemap"
+          }
           checked={showPostImagery}
           onChange={(_e, data) => setShowPostImagery(!!data.checked)}
           disabled={!hasPostImagery}
