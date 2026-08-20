@@ -1,87 +1,94 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import { useState } from "react";
-import { Button } from "@fluentui/react-components";
+import { Button, makeStyles, tokens } from "@fluentui/react-components";
 import { FluentIcon } from "../util/icons";
 import PropTypes from "prop-types";
 
-const rootStyle = {
-  color: "#605e5c",
-  fontSize: 11,
-  marginTop: 8,
-};
-
-const itemStyle = {
-  display: "block",
-  height: "auto",
-  margin: 0,
-  padding: "0 0 8px",
-  position: "relative",
-  width: "100%",
-};
-
-const keysStyle = {
-  alignItems: "center",
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 4,
-  lineHeight: "20px",
-  minHeight: 20,
-  position: "relative",
-  width: "100%",
-};
-
-const keyGroupStyle = {
-  alignItems: "center",
-  display: "inline-flex",
-  gap: 4,
-};
-
-const keyStyle = {
-  background: "#f3f2f1",
-  border: "1px solid #c8c6c4",
-  borderRadius: 3,
-  color: "#323130",
-  display: "inline-block",
-  fontFamily: "inherit",
-  fontSize: 10,
-  fontWeight: 600,
-  lineHeight: "16px",
-  minWidth: 18,
-  padding: "0 4px",
-  textAlign: "center",
-  whiteSpace: "nowrap",
-};
-
-const separatorStyle = {
-  color: "#8a8886",
-  display: "inline-block",
-  lineHeight: "16px",
-  whiteSpace: "pre",
-};
-
-const descriptionStyle = {
-  clear: "both",
-  display: "block",
-  fontSize: 11,
-  height: "auto",
-  lineHeight: "16px",
-  margin: "3px 0 0",
-  overflow: "visible",
-  overflowWrap: "break-word",
-  position: "relative",
-  whiteSpace: "normal",
-  width: "100%",
-};
+// Colours come from Fluent tokens so the panel follows the active theme.
+// Hardcoded greys here render at ~1.1:1 against the dark surface, which is
+// what made this block unreadable in dark mode.
+const useStyles = makeStyles({
+  root: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: "11px",
+    marginTop: tokens.spacingVerticalS,
+  },
+  toggle: {
+    fontSize: "11px",
+    fontWeight: tokens.fontWeightSemibold,
+    height: "24px",
+    minWidth: 0,
+    padding: 0,
+  },
+  item: {
+    display: "block",
+    height: "auto",
+    margin: 0,
+    padding: `0 0 ${tokens.spacingVerticalS}`,
+    position: "relative",
+    width: "100%",
+  },
+  keys: {
+    alignItems: "center",
+    display: "flex",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalXS,
+    lineHeight: "20px",
+    minHeight: "20px",
+    position: "relative",
+    width: "100%",
+  },
+  keyGroup: {
+    alignItems: "center",
+    display: "inline-flex",
+    gap: tokens.spacingHorizontalXS,
+  },
+  key: {
+    backgroundColor: tokens.colorNeutralBackground3,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1}`,
+    borderRadius: tokens.borderRadiusSmall,
+    color: tokens.colorNeutralForeground1,
+    display: "inline-block",
+    fontFamily: "inherit",
+    fontSize: tokens.fontSizeBase100,
+    fontWeight: tokens.fontWeightSemibold,
+    lineHeight: "16px",
+    minWidth: "18px",
+    padding: `0 ${tokens.spacingHorizontalXS}`,
+    textAlign: "center",
+    whiteSpace: "nowrap",
+  },
+  separator: {
+    color: tokens.colorNeutralForeground3,
+    display: "inline-block",
+    lineHeight: "16px",
+    whiteSpace: "pre",
+  },
+  description: {
+    clear: "both",
+    display: "block",
+    fontSize: "11px",
+    height: "auto",
+    lineHeight: "16px",
+    margin: "3px 0 0",
+    overflow: "visible",
+    overflowWrap: "break-word",
+    position: "relative",
+    whiteSpace: "normal",
+    width: "100%",
+  },
+});
 
 const KeyboardShortcutHelp = ({
   shortcuts,
   title = "Keyboard shortcuts",
 }) => {
+  const styles = useStyles();
   const [isExpanded, setIsExpanded] = useState(true);
 
   return (
-    <section style={rootStyle} aria-label={title}>
+    <section className={styles.root} aria-label={title}>
       <Button
         appearance="subtle"
         aria-expanded={isExpanded}
@@ -92,14 +99,7 @@ const KeyboardShortcutHelp = ({
         }
         onClick={() => setIsExpanded((expanded) => !expanded)}
         size="small"
-        style={{
-          color: "#323130",
-          fontSize: 11,
-          fontWeight: 600,
-          height: 24,
-          minWidth: 0,
-          padding: 0,
-        }}
+        className={styles.toggle}
       >
         {title}
       </Button>
@@ -108,22 +108,22 @@ const KeyboardShortcutHelp = ({
           {shortcuts.map((shortcut) => (
             <div
               role="listitem"
-              style={itemStyle}
+              className={styles.item}
               key={`${shortcut.keys.join("-")}-${shortcut.description}`}
             >
-              <div style={keysStyle}>
+              <div className={styles.keys}>
                 {shortcut.keys.map((key, index) => (
-                  <span style={keyGroupStyle} key={`${key}-${index}`}>
+                  <span className={styles.keyGroup} key={`${key}-${index}`}>
                     {index > 0 && (
-                      <span style={separatorStyle}>
+                      <span className={styles.separator}>
                         {shortcut.separator || "/"}
                       </span>
                     )}
-                    <kbd style={keyStyle}>{key}</kbd>
+                    <kbd className={styles.key}>{key}</kbd>
                   </span>
                 ))}
               </div>
-              <div style={descriptionStyle}>{shortcut.description}</div>
+              <div className={styles.description}>{shortcut.description}</div>
             </div>
           ))}
         </div>
