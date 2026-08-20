@@ -27,9 +27,9 @@ The imagery comparison keys use the same direction across views:
 
 | Shortcut | Action |
 |---|---|
-| `A` | Move the swipe divider left to show pre-event imagery. |
+| `A` | Move the swipe divider left. |
 | `S` | Center the swipe divider for an even comparison. |
-| `D` | Move the swipe divider right to show post-event imagery. |
+| `D` | Move the swipe divider right. |
 
 ## Interactive Labeler
 
