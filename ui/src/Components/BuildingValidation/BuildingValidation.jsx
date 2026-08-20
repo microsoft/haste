@@ -527,7 +527,7 @@ const BuildingValidation = () => {
       } else {
         const key = e.key.toLowerCase();
         if (key === "a") setShowPostImagery(false);
-        else if (key === "d") setShowPostImagery(true);
+else if (key === "d" && postImageryRef.current) setShowPostImagery(true);
       }
     }
     window.addEventListener("keydown", onKeyDown);
