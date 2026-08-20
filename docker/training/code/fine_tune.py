@@ -4,11 +4,12 @@
 """Script for fine-tuning a segmentation model to detect damage in satellite imagery."""
 
 import argparse
+import glob
 import os
 
 import lightning.pytorch as pl
 import torch
-from bda.config import get_args
+from bda.config import get_args, normalize_gpu_ids
 from bda.datamodules import SegmentationDataModule
 from bda.trainers import CustomSemanticSegmentationTask
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -30,6 +31,15 @@ def add_fine_tune_parser(
         help="Name of the experiment (used for TensorBoard logging)",
     )
     parser.add_argument("--training.gpu_id", type=int, help="GPU id to use")
+    parser.add_argument(
+        "--training.gpu_ids",
+        type=int,
+        nargs="+",
+        help=(
+            "One or more GPU ids for multi-GPU (DDP) training, e.g."
+            " `--training.gpu_ids 0 1 2 3`. Overrides `--training.gpu_id`."
+        ),
+    )
     parser.add_argument("--training.batch_size", type=int, help="Batch size")
     parser.add_argument(
         "--training.learning_rate",
@@ -76,7 +86,13 @@ def main() -> None:
     checkpoint_dir = os.path.join(
         experiment_dir, args["training"]["checkpoint_subdir"]
     )
-    if os.path.exists(checkpoint_dir) and not args["overwrite"]:
+    # Check for existing *checkpoints*, not just the directory. Under DDP,
+    # Lightning re-runs this script in a subprocess per GPU; the main process
+    # creates the (empty) checkpoint directory before the workers start, so a
+    # bare directory-existence check would make every worker exit early and the
+    # run would hang.
+    existing_checkpoints = glob.glob(os.path.join(checkpoint_dir, "*.ckpt"))
+    if existing_checkpoints and not args["overwrite"]:
         print(
             "Experiment output files already exist, use --overwrite to overwrite them."
             + " Exiting."
@@ -84,18 +100,58 @@ def main() -> None:
         return
     os.makedirs(checkpoint_dir, exist_ok=True)
 
+    gpu_ids = normalize_gpu_ids(
+        args["training"].get("gpu_ids"), args["training"].get("gpu_id")
+    )
+    if not torch.cuda.is_available():
+        gpu_ids = []
+    world_size = max(1, len(gpu_ids))
+
+    # `train_batches_per_epoch` is per-process under DDP, so divide it by the
+    # number of GPUs. This keeps the total batches seen per epoch (and thus the
+    # epoch wall-clock time) roughly constant as GPUs are added -- i.e. more
+    # GPUs makes each epoch faster instead of just processing proportionally
+    # more data.
+    train_batches_per_epoch = max(1, 1024 // world_size)
+
     datamodule = SegmentationDataModule(
         os.path.join(experiment_dir, "images/"),
         os.path.join(experiment_dir, "masks/"),
         batch_size=args["training"]["batch_size"],
         num_workers=int(os.environ.get("HASTE_DATALOADER_WORKERS", "4")),
-        train_batches_per_epoch=1024,
+        train_batches_per_epoch=train_batches_per_epoch,
         means=args["imagery"]["normalization_means"],
         stds=args["imagery"]["normalization_stds"],
     )
 
     # we include +1 to account for our 0 "not labeled" class
-    num_classes = len(args["labels"]["classes"]) + 1
+    classes = args["labels"]["classes"]
+    num_classes = len(classes) + 1
+
+    # The constraint loss penalizes the predicted "Damaged Building"
+    # probability at "No Damage" pixels. Mask values are (index in classes) + 1,
+    # so the "No Damage" value depends on the project's class list and must be
+    # derived here rather than hardcoded in the trainer.
+    use_constraint_loss = args["training"]["use_constraint_loss"]
+    no_damage_index = None
+    damaged_class_index = 3
+    if use_constraint_loss:
+        missing = [
+            c for c in ("No Damage", "Damaged Building") if c not in classes
+        ]
+        if missing:
+            raise ValueError(
+                "training.use_constraint_loss is true but labels.classes is "
+                f"missing {missing}. The constraint loss penalizes 'Damaged "
+                "Building' probability at 'No Damage' pixels, so both classes "
+                "are required."
+            )
+        no_damage_index = classes.index("No Damage") + 1
+        damaged_class_index = classes.index("Damaged Building") + 1
+        print(
+            f"Constraint loss enabled: penalizing P(Damaged Building="
+            f"{damaged_class_index}) at No Damage (={no_damage_index}) pixels"
+        )
 
     initial_weights_path = args["training"].get("initial_weights_fn", None)
     if initial_weights_path:
@@ -110,19 +166,26 @@ def main() -> None:
             )
 
         print(f"Loading initial weights from file: {initial_weights_path}")
-        task = CustomSemanticSegmentationTask(
-            model="unet",
-            backbone="resnext50_32x4d",
-            weights=False,  # Don't use ImageNet weights when loading custom checkpoint
-            in_channels=args["imagery"]["num_channels"],
-            num_classes=num_classes,
-            loss="ce",
-            ignore_index=0,
-            lr=args["training"]["learning_rate"],
-            patience=10,
-            use_constraint_loss=args["training"]["use_constraint_loss"],
-        )
+    else:
+        print("Using ImageNet pre-trained weights for model initialization.")
 
+    task = CustomSemanticSegmentationTask(
+        model="unet",
+        backbone="resnext50_32x4d",
+        # Don't use ImageNet weights when loading a custom checkpoint
+        weights=not initial_weights_path,
+        in_channels=args["imagery"]["num_channels"],
+        num_classes=num_classes,
+        loss="ce",
+        ignore_index=0,  # we use 0 as a "not labeled" class by convention
+        lr=args["training"]["learning_rate"],
+        patience=10,
+        use_constraint_loss=use_constraint_loss,
+        no_damage_index=no_damage_index,
+        damaged_class_index=damaged_class_index,
+    )
+
+    if initial_weights_path:
         # Load the checkpoint
         checkpoint = torch.load(initial_weights_path, map_location="cpu")
 
@@ -153,21 +216,6 @@ def main() -> None:
             f"Loading {len(compatible_state_dict)}/{len(checkpoint_state_dict)} layers from checkpoint"
         )
         task.load_state_dict(compatible_state_dict, strict=False)
-    else:
-        print("Using ImageNet pre-trained weights for model initialization.")
-
-        task = CustomSemanticSegmentationTask(
-            model="unet",
-            backbone="resnext50_32x4d",
-            weights=True,  # use ImageNet pre-trained weights
-            in_channels=args["imagery"]["num_channels"],
-            num_classes=num_classes,
-            loss="ce",
-            ignore_index=0,  # we use 0 as a "not labeled" class by convention
-            lr=args["training"]["learning_rate"],
-            patience=10,
-            use_constraint_loss=args["training"]["use_constraint_loss"],
-        )
 
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
@@ -176,15 +224,22 @@ def main() -> None:
         save_last=True,
     )
 
+    os.makedirs(args["training"]["log_dir"], exist_ok=True)
     tb_logger = TensorBoardLogger(
         save_dir=args["training"]["log_dir"], name=args["experiment_name"]
     )
 
-    accelerator = "gpu" if torch.cuda.is_available() else "cpu"
-    print(f"Using accelerator: {accelerator}")
-
-    devices = [args["training"]["gpu_id"]] if torch.cuda.is_available() else 1
-    print(f"Using devices: {devices}")
+    # More than one GPU -> data-parallel training via DDP (Lightning's robust
+    # multi-GPU strategy). `use_distributed_sampler=False` keeps our custom
+    # RandomGeoSampler instead of Lightning injecting a DistributedSampler.
+    accelerator = "gpu" if gpu_ids else "cpu"
+    devices = gpu_ids if gpu_ids else 1
+    strategy = "ddp" if world_size > 1 else "auto"
+    print(
+        f"Using accelerator: {accelerator}, device(s): {devices} "
+        f"(strategy={strategy}, {train_batches_per_epoch} train"
+        " batches/epoch/process)"
+    )
 
     trainer = pl.Trainer(
         callbacks=[checkpoint_callback],
@@ -193,6 +248,8 @@ def main() -> None:
         max_epochs=args["training"]["max_epochs"],
         accelerator=accelerator,
         devices=devices,
+        strategy=strategy,
+        use_distributed_sampler=False,
     )
 
     trainer.fit(model=task, datamodule=datamodule)

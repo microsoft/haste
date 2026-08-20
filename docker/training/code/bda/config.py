@@ -4,11 +4,12 @@
 """Methods to handle the parsing and merging of command line and YAML file arguments."""
 
 import argparse
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence, Union
 
 import yaml
 
 NULLABLE_STR = (str, type(None))
+NULLABLE_NUMBER = (int, float, type(None))
 
 _DEFAULT_CONFIG = {
     "experiment_name": str,
@@ -43,6 +44,56 @@ _DEFAULT_CONFIG = {
         "checkpoint_fn": str,
     },
 }
+
+# Keys that are validated only when present. Unlike `_DEFAULT_CONFIG`, a
+# missing key here is not an error -- these are opt-in features, and configs
+# written before they existed must keep working unchanged.
+_OPTIONAL_CONFIG = {
+    "labels": {
+        "cluster_size_in_meters": NULLABLE_NUMBER,
+        "min_pixels_per_cluster": (int, type(None)),
+    },
+    "training": {
+        "gpu_ids": (list, type(None)),
+    },
+}
+
+
+def normalize_gpu_ids(
+    gpu_ids: Optional[Union[Sequence[int], str, int]] = None,
+    gpu_id: Optional[int] = None,
+) -> list[int]:
+    """Normalize a GPU specification into an ordered, de-duplicated list of ids.
+
+    Precedence: an explicit ``gpu_ids`` (list/tuple, or a comma/space separated
+    string) takes priority over a single ``gpu_id``. Returns an empty list when
+    neither is provided (i.e. CPU).
+
+    Args:
+        gpu_ids: A list/tuple of ints, a comma/space-separated string (e.g.
+            ``"0,1,2"``), a single int, or ``None``.
+        gpu_id: A single GPU id, used only when ``gpu_ids`` is ``None``.
+
+    Returns:
+        Ordered list of unique GPU ids.
+    """
+    raw: list = []
+    if gpu_ids is not None:
+        if isinstance(gpu_ids, str):
+            raw = gpu_ids.replace(",", " ").split()
+        elif isinstance(gpu_ids, int):
+            raw = [gpu_ids]
+        else:
+            raw = list(gpu_ids)
+    elif gpu_id is not None:
+        raw = [gpu_id]
+
+    ids: list[int] = []
+    for item in raw:
+        value = int(item)
+        if value not in ids:
+            ids.append(value)
+    return ids
 
 
 def _get_base_parser(description: Optional[str]) -> argparse.ArgumentParser:
@@ -79,6 +130,30 @@ def _validate_config(config: dict, template: dict = _DEFAULT_CONFIG) -> None:
 
         if isinstance(value, dict):
             _validate_config(config[key], value)
+        elif not isinstance(config[key], value):
+            raise TypeError(
+                f"Key '{key}' is not of type '{value}' (value of '{config[key]}'"
+                + " found)."
+            )
+
+
+def _validate_optional_config(
+    config: dict, template: dict = _OPTIONAL_CONFIG
+) -> None:
+    """Type-checks the optional config keys that are present.
+
+    Args:
+        config (dict): The configuration dictionary to validate.
+
+    Raises:
+        TypeError: If a value is present but not of the expected type.
+    """
+    for key, value in template.items():
+        if key not in config:
+            continue
+
+        if isinstance(value, dict):
+            _validate_optional_config(config[key], value)
         elif not isinstance(config[key], value):
             raise TypeError(
                 f"Key '{key}' is not of type '{value}' (value of '{config[key]}'"
@@ -137,4 +212,5 @@ def get_args(
 
     config = _merge_argparse_and_config(config, args)
     _validate_config(config)
+    _validate_optional_config(config)
     return config

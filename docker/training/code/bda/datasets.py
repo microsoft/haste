@@ -3,7 +3,7 @@
 
 """Custom datasets."""
 
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import rasterio
@@ -55,9 +55,15 @@ class TileDataset(Dataset):
         mask_fns: List[str],
         transforms=None,
         sanity_check=True,
+        num_channels: Optional[int] = None,
     ):
         self.image_fns = image_fns
         self.mask_fns = mask_fns
+        # Optionally clip the stacked imagery to the first `num_channels`
+        # bands. Rasters often carry an extra alpha/mask band that the model
+        # was not trained on; without this the channel count mismatches the
+        # checkpoint's `in_channels` and inference fails.
+        self.num_channels = num_channels
         if self.mask_fns is not None:
             assert len(image_fns) == len(mask_fns)
 
@@ -96,6 +102,8 @@ class TileDataset(Dataset):
                 image = f.read(window=window)
             stack.append(image)
         stack = np.concatenate(stack, axis=0)
+        if self.num_channels is not None:
+            stack = stack[: self.num_channels]
         sample["image"] = torch.from_numpy(stack).float()
 
         # Load mask
