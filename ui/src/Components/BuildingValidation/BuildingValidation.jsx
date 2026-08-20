@@ -9,6 +9,7 @@ import { getAzureMapsAuthOptions, isAzureMapsPlaceholder } from "../../util/azur
 import { AppContext } from "../../AppContext.jsx";
 import BuildingValidationRightPanel from "./BuildingValidationRightPanel.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
+import { shouldIgnoreShortcut } from "../keyboardShortcuts.js";
 import "../../assets/css/labels.css";
 import "../../assets/css/drawingToolbar.css";
 
@@ -89,6 +90,18 @@ const BuildingValidation = () => {
   // satellite basemap underneath.
   const [showFill, setShowFill] = useState(true);
   const [showPostImagery, setShowPostImagery] = useState(true);
+  // The imagery layers are created inside the map's async "ready"
+  // handler, which fires after createMap() resolves and flips
+  // isMapReady. Mirroring their availability in state (rather than
+  // reading the refs during render) is what re-renders the right panel
+  // once the layers actually exist.
+  const [hasPreImagery, setHasPreImagery] = useState(false);
+  const [hasPostImagery, setHasPostImagery] = useState(false);
+  // The polygon datasource is also created in the "ready" handler, so the
+  // styling effect below would otherwise run once (before it exists),
+  // bail out, and never re-run — leaving the initial footprints drawn
+  // from the raw GeoJSON with no _label/_selected/_passesFilter set.
+  const [isDatasourceReady, setIsDatasourceReady] = useState(false);
 
   // Indices into `features` that pass the current filter. Prev / Next /
   // Skip-to-next-unlabeled all walk this subset, NOT the raw features
@@ -218,6 +231,7 @@ const BuildingValidation = () => {
           false
         );
         preTileUrlRef.current = layerData.imagery.preEventTileUrl;
+        setHasPreImagery(true);
       }
       if (layerData?.imagery?.postEventTileUrl) {
         loadImagery(
@@ -228,12 +242,14 @@ const BuildingValidation = () => {
           true
         );
         postTileUrlRef.current = layerData.imagery.postEventTileUrl;
+        setHasPostImagery(true);
       }
 
       // Create datasource for building polygons
       const datasource = new window.atlas.source.DataSource();
       map.sources.add(datasource);
       datasourceRef.current = datasource;
+      setIsDatasourceReady(true);
 
       if (featuresArr.length > 0) {
         datasource.add(footprintsGeoJSON);
@@ -319,7 +335,7 @@ const BuildingValidation = () => {
     if (postImageryRef.current) {
       postImageryRef.current.setOptions({ visible: showPostImagery });
     }
-  }, [showPostImagery, isMapReady]);
+  }, [showPostImagery, isMapReady, hasPreImagery, hasPostImagery]);
 
   // Update polygon properties when labels, selectedIndex, or filter change
   useEffect(() => {
@@ -347,7 +363,7 @@ const BuildingValidation = () => {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [labels, selectedIndex, features, filter]);
+  }, [labels, selectedIndex, features, filter, isDatasourceReady]);
 
   // When the filter changes such that the current selection no longer
   // matches, jump to the first building that does — so the user isn't
@@ -604,8 +620,8 @@ const BuildingValidation = () => {
           setShowFill={setShowFill}
           showPostImagery={showPostImagery}
           setShowPostImagery={setShowPostImagery}
-          hasPreImagery={!!preImageryRef.current}
-          hasPostImagery={!!postImageryRef.current}
+          hasPreImagery={hasPreImagery}
+          hasPostImagery={hasPostImagery}
         />
       )}
 

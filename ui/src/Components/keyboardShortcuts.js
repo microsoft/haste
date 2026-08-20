@@ -49,14 +49,83 @@ export const BUILDING_VALIDATION_SHORTCUTS = [
   },
 ];
 
+// Input types that are not free-text entry. Focus can legitimately sit on
+// one of these while the user keeps driving the page from the keyboard.
+const NON_TEXT_INPUT_TYPES = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+// Controls that act on Space / Enter. Firing a shortcut for those keys as
+// well would double-act (Space would click the focused button *and*
+// toggle footprints).
+const ACTIVATABLE_SELECTOR = [
+  "button",
+  "a[href]",
+  "[role='button']",
+  "[role='link']",
+  "[role='switch']",
+  "[role='checkbox']",
+  "[role='tab']",
+  "[role='menuitem']",
+  "[role='option']",
+].join(", ");
+
+// Controls that move their own selection with the arrow keys.
+const ARROW_CONSUMER_SELECTOR = [
+  "input[type='radio']",
+  "input[type='range']",
+  "[role='listbox']",
+  "[role='combobox']",
+  "[role='menu']",
+  "[role='radiogroup']",
+  "[role='slider']",
+  "[role='spinbutton']",
+  "[role='tablist']",
+].join(", ");
+
+const ACTIVATION_KEYS = new Set([" ", "Spacebar", "Enter"]);
+const ARROW_KEYS = new Set([
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+]);
+
+// True when the target swallows ordinary character keys: real typing
+// surfaces, plus <select>, which does letter type-ahead.
+function isTextEntryTarget(target) {
+  if (target?.isContentEditable === true) return true;
+  const tagName = target?.tagName?.toUpperCase();
+  if (tagName === "TEXTAREA" || tagName === "SELECT") return true;
+  if (tagName === "INPUT") {
+    const type = (target.type || "text").toLowerCase();
+    return !NON_TEXT_INPUT_TYPES.has(type);
+  }
+  return false;
+}
+
+// Shortcuts are suppressed only for keys the focused element genuinely
+// handles itself. Anything broader breaks the common case where a click
+// leaves focus parked on a button, switch, or nav link — after which
+// every shortcut on the page would silently stop responding.
 export function shouldIgnoreShortcut(event) {
   const target = event?.target;
-  const tagName = target?.tagName?.toUpperCase();
-  return (
-    ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(tagName) ||
-    target?.isContentEditable === true ||
-    target?.closest?.(
-      "button, a, [role='button'], [role='link'], [role='switch']"
-    ) != null
-  );
+  if (isTextEntryTarget(target)) return true;
+
+  const key = event?.key;
+  if (ACTIVATION_KEYS.has(key)) {
+    return target?.closest?.(ACTIVATABLE_SELECTOR) != null;
+  }
+  if (ARROW_KEYS.has(key)) {
+    return target?.closest?.(ARROW_CONSUMER_SELECTOR) != null;
+  }
+  return false;
 }
