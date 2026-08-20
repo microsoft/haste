@@ -316,6 +316,15 @@ def create_mask_for_labels(
         data, transform = rasterio.mask.mask(f, [geom], crop=True)
 
     if num_channels is not None and num_channels != data.shape[0]:
+        if num_channels > data.shape[0]:
+            # Slicing cannot invent bands. Left unchecked this writes a short
+            # image and the failure surfaces much later as an opaque model
+            # input-channel mismatch during fine-tuning.
+            raise ValueError(
+                f"imagery.num_channels is {num_channels} but"
+                f" {input_image_fn} has only {data.shape[0]} band(s)."
+                " Set imagery.num_channels to match the imagery."
+            )
         print(
             f"\n{'!' * 60}\n"
             f"WARNING: Clipping imagery from {data.shape[0]} channels to"

@@ -67,6 +67,24 @@ class TileDataset(Dataset):
         if self.mask_fns is not None:
             assert len(image_fns) == len(mask_fns)
 
+        # Fail here rather than at the first forward pass. Slicing to
+        # `num_channels` cannot add bands the raster doesn't have, so a short
+        # raster would otherwise flow through and surface as a generic
+        # convolution channel mismatch deep inside the model.
+        if num_channels is not None:
+            for image_fn in image_fns:
+                available = 0
+                for fn in image_fn:
+                    with rasterio.open(fn) as f:
+                        available += f.count
+                if available < num_channels:
+                    raise ValueError(
+                        f"Expected at least {num_channels} band(s) across"
+                        f" {list(image_fn)} but found {available}. Set"
+                        " imagery.num_channels to match the imagery, or use a"
+                        " checkpoint trained on this many channels."
+                    )
+
         # Check to make sure that all the image and mask tile pairs are the same size
         # as a sanity check
         if sanity_check and mask_fns is not None:
@@ -103,6 +121,8 @@ class TileDataset(Dataset):
             stack.append(image)
         stack = np.concatenate(stack, axis=0)
         if self.num_channels is not None:
+            # __init__ already verified there are enough bands, so this only
+            # ever drops extras (e.g. an alpha band).
             stack = stack[: self.num_channels]
         sample["image"] = torch.from_numpy(stack).float()
 
