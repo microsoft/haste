@@ -127,6 +127,43 @@ def get_class_names_from_labels(labels_fn: str, key: str = "class") -> set:
     return class_names
 
 
+def validate_cluster_crs(image_crs, input_image_fn: str) -> None:
+    """Reject imagery whose CRS makes `cluster_size_in_meters` meaningless.
+
+    The grid is built in the imagery's own coordinate units. On a geographic
+    CRS those units are degrees, so a 1000 "meter" cell becomes a 1000-degree
+    cell -- larger than the planet -- and every label collapses into a single
+    cluster. Clustering silently no-ops instead of failing, which is the worst
+    outcome, so fail fast rather than guessing a conversion.
+
+    Nothing upstream guarantees a projected CRS: the imageryprep mosaic step
+    preserves the source projection, and merge_with_building_footprints.py
+    carries an explicit geographic-CRS fallback for rasters from this same
+    lineage.
+
+    Args:
+        image_crs: The rasterio CRS of the input imagery, or None.
+        input_image_fn (str): Path to the imagery, used in the error message.
+
+    Raises:
+        ValueError: If the CRS is missing or not projected.
+    """
+    if image_crs is None:
+        raise ValueError(
+            f"{input_image_fn} has no CRS, so labels.cluster_size_in_meters"
+            " cannot be interpreted. Georeference the imagery or leave"
+            " clustering off."
+        )
+    if not image_crs.is_projected:
+        raise ValueError(
+            f"{input_image_fn} is in a geographic CRS ({image_crs.to_string()})"
+            " whose units are degrees, so labels.cluster_size_in_meters would"
+            " be treated as degrees and collapse every label into one cluster."
+            " Reproject the imagery to a projected CRS (e.g. the local UTM"
+            " zone) or leave clustering off."
+        )
+
+
 def assign_features_to_grid(
     feature_shapes: List, bounds_shape, cluster_size: float
 ) -> List[tuple]:
@@ -508,9 +545,11 @@ def main() -> None:
     # Clustering happens in the imagery CRS so cluster_size is in the same
     # units as the imagery (meters for a projected CRS).
     with rasterio.open(input_image_fn) as f:
-        dst_crs = f.crs.to_string()
+        image_crs = f.crs
+        dst_crs = image_crs.to_string() if image_crs is not None else None
 
     if cluster_size is not None:
+        validate_cluster_crs(image_crs, input_image_fn)
         print(f"Clustering labels with grid size {cluster_size}...")
         clusters = cluster_labels(input_label_fn, cluster_size, dst_crs)
         print(f"Found {len(clusters)} clusters")

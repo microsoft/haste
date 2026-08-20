@@ -16,6 +16,7 @@ from bda.config import (  # noqa: E402
     DAMAGED_CLASS_INDEX,
     _validate_config,
     _validate_optional_config,
+    _validate_optional_values,
     normalize_gpu_ids,
     resolve_constraint_indices,
 )
@@ -189,6 +190,60 @@ class TestValidateOptionalConfig(unittest.TestCase):
         config["labels"]["cluster_size_in_meters"] = "1000"
         with self.assertRaises(TypeError):
             _validate_optional_config(config)
+
+
+class TestValidateOptionalValues(unittest.TestCase):
+    """Type checks alone let nonsense reach the grid logic."""
+
+    def _labels(self, **kwargs):
+        return {"labels": dict(kwargs), "training": {}}
+
+    def test_absent_keys_are_fine(self):
+        _validate_optional_values({})  # must not raise
+
+    def test_null_values_are_fine(self):
+        _validate_optional_values(
+            self._labels(
+                cluster_size_in_meters=None, min_pixels_per_cluster=None
+            )
+        )
+
+    def test_valid_values_pass(self):
+        _validate_optional_values(
+            self._labels(
+                cluster_size_in_meters=1000.0, min_pixels_per_cluster=500
+            )
+        )
+
+    def test_zero_cluster_size_is_rejected(self):
+        """np.arange(step=0) raises ZeroDivisionError deep in the grid loop."""
+        with self.assertRaises(ValueError) as ctx:
+            _validate_optional_values(self._labels(cluster_size_in_meters=0))
+        self.assertIn("cluster_size_in_meters", str(ctx.exception))
+
+    def test_negative_cluster_size_is_rejected(self):
+        """A negative step yields zero cells, i.e. silently no training data."""
+        with self.assertRaises(ValueError):
+            _validate_optional_values(
+                self._labels(cluster_size_in_meters=-500.0)
+            )
+
+    def test_negative_min_pixels_is_rejected(self):
+        """A negative minimum quietly disables culling."""
+        with self.assertRaises(ValueError) as ctx:
+            _validate_optional_values(self._labels(min_pixels_per_cluster=-1))
+        self.assertIn("min_pixels_per_cluster", str(ctx.exception))
+
+    def test_zero_min_pixels_is_allowed(self):
+        """0 is meaningful: keep every cluster."""
+        _validate_optional_values(self._labels(min_pixels_per_cluster=0))
+
+    def test_negative_gpu_id_is_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            _validate_optional_values(
+                {"labels": {}, "training": {"gpu_ids": [0, -1]}}
+            )
+        self.assertIn("gpu_ids", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -47,9 +47,60 @@ def _load_assign_features_to_grid():
 assign_features_to_grid = _load_assign_features_to_grid()
 
 
+def _load_validate_cluster_crs():
+    """Load the CRS gate without importing create_masks' GDAL dependencies."""
+    path = os.path.join(CODE_DIR, "create_masks.py")
+    with open(path) as f:
+        source = f.read()
+
+    start = source.index("def validate_cluster_crs(")
+    end = source.index("def assign_features_to_grid(")
+    namespace = {}
+    exec(compile(source[start:end], path, "exec"), namespace)
+    return namespace["validate_cluster_crs"]
+
+
+validate_cluster_crs = _load_validate_cluster_crs()
+
+
 def _point_box(x, y, size=1.0):
     """A small square centered near (x, y)."""
     return shapely.geometry.box(x, y, x + size, y + size)
+
+
+class _FakeCRS:
+    """Stands in for a rasterio CRS; only `is_projected` matters here."""
+
+    def __init__(self, name, is_projected):
+        self._name = name
+        self.is_projected = is_projected
+
+    def to_string(self):
+        return self._name
+
+
+class TestValidateClusterCrs(unittest.TestCase):
+    """The grid is built in the imagery's own units.
+
+    On a geographic CRS `cluster_size_in_meters: 1000` means 1000 degrees, so
+    every label lands in one cluster and clustering silently does nothing.
+    Failing is better than a silent no-op.
+    """
+
+    def test_projected_crs_is_accepted(self):
+        validate_cluster_crs(_FakeCRS("EPSG:32610", True), "img.tif")
+
+    def test_geographic_crs_is_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            validate_cluster_crs(_FakeCRS("EPSG:4326", False), "img.tif")
+        message = str(ctx.exception)
+        self.assertIn("EPSG:4326", message)
+        self.assertIn("degrees", message)
+
+    def test_missing_crs_is_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            validate_cluster_crs(None, "img.tif")
+        self.assertIn("no CRS", str(ctx.exception))
 
 
 class TestAssignFeaturesToGrid(unittest.TestCase):

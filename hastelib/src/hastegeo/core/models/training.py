@@ -40,10 +40,10 @@ class Labels(BaseModel):
     # Tile the labels onto a grid of this cell size (in the units of the
     # imagery CRS) and emit one image/mask pair per populated cell. None keeps
     # the single-pair behavior of cropping to the full label extent.
-    cluster_size_in_meters: Optional[float] = None
+    cluster_size_in_meters: Optional[float] = Field(default=None, gt=0)
     # Clusters with fewer labeled pixels than this are discarded. Only used
     # when cluster_size_in_meters is set; create_masks.py defaults to 1000.
-    min_pixels_per_cluster: Optional[int] = None
+    min_pixels_per_cluster: Optional[int] = Field(default=None, ge=0)
 
 
 class Training(BaseModel):

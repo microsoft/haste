@@ -209,6 +209,45 @@ def _validate_config(config: dict, template: dict = _DEFAULT_CONFIG) -> None:
             )
 
 
+def _validate_optional_values(config: dict) -> None:
+    """Range-checks the optional config values that are present.
+
+    Type checks alone let nonsense through to the grid logic: a cluster size
+    of 0 makes ``np.arange`` raise ZeroDivisionError, a negative one produces
+    no cells at all, and a negative pixel minimum quietly disables culling.
+    Hand-edited YAML is the only way to reach these keys today, so catch it
+    here where the message can name the key.
+
+    Args:
+        config (dict): The configuration dictionary to validate.
+
+    Raises:
+        ValueError: If a value is present but out of range.
+    """
+    cluster_size = config.get("labels", {}).get("cluster_size_in_meters")
+    if cluster_size is not None and cluster_size <= 0:
+        raise ValueError(
+            "labels.cluster_size_in_meters must be greater than 0 (got"
+            f" {cluster_size}). Remove the key or set it to null to disable"
+            " clustering."
+        )
+
+    min_pixels = config.get("labels", {}).get("min_pixels_per_cluster")
+    if min_pixels is not None and min_pixels < 0:
+        raise ValueError(
+            "labels.min_pixels_per_cluster must be 0 or greater (got"
+            f" {min_pixels}). Use 0 to keep every cluster."
+        )
+
+    gpu_ids = config.get("training", {}).get("gpu_ids")
+    if gpu_ids is not None:
+        if any(not isinstance(g, int) or g < 0 for g in gpu_ids):
+            raise ValueError(
+                f"training.gpu_ids must be non-negative integers (got"
+                f" {gpu_ids})."
+            )
+
+
 def _validate_optional_config(
     config: dict, template: dict = _OPTIONAL_CONFIG
 ) -> None:
@@ -285,4 +324,5 @@ def get_args(
     config = _merge_argparse_and_config(config, args)
     _validate_config(config)
     _validate_optional_config(config)
+    _validate_optional_values(config)
     return config
