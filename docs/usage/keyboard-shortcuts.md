@@ -15,7 +15,8 @@ building validation. Each supported view also includes a collapsible
 ## General Behavior
 
 Letter shortcuts are not case-sensitive. HASTE ignores global shortcuts while
-you type in a field or interact with a button, link, dropdown, or switch.
+you type in a field or use a dropdown. Space/Enter and arrow-key shortcuts are
+also ignored when the focused control handles those keys itself.
 
 The imagery comparison keys use the same direction across views:
 
