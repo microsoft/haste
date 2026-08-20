@@ -15,22 +15,28 @@ building validation. Each supported view also includes a collapsible
 ## General Behavior
 
 Letter shortcuts are not case-sensitive. HASTE ignores global shortcuts while
-you type in a field or use a dropdown. Space/Enter and arrow-key shortcuts are
-also ignored when the focused control handles those keys itself.
+you type in a field or dropdown. Clicking a button, link, or switch does not
+disable them — a control only keeps the keys it needs itself, such as
+`Space` or `Enter` to activate a focused button, or the arrow keys inside a
+dropdown.
 
 The imagery comparison keys use the same direction across views:
 
-- `A` shows pre-event imagery or moves a swipe divider left.
+- `A` shows pre-event imagery, or moves a swipe divider left.
 - `S` centers a swipe divider when the view supports split comparison.
-- `D` shows post-event imagery or moves a swipe divider right.
+- `D` shows post-event imagery, or moves a swipe divider right.
+
+In swipe views the divider is the control, and the pre-event map sits on the
+left of it. Moving the divider left therefore uncovers more of the post-event
+map, and moving it right uncovers more of the pre-event map.
 
 ## Results Viewer
 
 | Shortcut | Action |
 |---|---|
-| `A` | Move the swipe divider left. |
+| `A` | Move the swipe divider fully left, uncovering the post-event map. |
 | `S` | Center the swipe divider for an even comparison. |
-| `D` | Move the swipe divider right. |
+| `D` | Move the swipe divider fully right, uncovering the pre-event map. |
 
 ## Interactive Labeler
 
@@ -64,4 +70,4 @@ The imagery comparison keys use the same direction across views:
 | `Left Arrow` | Select the previous building in the current filter. |
 | `Right Arrow` | Select the next building in the current filter. |
 | `A` | Show pre-event imagery, or the basemap when pre-event imagery is unavailable. |
-| `D` | Show post-event imagery. |
+| `D` | Show post-event imagery. Has no effect when the layer has no post-event imagery. |

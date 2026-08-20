@@ -2097,7 +2097,33 @@ const InteractiveLabeler = () => {
             uncertainty ramp, or the misclassified explanation. */}
         {isMapReady && showFootprints && (
           <div className={styles.legend}>
-            {uncertaintyOn ? (
+            {misclassifiedOn ? (
+              <>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  Misclassified
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span
+                    style={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: 2,
+                      background: MISCLASSIFIED_COLOR,
+                    }}
+                  />
+                  <span>Label disagrees with prediction</span>
+                </div>
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: tokens.colorNeutralForeground3,
+                    marginTop: 2,
+                  }}
+                >
+                  Correct and unlabeled buildings stay clear.
+                </div>
+              </>
+            ) : uncertaintyOn ? (
               <>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>
                   Model uncertainty

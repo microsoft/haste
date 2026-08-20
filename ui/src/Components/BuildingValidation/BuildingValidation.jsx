@@ -103,6 +103,12 @@ const BuildingValidation = () => {
   // from the raw GeoJSON with no _label/_selected/_passesFilter set.
   const [isDatasourceReady, setIsDatasourceReady] = useState(false);
 
+  // Post-event is only genuinely showable once that layer exists. Without
+  // this, the toggle defaults to "post" on a layer that has no post-event
+  // imagery, which hides the pre-event layer and leaves just the basemap
+  // while the panel still claims post-event is on screen.
+  const showPostEvent = showPostImagery && hasPostImagery;
+
   // Indices into `features` that pass the current filter. Prev / Next /
   // Skip-to-next-unlabeled all walk this subset, NOT the raw features
   // list, so the filter genuinely restricts navigation.
@@ -330,12 +336,12 @@ const BuildingValidation = () => {
   // A single-map comparison: post-event on, or pre-event/basemap when off.
   useEffect(() => {
     if (preImageryRef.current) {
-      preImageryRef.current.setOptions({ visible: !showPostImagery });
+      preImageryRef.current.setOptions({ visible: !showPostEvent });
     }
     if (postImageryRef.current) {
-      postImageryRef.current.setOptions({ visible: showPostImagery });
+      postImageryRef.current.setOptions({ visible: showPostEvent });
     }
-  }, [showPostImagery, isMapReady, hasPreImagery, hasPostImagery]);
+  }, [showPostEvent, isMapReady, hasPreImagery, hasPostImagery]);
 
   // Update polygon properties when labels, selectedIndex, or filter change
   useEffect(() => {
@@ -527,13 +533,13 @@ const BuildingValidation = () => {
       } else {
         const key = e.key.toLowerCase();
         if (key === "a") setShowPostImagery(false);
-else if (key === "d" && postImageryRef.current) setShowPostImagery(true);
+        else if (key === "d" && hasPostImagery) setShowPostImagery(true);
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [features, selectedIndex, filteredIndices]);
+  }, [features, selectedIndex, filteredIndices, hasPostImagery]);
 
   async function handleSave() {
     setIsSaving(true);
@@ -618,7 +624,7 @@ else if (key === "d" && postImageryRef.current) setShowPostImagery(true);
           onSkipToNextUnlabeled={skipToNextUnlabeled}
           showFill={showFill}
           setShowFill={setShowFill}
-          showPostImagery={showPostImagery}
+          showPostImagery={showPostEvent}
           setShowPostImagery={setShowPostImagery}
           hasPreImagery={hasPreImagery}
           hasPostImagery={hasPostImagery}
