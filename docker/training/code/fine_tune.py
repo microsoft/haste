@@ -9,7 +9,7 @@ import os
 
 import lightning.pytorch as pl
 import torch
-from bda.config import get_args, normalize_gpu_ids
+from bda.config import get_args, normalize_gpu_ids, resolve_constraint_indices
 from bda.datamodules import SegmentationDataModule
 from bda.trainers import CustomSemanticSegmentationTask
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -128,26 +128,15 @@ def main() -> None:
     classes = args["labels"]["classes"]
     num_classes = len(classes) + 1
 
-    # The constraint loss penalizes the predicted "Damaged Building"
-    # probability at "No Damage" pixels. Mask values are (index in classes) + 1,
-    # so the "No Damage" value depends on the project's class list and must be
-    # derived here rather than hardcoded in the trainer.
+    # Resolve the mask values the constraint loss operates on. "No Damage" is
+    # derived from the class list; "Damaged Building" is required to stay at
+    # the value the rest of the pipeline hardcodes. See
+    # bda.config.resolve_constraint_indices for why they differ.
     use_constraint_loss = args["training"]["use_constraint_loss"]
-    no_damage_index = None
-    damaged_class_index = 3
+    no_damage_index, damaged_class_index = resolve_constraint_indices(
+        classes, use_constraint_loss
+    )
     if use_constraint_loss:
-        missing = [
-            c for c in ("No Damage", "Damaged Building") if c not in classes
-        ]
-        if missing:
-            raise ValueError(
-                "training.use_constraint_loss is true but labels.classes is "
-                f"missing {missing}. The constraint loss penalizes 'Damaged "
-                "Building' probability at 'No Damage' pixels, so both classes "
-                "are required."
-            )
-        no_damage_index = classes.index("No Damage") + 1
-        damaged_class_index = classes.index("Damaged Building") + 1
         print(
             f"Constraint loss enabled: penalizing P(Damaged Building="
             f"{damaged_class_index}) at No Damage (={no_damage_index}) pixels"

@@ -13,9 +13,11 @@ if CODE_DIR not in sys.path:
     sys.path.insert(0, CODE_DIR)
 
 from bda.config import (  # noqa: E402
+    DAMAGED_CLASS_INDEX,
     _validate_config,
     _validate_optional_config,
     normalize_gpu_ids,
+    resolve_constraint_indices,
 )
 
 
@@ -47,6 +49,81 @@ class TestNormalizeGpuIds(unittest.TestCase):
     def test_gpu_id_zero_is_not_treated_as_missing(self):
         """0 is a valid GPU id and must not be swallowed by a falsy check."""
         self.assertEqual(normalize_gpu_ids(None, 0), [0])
+
+
+class TestResolveConstraintIndices(unittest.TestCase):
+    """Only one of the two class indices is safe to derive.
+
+    "No Damage" is read solely by the loss, so it varies freely. "Damaged
+    Building" must stay at its pipeline value because
+    merge_with_building_footprints.py and the inference palette both hardcode
+    it.
+    """
+
+    STANDARD = ["Background", "Building", "Damaged Building", "No Damage"]
+
+    def test_disabled_returns_no_index(self):
+        no_damage, damaged = resolve_constraint_indices(
+            ["Background", "Building"], use_constraint_loss=False
+        )
+        self.assertIsNone(no_damage)
+        self.assertEqual(damaged, DAMAGED_CLASS_INDEX)
+
+    def test_disabled_does_not_validate_classes(self):
+        """A project not using the loss is unaffected by its requirements."""
+        no_damage, _ = resolve_constraint_indices(
+            ["Anything", "At", "All"], use_constraint_loss=False
+        )
+        self.assertIsNone(no_damage)
+
+    def test_standard_layout(self):
+        no_damage, damaged = resolve_constraint_indices(
+            self.STANDARD, use_constraint_loss=True
+        )
+        self.assertEqual(no_damage, 4)
+        self.assertEqual(damaged, DAMAGED_CLASS_INDEX)
+
+    def test_no_damage_index_is_derived_not_hardcoded(self):
+        """A Cloud class after Damaged Building shifts No Damage to 5."""
+        classes = [
+            "Background",
+            "Building",
+            "Damaged Building",
+            "Cloud",
+            "No Damage",
+        ]
+        no_damage, damaged = resolve_constraint_indices(
+            classes, use_constraint_loss=True
+        )
+        self.assertEqual(no_damage, 5)
+        self.assertEqual(damaged, DAMAGED_CLASS_INDEX)
+
+    def test_damaged_class_off_by_position_is_rejected(self):
+        """Training would disagree with merge/palette, so refuse to start."""
+        classes = [
+            "Background",
+            "Cloud",
+            "Building",
+            "Damaged Building",
+            "No Damage",
+        ]
+        with self.assertRaises(ValueError) as ctx:
+            resolve_constraint_indices(classes, use_constraint_loss=True)
+        message = str(ctx.exception)
+        self.assertIn("Damaged Building", message)
+        self.assertIn("merge_with_building_footprints.py", message)
+
+    def test_missing_no_damage_is_rejected(self):
+        classes = ["Background", "Building", "Damaged Building"]
+        with self.assertRaises(ValueError) as ctx:
+            resolve_constraint_indices(classes, use_constraint_loss=True)
+        self.assertIn("No Damage", str(ctx.exception))
+
+    def test_missing_damaged_building_is_rejected(self):
+        classes = ["Background", "Building", "No Damage"]
+        with self.assertRaises(ValueError) as ctx:
+            resolve_constraint_indices(classes, use_constraint_loss=True)
+        self.assertIn("Damaged Building", str(ctx.exception))
 
 
 class TestValidateOptionalConfig(unittest.TestCase):

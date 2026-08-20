@@ -96,6 +96,78 @@ def normalize_gpu_ids(
     return ids
 
 
+# Mask value / output channel that the rest of the pipeline treats as the
+# damaged class. merge_with_building_footprints.py derives the damage fraction
+# from this raster value and inference.py assigns it the red palette entry, so
+# it is a pipeline-wide contract rather than a free parameter.
+DAMAGED_CLASS_INDEX = 3
+
+
+def resolve_constraint_indices(
+    classes: Sequence[str], use_constraint_loss: bool
+) -> tuple:
+    """Resolve the mask values the "No Damage" constraint loss operates on.
+
+    Mask values are ``classes.index(name) + 1``. The two indices are not
+    equally free to move:
+
+    * "No Damage" is read only by the loss, so it can be derived from the
+      class list and varies safely.
+    * "Damaged Building" is load-bearing for the rest of the pipeline.
+      ``merge_with_building_footprints.py`` counts raster value
+      ``DAMAGED_CLASS_INDEX`` to compute the damage fraction and
+      ``inference.py`` paints it red. Training against a different channel
+      while those still read 3 would report a damage fraction of zero (or one
+      taken from another class) with no error anywhere.
+
+    So "No Damage" is derived and "Damaged Building" is required to be where
+    the downstream steps expect it.
+
+    Args:
+        classes (Sequence[str]): The configured ``labels.classes``.
+        use_constraint_loss (bool): Whether the constraint loss is enabled.
+
+    Returns:
+        tuple: ``(no_damage_index, damaged_class_index)``. The first is None
+            when the constraint loss is off.
+
+    Raises:
+        ValueError: If the constraint loss is on but the class list can't
+            support it.
+    """
+    if not use_constraint_loss:
+        return None, DAMAGED_CLASS_INDEX
+
+    missing = [
+        c for c in ("No Damage", "Damaged Building") if c not in classes
+    ]
+    if missing:
+        raise ValueError(
+            "training.use_constraint_loss is true but labels.classes is "
+            f"missing {missing}. The constraint loss penalizes 'Damaged "
+            "Building' probability at 'No Damage' pixels, so both classes "
+            "are required."
+        )
+
+    no_damage_index = list(classes).index("No Damage") + 1
+    damaged_class_index = list(classes).index("Damaged Building") + 1
+    if damaged_class_index != DAMAGED_CLASS_INDEX:
+        raise ValueError(
+            "training.use_constraint_loss is true but 'Damaged Building' is "
+            f"class value {damaged_class_index} in labels.classes (expected "
+            f"{DAMAGED_CLASS_INDEX}). Downstream steps hardcode "
+            f"{DAMAGED_CLASS_INDEX} as the damaged class -- "
+            "merge_with_building_footprints.py computes the damage fraction "
+            "from it and inference.py colors it red -- so training against a "
+            "different channel would silently report no damage. Reorder "
+            f"labels.classes so 'Damaged Building' is entry "
+            f"{DAMAGED_CLASS_INDEX} (1-based), or leave use_constraint_loss "
+            "off."
+        )
+
+    return no_damage_index, damaged_class_index
+
+
 def _get_base_parser(description: Optional[str]) -> argparse.ArgumentParser:
     """The base argument parser for all scripts.
 
