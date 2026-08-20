@@ -386,6 +386,9 @@ function fillOpacityExprUncertainty() {
 // same "label" and "pred" feature-state used by the existing views, so correct
 // and unlabeled buildings remain transparent without a duplicate state map.
 const MISCLASSIFIED_COLOR = "#D83B01";
+// The swipe pre map declares its own copy of the PMTiles source under this
+// id, so feature-state writes aimed at that renderer must use it.
+const SWIPE_SOURCE_ID = "buildings";
 const MISCLASSIFIED_FILL_OPACITY = 0.75;
 
 function validClassStateExpr(stateKey) {
@@ -560,6 +563,11 @@ const InteractiveLabeler = () => {
   const swipeRef = useRef(null);
   const layerImageryRef = useRef(null);
   const swipePmtilesUrlRef = useRef(null);
+  // The pre map has its own renderer. Feature-state and paint expressions
+  // are per-renderer, so anything applied to the labeler map has to be
+  // mirrored here or the left pane stays unlabeled-colored.
+  const swipePreGlMapRef = useRef(null);
+  const swipeBoxCleanupRef = useRef(null);
 
   const [isMapReady, setIsMapReady] = useState(false);
   const [selectedClass, setSelectedClass] = useState(CLASS_DAMAGED);
@@ -605,6 +613,12 @@ const InteractiveLabeler = () => {
   useEffect(() => {
     misclassifiedOnRef.current = misclassifiedOn;
   }, [misclassifiedOn]);
+  // Read when the swipe pre map is built, so its footprint layers adopt the
+  // current visibility instead of always starting shown.
+  const showFootprintsRef = useRef(showFootprints);
+  useEffect(() => {
+    showFootprintsRef.current = showFootprints;
+  }, [showFootprints]);
   // Read by the P hotkey (long-lived listener) so it can't switch to the
   // Predicted view before there are enough labels to train.
   const canTrainRef = useRef(false);
@@ -640,6 +654,10 @@ const InteractiveLabeler = () => {
     init();
     return () => {
       setAppHeaderRightButtons([]);
+      // Read at teardown on purpose: setupBoxSelect registers this well after
+      // the effect runs, so copying the ref up front would capture null and
+      // leak the document-level drag listeners.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       if (boxCleanupRef.current) boxCleanupRef.current();
       if (mapRef.current) {
         mapRef.current.dispose();
@@ -921,7 +939,12 @@ const InteractiveLabeler = () => {
         return false;
       });
       map.getCanvasContainer().style.cursor = "pointer";
-      setupBoxSelect(map);
+      setupBoxSelect(
+        map,
+        () => glMapRef.current,
+        () => internalLayerIdsRef.current,
+        boxCleanupRef
+      );
 
       // Hydrate viewport features each time the map settles. This:
       //  (a) detects feature keys on the first f_* props we see;
@@ -961,8 +984,7 @@ const InteractiveLabeler = () => {
   // ── Internal-map helpers ──────────────────────────────────────────────────
   // Walk the rendered features at a click point and return the first one
   // from our buildings layer, with its id + props (which include f_*).
-  function clickedFeature(map, e) {
-    const gl = glMapRef.current;
+  function clickedFeatureOn(map, gl, layerIds, e) {
     if (!gl) return null;
     let px = e.pixel;
     if (!px && e.position) {
@@ -974,9 +996,7 @@ const InteractiveLabeler = () => {
     try {
       rf = gl.queryRenderedFeatures(
         px,
-        internalLayerIdsRef.current.length
-          ? { layers: internalLayerIdsRef.current }
-          : undefined
+        layerIds && layerIds.length ? { layers: layerIds } : undefined
       );
     } catch (err) {
       console.warn("queryRenderedFeatures failed:", err);
@@ -985,6 +1005,15 @@ const InteractiveLabeler = () => {
     const f = rf[0];
     if (!f || f.id == null) return null;
     return { id: f.id, properties: f.properties, source: f.source };
+  }
+
+  function clickedFeature(map, e) {
+    return clickedFeatureOn(
+      map,
+      glMapRef.current,
+      internalLayerIdsRef.current,
+      e
+    );
   }
 
   // Read all currently-rendered features from the buildings layer, hydrate
@@ -1114,63 +1143,92 @@ const InteractiveLabeler = () => {
   }
 
   // ── feature-state helpers (drive renderer paint) ──────────────────────────
-  function setFeatureStateLabel(sourceId, id, cls) {
-    const gl = glMapRef.current;
-    if (!gl) return;
-    try {
-      gl.setFeatureState(
-        { source: sourceId, sourceLayer: PMTILES_SOURCE_LAYER, id },
-        { label: cls }
-      );
-      mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
-    } catch (err) {
-      console.warn("setFeatureState (label) failed:", err);
+  // Feature-state is per-renderer. When the swipe view is up, every write
+  // has to reach the pre map's renderer too, otherwise the left pane keeps
+  // drawing the unlabeled color and misses the misclassified highlight.
+  function forEachStateTarget(sourceId, fn) {
+    const targets = [[glMapRef.current, sourceId]];
+    if (swipePreGlMapRef.current) {
+      targets.push([swipePreGlMapRef.current, SWIPE_SOURCE_ID]);
     }
+    for (const [gl, src] of targets) {
+      if (!gl) continue;
+      try {
+        fn(gl, src);
+      } catch (err) {
+        console.warn("feature-state write failed:", err);
+      }
+    }
+    mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
+    swipePreMapRef.current?.triggerRepaint &&
+      swipePreMapRef.current.triggerRepaint();
+  }
+
+  function setFeatureStateLabel(sourceId, id, cls) {
+    forEachStateTarget(sourceId, (gl, src) =>
+      gl.setFeatureState(
+        { source: src, sourceLayer: PMTILES_SOURCE_LAYER, id },
+        { label: cls }
+      )
+    );
   }
   function setFeatureStatePred(sourceId, id, cls) {
-    const gl = glMapRef.current;
-    if (!gl) return;
-    try {
+    forEachStateTarget(sourceId, (gl, src) =>
       gl.setFeatureState(
-        { source: sourceId, sourceLayer: PMTILES_SOURCE_LAYER, id },
+        { source: src, sourceLayer: PMTILES_SOURCE_LAYER, id },
         { pred: cls }
-      );
-      mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
-    } catch (err) {
-      console.warn("setFeatureState (pred) failed:", err);
-    }
+      )
+    );
   }
   function setFeatureStateUnc(sourceId, id, unc) {
-    const gl = glMapRef.current;
-    if (!gl) return;
-    try {
+    forEachStateTarget(sourceId, (gl, src) =>
       gl.setFeatureState(
-        { source: sourceId, sourceLayer: PMTILES_SOURCE_LAYER, id },
+        { source: src, sourceLayer: PMTILES_SOURCE_LAYER, id },
         { unc }
-      );
-      mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
-    } catch (err) {
-      console.warn("setFeatureState (unc) failed:", err);
-    }
+      )
+    );
   }
   function clearFeatureStateLabel(sourceId, id) {
-    const gl = glMapRef.current;
-    if (!gl) return;
-    try {
+    forEachStateTarget(sourceId, (gl, src) =>
       gl.removeFeatureState(
-        { source: sourceId, sourceLayer: PMTILES_SOURCE_LAYER, id },
+        { source: src, sourceLayer: PMTILES_SOURCE_LAYER, id },
         "label"
-      );
-      mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
-    } catch (err) {
-      console.warn("removeFeatureState failed:", err);
-    }
+      )
+    );
   }
   // The renderer may have given our source an internal name; pick the first
   // id from the discovered list (the click handler uses the feature's own
   // .source so this only matters for state writes not driven by a click).
   function primarySourceId() {
     return internalSourceIdsRef.current[0] || "buildings";
+  }
+
+  // Both panes draw the same footprints from the same archive, so they must
+  // share one source of truth for the paint expressions.
+  function fillPaintFor(misclassified, uncertainty, mode) {
+    if (misclassified) {
+      return {
+        fillColor: MISCLASSIFIED_COLOR,
+        fillOpacity: fillOpacityExprMisclassified(),
+      };
+    }
+    if (uncertainty) {
+      return {
+        fillColor: fillColorExprUncertainty(),
+        fillOpacity: fillOpacityExprUncertainty(),
+      };
+    }
+    const key = mode === "predict" ? "pred" : "label";
+    return {
+      fillColor: fillColorExpr(key),
+      fillOpacity: fillOpacityExpr(key),
+    };
+  }
+
+  function applySwipeFillPaint(paint) {
+    const layer =
+      swipePreMapRef.current?.layers?.getLayerById?.("swipeFill");
+    if (layer) layer.setOptions(paint);
   }
 
   // ── Repaint when the view-mode toggle flips ───────────────────────────────
@@ -1182,27 +1240,11 @@ const InteractiveLabeler = () => {
     if (!map) return;
     const fill = map.layers.getLayerById?.("embeddingFill");
     if (!fill) return;
-    if (misclassifiedOn) {
-      // The opacity expression itself requires a human label, a prediction,
-      // and a class mismatch. Correct and unlabeled buildings stay clear.
-      fill.setOptions({
-        fillColor: MISCLASSIFIED_COLOR,
-        fillOpacity: fillOpacityExprMisclassified(),
-      });
+    const paint = fillPaintFor(misclassifiedOn, uncertaintyOn, viewMode);
+    fill.setOptions(paint);
+    applySwipeFillPaint(paint);
+    if (misclassifiedOn || uncertaintyOn || viewMode === "predict") {
       hydrateViewport(map);
-    } else if (uncertaintyOn) {
-      // Uncertainty view overrides the label/predict coloring entirely.
-      fill.setOptions({
-        fillColor: fillColorExprUncertainty(),
-        fillOpacity: fillOpacityExprUncertainty(),
-      });
-      hydrateViewport(map);
-    } else {
-      fill.setOptions({
-        fillColor: fillColorExpr(viewMode === "predict" ? "pred" : "label"),
-        fillOpacity: fillOpacityExpr(viewMode === "predict" ? "pred" : "label"),
-      });
-      if (viewMode === "predict") hydrateViewport(map);
     }
     // hydrateViewport reads current refs and intentionally stays out of this
     // dependency list to avoid re-running the effect on every render.
@@ -1217,6 +1259,13 @@ const InteractiveLabeler = () => {
     if (!map) return;
     for (const layerId of ["embeddingFill", "embeddingOutline"]) {
       const layer = map.layers.getLayerById?.(layerId);
+      if (layer) layer.setOptions({ visible: showFootprints });
+    }
+    // The Space hotkey has to hide both panes, or footprints vanish on the
+    // right and stay on the left.
+    for (const layerId of ["swipeFill", "swipeOutline"]) {
+      const layer =
+        swipePreMapRef.current?.layers?.getLayerById?.(layerId);
       if (layer) layer.setOptions({ visible: showFootprints });
     }
   }, [showFootprints, isMapReady]);
@@ -1330,7 +1379,7 @@ const InteractiveLabeler = () => {
   }
 
   // ── Ctrl+drag box-select (viewport-scoped) ────────────────────────────────
-  function setupBoxSelect(map) {
+  function setupBoxSelect(map, glGetter, layerIdsGetter, cleanupRef) {
     const canvas = map.getCanvasContainer();
     let origin = null;
 
@@ -1377,8 +1426,9 @@ const InteractiveLabeler = () => {
       map.setUserInteraction({ dragPanInteraction: true });
       if (x2 - x1 < 4 || y2 - y1 < 4) return;
 
-      const gl = glMapRef.current;
+      const gl = glGetter();
       if (!gl) return;
+      const layerIds = layerIdsGetter();
       let rf = [];
       try {
         rf = gl.queryRenderedFeatures(
@@ -1386,9 +1436,7 @@ const InteractiveLabeler = () => {
             [x1, y1],
             [x2, y2],
           ],
-          internalLayerIdsRef.current.length
-            ? { layers: internalLayerIdsRef.current }
-            : undefined
+          layerIds && layerIds.length ? { layers: layerIds } : undefined
         );
       } catch (err) {
         console.warn("box-select queryRenderedFeatures failed:", err);
@@ -1403,13 +1451,12 @@ const InteractiveLabeler = () => {
     canvas.addEventListener("mousedown", onDown);
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
-    boxCleanupRef.current = () => {
+    cleanupRef.current = () => {
       canvas.removeEventListener("mousedown", onDown);
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
     };
   }
-
   // ── Viewport-scoped train + predict ───────────────────────────────────────
   // Train ONCE per label-set change (labelsDirtyRef flips on every label/
   // clear/restore), then reuse the cached model on every viewport settle.
@@ -1665,26 +1712,82 @@ const InteractiveLabeler = () => {
       if (swipePmtilesUrlRef.current) {
         try {
           preMap.sources.add(
-            new window.atlas.source.VectorTileSource("buildings", {
+            new window.atlas.source.VectorTileSource(SWIPE_SOURCE_ID, {
               type: "vector",
               url: `pmtiles://${swipePmtilesUrlRef.current}`,
             })
           );
-          preMap.layers.add(
-            new window.atlas.layer.PolygonLayer("buildings", "swipeFill", {
+          const swipeFillLayer = new window.atlas.layer.PolygonLayer(
+            SWIPE_SOURCE_ID,
+            "swipeFill",
+            {
               sourceLayer: PMTILES_SOURCE_LAYER,
               fillColor: UNLABELED_COLOR,
               fillOpacity: 0.15,
-            })
+              visible: showFootprintsRef.current,
+            }
           );
+          preMap.layers.add(swipeFillLayer);
           preMap.layers.add(
-            new window.atlas.layer.LineLayer("buildings", "swipeOutline", {
+            new window.atlas.layer.LineLayer(SWIPE_SOURCE_ID, "swipeOutline", {
               sourceLayer: PMTILES_SOURCE_LAYER,
               strokeColor: "#1a5276",
               minZoom: 15,
               strokeWidth: ["step", ["zoom"], 1, 16, 2],
+              visible: showFootprintsRef.current,
             })
           );
+
+          // SwipeMap clips the labeler map to the right of the divider, so
+          // without these the whole left pane is inert. Route its clicks
+          // through the same labelBuilding / clearLabel path.
+          swipePreGlMapRef.current = findGlMap(preMap);
+          const swipeLayerIds = () => ["swipeFill"];
+          preMap.events.add("click", swipeFillLayer, (e) => {
+            if (
+              e.originalEvent &&
+              (e.originalEvent.ctrlKey || e.originalEvent.metaKey)
+            ) {
+              return;
+            }
+            const f = clickedFeatureOn(
+              preMap,
+              swipePreGlMapRef.current,
+              swipeLayerIds(),
+              e
+            );
+            if (!f) return;
+            labelBuilding(f.id, f.properties, selectedClassRef.current);
+          });
+          preMap.events.add("contextmenu", swipeFillLayer, (e) => {
+            const f = clickedFeatureOn(
+              preMap,
+              swipePreGlMapRef.current,
+              swipeLayerIds(),
+              e
+            );
+            if (!f) return;
+            clearLabel(f.id);
+            return false;
+          });
+          preMap.getCanvasContainer().style.cursor = "pointer";
+          setupBoxSelect(
+            preMap,
+            () => swipePreGlMapRef.current,
+            swipeLayerIds,
+            swipeBoxCleanupRef
+          );
+
+          // Adopt whatever view is active, then replay the existing labels
+          // and predictions onto this renderer's feature-state.
+          applySwipeFillPaint(
+            fillPaintFor(
+              misclassifiedOnRef.current,
+              uncertaintyOnRef.current,
+              viewModeRef.current
+            )
+          );
+          hydrateViewport(mapRef.current);
         } catch (e) {
           console.warn("Swipe pre-map footprints failed:", e);
         }
@@ -1703,6 +1806,14 @@ const InteractiveLabeler = () => {
     });
 
     return () => {
+      // Detach the pre map's document-level drag listeners before its map is
+      // torn down, otherwise box-select keeps firing against a disposed
+      // renderer.
+      if (swipeBoxCleanupRef.current) {
+        swipeBoxCleanupRef.current();
+        swipeBoxCleanupRef.current = null;
+      }
+      swipePreGlMapRef.current = null;
       // Tear down the swipe control first — its dispose() removes the divider
       // handle it appended to the PRIMARY (pre map) container and detaches the
       // 'move'/'resize' sync handlers from BOTH maps — then dispose the new pre
@@ -1746,6 +1857,10 @@ const InteractiveLabeler = () => {
       container.style.clip = "";
       container.innerHTML = "";
     };
+    // The labeling helpers are stable for the life of the component and are
+    // intentionally kept out of the deps; re-running would rebuild the pre
+    // map on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMapReady, swipeOn]);
 
   // ── Save labels ───────────────────────────────────────────────────────────
@@ -1825,6 +1940,18 @@ const InteractiveLabeler = () => {
                 } catch { /* ignore */ }
               }
               mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
+            }
+            // The swipe pre map keeps its own feature-state, so clear it too
+            // or the left pane stays colored after a reset.
+            const preGl = swipePreGlMapRef.current;
+            if (preGl) {
+              try {
+                preGl.removeFeatureState(
+                  { source: SWIPE_SOURCE_ID, sourceLayer: PMTILES_SOURCE_LAYER }
+                );
+              } catch { /* ignore */ }
+              swipePreMapRef.current?.triggerRepaint &&
+                swipePreMapRef.current.triggerRepaint();
             }
             // In-memory reset (labels + predictions).
             labeledMapRef.current = {};
