@@ -1,5 +1,5 @@
 # Use Microsoft-hosted Python image to avoid Docker Hub authentication issues
-FROM mcr.microsoft.com/devcontainers/python:3.11
+FROM mcr.microsoft.com/devcontainers/python:3.14
 
 # Install Azure Storage Blob SDK
 RUN pip install azure-storage-blob azure-storage-queue
