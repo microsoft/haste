@@ -27,6 +27,7 @@ import fiona.transform
 import numpy as np
 import rasterio
 import rasterio.mask
+import shapely  # shapely>=2 (via geopandas) for STRtree
 import shapely.geometry
 from bda.config import get_args
 
@@ -184,6 +185,15 @@ def assign_features_to_grid(
     minx, miny, maxx, maxy = bounds_shape.bounds
     envelope = bounds_shape.envelope
 
+    if not feature_shapes:
+        return []
+
+    # Index the features so each cell tests only nearby candidates. Scanning
+    # the whole feature list per cell is O(cells x features), and the case
+    # this feature exists for -- sparse labels spread over a large scene --
+    # is exactly the one that maximizes both terms.
+    tree = shapely.STRtree(feature_shapes)
+
     cells = []
     for x in np.arange(minx, maxx, cluster_size):
         for y in np.arange(miny, maxy, cluster_size):
@@ -191,11 +201,13 @@ def assign_features_to_grid(
                 x, y, x + cluster_size, y + cluster_size
             )
 
-            indices = [
-                idx
-                for idx, shape in enumerate(feature_shapes)
-                if grid_cell.intersects(shape)
-            ]
+            # STRtree.query with a predicate returns exact matches, not just
+            # bounding-box candidates, so this is equivalent to the full scan.
+            # Sorted to keep cluster contents order-stable regardless of the
+            # tree's internal ordering.
+            indices = sorted(
+                int(i) for i in tree.query(grid_cell, predicate="intersects")
+            )
             if not indices:
                 continue
 

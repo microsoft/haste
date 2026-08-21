@@ -180,6 +180,47 @@ class TestAssignFeaturesToGrid(unittest.TestCase):
         self.assertEqual(len(cells), 1)
         self.assertEqual(cells[0][1], [0, 1])
 
+    def test_matches_a_brute_force_scan(self):
+        """The STRtree must select exactly what a full scan would.
+
+        `STRtree.query(..., predicate="intersects")` filters to real
+        intersections rather than bounding-box candidates, so swapping the
+        scan for the index must not change a single assignment. Uses an
+        irregular layout with straddling and disjoint geometries.
+        """
+        features = [
+            shapely.geometry.box(5, 5, 8, 8),
+            shapely.geometry.box(48, 10, 62, 14),  # straddles x=50
+            shapely.geometry.box(10, 48, 14, 62),  # straddles y=50
+            shapely.geometry.box(70, 70, 99, 99),  # spans two cells
+            shapely.geometry.Point(25, 25).buffer(3),
+            shapely.geometry.box(49.5, 49.5, 50.5, 50.5),  # on the corner
+        ]
+        bounds = shapely.geometry.box(0, 0, 100, 100)
+        cluster_size = 25.0
+
+        got = assign_features_to_grid(features, bounds, cluster_size)
+
+        # Independent re-implementation of the loop this replaced.
+        minx, miny, maxx, maxy = bounds.bounds
+        expected = []
+        x = minx
+        while x < maxx:
+            y = miny
+            while y < maxy:
+                cell = shapely.geometry.box(
+                    x, y, x + cluster_size, y + cluster_size
+                )
+                idx = [i for i, s in enumerate(features) if cell.intersects(s)]
+                if idx:
+                    clipped = cell.intersection(bounds.envelope)
+                    if not clipped.is_empty:
+                        expected.append(idx)
+                y += cluster_size
+            x += cluster_size
+
+        self.assertEqual([i for _, i in got], expected)
+
     def test_ids_are_stable_across_calls(self):
         """Cluster ids come from enumeration order, which must be repeatable."""
         features = [_point_box(x, y) for x in (5, 45) for y in (5, 45)]
