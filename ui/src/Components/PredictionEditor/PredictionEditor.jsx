@@ -18,6 +18,15 @@
 // PutEditedPredictions, which writes a brand-new version — nothing is
 // destructive.
 //
+// The optional swipe view (see the swipe effect near the bottom) puts a
+// second Azure Maps instance behind this one and hands both to
+// atlas.SwipeMap so the analyst can compare imagery while reclassifying:
+// pre-event vs post-event when the layer has pre-event tiles, basemap vs
+// post-event when it does not. Both panes draw the same footprints, share
+// every feature-state write, and accept the same edit gestures — SwipeMap
+// clips the editor map, so clicks on the uncovered side land on the other
+// map and would otherwise do nothing.
+//
 // Both artifacts are produced by a queued job, so a model nobody has opened
 // before arrives here unprepared. The editor enqueues that job itself
 // (PutPreparePredictionTilesQueueMessage) and then polls the session until
@@ -40,6 +49,8 @@ import {
 import { PMTiles } from "pmtiles";
 import { FluentIcon } from "../../util/icons";
 import { apiGet, apiPut, buildUrl } from "../../util/api";
+import { toBrowserTitilerUrl } from "../../util/blobUrl";
+import { loadImagery } from "../LabelingTool/LabelingToolHelper";
 import {
   getPmtilesProtocol,
   InMemoryPMTilesSource,
@@ -87,6 +98,14 @@ import {
   prepStatusLabel,
   shouldPollPrep,
 } from "./predictionPrep.js";
+import {
+  dividerPositionForKey,
+  isSwipeAvailable,
+  resolveSwipeMode,
+  swipeComparisonTileUrl,
+  swipeLeftPaneLabel,
+  swipeRightPaneLabel,
+} from "./predictionSwipe.js";
 import "../../assets/css/drawingToolbar.css";
 
 // Tippecanoe writes the buildings layer with `-l buildings`; every feature
@@ -95,6 +114,14 @@ const PMTILES_SOURCE_LAYER = "buildings";
 const SOURCE_ID = "predictionBuildings";
 const FILL_LAYER_ID = "predictionFill";
 const LINE_LAYER_ID = "predictionOutline";
+
+// The swipe comparison map is a second Azure Maps instance with its own
+// renderer, so it declares its own copy of the same PMTiles archive. Ids are
+// distinct from the editor map's purely for clarity in the debugger — the two
+// styles never meet.
+const SWIPE_SOURCE_ID = "predictionSwipeBuildings";
+const SWIPE_FILL_LAYER_ID = "predictionSwipeFill";
+const SWIPE_LINE_LAYER_ID = "predictionSwipeOutline";
 
 // Paint expressions compare numbers, so each class gets a code.
 const CLASS_CODES = {
@@ -202,6 +229,48 @@ function findGlMap(atlasMap) {
   return null;
 }
 
+// Azure Maps renames our source/layer inside the renderer's style, so the ids
+// queryRenderedFeatures needs have to be discovered rather than assumed. Used
+// for the editor map and, identically, for the swipe comparison map.
+function discoverFillLayerIds(glMap, fallbackLayerIds) {
+  if (!glMap || typeof glMap.getStyle !== "function") return fallbackLayerIds;
+  try {
+    const style = glMap.getStyle();
+    const sourceIds = Object.keys(style.sources || {});
+    const ours = [...fallbackLayerIds, ...sourceIds];
+    const discovered = (style.layers || [])
+      .filter(
+        (layer) =>
+          layer.type === "fill" &&
+          (ours.includes(layer.source) || /predict|build/i.test(layer.id))
+      )
+      .map((layer) => layer.id);
+    return discovered.length > 0 ? discovered : fallbackLayerIds;
+  } catch (error) {
+    console.warn("glMap.getStyle() failed:", error);
+    return fallbackLayerIds;
+  }
+}
+
+// The name the renderer gave our vector source, which is the id every
+// setFeatureState call has to use. The editor map learns this from its first
+// rendered feature; the comparison map has no such feature yet when its
+// layers are built, so it reads the style instead.
+function discoverVectorSourceId(glMap, preferredId) {
+  if (!glMap || typeof glMap.getStyle !== "function") return preferredId;
+  try {
+    const sources = glMap.getStyle().sources || {};
+    if (sources[preferredId]) return preferredId;
+    const match = Object.keys(sources).find(
+      (id) => sources[id]?.type === "vector" && /predict|build/i.test(id)
+    );
+    return match || preferredId;
+  } catch (error) {
+    console.warn("glMap.getStyle() failed:", error);
+    return preferredId;
+  }
+}
+
 // Average of the first ring's vertices — good enough to centre the camera on
 // a building, and far cheaper than a real centroid.
 function featureCentroid(geometry) {
@@ -233,9 +302,52 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground1,
     backgroundColor: tokens.colorNeutralBackground2,
   },
-  map: {
+  // Both map panes are absolutely positioned inside this wrapper and fill it
+  // exactly: the swipe comparison map (SwipeMap PRIMARY) sits behind, the
+  // editor map (SECONDARY, clipped to the right of the divider) on top. The
+  // wrapper is also the positioning context for the box-select rectangle and
+  // the pane badges, so their pixel offsets match the map canvases.
+  mapArea: {
+    position: "relative",
     flexGrow: 1,
     minHeight: 0,
+  },
+  mapPane: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+  mapPaneHidden: {
+    display: "none",
+  },
+  mapBadge: {
+    position: "absolute",
+    top: "10px",
+    zIndex: 900,
+    padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
+    borderRadius: tokens.borderRadiusMedium,
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    boxShadow: tokens.shadow4,
+    fontSize: tokens.fontSizeBase200,
+    fontWeight: tokens.fontWeightSemibold,
+    whiteSpace: "nowrap",
+    // Never intercept a divider drag or a footprint click.
+    pointerEvents: "none",
+  },
+  // The Back button control (10px inset, 104px wide, 4px padding) owns the
+  // top-left corner, so the left badge starts clear of it.
+  mapBadgeLeft: {
+    left: "132px",
+  },
+  mapBadgeRight: {
+    right: "calc(clamp(300px, 25vw, 360px) + 20px)",
+    "@media (max-width: 700px)": {
+      right: "10px",
+    },
   },
   messageCard: {
     position: "absolute",
@@ -427,6 +539,30 @@ const PredictionEditor = () => {
   const selectedIdRef = useRef(null);
   const boxRef = useRef(null);
   const boxCleanupRef = useRef(null);
+  // ── Swipe comparison map ──────────────────────────────────────────────────
+  // atlas.SwipeMap reveals its SECONDARY on the RIGHT of the divider and its
+  // PRIMARY on the LEFT, so the comparison map (pre-event imagery, or just
+  // the basemap) is built as the PRIMARY and the editor map is adopted as the
+  // SECONDARY. mapAreaRef is the wrapper both panes fill — its width is what
+  // the A/S/D divider shortcuts measure against.
+  const mapAreaRef = useRef(null);
+  const swipeMapContainerRef = useRef(null);
+  const swipeMapRef = useRef(null);
+  // The comparison map's own renderer: feature-state and paint are
+  // per-renderer, so every write aimed at the editor map is mirrored here or
+  // the left pane draws every footprint in the "pending" colour.
+  const swipeGlMapRef = useRef(null);
+  const swipeControlRef = useRef(null);
+  const swipeFillLayerRef = useRef(null);
+  const swipeLineLayerRef = useRef(null);
+  const swipeSourceIdRef = useRef(SWIPE_SOURCE_ID);
+  const swipeLayerIdsRef = useRef([SWIPE_FILL_LAYER_ID]);
+  const swipeBoxCleanupRef = useRef(null);
+  // The layer's imagery URLs (GetLayerLabelingToolData) and the PMTiles
+  // archive URL, cached so the comparison map can draw the same imagery and
+  // the same footprints without refetching anything.
+  const imageryRef = useRef(null);
+  const archiveUrlRef = useRef("");
   // Guards every setState that happens after an await, so nothing writes to a
   // torn-down component (and, with it, no timer outlives the editor).
   const mountedRef = useRef(true);
@@ -450,6 +586,20 @@ const PredictionEditor = () => {
   // depending on it below) is what makes the styling effects re-run once the
   // layers actually exist — the refs alone never trigger a render.
   const [isSourceReady, setIsSourceReady] = useState(false);
+  // Same rule for the swipe comparison map: its layers exist only once its
+  // own async "ready" has fired, so the paint effect depends on this flag
+  // rather than on swipeMapRef.current.
+  const [isSwipeReady, setIsSwipeReady] = useState(false);
+  // The layer's imagery block, in state because the render tree decides from
+  // it whether to offer a swipe (and which comparison to name).
+  const [imagery, setImagery] = useState(null);
+  // Swipe defaults OFF. The editor's bread-and-butter gesture is a wide
+  // ctrl+drag box-select over the whole map, and a second Azure Maps instance
+  // plus a second PMTiles renderer is not free — so the analyst opts in when
+  // they actually want to compare imagery. (Editing is wired to BOTH panes
+  // regardless, so turning it on never makes half the map inert, which is the
+  // regression the Interactive Labeler hit by defaulting swipe on.)
+  const [swipeOn, setSwipeOn] = useState(false);
 
   const [threshold, setThreshold] = useState(0.5);
   const [unknownThreshold, setUnknownThreshold] = useState(0);
@@ -482,6 +632,15 @@ const PredictionEditor = () => {
   // a real element — the editor may reach this point from the preparing card,
   // where the container was not in the DOM at all.
   const [loadToken, setLoadToken] = useState(0);
+
+  // Which comparison the swipe offers, derived from the imagery the layer
+  // actually has (pure, unit-tested in predictionSwipe.js). Pre-vs-post is
+  // never offered without pre-event tiles, and no swipe at all is offered
+  // without post-event tiles — there would be nothing to compare.
+  const swipeMode = useMemo(() => resolveSwipeMode(imagery), [imagery]);
+  const swipeAvailable = isSwipeAvailable(swipeMode);
+  // The comparison pane is only really up once its map has finished loading.
+  const isSwipeActive = swipeOn && swipeAvailable;
 
   // ── Ref mirrors ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -602,6 +761,7 @@ const PredictionEditor = () => {
       setPhase(PHASE_LOADING);
       setPrepState(null);
       setIsSourceReady(false);
+      setImagery(null);
       setOverridesState({});
       setClassification(null);
       setSelectedIndex(-1);
@@ -741,6 +901,9 @@ const PredictionEditor = () => {
           teardownMap();
           return;
         }
+        // Publishing the imagery block is what lets the panel decide whether
+        // to offer a swipe, and which comparison to name.
+        setImagery(imageryRef.current);
         setPhase(PHASE_READY);
       } catch (error) {
         if (cancelled || isStale(runId)) return;
@@ -813,6 +976,24 @@ const PredictionEditor = () => {
       `GetModelArtifact?projectId=${encodeURIComponent(projectId)}` +
         `&modelId=${encodeURIComponent(modelId)}&kind=footprint_pmtiles`
     );
+    // Cached so the swipe comparison map can point a source at the very same
+    // `pmtiles://<url>` key and reuse the archive already in memory.
+    archiveUrlRef.current = archiveUrl;
+
+    // The layer's imagery, so the editor draws footprints over the post-event
+    // scene the model actually scored (rather than a generic basemap) and the
+    // swipe view knows whether pre-event tiles exist. Imagery is optional:
+    // a failure here must not stop the editor from opening.
+    let layerData = null;
+    try {
+      layerData = await apiGet(
+        `GetLayerLabelingToolData?projectId=${encodeURIComponent(projectId)}` +
+          `&imageLayerId=${encodeURIComponent(imageLayerId)}`
+      );
+    } catch (error) {
+      console.warn("Could not fetch layer imagery:", error);
+    }
+    imageryRef.current = layerData?.imagery || null;
 
     // Download the whole archive once and serve pmtiles.js from memory: the
     // SWA /api proxy in front of the function app does not honour range
@@ -857,6 +1038,25 @@ const PredictionEditor = () => {
         position: "bottom-left",
       });
 
+      // Post-event imagery under the footprints. This is the pane the swipe
+      // view compares against, and on its own it already puts every footprint
+      // over the scene the model scored. toBrowserTitilerUrl returns "" when
+      // it cannot map the tile template to something this browser can reach,
+      // in which case the basemap alone is a better answer than a layer of
+      // failing tiles.
+      const postUrl = toBrowserTitilerUrl(
+        layerData?.imagery?.postEventTileUrl || ""
+      );
+      if (postUrl) {
+        loadImagery(
+          postUrl,
+          map,
+          { current: null },
+          "predictionPostEventImagery",
+          true
+        );
+      }
+
       const source = new window.atlas.source.VectorTileSource(SOURCE_ID, {
         type: "vector",
         url: `pmtiles://${archiveUrl}`,
@@ -894,28 +1094,9 @@ const PredictionEditor = () => {
 
       const glMap = findGlMap(map);
       glMapRef.current = glMap;
-      if (glMap && typeof glMap.getStyle === "function") {
-        // Azure Maps renames our source/layer internally; discover the ids
-        // the renderer actually uses so queryRenderedFeatures can target them.
-        try {
-          const style = glMap.getStyle();
-          const sourceIds = Object.keys(style.sources || {});
-          const ours = [
-            SOURCE_ID,
-            ...sourceIds.filter((s) => s === SOURCE_ID || /predict|build/i.test(s)),
-            ...sourceIds,
-          ];
-          internalLayerIdsRef.current = (style.layers || [])
-            .filter(
-              (layer) =>
-                layer.type === "fill" &&
-                (ours.includes(layer.source) || /predict|build/i.test(layer.id))
-            )
-            .map((layer) => layer.id);
-        } catch (error) {
-          console.warn("glMap.getStyle() failed:", error);
-        }
-      }
+      internalLayerIdsRef.current = discoverFillLayerIds(glMap, [
+        FILL_LAYER_ID,
+      ]);
 
       map.events.add("click", fillLayer, (event) => {
         // Ctrl+click starts a box-select drag; don't also toggle a class.
@@ -934,7 +1115,12 @@ const PredictionEditor = () => {
         return false;
       });
       map.getCanvasContainer().style.cursor = "pointer";
-      setupBoxSelect(map);
+      setupBoxSelect(
+        map,
+        () => glMapRef.current,
+        () => internalLayerIdsRef.current,
+        boxCleanupRef
+      );
 
       const hydrate = () => scheduleHydrate();
       map.events.add("moveend", hydrate);
@@ -949,8 +1135,30 @@ const PredictionEditor = () => {
   }
 
   // ── Renderer helpers (all read refs so map handlers stay valid) ───────────
-  function featureAtEvent(map, event) {
-    const glMap = glMapRef.current;
+  // Every renderer currently drawing footprints: the editor map, plus the
+  // swipe comparison map while it is up. Feature-state is per-renderer, so a
+  // write that skipped the second one would leave the far side of the divider
+  // painting every building in the "pending" colour.
+  function footprintRenderers() {
+    const renderers = [];
+    if (glMapRef.current) {
+      renderers.push({
+        map: mapRef.current,
+        gl: glMapRef.current,
+        sourceId: primarySourceIdRef.current || SOURCE_ID,
+      });
+    }
+    if (swipeGlMapRef.current) {
+      renderers.push({
+        map: swipeMapRef.current,
+        gl: swipeGlMapRef.current,
+        sourceId: swipeSourceIdRef.current || SWIPE_SOURCE_ID,
+      });
+    }
+    return renderers;
+  }
+
+  function featureAtEventOn(map, glMap, layerIds, event) {
     if (!glMap) return null;
     let pixel = event.pixel;
     if (!pixel && event.position) {
@@ -959,7 +1167,6 @@ const PredictionEditor = () => {
     }
     if (!pixel) return null;
     try {
-      const layerIds = internalLayerIdsRef.current;
       const rendered = glMap.queryRenderedFeatures(
         pixel,
         layerIds && layerIds.length ? { layers: layerIds } : undefined
@@ -973,10 +1180,17 @@ const PredictionEditor = () => {
     }
   }
 
-  function renderedFeatures(box) {
-    const glMap = glMapRef.current;
+  function featureAtEvent(map, event) {
+    return featureAtEventOn(
+      map,
+      glMapRef.current,
+      internalLayerIdsRef.current,
+      event
+    );
+  }
+
+  function renderedFeaturesOn(glMap, layerIds, box) {
     if (!glMap) return [];
-    const layerIds = internalLayerIdsRef.current;
     try {
       return (
         glMap.queryRenderedFeatures(
@@ -990,20 +1204,38 @@ const PredictionEditor = () => {
     }
   }
 
-  function writeFeatureState(sourceId, id, state) {
-    const glMap = glMapRef.current;
-    if (!glMap) return;
-    try {
-      glMap.setFeatureState(
-        {
-          source: sourceId || primarySourceIdRef.current || SOURCE_ID,
-          sourceLayer: PMTILES_SOURCE_LAYER,
-          id,
-        },
-        state
-      );
-    } catch (error) {
-      console.warn("feature-state write failed:", error);
+  function renderedFeatures(box) {
+    return renderedFeaturesOn(
+      glMapRef.current,
+      internalLayerIdsRef.current,
+      box
+    );
+  }
+
+  // One class change, written to every renderer that draws the building. Each
+  // renderer names the source differently, so each gets its own cached id.
+  function writeFeatureState(id, state) {
+    for (const renderer of footprintRenderers()) {
+      try {
+        renderer.gl.setFeatureState(
+          {
+            source: renderer.sourceId,
+            sourceLayer: PMTILES_SOURCE_LAYER,
+            id,
+          },
+          state
+        );
+      } catch (error) {
+        console.warn("feature-state write failed:", error);
+      }
+    }
+  }
+
+  function repaintFootprints() {
+    for (const renderer of footprintRenderers()) {
+      if (renderer.map && renderer.map.triggerRepaint) {
+        renderer.map.triggerRepaint();
+      }
     }
   }
 
@@ -1020,6 +1252,10 @@ const PredictionEditor = () => {
   // Paint every footprint currently on screen from the cached classification,
   // and remember where each one is so Prev/Next can pan to it. Called on every
   // viewport settle and whenever the classification changes.
+  //
+  // The two panes share a camera, so the editor map's rendered features are
+  // the authoritative list of what is on screen; writeFeatureState fans each
+  // building's state out to the comparison map's renderer as well.
   function hydrateViewport() {
     const features = renderedFeatures(undefined);
     if (features.length === 0) return;
@@ -1039,16 +1275,14 @@ const PredictionEditor = () => {
         if (centroid) centroidsRef.current.set(id, centroid);
       }
       const cls = classes[index];
-      writeFeatureState(feature.source, id, {
+      writeFeatureState(id, {
         cls: CLASS_CODES[cls] || 0,
         dim: !matchesFilter(cls, edited[index], activeFilter),
         edited: !!edited[index],
         selected: selectedId === id,
       });
     }
-    if (mapRef.current && mapRef.current.triggerRepaint) {
-      mapRef.current.triggerRepaint();
-    }
+    repaintFootprints();
   }
 
   // ── Editing ───────────────────────────────────────────────────────────────
@@ -1109,7 +1343,11 @@ const PredictionEditor = () => {
   }
 
   // ── Ctrl+drag box-select ──────────────────────────────────────────────────
-  function setupBoxSelect(map) {
+  // Parameterised by pane: the swipe comparison map wires its own copy so a
+  // drag that starts on the uncovered (left) half selects buildings too. The
+  // two canvases are the same size and in the same place, so both can share
+  // the single box rectangle without any coordinate translation.
+  function setupBoxSelect(map, glGetter, layerIdsGetter, cleanupRef) {
     const canvas = map.getCanvasContainer();
     let origin = null;
 
@@ -1156,7 +1394,7 @@ const PredictionEditor = () => {
       map.setUserInteraction({ dragPanInteraction: true });
       if (x2 - x1 < 4 || y2 - y1 < 4) return;
 
-      const features = renderedFeatures([
+      const features = renderedFeaturesOn(glGetter(), layerIdsGetter(), [
         [x1, y1],
         [x2, y2],
       ]);
@@ -1169,7 +1407,7 @@ const PredictionEditor = () => {
     canvas.addEventListener("mousedown", onDown);
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
-    boxCleanupRef.current = () => {
+    cleanupRef.current = () => {
       canvas.removeEventListener("mousedown", onDown);
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
@@ -1203,31 +1441,36 @@ const PredictionEditor = () => {
 
   // Repaint on-screen footprints. isSourceReady is in the deps because the
   // layers are created inside the map's async "ready" handler — reading the
-  // layer refs during render would see nulls and never re-run.
+  // layer refs during render would see nulls and never re-run. isSwipeReady
+  // is there for the same reason on the comparison pane: its renderer starts
+  // with no feature-state at all, so it has to be hydrated the moment it
+  // appears.
   useEffect(() => {
     if (!isSourceReady || !classification) return;
     hydrateViewport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classification, filter, isSourceReady]);
+  }, [classification, filter, isSourceReady, isSwipeReady]);
 
   // Resolve the map palette from the active Fluent theme, and re-apply it when
   // the user flips light/dark or changes the brand palette. The resolved
   // values live in a ref because only the renderer consumes them — the legend
   // uses the same tokens through makeStyles.
+  //
+  // Paint expressions are per-renderer too, so the comparison pane's layers
+  // get exactly the same ones; isSwipeReady is in the deps because those
+  // layers only exist once that map's async "ready" has fired.
   useEffect(() => {
     const resolved = resolveThemeColors(rootRef.current);
     colorsRef.current = resolved;
-    if (fillLayerRef.current) {
-      fillLayerRef.current.setOptions({
-        fillColor: fillColorExpression(resolved),
-      });
+    const fillColor = fillColorExpression(resolved);
+    const strokeColor = strokeColorExpression(resolved);
+    for (const layer of [fillLayerRef.current, swipeFillLayerRef.current]) {
+      if (layer) layer.setOptions({ fillColor });
     }
-    if (lineLayerRef.current) {
-      lineLayerRef.current.setOptions({
-        strokeColor: strokeColorExpression(resolved),
-      });
+    for (const layer of [lineLayerRef.current, swipeLineLayerRef.current]) {
+      if (layer) layer.setOptions({ strokeColor });
     }
-  }, [isDark, palette, isSourceReady]);
+  }, [isDark, palette, isSourceReady, isSwipeReady]);
 
   // ── Selection ─────────────────────────────────────────────────────────────
   const filteredIndices = useMemo(
@@ -1265,11 +1508,15 @@ const PredictionEditor = () => {
         ? attrs.ids[selectedIndex]
         : null;
     if (previousId != null && previousId !== nextId) {
-      writeFeatureState(null, previousId, { selected: false });
+      writeFeatureState(previousId, { selected: false });
     }
     selectedIdRef.current = nextId;
-    if (nextId == null) return;
-    writeFeatureState(null, nextId, { selected: true });
+    if (nextId == null) {
+      repaintFootprints();
+      return;
+    }
+    writeFeatureState(nextId, { selected: true });
+    repaintFootprints();
     const shouldPan = pendingPanRef.current;
     pendingPanRef.current = false;
     const centroid = centroidsRef.current.get(nextId);
@@ -1281,7 +1528,11 @@ const PredictionEditor = () => {
         duration: 500,
       });
     }
-  }, [selectedIndex, isSourceReady]);
+    // writeFeatureState / repaintFootprints only read refs (the renderers and
+    // their source ids), so they are stable for the life of the component and
+    // are deliberately not dependencies.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIndex, isSourceReady, isSwipeReady]);
 
   function navigateInFilter(direction) {
     if (filteredIndices.length === 0) return;
@@ -1302,6 +1553,250 @@ const PredictionEditor = () => {
     pendingPanRef.current = true;
     setSelectedIndex(next);
   }
+
+  // ── Swipe comparison map ──────────────────────────────────────────────────
+  // Built on demand from the global atlas.SwipeMap that index.html loads from
+  // /assets/js/azure-maps-swipe-map.min.js — NOT an npm import. Mirrors the
+  // Interactive Labeler's hardened implementation.
+  //
+  // atlas.SwipeMap always shows its PRIMARY on the LEFT of the divider and
+  // clips its SECONDARY to reveal it on the RIGHT, so:
+  //   • PRIMARY   = a freshly built comparison map (pre-event imagery, or the
+  //                 plain basemap), created in swipeMapContainerRef — the
+  //                 FIRST/behind pane; and
+  //   • SECONDARY = the existing editor map (post-event imagery + footprints
+  //                 + editing), which sits in the SECOND/on-top pane, so its
+  //                 clipped right half reveals the comparison map on the left.
+  // Consequently the divider moving LEFT uncovers more of the post-event
+  // (editing) map, and moving RIGHT uncovers more of the comparison map.
+  //
+  // The editor map is only ADOPTED: SwipeMap adds 'move'/'resize' handlers and
+  // an inline clip to its container, nothing else, so an already-"ready" map
+  // adopts cleanly and its own handlers survive. SwipeMap also syncs BOTH
+  // cameras on every 'move' internally — adding our own camera-sync handler
+  // here would double-update them and make panning stutter, so we do not.
+  useEffect(() => {
+    if (!isSourceReady || !swipeOn || !swipeAvailable) return undefined;
+    const editorMap = mapRef.current;
+    const container = swipeMapContainerRef.current;
+    // Captured up front: by teardown time the ref may already point elsewhere,
+    // but this node is stable for the effect's lifetime.
+    const editorContainer = mapContainerRef.current;
+    if (!editorMap || !container || !window.atlas || !window.atlas.SwipeMap) {
+      return undefined;
+    }
+    // The map's "ready" is async and can land after this effect is cleaned up
+    // (a fast toggle off, or an unmount) — by which point the map is disposed.
+    let isDisposed = false;
+
+    // Seed the comparison map with the editor's current camera so the two
+    // start aligned before SwipeMap takes over the synchronisation.
+    const camera = editorMap.getCamera();
+    const compareMap = new window.atlas.Map(container, {
+      center: camera.center,
+      zoom: camera.zoom,
+      bearing: camera.bearing || 0,
+      pitch: 0,
+      maxPitch: 0,
+      // Same rule as the editor map: "satellite" is the real basemap, while
+      // local docker dev (no Azure Maps subscription) uses "blank" so the
+      // control still fires "ready" without a valid token.
+      style: isAzureMapsPlaceholder ? "blank" : "satellite",
+      language: "en-US",
+      authOptions: getAzureMapsAuthOptions(),
+    });
+    swipeMapRef.current = compareMap;
+
+    compareMap.events.add("ready", () => {
+      if (isDisposed) return;
+      compareMap.setUserInteraction({
+        dragRotateInteraction: false,
+        scrollZoomInteraction: true,
+        pinchZoomInteraction: true,
+        pinchRotateInteraction: false,
+      });
+
+      // Pre-event imagery on the comparison pane. In basemap mode there is no
+      // overlay at all — the map's own basemap IS the comparison.
+      const compareUrl = toBrowserTitilerUrl(
+        swipeComparisonTileUrl(imageryRef.current, swipeMode)
+      );
+      if (compareUrl) {
+        loadImagery(
+          compareUrl,
+          compareMap,
+          { current: null },
+          "predictionSwipeComparisonImagery",
+          true
+        );
+      }
+
+      // The same footprints, from the same in-memory archive: SwipeMap clips
+      // a whole map, so a single set of footprint layers could only ever
+      // appear on one side of the divider.
+      if (archiveUrlRef.current) {
+        try {
+          compareMap.sources.add(
+            new window.atlas.source.VectorTileSource(SWIPE_SOURCE_ID, {
+              type: "vector",
+              url: `pmtiles://${archiveUrlRef.current}`,
+              promoteId: { [PMTILES_SOURCE_LAYER]: "id" },
+            })
+          );
+          const paint = colorsRef.current;
+          const swipeFillLayer = new window.atlas.layer.PolygonLayer(
+            SWIPE_SOURCE_ID,
+            SWIPE_FILL_LAYER_ID,
+            {
+              sourceLayer: PMTILES_SOURCE_LAYER,
+              fillColor: fillColorExpression(paint),
+              fillOpacity: FILL_OPACITY_EXPRESSION,
+            }
+          );
+          compareMap.layers.add(swipeFillLayer);
+          swipeFillLayerRef.current = swipeFillLayer;
+
+          const swipeLineLayer = new window.atlas.layer.LineLayer(
+            SWIPE_SOURCE_ID,
+            SWIPE_LINE_LAYER_ID,
+            {
+              sourceLayer: PMTILES_SOURCE_LAYER,
+              strokeColor: strokeColorExpression(paint),
+              strokeWidth: STROKE_WIDTH_EXPRESSION,
+            }
+          );
+          compareMap.layers.add(swipeLineLayer);
+          swipeLineLayerRef.current = swipeLineLayer;
+
+          const swipeGlMap = findGlMap(compareMap);
+          swipeGlMapRef.current = swipeGlMap;
+          swipeLayerIdsRef.current = discoverFillLayerIds(swipeGlMap, [
+            SWIPE_FILL_LAYER_ID,
+          ]);
+          swipeSourceIdRef.current = discoverVectorSourceId(
+            swipeGlMap,
+            SWIPE_SOURCE_ID
+          );
+
+          // Without these the whole uncovered half of the map would be inert:
+          // the editor map is clipped there, so its own handlers never see
+          // those clicks. Same edit path, same box-select, same undo.
+          compareMap.events.add("click", swipeFillLayer, (event) => {
+            if (
+              event.originalEvent &&
+              (event.originalEvent.ctrlKey || event.originalEvent.metaKey)
+            ) {
+              return;
+            }
+            const feature = featureAtEventOn(
+              compareMap,
+              swipeGlMapRef.current,
+              swipeLayerIdsRef.current,
+              event
+            );
+            if (feature) handleFeatureClick(feature.id);
+          });
+          compareMap.events.add("contextmenu", swipeFillLayer, (event) => {
+            const feature = featureAtEventOn(
+              compareMap,
+              swipeGlMapRef.current,
+              swipeLayerIdsRef.current,
+              event
+            );
+            if (feature) handleClearOverrideForId(feature.id);
+            return false;
+          });
+          compareMap.getCanvasContainer().style.cursor = "pointer";
+          setupBoxSelect(
+            compareMap,
+            () => swipeGlMapRef.current,
+            () => swipeLayerIdsRef.current,
+            swipeBoxCleanupRef
+          );
+
+          // This renderer starts with empty feature-state, and its tiles
+          // arrive on their own schedule, so re-hydrate as they land.
+          compareMap.events.add("sourcedata", (event) => {
+            if (event && event.isSourceLoaded) scheduleHydrate();
+          });
+        } catch (error) {
+          console.warn("Swipe comparison footprints failed:", error);
+        }
+      }
+
+      try {
+        swipeControlRef.current = new window.atlas.SwipeMap(
+          compareMap,
+          editorMap
+        );
+      } catch (error) {
+        console.warn("atlas.SwipeMap init failed:", error);
+      }
+
+      // Paint what is already on screen into the new renderer, then let the
+      // effects above take over (isSwipeReady is their trigger).
+      hydrateViewport();
+      if (mountedRef.current && !isDisposed) setIsSwipeReady(true);
+    });
+
+    return () => {
+      isDisposed = true;
+      // Detach the comparison pane's document-level drag listeners before its
+      // map goes away, or box-select keeps firing against a dead renderer.
+      if (swipeBoxCleanupRef.current) {
+        swipeBoxCleanupRef.current();
+        swipeBoxCleanupRef.current = null;
+      }
+      swipeGlMapRef.current = null;
+      swipeFillLayerRef.current = null;
+      swipeLineLayerRef.current = null;
+      swipeLayerIdsRef.current = [SWIPE_FILL_LAYER_ID];
+      swipeSourceIdRef.current = SWIPE_SOURCE_ID;
+      // Order matters: SwipeMap.dispose() removes the divider handle it
+      // appended to the PRIMARY container and detaches the 'move'/'resize'
+      // handlers from BOTH maps, so it has to go before the map it decorates.
+      if (swipeControlRef.current) {
+        try {
+          if (typeof swipeControlRef.current.dispose === "function") {
+            swipeControlRef.current.dispose();
+          }
+        } catch (error) {
+          console.warn("atlas.SwipeMap dispose failed:", error);
+        }
+        swipeControlRef.current = null;
+      }
+      if (swipeMapRef.current) {
+        try {
+          swipeMapRef.current.dispose();
+        } catch (error) {
+          console.warn("swipe comparison map dispose failed:", error);
+        }
+        swipeMapRef.current = null;
+      }
+      // SwipeMap.dispose() does NOT clear the inline `clip` it set on the
+      // SECONDARY (editor) map's container. Left behind, the editor stays
+      // stuck at half width. Clear it on both the element getMapContainer()
+      // reports and the div handed to the Map constructor, since which one
+      // that is varies across Atlas builds. The editor map may already be
+      // disposed when this runs on unmount, hence the try/catch.
+      try {
+        if (editorMap && typeof editorMap.getMapContainer === "function") {
+          editorMap.getMapContainer().style.clip = "";
+        }
+      } catch (error) {
+        console.warn("clearing the editor map clip failed:", error);
+      }
+      if (editorContainer) editorContainer.style.clip = "";
+      // Leave the comparison pane's container as clean as we found it.
+      container.style.clip = "";
+      container.innerHTML = "";
+      if (mountedRef.current) setIsSwipeReady(false);
+    };
+    // The map helpers are stable for the life of the component and are
+    // deliberately not dependencies: including them would rebuild the
+    // comparison map on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSourceReady, swipeOn, swipeAvailable, swipeMode]);
 
   // ── Save ──────────────────────────────────────────────────────────────────
   async function refreshVersions() {
@@ -1360,7 +1855,8 @@ const PredictionEditor = () => {
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
   // 1/2/3 set the selected building's class (and become the click action, so
-  // the next click paints the same class); arrows walk the filtered set.
+  // the next click paints the same class); arrows walk the filtered set; with
+  // the swipe view up, A/S/D snap the divider.
   useEffect(() => {
     if (phase !== PHASE_READY) return undefined;
     const classByKey = {
@@ -1376,6 +1872,22 @@ const PredictionEditor = () => {
         setClickAction(cls);
         setClassForSelected(cls);
         return;
+      }
+      if (swipeControlRef.current) {
+        // sliderPosition is in pixels from the left edge of the map area.
+        // A = hard left (the whole post-event/editing map shows), S = centre,
+        // D = hard right (the whole comparison map shows). SwipeMap clamps to
+        // [0, width] itself.
+        const width = mapAreaRef.current?.getBoundingClientRect().width;
+        const position = dividerPositionForKey(event.key, width);
+        if (position !== null) {
+          try {
+            swipeControlRef.current.setOptions({ sliderPosition: position });
+          } catch (error) {
+            console.warn("swipe setOptions (sliderPosition) failed:", error);
+          }
+          return;
+        }
       }
       if (event.key === "ArrowLeft") {
         event.preventDefault();
@@ -1558,12 +2070,44 @@ const PredictionEditor = () => {
         </Button>
       </div>
 
+      {/* Map area. Both panes fill this wrapper exactly and overlap: the
+          comparison map (SwipeMap PRIMARY, revealed LEFT of the divider) has
+          to sit FIRST/behind, and the editor map (SECONDARY, clipped so it is
+          revealed RIGHT of the divider) SECOND/on-top. The divider handle
+          SwipeMap appends into the primary's container carries its own
+          z-index and still paints above both. The comparison pane's container
+          stays mounted but hidden while swipe is off, so the effect always
+          has a container to build into. */}
       {showMap && (
-        <div
-          ref={mapContainerRef}
-          id="predictionEditorMap"
-          className={styles.map}
-        />
+        <div className={styles.mapArea} ref={mapAreaRef}>
+          <div
+            ref={swipeMapContainerRef}
+            id="predictionEditorSwipeMap"
+            className={
+              isSwipeActive
+                ? styles.mapPane
+                : `${styles.mapPane} ${styles.mapPaneHidden}`
+            }
+          />
+          <div
+            ref={mapContainerRef}
+            id="predictionEditorMap"
+            className={styles.mapPane}
+          />
+          {/* Box-select rectangle (Ctrl+drag). Inside the map area so its
+              offsets line up with either canvas. */}
+          <div ref={boxRef} className={styles.selectBox} />
+          {isSwipeActive && (
+            <>
+              <div className={`${styles.mapBadge} ${styles.mapBadgeLeft}`}>
+                {swipeLeftPaneLabel(swipeMode)}
+              </div>
+              <div className={`${styles.mapBadge} ${styles.mapBadgeRight}`}>
+                {swipeRightPaneLabel(swipeMode)}
+              </div>
+            </>
+          )}
+        </div>
       )}
 
       {phase === PHASE_LOADING && (
@@ -1630,6 +2174,9 @@ const PredictionEditor = () => {
           <div className={styles.mapHint}>
             Click a footprint to change it &middot; Ctrl+drag to box-select
             &middot; right-click to undo an edit
+            {isSwipeActive
+              ? " · A / S / D move the swipe divider"
+              : ""}
           </div>
           <PredictionEditorRightPanel
             session={session}
@@ -1657,6 +2204,9 @@ const PredictionEditor = () => {
             setUnknownThreshold={setUnknownThreshold}
             baseline={baseline}
             changeCount={changeCount}
+            swipeMode={swipeMode}
+            swipeOn={swipeOn}
+            onSwipeChange={setSwipeOn}
             onSave={handleSave}
             isSaving={isSaving}
             saveError={saveError}
@@ -1665,9 +2215,6 @@ const PredictionEditor = () => {
           />
         </>
       )}
-
-      {/* Box-select rectangle (Ctrl+drag) */}
-      {showMap && <div ref={boxRef} className={styles.selectBox} />}
     </div>
   );
 };

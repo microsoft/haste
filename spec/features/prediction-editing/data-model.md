@@ -18,7 +18,7 @@ Model and ImageLayer metadata documents so reads remain local to the project.
 | Container | Change | Migration Needed? |
 |---|---|---|
 | Model metadata | Add `editedPredictions`, `predictedBuildingCount`, `predictedAt`, `predictionAttrsUrl`, `predictionTilesJob`, `predictionTilesStatus`, and `predictionTilesStatusMessage` | no — nullable/defaulted fields are backward-compatible |
-| ImageLayer metadata | Add `footprintPmtilesUrl` | no — nullable/defaulted field is backward-compatible |
+| ImageLayer metadata | Add `footprintPmtilesUrl`, `footprintTilesJob`, `footprintTilesStatus`, and `footprintTilesStatusMessage` | no — nullable/defaulted fields are backward-compatible |
 
 ### New Document Schema
 
@@ -75,7 +75,10 @@ registry in a follow-up ADR.
 | Model metadata | `predictionTilesJob` | absent | `Optional[TrainingJob]` | Batch/local runner job metadata for the queued prep workflow. |
 | Model metadata | `predictionTilesStatus` | absent | `Optional[str]` | Prep status using HASTE status values: `Queued`, `InProgress`, `Processed`, `Failed`, `Cancelled`. |
 | Model metadata | `predictionTilesStatusMessage` | absent | `Optional[str]`, default `""` | User-visible appended progress/failure messages for prep polling. |
-| ImageLayer metadata | `footprintPmtilesUrl` | absent | `Optional[str]` | Layer-level PMTiles for all footprints used by prediction editing. |
+| ImageLayer metadata | `footprintPmtilesUrl` | absent | `Optional[str]` | Layer-level PMTiles for all footprints used by prediction editing. Normally written by the layer-only tiling job queued at image-layer creation; still written by the model-scoped prep job for layers created before that existed. |
+| ImageLayer metadata | `footprintTilesJob` | absent | `Optional[TrainingJob]` | Batch/local runner job metadata for the layer-only tiling job. Separate from `Model.predictionTilesJob` because the job has no model. |
+| ImageLayer metadata | `footprintTilesStatus` | absent | `Optional[str]` | Status of that job using HASTE status values. Deliberately not `ImageLayer.status`: tiling is an optimisation and must never affect the imagery-preprocessing lifecycle. |
+| ImageLayer metadata | `footprintTilesStatusMessage` | absent | `Optional[str]`, default `""` | Appended progress/failure messages for the layer-only tiling job. |
 
 ### Transport-Only Wire Models
 
@@ -262,6 +265,19 @@ UI opens editor
   → training image workflow builds PMTiles + sidecar
   → Blob Storage footprints_{imageLayerId}.pmtiles + prediction_attrs_{modelId}.json
   → Cosmos ImageLayer.footprintPmtilesUrl + Model.predictionAttrsUrl/predictedBuildingCount/predictedAt/predictionTilesStatus
+```
+
+Layer-time prep write path (no model; runs at image-layer creation so the
+tiles already exist by the time anyone opens the editor):
+
+```text
+imageryprep workflow caches building footprints
+  → hastegeo.core.processors.imagery.ImageryPostProcessor completes the layer
+  → Queue Storage prediction-edit-prep-queue (message with empty modelId)
+  → hastefuncqueues
+  → training image workflow builds PMTiles only (no sidecar)
+  → Blob Storage footprints_{imageLayerId}.pmtiles
+  → Cosmos ImageLayer.footprintPmtilesUrl/footprintTilesStatus/footprintTilesJob
 ```
 
 ### Read Path

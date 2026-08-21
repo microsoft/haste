@@ -191,6 +191,13 @@ the work inline, it only asks for it. The
 `prediction-edit-prep-queue` trigger in `hastefuncqueues` runs the job through
 the training pool and writes the two URLs back.
 
+The footprint PMTiles are normally already there: imagery preprocessing queues
+a layer-only preparation job (same queue, empty `modelId`) as soon as an image
+layer's building footprints are cached, so this route usually only has to build
+the per-model sidecar. Image layers created before that behaviour existed —
+or whose layer-time enqueue failed, which is deliberately non-fatal — get their
+tiles built here on demand instead.
+
 **Request:**
 
 ```json

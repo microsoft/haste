@@ -519,6 +519,14 @@ class TestWorkflowRun(unittest.TestCase):
 
     def test_run_requires_identifiers(self):
         config = self._config(False)
+        config.pop("project_id")
+        with self.assertRaises(ValueError):
+            ppt.run(config, self.output_dir)
+
+    def test_run_without_a_model_or_tiles_has_nothing_to_do(self):
+        # Dropping model_id selects layer-only mode, which only makes
+        # sense when tiles are actually being built.
+        config = self._config(False)
         config.pop("model_id")
         with self.assertRaises(ValueError):
             ppt.run(config, self.output_dir)
@@ -530,6 +538,127 @@ class TestWorkflowRun(unittest.TestCase):
         )
         with self.assertRaises(FileNotFoundError):
             ppt.run(config, self.output_dir)
+
+
+class TestLayerOnlyWorkflowRun(unittest.TestCase):
+    """``run()`` without a ``model_id``: footprint tiles, no sidecar.
+
+    This is the mode imagery prep asks for at layer-creation time. There
+    are no predictions yet — only the layer's cached footprints — so the
+    workflow must not go looking for a prediction GeoPackage.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="haste-layer-tiles-")
+        self.addCleanup(shutil.rmtree, self.tmpdir, True)
+        self.output_dir = os.path.join(self.tmpdir, "outputs")
+        os.makedirs(self.output_dir)
+        self.footprints = os.path.join(self.tmpdir, "footprints.gpkg")
+        write_footprints(self.footprints, 3)
+
+    def _config(self, **overrides) -> dict:
+        config = {
+            "project_id": "proj-1",
+            "image_layer_id": "layer-1",
+            "files": {"footprints": self.footprints},
+            "tiles": {"build_pmtiles": True},
+            "store_artifacts": False,
+        }
+        config.update(overrides)
+        return config
+
+    def _run(self, config: dict) -> dict:
+        def fake_run(cmd, check=False):
+            # Stand in for tippecanoe: touch the -o target.
+            with open(cmd[cmd.index("-o") + 1], "wb") as handle:
+                handle.write(b"PMTiles")
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(
+            ppt.shutil, "which", return_value="/usr/bin/tippecanoe"
+        ):
+            with mock.patch.object(
+                ppt.subprocess, "run", side_effect=fake_run
+            ):
+                return ppt.run(config, self.output_dir)
+
+    def test_builds_tiles_and_skips_the_sidecar(self):
+        manifest = self._run(self._config())
+
+        self.assertTrue(manifest["pmtiles_built"])
+        self.assertEqual(
+            manifest["pmtiles_filename"], "footprints_layer-1.pmtiles"
+        )
+        self.assertTrue(
+            os.path.exists(
+                os.path.join(self.output_dir, manifest["pmtiles_filename"])
+            )
+        )
+        # No model -> no sidecar, and nothing that implies one.
+        self.assertEqual(manifest["model_id"], "")
+        self.assertEqual(manifest["attrs_filename"], "")
+        self.assertIsNone(manifest["attrs_url"])
+        self.assertEqual(manifest["prediction_flavor"], "")
+        self.assertFalse(manifest["supports_threshold"])
+        self.assertEqual(
+            [
+                name
+                for name in os.listdir(self.output_dir)
+                if name.endswith(".json")
+            ],
+            [ppt.MANIFEST_FILENAME],
+        )
+
+    def test_building_count_comes_from_the_tiled_footprints(self):
+        manifest = self._run(self._config())
+
+        self.assertEqual(manifest["building_count"], 3)
+
+    def test_missing_predictions_are_not_an_error(self):
+        """The layer has footprints long before any model exists."""
+        config = self._config()
+        config["files"]["predictions"] = os.path.join(
+            self.tmpdir, "does-not-exist.gpkg"
+        )
+
+        manifest = self._run(config)
+
+        self.assertTrue(manifest["pmtiles_built"])
+        self.assertEqual(manifest["attrs_filename"], "")
+
+    def test_missing_footprints_still_fail(self):
+        config = self._config()
+        config["files"]["footprints"] = os.path.join(
+            self.tmpdir, "does-not-exist.gpkg"
+        )
+        with self.assertRaises(FileNotFoundError):
+            ppt.run(config, self.output_dir)
+
+    def test_nothing_to_build_is_rejected(self):
+        """No model and no tiles requested is a malformed config."""
+        config = self._config(tiles={"build_pmtiles": False})
+        with self.assertRaises(ValueError):
+            ppt.run(config, self.output_dir)
+
+    def test_image_layer_id_is_still_required(self):
+        config = self._config()
+        config.pop("image_layer_id")
+        with self.assertRaises(ValueError):
+            ppt.run(config, self.output_dir)
+
+    def test_manifest_is_written_for_the_postprocessor(self):
+        manifest = self._run(self._config())
+
+        with open(
+            os.path.join(self.output_dir, ppt.MANIFEST_FILENAME)
+        ) as handle:
+            self.assertEqual(json.load(handle), manifest)
+        # The tiling GeoJSON is scratch and must not be uploaded.
+        self.assertFalse(
+            os.path.exists(
+                os.path.join(self.output_dir, "footprints_4326.geojson")
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -320,21 +320,40 @@ length and order as the source prediction GeoPackage rows.
 {
   "projectId": "string",
   "imageLayerId": "string",
-  "modelId": "string",
-  "sourceGpkgUrl": "string",
+  "modelId": "string — empty selects layer-only preparation",
+  "sourceGpkgUrl": "string — empty in layer-only mode",
   "sourceFootprintsUrl": "string",
   "force": false
 }
 ```
 
-**Trigger behavior:** The worker downloads the source footprints and raw
-prediction GeoPackage, validates equal row count and positional row order,
-writes or refreshes `footprints_${imageLayerId}.pmtiles` when missing, writes
-`prediction_attrs_${modelId}` from prediction columns, uploads both artifacts,
-and updates `ImageLayer.footprintPmtilesUrl`, `Model.predictionAttrsUrl`,
-`Model.predictedBuildingCount`, `Model.predictedAt`,
-`Model.predictionTilesJob`, `Model.predictionTilesStatus`, and
-`Model.predictionTilesStatusMessage`.
+**Trigger behavior (model-scoped, `modelId` set):** The worker downloads the
+source footprints and raw prediction GeoPackage, validates equal row count and
+positional row order, writes or refreshes `footprints_${imageLayerId}.pmtiles`
+when missing, writes `prediction_attrs_${modelId}` from prediction columns,
+uploads both artifacts, and updates `ImageLayer.footprintPmtilesUrl`,
+`Model.predictionAttrsUrl`, `Model.predictedBuildingCount`,
+`Model.predictedAt`, `Model.predictionTilesJob`,
+`Model.predictionTilesStatus`, and `Model.predictionTilesStatusMessage`.
+
+**Trigger behavior (layer-only, `modelId` empty):** The worker downloads the
+source footprints only, writes `footprints_${imageLayerId}.pmtiles`, and
+updates `ImageLayer.footprintPmtilesUrl`, `ImageLayer.footprintTilesJob`,
+`ImageLayer.footprintTilesStatus`, and
+`ImageLayer.footprintTilesStatusMessage`. No sidecar is built and no model
+document is read or written — there is usually no model yet. Only the tiling
+fields of the layer are patched on save, so a concurrent imagery-preprocessing
+write is never clobbered.
+
+`ImageryPostProcessor` enqueues the layer-only message as soon as an image
+layer completes with cached building footprints and no
+`footprintPmtilesUrl`, so the editor normally finds the tiles already built.
+That enqueue is best effort: a queue failure is logged and imagery
+preprocessing still succeeds, because `PutPreparePredictionTilesQueueMessage`
+rebuilds the tiles on demand (the path layers created before this change take).
+Both jobs write the same deterministic artifact name, so an editor opened while
+a layer-time job is still running merely repeats the tiling rather than
+corrupting anything.
 
 Tile creation must run in the queued worker because `tippecanoe` is installed in
 the training image only (`docker/training/env/env.yml:11`). Existing PMTiles
@@ -351,8 +370,11 @@ creation in `embed_buildings.py` is the invocation pattern to mirror
 | `core/processors/prediction_edits.py` | `apply_edits` | `(src_gpkg: str, dst_gpkg: str, threshold: float, unknown_threshold: float, overrides: dict[int, str], footprints_path: Optional[str]) -> EditSummary` | Applies class derivation, preserves row order, and writes the edited GeoPackage. |
 | `core/processors/prediction_edits.py` | `derive_class`, `next_version`, `store_edited_version` | helper functions | Compute final class, allocate the next version number, and store `edited_predictions_${modelId}_v${version}.gpkg`. |
 | `core/processors/prediction_tiles.py` | `needs_preparation`, `request_preparation` | `(model: Model, image_layer: ImageLayer, force: bool = False) -> dict` | Decide whether PMTiles/sidecar artifacts are ready and enqueue at most one prep message for the explicit PUT route. |
-| `core/processors/prediction_tiles.py` | `PredictionTilesPostprocessor` | class | Submit, poll, and finalize the queued training-image workflow. |
-| `hastegeo/workflows/prepare_prediction_tiles.py` | `run` | `(config: dict, output_dir: str) -> dict` | Builds footprint PMTiles and the prediction attribute JSON sidecar. |
+| `core/processors/prediction_tiles.py` | `layer_needs_footprint_tiles` | `(image_layer: ImageLayer) -> bool` | Guard used by imagery prep: tiles are worth queueing only once footprints are cached and while the layer has no archive. |
+| `core/processors/prediction_tiles.py` | `enqueue_prediction_tiles` | `(project_id: str, image_layer_id: str, model_id: Optional[str] = None, ...) -> dict` | Put one prep request on the queue. Omitting `model_id` requests the layer's footprint PMTiles alone. |
+| `core/processors/prediction_tiles.py` | `PredictionTilesPostprocessor` | `(model: Optional[Model], image_layer: ImageLayer)` | Submit, poll, and finalize the queued training-image workflow. `model=None` runs layer-only and keeps all job state on the `ImageLayer`. |
+| `core/processors/imagery.py` | `ImageryPostProcessor._enqueue_footprint_tiles` | `() -> None` | Best-effort layer-only enqueue once a completed layer has footprints and no tiles; never raises into imagery prep. |
+| `hastegeo/workflows/prepare_prediction_tiles.py` | `run` | `(config: dict, output_dir: str) -> dict` | Builds footprint PMTiles and, when `config["model_id"]` is set, the prediction attribute JSON sidecar. |
 | `api/hastefuncapi/function_app.py` | `GetModelArtifact` | HTTP route | Adds `footprint_pmtiles` and `prediction_attrs` kinds. |
 
 ## Behavior & Logic
@@ -372,7 +394,11 @@ creation in `embed_buildings.py` is the invocation pattern to mirror
    `PutPreparePredictionTilesQueueMessage`; that route enqueues
    `prediction-edit-prep-queue` unless artifacts are already ready or a job is
    already in flight. The screen shows a preparation state and polls the
-   session endpoint.
+   session endpoint. `tilesReady` is normally already true: the layer's
+   footprint PMTiles are built by a layer-only job queued when the image
+   layer was created, so only the per-model sidecar is usually outstanding.
+   Layers created before that behaviour existed fall back to this on-demand
+   path unchanged.
 7. Once ready, the UI fetches `footprint_pmtiles` and `prediction_attrs` through
    `GetModelArtifact`.
 8. Azure Maps displays PMTiles footprints. Feature-state coloring is computed

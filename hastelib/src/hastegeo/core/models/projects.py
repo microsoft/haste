@@ -767,6 +767,15 @@ class ImageLayer(BaseModel):
             building footprints (geometry + Overture id only). Rendered by
             the prediction editor, which joins prediction attributes onto
             the tiles client-side instead of shipping a GeoJSON payload.
+        footprintTilesJob: Job reference for the layer-scoped tiling task
+            that builds ``footprintPmtilesUrl``. Kicked off automatically
+            once imagery prep caches the footprints, so the tiles already
+            exist by the time anyone opens the prediction editor.
+        footprintTilesStatus: Status of that layer-scoped tiling job.
+            Deliberately separate from ``status`` so tiling never disturbs
+            the imagery-preprocessing lifecycle — tiles are an
+            optimisation and a layer without them still works.
+        footprintTilesStatusMessage: Progress/error log of the tiling job.
         dependsOn: Dependency tuple specifying parent resource type and ID
 
     Example:
@@ -844,7 +853,16 @@ class ImageLayer(BaseModel):
     # Catalog "clip to area" flow.
     clipBbox: Optional[list[float]] = Field(default=None)
     validAreaMaskUrl: Optional[str] = Field(default=None)
+    # ── Prediction editing (shared footprint vector tiles) ──────────────
+    # Built once per layer — at layer-creation time when footprints are
+    # cached, or on demand the first time the prediction editor opens an
+    # older layer — and reused by every model trained on the layer. The
+    # tiling job runs in the training image (only tippecanoe carrier), so
+    # it carries its own status fields rather than reusing ``status``.
     footprintPmtilesUrl: Optional[str] = Field(default=None)
+    footprintTilesJob: Optional[TrainingJob] = Field(default=None)
+    footprintTilesStatus: Optional[str] = Field(default=None)
+    footprintTilesStatusMessage: Optional[str] = Field(default="")
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("Project", "projectId")
     )

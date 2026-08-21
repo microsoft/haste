@@ -78,6 +78,15 @@ export const PREDICTION_EDITOR_SHORTCUTS = [
     keys: ["Right-click"],
     description: "Undo an edit — back to the model's class",
   },
+  {
+    // Direction matters: the comparison map (pre-event imagery, or the
+    // basemap) is the swipe PRIMARY and sits LEFT of the divider, so moving
+    // the divider left uncovers MORE of the post-event map and moving it
+    // right uncovers more of the comparison map.
+    keys: ["A", "S", "D"],
+    description:
+      "With Swipe on: snap the divider left / centre / right — left uncovers more post-event imagery, right more of the pre-event (or basemap) pane",
+  },
 ];
 
 // Input types that are not free-text entry. Focus can legitimately sit on

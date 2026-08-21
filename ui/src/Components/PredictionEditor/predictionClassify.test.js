@@ -57,6 +57,19 @@ import {
   prepStatusLabel,
   shouldPollPrep,
 } from "./predictionPrep.js";
+import {
+  SWIPE_MODE_BASEMAP_POST,
+  SWIPE_MODE_NONE,
+  SWIPE_MODE_PRE_POST,
+  dividerPositionForKey,
+  isSwipeAvailable,
+  resolveSwipeMode,
+  swipeComparisonTileUrl,
+  swipeLeftPaneLabel,
+  swipeModeHint,
+  swipeRightPaneLabel,
+  swipeToggleLabel,
+} from "./predictionSwipe.js";
 
 // Five buildings covering every interesting corner: below/at/above the
 // threshold, and one with a non-zero unknown score.
@@ -612,4 +625,130 @@ test("prep card copy reports what is outstanding", () => {
   // Unknown/missing must still render something sensible.
   assert.equal(prepStatusLabel(undefined), "Starting");
   assert.equal(prepStatusLabel("Weird"), "Starting");
+});
+
+// ── Swipe comparison map (predictionSwipe.js) ───────────────────────────────
+
+test("swipe mode follows the imagery the layer actually has", () => {
+  // Pre-event tiles present: compare pre against post.
+  assert.equal(
+    resolveSwipeMode({
+      preEventTileUrl: "https://x/pre/{z}/{x}/{y}.png",
+      postEventTileUrl: "https://x/post/{z}/{x}/{y}.png",
+    }),
+    SWIPE_MODE_PRE_POST
+  );
+
+  // No pre-event tiles: the basemap stands in on the comparison pane.
+  assert.equal(
+    resolveSwipeMode({ postEventTileUrl: "https://x/post/{z}/{x}/{y}.png" }),
+    SWIPE_MODE_BASEMAP_POST
+  );
+  assert.equal(
+    resolveSwipeMode({
+      preEventTileUrl: "   ",
+      postEventTileUrl: "https://x/post/{z}/{x}/{y}.png",
+    }),
+    SWIPE_MODE_BASEMAP_POST,
+    "a blank pre URL is not pre-event imagery"
+  );
+
+  // Without post-event imagery there is nothing to compare against, so the
+  // editor must not offer a swipe at all.
+  assert.equal(resolveSwipeMode(null), SWIPE_MODE_NONE);
+  assert.equal(resolveSwipeMode(undefined), SWIPE_MODE_NONE);
+  assert.equal(resolveSwipeMode({}), SWIPE_MODE_NONE);
+  assert.equal(
+    resolveSwipeMode({ preEventTileUrl: "https://x/pre/{z}/{x}/{y}.png" }),
+    SWIPE_MODE_NONE
+  );
+
+  assert.equal(isSwipeAvailable(SWIPE_MODE_PRE_POST), true);
+  assert.equal(isSwipeAvailable(SWIPE_MODE_BASEMAP_POST), true);
+  assert.equal(isSwipeAvailable(SWIPE_MODE_NONE), false);
+  assert.equal(isSwipeAvailable(undefined), false);
+});
+
+test("only the pre/post mode overlays imagery on the comparison pane", () => {
+  const imagery = {
+    preEventTileUrl: " https://x/pre/{z}/{x}/{y}.png ",
+    postEventTileUrl: "https://x/post/{z}/{x}/{y}.png",
+  };
+  assert.equal(
+    swipeComparisonTileUrl(imagery, SWIPE_MODE_PRE_POST),
+    "https://x/pre/{z}/{x}/{y}.png"
+  );
+  // Basemap mode draws the map's own basemap — no tile layer on top.
+  assert.equal(swipeComparisonTileUrl(imagery, SWIPE_MODE_BASEMAP_POST), "");
+  assert.equal(swipeComparisonTileUrl(imagery, SWIPE_MODE_NONE), "");
+  assert.equal(swipeComparisonTileUrl(null, SWIPE_MODE_PRE_POST), "");
+});
+
+test("swipe labels name the comparison the analyst is getting", () => {
+  assert.equal(
+    swipeToggleLabel(SWIPE_MODE_PRE_POST),
+    "Swipe: pre-event vs post-event"
+  );
+  assert.equal(
+    swipeToggleLabel(SWIPE_MODE_BASEMAP_POST),
+    "Swipe: basemap vs post-event"
+  );
+  assert.equal(
+    swipeToggleLabel(SWIPE_MODE_NONE),
+    "Swipe comparison unavailable"
+  );
+
+  assert.equal(swipeLeftPaneLabel(SWIPE_MODE_PRE_POST), "Pre-event imagery");
+  assert.equal(swipeLeftPaneLabel(SWIPE_MODE_BASEMAP_POST), "Basemap");
+  assert.equal(swipeLeftPaneLabel(SWIPE_MODE_NONE), "");
+  assert.equal(
+    swipeRightPaneLabel(SWIPE_MODE_PRE_POST),
+    "Post-event imagery"
+  );
+  assert.equal(
+    swipeRightPaneLabel(SWIPE_MODE_BASEMAP_POST),
+    "Post-event imagery"
+  );
+  assert.equal(swipeRightPaneLabel(SWIPE_MODE_NONE), "");
+});
+
+test("swipe hint describes the divider directions the right way round", () => {
+  // The comparison map is the SwipeMap PRIMARY and sits LEFT of the divider,
+  // so dragging LEFT uncovers MORE post-event imagery. A previous PR shipped
+  // this backwards; pin it down.
+  const hint = swipeModeHint(SWIPE_MODE_PRE_POST);
+  assert.match(hint, /Pre-event imagery sits left of the divider/);
+  assert.match(hint, /left for more post-event/);
+  assert.match(hint, /right for more pre-event imagery/);
+  assert.match(hint, /Editing works on both sides/);
+  assert.match(
+    swipeModeHint(SWIPE_MODE_BASEMAP_POST),
+    /Basemap sits left of the divider/
+  );
+  assert.match(
+    swipeModeHint(SWIPE_MODE_NONE),
+    /no post-event imagery to compare against/
+  );
+});
+
+test("A / S / D snap the divider left / centre / right", () => {
+  assert.equal(dividerPositionForKey("a", 800), 0);
+  assert.equal(dividerPositionForKey("s", 800), 400);
+  assert.equal(dividerPositionForKey("d", 800), 800);
+  // Shift-held (or caps-locked) keys are the same shortcut.
+  assert.equal(dividerPositionForKey("A", 800), 0);
+  assert.equal(dividerPositionForKey("S", 800), 400);
+  assert.equal(dividerPositionForKey("D", 800), 800);
+
+  // Anything else is not ours to handle.
+  for (const key of ["1", "w", "ArrowLeft", " ", "", null, undefined, 5]) {
+    assert.equal(dividerPositionForKey(key, 800), null);
+  }
+
+  // No usable width yet (map area not laid out): do nothing rather than
+  // silently park the divider at 0.
+  for (const width of [0, -10, NaN, Infinity, null, undefined, "wide"]) {
+    assert.equal(dividerPositionForKey("s", width), null);
+  }
+  assert.equal(dividerPositionForKey("s", "800"), 400, "numeric strings work");
 });

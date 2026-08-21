@@ -23,7 +23,27 @@ State lives in ``Model.predictionTilesStatus`` rather than
 train/inference lifecycle (same separation the zip flow uses with
 ``ModelArtifacts.zipStatus``).
 
-Config JSON handed to the workflow::
+Two scopes share this machinery:
+
+* **model-scoped** — the historic path: build the layer's PMTiles when
+  they are still missing *and* the model's attribute sidecar. State
+  lives on the ``Model``.
+* **layer-only** — no ``modelId``: build just the shared footprint
+  PMTiles for an image layer, skipping the sidecar entirely. Kicked off
+  by ``processors/imagery.py`` as soon as a layer's footprints are
+  cached, so the tiles are already there by the time the first model is
+  edited. State lives on the ``ImageLayer``
+  (``footprintTilesStatus``/``footprintTilesJob``) — there is no model
+  to write to.
+
+Both scopes write the same deterministic artifact name
+(``footprints_${imageLayerId}.pmtiles``), so a model-scoped job that
+starts while a layer-only job is still running simply repeats the tiling
+and overwrites the archive with an identical one — wasteful in a narrow
+window, never inconsistent.
+
+Config JSON handed to the workflow (``model_id``/``files.predictions``/
+``files.attrs`` are omitted in layer-only mode)::
 
     {
       "project_id": "...",
@@ -51,6 +71,9 @@ Queue message (``prediction-edit-prep-queue``)::
       "force": false
     }
 
+An empty ``modelId`` (and, with it, an empty ``sourceGpkgUrl``) selects
+the layer-only mode.
+
 The trigger treats the message as a *request* and reads the authoritative
 state from metadata, so the postprocessor's own poll re-queues (which
 carry the full model document) are handled by the same code path.
@@ -64,7 +87,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from ..config import ArtifactTypes, Config
 from ..data_layer.unified import UnifiedDataLayer
@@ -80,6 +103,11 @@ BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 PREDICTION_TILES_PREFIX = "ptl"
 MANIFEST_FILENAME = "prediction_tiles_manifest.json"
 FRIENDLY_LOG_FILENAME = "prediction_tiles_friendly.log"
+
+# The document a prediction-tiles job records its state on: the Model in
+# model-scoped mode, the ImageLayer when only the shared footprint tiles
+# are being built.
+PredictionTilesTarget = Union[Model, ImageLayer]
 
 
 def pmtiles_artifact_name(image_layer_id: str) -> str:
@@ -103,7 +131,7 @@ def attrs_artifact_name(model_id: str) -> str:
 def build_prep_message(
     project_id: str,
     image_layer_id: str,
-    model_id: str,
+    model_id: Optional[str] = None,
     source_gpkg_url: Optional[str] = None,
     source_footprints_url: Optional[str] = None,
     force: bool = False,
@@ -113,11 +141,23 @@ def build_prep_message(
     The message only carries identifiers; the queue trigger reads the
     authoritative state from metadata so that re-queued poll messages
     and fresh requests take the same code path.
+
+    Args:
+        project_id: Owning project.
+        image_layer_id: Layer whose footprints get tiled.
+        model_id: Model whose attribute sidecar is needed. Omit (or pass
+            ``None``) to request the layer's footprint PMTiles alone —
+            the mode imagery prep uses at layer-creation time, when no
+            model exists yet.
+        source_gpkg_url: The model's prediction GeoPackage. Meaningless
+            (and empty) in layer-only mode.
+        source_footprints_url: The layer's cached footprints GeoPackage.
+        force: Rebuild even when the artifacts already exist.
     """
     return {
         "projectId": project_id,
         "imageLayerId": image_layer_id,
-        "modelId": model_id,
+        "modelId": model_id or "",
         "sourceGpkgUrl": source_gpkg_url or "",
         "sourceFootprintsUrl": source_footprints_url or "",
         "force": bool(force),
@@ -127,7 +167,7 @@ def build_prep_message(
 def enqueue_prediction_tiles(
     project_id: str,
     image_layer_id: str,
-    model_id: str,
+    model_id: Optional[str] = None,
     source_gpkg_url: Optional[str] = None,
     source_footprints_url: Optional[str] = None,
     force: bool = False,
@@ -135,8 +175,10 @@ def enqueue_prediction_tiles(
 ) -> Dict[str, Any]:
     """Put a preparation request on the prediction-edit prep queue.
 
-    Convenience seam for the HTTP layer, which must never run
-    ``tippecanoe`` inline. Returns the enqueued message.
+    Convenience seam for the HTTP layer and for imagery prep, neither of
+    which may run ``tippecanoe`` inline. Omitting ``model_id`` requests
+    the layer's shared footprint PMTiles only. Returns the enqueued
+    message.
     """
     if config is None:
         config = Config()
@@ -182,6 +224,18 @@ def needs_preparation(
     needs_pmtiles = not bool(resolve_tiles_url(model, image_layer))
     needs_attrs = not bool(model.predictionAttrsUrl)
     return needs_pmtiles, needs_attrs
+
+
+def layer_needs_footprint_tiles(image_layer: ImageLayer) -> bool:
+    """Report whether a layer-only tiling job is worth queueing.
+
+    Used by imagery prep, which has no model in hand: the tiles can only
+    be built once the footprints GeoPackage is cached, and there is no
+    point rebuilding an archive the layer already has.
+    """
+    return bool(image_layer.buildingFootprintsUrl) and not bool(
+        image_layer.footprintPmtilesUrl
+    )
 
 
 class PredictionTilesUnavailableError(ValueError):
@@ -419,22 +473,43 @@ class PredictionTilesPreprocessor:
 
 
 class PredictionTilesPostprocessor:
-    """Submit, poll and finalize the prediction-tiles Batch task."""
+    """Submit, poll and finalize the prediction-tiles Batch task.
+
+    Runs in one of two scopes:
+
+    * **model-scoped** (``model`` given): builds the attribute sidecar,
+      plus the layer's PMTiles when they are still missing. Job state
+      lives on the ``Model``.
+    * **layer-only** (``model is None``): builds just the layer's shared
+      footprint PMTiles, which is what imagery prep asks for at
+      layer-creation time. Job state lives on the ``ImageLayer`` and no
+      model document is read or written.
+    """
 
     def __init__(
         self,
-        model: Model,
+        model: Optional[Model],
         image_layer: ImageLayer,
         config: Optional[Config] = None,
     ) -> None:
         if config is None:
             config = Config()
+        if image_layer is None:
+            raise ValueError(
+                "PredictionTilesPostprocessor requires the image layer "
+                "that owns the footprint tiles."
+            )
         self.config = config
         self.model_data = model
         self.image_layer = image_layer
+        # No model -> layer-only mode: footprint tiles alone, no sidecar.
+        self.layer_only = model is None
+        self.project_id = (
+            image_layer.projectId if self.layer_only else model.projectId
+        )
         self.storage = UnifiedDataLayer(
             storage_type=config.storage_type,
-            partition_key=model.projectId,
+            partition_key=self.project_id,
             **config.storage_config,
         )
         self.logger = Logger.get_logger(__name__)
@@ -452,56 +527,115 @@ class PredictionTilesPostprocessor:
             config.queue_config["queue_account_url"],
         )
 
+    # ── scope-aware state accessors ───────────────────────────────────
+    # The job's status/reference/log live on whichever document owns the
+    # work, so every state transition below goes through these instead of
+    # touching a specific document.
+    @property
+    def target(self) -> PredictionTilesTarget:
+        """The document this job's state is recorded on."""
+        return self.image_layer if self.layer_only else self.model_data
+
+    @property
+    def target_id(self) -> str:
+        """Identifier of that document, for logs and task naming."""
+        if self.layer_only:
+            return self.image_layer.imageLayerId
+        return self.model_data.modelId
+
+    @property
+    def status(self) -> Optional[str]:
+        if self.layer_only:
+            return self.image_layer.footprintTilesStatus
+        return self.model_data.predictionTilesStatus
+
+    @status.setter
+    def status(self, value: str) -> None:
+        if self.layer_only:
+            self.image_layer.footprintTilesStatus = value
+        else:
+            self.model_data.predictionTilesStatus = value
+
+    @property
+    def job(self) -> Optional[TrainingJob]:
+        if self.layer_only:
+            return self.image_layer.footprintTilesJob
+        return self.model_data.predictionTilesJob
+
+    @job.setter
+    def job(self, value: TrainingJob) -> None:
+        if self.layer_only:
+            self.image_layer.footprintTilesJob = value
+        else:
+            self.model_data.predictionTilesJob = value
+
+    @property
+    def status_message(self) -> str:
+        if self.layer_only:
+            return self.image_layer.footprintTilesStatusMessage or ""
+        return self.model_data.predictionTilesStatusMessage or ""
+
+    @status_message.setter
+    def status_message(self, value: str) -> None:
+        if self.layer_only:
+            self.image_layer.footprintTilesStatusMessage = value
+        else:
+            self.model_data.predictionTilesStatusMessage = value
+
     def _poll_message(self) -> str:
-        """Message that brings this model back for another status poll."""
+        """Message that brings this job back for another status poll."""
         footprints_url = self.image_layer.buildingFootprintsUrl
         return json.dumps(
             build_prep_message(
-                project_id=self.model_data.projectId,
+                project_id=self.project_id,
                 image_layer_id=self.image_layer.imageLayerId,
-                model_id=self.model_data.modelId,
-                source_gpkg_url=self.model_data.gpkgUrl,
+                model_id=None if self.layer_only else self.model_data.modelId,
+                source_gpkg_url=(
+                    None if self.layer_only else self.model_data.gpkgUrl
+                ),
                 source_footprints_url=footprints_url,
             )
         )
 
-    def process(self) -> Model:
+    def process(self) -> PredictionTilesTarget:
         """Advance the job state machine by one step.
 
-        The caller persists both ``self.model_data`` and
-        ``self.image_layer``: the footprint tiles belong to the layer,
-        the attribute sidecar to the model.
+        Returns:
+            The document that owns this job's state — the ``Model`` in
+            model-scoped mode, the ``ImageLayer`` in layer-only mode. In
+            model-scoped mode the caller persists ``self.image_layer``
+            too: the footprint tiles belong to the layer, the attribute
+            sidecar to the model.
         """
         self.logger.info(
-            "%s.process: model %s prediction tiles status %s",
+            "%s.process: %s %s prediction tiles status %s",
             self.__class__.__name__,
-            self.model_data.modelId,
-            self.model_data.predictionTilesStatus,
+            "image layer" if self.layer_only else "model",
+            self.target_id,
+            self.status,
         )
         statuses = self.config.get_status_types()
 
-        if self.model_data.predictionTilesStatus == statuses.PENDING.value:
+        if self.status == statuses.PENDING.value:
             self._update_progress("Submitting prediction tile job")
-            self.model_data = self._execute_job()
+            self._execute_job()
 
-        elif (
-            self.model_data.predictionTilesStatus == statuses.IN_PROGRESS.value
-        ):
-            job = self.model_data.predictionTilesJob
+        elif self.status == statuses.IN_PROGRESS.value:
+            job = self.job
             if job is None:
-                self.model_data.predictionTilesStatus = statuses.FAILED.value
+                self.status = statuses.FAILED.value
                 self._update_progress(
                     "Prediction tile job reference is missing; cannot "
                     "poll for completion"
                 )
-                return self.model_data
+                return self.target
 
             task_status = self.runner.get_task_status(
                 job_id=job.jobId, task_id=job.taskId
             )
             self.logger.info(
-                "Task status for prediction tiles of model %s is %s",
-                self.model_data.modelId,
+                "Task status for prediction tiles of %s is %s",
+                self.target_id,
                 task_status,
             )
 
@@ -510,16 +644,14 @@ class PredictionTilesPostprocessor:
                 job.completedDate = MetadataUtils.get_timestamp()
                 try:
                     self._update_results_from_job()
-                    self.model_data.predictionTilesStatus = task_status
+                    self.status = task_status
                 except Exception as error:
                     self.logger.error(
-                        "Error finalizing prediction tiles for model "
-                        f"{self.model_data.modelId}: {error}",
+                        "Error finalizing prediction tiles for "
+                        f"{self.target_id}: {error}",
                         stack_info=True,
                     )
-                    self.model_data.predictionTilesStatus = (
-                        statuses.FAILED.value
-                    )
+                    self.status = statuses.FAILED.value
                     job.status = statuses.FAILED.value
                     self._update_progress(
                         f"Prediction tile job failed: {error}"
@@ -528,21 +660,21 @@ class PredictionTilesPostprocessor:
                 self.runner.cleanup_task(job_id=job.jobId, task_id=job.taskId)
 
             elif task_status == statuses.FAILED.value:
-                self.model_data.predictionTilesStatus = task_status
+                self.status = task_status
                 job.status = task_status
                 job.completedDate = MetadataUtils.get_timestamp()
                 self._replay_friendly_logs()
                 self._update_progress("Prediction tile job failed")
                 self.runner.cleanup_task(job_id=job.jobId, task_id=job.taskId)
             else:
-                self.model_data.predictionTilesStatus = task_status
+                self.status = task_status
                 job.status = task_status
                 self.queue_client.put_message(self._poll_message())
 
-        return self.model_data
+        return self.target
 
     # ── submission ────────────────────────────────────────────────────
-    def _execute_job(self) -> Model:
+    def _execute_job(self) -> PredictionTilesTarget:
         statuses = self.config.get_status_types()
         try:
             input_files = self._create_job_config()
@@ -560,8 +692,7 @@ class PredictionTilesPostprocessor:
                 f"{PREDICTION_TILES_PREFIX}-{MetadataUtils.generate_id()}"
             )
             output_prefix = (
-                f"{MetadataUtils.hash_string(self.model_data.projectId)}"
-                f"/{task_id}"
+                f"{MetadataUtils.hash_string(self.project_id)}" f"/{task_id}"
             )
             job_id, task_id = self.runner.add_task(
                 job_id=job_id,
@@ -574,72 +705,88 @@ class PredictionTilesPostprocessor:
                     "docker_image"
                 ],
             )
-            self.model_data.predictionTilesJob = TrainingJob(
+            self.job = TrainingJob(
                 jobId=job_id,
                 taskId=task_id,
-                modelId=self.model_data.modelId,
-                projectId=self.model_data.projectId,
+                modelId=None if self.layer_only else self.model_data.modelId,
+                projectId=self.project_id,
                 status=statuses.IN_PROGRESS.value,
                 creationDate=MetadataUtils.get_timestamp(),
             )
-            self.model_data.predictionTilesStatus = statuses.IN_PROGRESS.value
+            self.status = statuses.IN_PROGRESS.value
             self._update_progress(
                 f"Prediction tiles submitted with task id {task_id}"
             )
             self.queue_client.put_message(self._poll_message())
         except Exception as error:
             self.logger.error(
-                "Error submitting prediction tiles for model "
-                f"{self.model_data.modelId}: {error}",
+                "Error submitting prediction tiles for "
+                f"{self.target_id}: {error}",
                 stack_info=True,
             )
-            self.model_data.predictionTilesStatus = statuses.FAILED.value
+            self.status = statuses.FAILED.value
             self._update_progress(f"Prediction tile job failed: {error}")
-        return self.model_data
+        return self.target
 
     def _create_job_config(self) -> Dict[str, Dict[str, str]]:
-        """Write the workflow config and describe the task input files."""
+        """Write the workflow config and describe the task input files.
+
+        In layer-only mode neither the prediction GeoPackage nor the
+        sidecar is referenced: the task tiles the footprints and stops.
+        """
         filename_pattern = (
-            rf"{MetadataUtils.hash_string(self.model_data.projectId)}/(.*)\?+"
+            rf"{MetadataUtils.hash_string(self.project_id)}/(.*)\?+"
         )
         plain_url_pattern = r"(.*)\?+"
 
         footprints_url = self.image_layer.buildingFootprintsUrl
-        predictions_url = self.model_data.gpkgUrl
         if not footprints_url:
             raise ValueError("Image layer has no building footprints.")
-        if not predictions_url:
-            raise ValueError("Model has no prediction GeoPackage.")
-
         footprints_fn = (
             f"inputs/{extract_from_url(footprints_url, filename_pattern)}"
         )
-        predictions_fn = (
-            f"inputs/{extract_from_url(predictions_url, filename_pattern)}"
-        )
 
-        needs_pmtiles, _ = needs_preparation(self.model_data, self.image_layer)
-        pmtiles_name = pmtiles_artifact_name(self.model_data.imageLayerId)
-        attrs_name = attrs_artifact_name(self.model_data.modelId)
-
+        image_layer_id = self.image_layer.imageLayerId
+        pmtiles_name = pmtiles_artifact_name(image_layer_id)
+        files: Dict[str, str] = {
+            "footprints": footprints_fn,
+            "pmtiles": pmtiles_name,
+        }
         workflow_config: Dict[str, Any] = {
-            "project_id": self.model_data.projectId,
-            "image_layer_id": self.model_data.imageLayerId,
-            "model_id": self.model_data.modelId,
+            "project_id": self.project_id,
+            "image_layer_id": image_layer_id,
             "output_dir": "outputs",
             # Relative to the task working dir: the command cd's into
             # $AZ_BATCH_TASK_WORKING_DIR before running the workflow.
-            "files": {
-                "footprints": footprints_fn,
-                "predictions": predictions_fn,
-                "pmtiles": pmtiles_name,
-                "attrs": attrs_name,
-            },
-            "tiles": {"build_pmtiles": needs_pmtiles},
+            "files": files,
             "store_artifacts": True,
         }
+
+        predictions_url = None
+        predictions_fn = ""
+        if self.layer_only:
+            # Nothing to reuse and nothing to join: the whole point of
+            # this job is to produce the layer's archive.
+            workflow_config["tiles"] = {"build_pmtiles": True}
+            config_identifier = image_layer_id
+        else:
+            predictions_url = self.model_data.gpkgUrl
+            if not predictions_url:
+                raise ValueError("Model has no prediction GeoPackage.")
+            predictions_fn = (
+                f"inputs/{extract_from_url(predictions_url, filename_pattern)}"
+            )
+            needs_pmtiles, _ = needs_preparation(
+                self.model_data, self.image_layer
+            )
+            files["predictions"] = predictions_fn
+            files["attrs"] = attrs_artifact_name(self.model_data.modelId)
+            workflow_config["model_id"] = self.model_data.modelId
+            workflow_config["tiles"] = {"build_pmtiles": needs_pmtiles}
+            config_identifier = self.model_data.modelId
+
         self.storage.save(
-            identifier=self.model_data.modelId,
+            identifier=config_identifier,
             data=workflow_config,
             data_type=(
                 self.config.get_metadata_types().PREDICTION_TILES_CONFIG.value
@@ -647,7 +794,7 @@ class PredictionTilesPostprocessor:
             data_format="json",
         )
         config_filepath = self.storage.get_file_remote_path(
-            self.model_data.modelId,
+            config_identifier,
             self.config.get_metadata_types().PREDICTION_TILES_CONFIG.value,
             data_format="json",
         )
@@ -655,7 +802,7 @@ class PredictionTilesPostprocessor:
             f"inputs/{extract_from_url(config_filepath, filename_pattern)}"
         )
 
-        return {
+        input_files: Dict[str, Dict[str, str]] = {
             "config": {
                 "http_url": extract_from_url(
                     config_filepath, plain_url_pattern
@@ -668,18 +815,20 @@ class PredictionTilesPostprocessor:
                 ),
                 "file_path": footprints_fn,
             },
-            "predictions": {
+        }
+        if predictions_url:
+            input_files["predictions"] = {
                 "http_url": extract_from_url(
                     predictions_url, plain_url_pattern
                 ),
                 "file_path": predictions_fn,
-            },
-        }
+            }
+        return input_files
 
     # ── finalization ──────────────────────────────────────────────────
     def _update_results_from_job(self) -> None:
         """Persist artifact URLs and counts from the task manifest."""
-        job = self.model_data.predictionTilesJob
+        job = self.job
         content = self.runner.get_filecontent_from_task(
             job_id=job.jobId,
             task_id=job.taskId,
@@ -687,10 +836,35 @@ class PredictionTilesPostprocessor:
         )
         if not content:
             raise FileNotFoundError(
-                "Prediction tiles manifest not found for model "
-                f"{self.model_data.modelId}"
+                "Prediction tiles manifest not found for " f"{self.target_id}"
             )
         manifest = json.loads(content)
+
+        if manifest.get("pmtiles_built"):
+            pmtiles_url = manifest.get("pmtiles_url") or self._artifact_url(
+                manifest.get("pmtiles_filename", "")
+            )
+            if not pmtiles_url:
+                raise ValueError(
+                    "Prediction tiles manifest reports tiles were built "
+                    "but carries no PMTiles URL for image layer "
+                    f"{self.image_layer.imageLayerId}"
+                )
+            self.image_layer.footprintPmtilesUrl = pmtiles_url
+
+        if self.layer_only:
+            # No sidecar, no model document: the layer's tiles are the
+            # entire deliverable, so a manifest without them is a failure.
+            if not self.image_layer.footprintPmtilesUrl:
+                raise ValueError(
+                    "Layer-only prediction tile job produced no PMTiles "
+                    f"for image layer {self.image_layer.imageLayerId}"
+                )
+            self._update_progress(
+                "Prepared footprint tiles for "
+                f"{int(manifest.get('building_count', 0))} buildings"
+            )
+            return
 
         attrs_url = manifest.get("attrs_url") or self._artifact_url(
             manifest.get("attrs_filename", "")
@@ -701,18 +875,6 @@ class PredictionTilesPostprocessor:
                 f"for model {self.model_data.modelId}"
             )
         self.model_data.predictionAttrsUrl = attrs_url
-
-        if manifest.get("pmtiles_built"):
-            pmtiles_url = manifest.get("pmtiles_url") or self._artifact_url(
-                manifest.get("pmtiles_filename", "")
-            )
-            if not pmtiles_url:
-                raise ValueError(
-                    "Prediction tiles manifest reports tiles were built "
-                    "but carries no PMTiles URL for image layer "
-                    f"{self.model_data.imageLayerId}"
-                )
-            self.image_layer.footprintPmtilesUrl = pmtiles_url
 
         self.model_data.predictedBuildingCount = int(
             manifest.get("building_count", 0)
@@ -729,19 +891,17 @@ class PredictionTilesPostprocessor:
             return ""
         return self.storage.get_file_remote_path(
             identifier=filename,
-            extra_partition_keys=f"{self.model_data.predictionTilesJob.taskId}",
+            extra_partition_keys=f"{self.job.taskId}",
             data_format=os.path.splitext(filename)[1].strip("."),
         )
 
     def _replay_friendly_logs(self) -> None:
         for timestamp, message in self._get_friendly_logs():
-            if message not in (
-                self.model_data.predictionTilesStatusMessage or ""
-            ):
+            if message not in self.status_message:
                 self._update_progress(message, timestamp=timestamp)
 
     def _get_friendly_logs(self) -> List[Tuple[str, str]]:
-        job = self.model_data.predictionTilesJob
+        job = self.job
         content = self.runner.get_filecontent_from_task(
             job_id=job.jobId,
             task_id=job.taskId,
@@ -760,10 +920,8 @@ class PredictionTilesPostprocessor:
     def _update_progress(
         self, message: str, timestamp: Optional[str] = None
     ) -> None:
-        self.model_data.predictionTilesStatusMessage = (
-            MetadataUtils.append_status_message(
-                self.model_data.predictionTilesStatusMessage,
-                message,
-                timestamp=timestamp,
-            )
+        self.status_message = MetadataUtils.append_status_message(
+            self.status_message,
+            message,
+            timestamp=timestamp,
         )

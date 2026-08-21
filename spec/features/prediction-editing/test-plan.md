@@ -62,8 +62,11 @@ cases below remain follow-up coverage.
 | QT-001 | `prediction-edit-prep-queue` | Build missing PMTiles and sidecar | valid project/layer/model/source urls | PMTiles and sidecar blobs uploaded; metadata fields updated | US-002 |
 | QT-002 | `prediction-edit-prep-queue` | Idempotent no-op | artifacts already exist and `force=false` | No duplicate work; metadata remains consistent | US-002 |
 | QT-003 | `prediction-edit-prep-queue` | Force rebuild | artifacts exist and `force=true` | Artifacts regenerated and metadata timestamp refreshed | US-002 |
-| QT-004 | `prediction-edit-prep-queue` | Malformed message | missing `modelId` | Worker logs validation error and dead-letters/fails without partial metadata | US-002 |
+| QT-004 | `prediction-edit-prep-queue` | Malformed message | neither `modelId` nor `imageLayerId` | Worker logs validation error and dead-letters/fails without partial metadata | US-002 |
 | QT-005 | `prediction-edit-prep-queue` | Row-count mismatch | predictions and footprints lengths differ | Prep fails; no `predictedAt` update | US-002 |
+| QT-006 | `prediction-edit-prep-queue` | Layer-only prep | empty `modelId`, layer with footprints | PMTiles blob uploaded; only `ImageLayer.footprintPmtilesUrl`/`footprintTiles*` written; no sidecar and no model document touched | US-002 |
+| QT-007 | `prediction-edit-prep-queue` | Layer-only no-op | empty `modelId`, layer already has `footprintPmtilesUrl`, `force=false` | No job submitted; layer marked `Processed` | US-002 |
+| QT-008 | imagery prep (`ImageryPostProcessor`) | Layer-time scheduling | layer completes with cached footprints and no tiles | Exactly one layer-only message enqueued; none when tiles exist or the footprint step errored; enqueue failure never fails imagery prep | US-002 |
 
 ### UI Component Tests
 

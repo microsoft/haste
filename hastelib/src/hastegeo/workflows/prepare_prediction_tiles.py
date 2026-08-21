@@ -17,6 +17,16 @@ make that possible and this workflow builds both:
    values, fetched once per editing session and indexed by the same
    integer id that is baked into the tiles.
 
+Two modes, selected by the presence of ``model_id`` in the config:
+
+* **model-scoped** (``model_id`` set): build the sidecar, and the
+  PMTiles too unless ``tiles.build_pmtiles`` says the layer already has
+  them.
+* **layer-only** (no ``model_id``): build the footprint PMTiles alone
+  and skip the sidecar entirely. Imagery prep requests this as soon as
+  a layer's footprints are cached, so the tiles exist before any model
+  is trained — there are no predictions to join yet.
+
 CRITICAL — row-order invariant:
     Predictions join to the layer's ``buildingFootprintsUrl`` GeoPackage
     **by row index** (``hastegeo.core.utils.assessment``). Both artifacts
@@ -515,21 +525,35 @@ def run(config: Dict[str, Any], output_dir: str) -> Dict[str, Any]:
     Args:
         config: Parsed workflow config (see the module docstring of
             ``hastegeo.core.processors.prediction_tiles`` for the shape
-            the processor writes).
+            the processor writes). Omitting ``model_id`` selects
+            layer-only mode: footprint PMTiles, no sidecar.
         output_dir: Directory the artifacts are written to. The runner
             uploads everything in here after the task completes.
 
     Returns:
         The manifest dict, which is also written to ``output_dir``.
+
+    Raises:
+        ValueError: when the identifiers are missing, or when a
+            layer-only config asks for no tiles (nothing to do).
+        FileNotFoundError: when a declared input file is absent.
     """
     files: Dict[str, Any] = config.get("files", {})
     tiles_config: Dict[str, Any] = config.get("tiles", {})
     project_id = config.get("project_id")
     image_layer_id = config.get("image_layer_id")
-    model_id = config.get("model_id")
-    if not project_id or not image_layer_id or not model_id:
+    # No model -> layer-only: build the shared footprint tiles only.
+    model_id = config.get("model_id") or None
+    if not project_id or not image_layer_id:
+        raise ValueError("Config must set project_id and image_layer_id.")
+
+    build_pmtiles = bool(tiles_config.get("build_pmtiles", True))
+    if model_id is None and not build_pmtiles:
         raise ValueError(
-            "Config must set project_id, image_layer_id and model_id."
+            "Config has no model_id and does not ask for PMTiles, so "
+            "there is nothing to build. Set model_id to build the "
+            "prediction attribute sidecar, or tiles.build_pmtiles to "
+            "build the layer's footprint tiles."
         )
 
     footprints_path = files.get("footprints")
@@ -538,7 +562,9 @@ def run(config: Dict[str, Any], output_dir: str) -> Dict[str, Any]:
         raise FileNotFoundError(
             f"Building footprints not found: {footprints_path}"
         )
-    if not predictions_path or not os.path.exists(predictions_path):
+    if model_id is not None and (
+        not predictions_path or not os.path.exists(predictions_path)
+    ):
         raise FileNotFoundError(
             f"Prediction GeoPackage not found: {predictions_path}"
         )
@@ -546,15 +572,18 @@ def run(config: Dict[str, Any], output_dir: str) -> Dict[str, Any]:
     pmtiles_name = os.path.basename(
         files.get("pmtiles") or default_pmtiles_name(image_layer_id)
     )
-    attrs_name = os.path.basename(
-        files.get("attrs") or default_attrs_name(model_id)
+    attrs_name = (
+        ""
+        if model_id is None
+        else os.path.basename(
+            files.get("attrs") or default_attrs_name(model_id)
+        )
     )
-    build_pmtiles = bool(tiles_config.get("build_pmtiles", True))
 
     manifest: Dict[str, Any] = {
         "project_id": project_id,
         "image_layer_id": image_layer_id,
-        "model_id": model_id,
+        "model_id": model_id or "",
         "pmtiles_filename": "",
         "pmtiles_built": False,
         "pmtiles_url": None,
@@ -570,7 +599,7 @@ def run(config: Dict[str, Any], output_dir: str) -> Dict[str, Any]:
     if build_pmtiles:
         log_progress("Building footprint vector tiles")
         pmtiles_path = os.path.join(output_dir, pmtiles_name)
-        build_footprint_pmtiles(
+        tiled_count = build_footprint_pmtiles(
             footprints_path,
             pmtiles_path,
             minimum_zoom=int(
@@ -583,27 +612,36 @@ def run(config: Dict[str, Any], output_dir: str) -> Dict[str, Any]:
         )
         manifest["pmtiles_filename"] = pmtiles_name
         manifest["pmtiles_built"] = True
+        # Without a sidecar this is the only building count available;
+        # the model-scoped branch overwrites it with the sidecar's own.
+        manifest["building_count"] = int(tiled_count)
         to_store[pmtiles_name] = pmtiles_path
     else:
         log_progress("Reusing existing footprint vector tiles")
 
-    log_progress("Building prediction attributes")
-    attrs_path = os.path.join(output_dir, attrs_name)
-    payload = write_prediction_attrs(
-        predictions_path, footprints_path, attrs_path
-    )
-    predictions = read_predictions(predictions_path)
-    manifest["building_count"] = int(payload["n"])
-    manifest["prediction_flavor"] = predictions.flavor
-    manifest["supports_threshold"] = bool(predictions.supports_threshold)
-    to_store[attrs_name] = attrs_path
+    if model_id is not None:
+        log_progress("Building prediction attributes")
+        attrs_path = os.path.join(output_dir, attrs_name)
+        payload = write_prediction_attrs(
+            predictions_path, footprints_path, attrs_path
+        )
+        predictions = read_predictions(predictions_path)
+        manifest["building_count"] = int(payload["n"])
+        manifest["prediction_flavor"] = predictions.flavor
+        manifest["supports_threshold"] = bool(predictions.supports_threshold)
+        to_store[attrs_name] = attrs_path
+    else:
+        log_progress("No model requested; skipping prediction attributes")
 
     if config.get("store_artifacts", True):
         haste_config = Config()
         if artifact_storage_available(haste_config):
             urls = store_artifacts(project_id, to_store, config=haste_config)
             manifest["pmtiles_url"] = urls.get(pmtiles_name)
-            manifest["attrs_url"] = urls.get(attrs_name)
+            # Empty in layer-only mode: no sidecar was built or stored.
+            manifest["attrs_url"] = (
+                urls.get(attrs_name) if attrs_name else None
+            )
         else:
             # Not an error: on Azure Batch the runner uploads outputs/
             # and the postprocessor resolves the URLs from the task's

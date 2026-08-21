@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 //
 // Right-hand control panel for the Prediction Editor: class counts, the
-// filter + prev/next traversal over the filtered set, the threshold sliders
-// (only for models that support them), the live "would change class"
-// readout, the save action, and the saved-version history.
+// swipe imagery-comparison toggle, the filter + prev/next traversal over the
+// filtered set, the threshold sliders (only for models that support them),
+// the live "would change class" readout, the save action, and the
+// saved-version history.
 //
 // Layout and interaction mirror BuildingValidationRightPanel so the two
 // review screens feel like the same tool. Every colour comes from Fluent
@@ -22,6 +23,7 @@ import {
   Radio,
   RadioGroup,
   Slider,
+  Switch,
   Text,
   makeStyles,
   tokens,
@@ -39,6 +41,12 @@ import {
   sortVersionsDescending,
   toPercentLabel,
 } from "./predictionClassify";
+import {
+  SWIPE_MODE_NONE,
+  isSwipeAvailable,
+  swipeModeHint,
+  swipeToggleLabel,
+} from "./predictionSwipe";
 
 const CLASS_ORDER = [CLASS_DAMAGED, CLASS_NOT_DAMAGED, CLASS_UNKNOWN];
 
@@ -243,6 +251,9 @@ const PredictionEditorRightPanel = ({
   setUnknownThreshold,
   baseline,
   changeCount,
+  swipeMode = SWIPE_MODE_NONE,
+  swipeOn = false,
+  onSwipeChange,
   onSave,
   isSaving,
   saveError,
@@ -270,6 +281,7 @@ const PredictionEditorRightPanel = ({
         : `${filteredIndices.length} buildings match — press Next to start`;
 
   const orderedVersions = sortVersionsDescending(versions);
+  const swipeAvailable = isSwipeAvailable(swipeMode);
   const thresholdChanged =
     toPercent(threshold) !== toPercent(baseline?.threshold) ||
     toPercent(unknownThreshold) !== toPercent(baseline?.unknownThreshold);
@@ -306,6 +318,21 @@ const PredictionEditorRightPanel = ({
               {editedCount.toLocaleString()}
             </span>
           </div>
+        </div>
+
+        <Divider />
+
+        {/* Imagery comparison. The mode is decided by the layer's imagery, so
+            pre-vs-post is simply not on offer when there are no pre-event
+            tiles — the label always names the comparison being shown. */}
+        <div>
+          <Switch
+            checked={swipeOn}
+            disabled={!swipeAvailable}
+            label={swipeToggleLabel(swipeMode)}
+            onChange={(_event, data) => onSwipeChange?.(data.checked)}
+          />
+          <div className={styles.subtle}>{swipeModeHint(swipeMode)}</div>
         </div>
 
         <Divider />
@@ -571,6 +598,9 @@ PredictionEditorRightPanel.propTypes = {
     unknownThreshold: PropTypes.number,
   }).isRequired,
   changeCount: PropTypes.number.isRequired,
+  swipeMode: PropTypes.string,
+  swipeOn: PropTypes.bool,
+  onSwipeChange: PropTypes.func,
   onSave: PropTypes.func.isRequired,
   isSaving: PropTypes.bool.isRequired,
   saveError: PropTypes.string,
