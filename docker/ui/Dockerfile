@@ -1,5 +1,5 @@
 # Use the official Node.js image as the base image
-FROM mcr.microsoft.com/azurelinux/base/nodejs:20.14
+FROM mcr.microsoft.com/azurelinux/base/nodejs:24.17
 
 # Set the working directory
 WORKDIR /app
