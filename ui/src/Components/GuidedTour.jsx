@@ -121,17 +121,33 @@ const GuidedTour = () => {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const cardW = Math.min(340, vw - 32);
-    const placeBelow = spot.top + spot.height + 12 + 220 < vh;
+    const viewportMargin = 16;
+    const cardGap = 14;
+    const preferredCardHeight = 280;
+    const targetBottom = spot.top + spot.height;
+    const spaceBelow = vh - targetBottom - cardGap - viewportMargin;
+    const spaceAbove = spot.top - cardGap - viewportMargin;
 
     const cardStyle = {
       position: "fixed",
       width: cardW,
       left: Math.max(16, Math.min(holeLeft, vw - cardW - 16)),
     };
-    if (placeBelow) {
-      cardStyle.top = spot.top + spot.height + 14;
+    if (spaceBelow >= preferredCardHeight) {
+      cardStyle.top = targetBottom + cardGap;
+      cardStyle.maxHeight = vh - cardStyle.top - viewportMargin;
+    } else if (spaceAbove >= preferredCardHeight) {
+      cardStyle.bottom = vh - spot.top + cardGap;
+      cardStyle.maxHeight = spaceAbove;
     } else {
-      cardStyle.bottom = vh - spot.top + 14;
+      cardStyle.top = Math.max(
+        viewportMargin,
+        Math.min(
+          spot.top + cardGap,
+          vh - preferredCardHeight - viewportMargin
+        )
+      );
+      cardStyle.maxHeight = vh - cardStyle.top - viewportMargin;
     }
 
     const totalSteps = filteedTourSteps.length;

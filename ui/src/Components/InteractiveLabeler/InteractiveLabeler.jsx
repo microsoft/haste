@@ -44,6 +44,10 @@ import { toBrowserTitilerUrl } from "../../util/blobUrl";
 import { AppContext } from "../../AppContext.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
 import {
+  initGuidedTourState,
+  setGuidedTourState,
+} from "../GuidedTourHelper.js";
+import {
   CLASS_CLOUDY,
   CLASS_DAMAGED,
   CLASS_INTACT,
@@ -53,6 +57,7 @@ import {
   isValidVector,
 } from "./interactiveModel.js";
 import { getGpu } from "./gpuLogreg.js";
+import InteractiveLabelerLoader from "./InteractiveLabelerLoader.jsx";
 import KeyboardShortcutHelp from "../KeyboardShortcutHelp.jsx";
 import {
   INTERACTIVE_LABELER_SHORTCUTS,
@@ -108,14 +113,42 @@ class InMemoryPMTilesSource {
 // Download an entire artifact through the same-origin API proxy as raw
 // bytes. Used for the PMTiles archive so it can be read fully in memory
 // (see InMemoryPMTilesSource) rather than via unsupported range requests.
-async function fetchArtifactBuffer(url) {
+async function readResponseBuffer(response, onProgress) {
+  const total = Number(response.headers.get("content-length")) || null;
+  if (!response.body) {
+    const buffer = await response.arrayBuffer();
+    onProgress?.(buffer.byteLength, total || buffer.byteLength);
+    return buffer;
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    onProgress?.(loaded, total);
+  }
+
+  const bytes = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes.buffer;
+}
+
+async function fetchArtifactBuffer(url, onProgress) {
   const resp = await fetch(url);
   if (!resp.ok) {
     throw new Error(
       `Failed to fetch PMTiles archive (HTTP ${resp.status}) at ${url}`
     );
   }
-  return resp.arrayBuffer();
+  return readResponseBuffer(resp, onProgress);
 }
 
 // Class colors (match index.html). Index = class number.
@@ -442,7 +475,7 @@ function normalizedEntropy(probs) {
 const SIDECAR_MAGIC = [0x48, 0x46, 0x54, 0x52]; // "HFTR"
 const SIDECAR_VERSION = 1;
 
-async function fetchFeaturesSidecar(url) {
+async function fetchFeaturesSidecar(url, onProgress) {
   const t0 = performance.now();
   const resp = await fetch(url);
   if (!resp.ok) {
@@ -450,7 +483,7 @@ async function fetchFeaturesSidecar(url) {
       `Failed to fetch features sidecar (HTTP ${resp.status}) at ${url}`
     );
   }
-  const buf = await resp.arrayBuffer();
+  const buf = await readResponseBuffer(resp, onProgress);
   if (buf.byteLength < 16) {
     throw new Error("Features sidecar is too short — header missing.");
   }
@@ -499,8 +532,13 @@ const InteractiveLabeler = () => {
   const styles = useStyles();
   const { projectId, imageLayerId, modelId } = useParams();
   const navigate = useNavigate();
-  const { setIsLoading, setDialog, setAppHeaderRightButtons } =
-    useContext(AppContext);
+  const {
+    appParams,
+    initCurrentTour,
+    setIsLoading,
+    setDialog,
+    setAppHeaderRightButtons,
+  } = useContext(AppContext);
 
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
@@ -581,6 +619,11 @@ const InteractiveLabeler = () => {
   const swipeBoxCleanupRef = useRef(null);
 
   const [isMapReady, setIsMapReady] = useState(false);
+  const [initialLoad, setInitialLoad] = useState({
+    step: 0,
+    loaded: null,
+    total: null,
+  });
   const [selectedClass, setSelectedClass] = useState(CLASS_DAMAGED);
   const [viewMode, setViewMode] = useState("label"); // "label" | "predict"
   const [showFootprints, setShowFootprints] = useState(true);
@@ -651,22 +694,21 @@ const InteractiveLabeler = () => {
   useEffect(() => {
     const init = async () => {
       if (!window.atlas) return;
-      setIsLoading(true, "Loading Interactive Labeler");
       try {
         await createMap();
         setIsMapReady(true);
+        setInitialLoad(null);
       } catch (e) {
         console.error("Error initializing interactive labeler:", e);
         setDialog(
           "Error",
           `Failed to load the interactive labeler: ${e?.message || e}`
         );
-      } finally {
-        setIsLoading(false);
       }
     };
     init();
     return () => {
+      initCurrentTour(null);
       setAppHeaderRightButtons([]);
       // Read at teardown on purpose: setupBoxSelect registers this well after
       // the effect runs, so copying the ref up front would capture null and
@@ -688,7 +730,34 @@ const InteractiveLabeler = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!isMapReady) return;
+    initGuidedTourState(
+      "interactiveLabelerGuide",
+      appParams.guidedTourProperties
+    );
+    initCurrentTour("interactiveLabelerGuide");
+    setAppHeaderRightButtons([
+      {
+        iconName: "help",
+        title: "Help",
+        id: "helpButton",
+        onClick: () =>
+          setGuidedTourState(
+            false,
+            initCurrentTour,
+            "interactiveLabelerGuide",
+            appParams.guidedTourProperties
+          ),
+      },
+    ]);
+    // Tour configuration is stable for the mounted labeler. Re-running this
+    // effect on AppContext updates would restart the tour at every step.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMapReady]);
+
   async function createMap() {
+    setInitialLoad({ step: 0, loaded: null, total: null });
     let layerData = null;
     try {
       layerData = await apiGet(
@@ -707,6 +776,7 @@ const InteractiveLabeler = () => {
     // populated by the embedding workflow's postprocessor.
     let pmtilesUrl = "";
     let sidecarUrl = "";
+    setInitialLoad({ step: 1, loaded: null, total: null });
     try {
       const models = await apiGet(
         `GetLayerModelsDetails?projectId=${projectId}&imageLayerId=${imageLayerId}`
@@ -751,8 +821,12 @@ const InteractiveLabeler = () => {
     // read hit the local buffer instead of the network. `getKey()` returns
     // browserPmtilesUrl so it matches the `pmtiles://<url>` source below.
     let pmtilesHeader = null;
+    setInitialLoad({ step: 2, loaded: 0, total: null });
     try {
-      const pmtilesBuffer = await fetchArtifactBuffer(browserPmtilesUrl);
+      const pmtilesBuffer = await fetchArtifactBuffer(
+        browserPmtilesUrl,
+        (loaded, total) => setInitialLoad({ step: 2, loaded, total })
+      );
       const pm = new PMTiles(
         new InMemoryPMTilesSource(browserPmtilesUrl, pmtilesBuffer)
       );
@@ -770,14 +844,17 @@ const InteractiveLabeler = () => {
     // f_* lookup downstream — the PMTiles archive itself only carries id +
     // overture_id, so the labeler reads feature vectors here, not from
     // tile properties.
-    setIsLoading(true, "Loading features…");
-    sidecarRef.current = await fetchFeaturesSidecar(browserSidecarUrl);
-    setIsLoading(true, "Loading Interactive Labeler");
+    setInitialLoad({ step: 3, loaded: 0, total: null });
+    sidecarRef.current = await fetchFeaturesSidecar(
+      browserSidecarUrl,
+      (loaded, total) => setInitialLoad({ step: 3, loaded, total })
+    );
 
     // Restore this model's previously-saved interactive labels (separate from
     // the Building Validation store). Labels are keyed by overture id; we
     // re-apply them as feature-state on each moveend hydration when the
     // matching building's tile is in view.
+    setInitialLoad({ step: 4, loaded: null, total: null });
     try {
       const saved = await apiGet(
         `GetInteractiveLabels?projectId=${projectId}&modelId=${modelId}`
@@ -822,6 +899,7 @@ const InteractiveLabeler = () => {
       initialCamera = { center: [centerLon, centerLat], zoom };
     }
 
+    setInitialLoad({ step: 5, loaded: null, total: null });
     const map = new window.atlas.Map(mapContainerRef.current, {
       ...initialCamera,
       maxPitch: 0,
@@ -831,7 +909,7 @@ const InteractiveLabeler = () => {
       authOptions: getAzureMapsAuthOptions(),
     });
 
-    map.events.add("ready", () => {
+    await new Promise((resolve) => map.events.add("ready", () => {
       map.setUserInteraction({
         dragRotateInteraction: false,
         scrollZoomInteraction: true,
@@ -1026,7 +1104,8 @@ const InteractiveLabeler = () => {
       };
       map.events.add("move", syncInfo);
       syncInfo();
-    });
+      resolve();
+    }));
 
     mapRef.current = map;
   }
@@ -2394,6 +2473,7 @@ const InteractiveLabeler = () => {
 
   return (
     <div className={styles.root}>
+      <InteractiveLabelerLoader loadState={initialLoad} />
       <div
         className="labeling-tool-surface labeling-navigation-controls"
         style={{
@@ -2424,7 +2504,10 @@ const InteractiveLabeler = () => {
           handle (z-index:1, appended into the primary/pre container) still
           paints above both. The pre-map overlay stays display:none until the
           swipe toggle is on. */}
-      <div style={{ position: "relative", flexGrow: 1 }}>
+      <div
+        id="interactiveLabelerMapArea"
+        style={{ position: "relative", flexGrow: 1 }}
+      >
         {/* FIRST/behind: swipe PRIMARY = the new pre-event map (built on
             demand by the swipe effect while the toggle is on). */}
         <div
@@ -2573,55 +2656,59 @@ const InteractiveLabeler = () => {
             </div>
           )}
 
-          <Field label="Set class">
-            <RadioGroup
-              value={String(selectedClass)}
-              onChange={(_e, data) => setSelectedClass(parseInt(data.value, 10))}
-            >
-              {CLASS_OPTIONS.map((o) => (
-                <Radio key={o.key} value={o.key} label={o.text} />
-              ))}
-            </RadioGroup>
-          </Field>
+          <div id="interactiveLabelerClasses">
+            <Field label="Set class">
+              <RadioGroup
+                value={String(selectedClass)}
+                onChange={(_e, data) => setSelectedClass(parseInt(data.value, 10))}
+              >
+                {CLASS_OPTIONS.map((o) => (
+                  <Radio key={o.key} value={o.key} label={o.text} />
+                ))}
+              </RadioGroup>
+            </Field>
 
-          <div style={{ marginTop: 8, fontSize: 13 }}>
-            <div style={{ color: CLASS_COLORS[CLASS_INTACT] }}>
-              Intact: <b>{counts[CLASS_INTACT]}</b>
-            </div>
-            <div style={{ color: CLASS_COLORS[CLASS_DAMAGED] }}>
-              Damaged: <b>{counts[CLASS_DAMAGED]}</b>
-            </div>
-            <div style={{ color: CLASS_COLORS[CLASS_CLOUDY] }}>
-              Cloudy: <b>{counts[CLASS_CLOUDY]}</b>
+            <div style={{ marginTop: 8, fontSize: 13 }}>
+              <div style={{ color: CLASS_COLORS[CLASS_INTACT] }}>
+                Intact: <b>{counts[CLASS_INTACT]}</b>
+              </div>
+              <div style={{ color: CLASS_COLORS[CLASS_DAMAGED] }}>
+                Damaged: <b>{counts[CLASS_DAMAGED]}</b>
+              </div>
+              <div style={{ color: CLASS_COLORS[CLASS_CLOUDY] }}>
+                Cloudy: <b>{counts[CLASS_CLOUDY]}</b>
+              </div>
             </div>
           </div>
 
-          <Switch
-            label="View: Predicted / Labeled"
-            checked={viewMode === "predict"}
-            disabled={!canTrain}
-            onChange={(_e, data) => {
-              setViewMode(data.checked ? "predict" : "label");
-              // Model-driven review views are mutually exclusive.
-              if (data.checked) {
-                setUncertaintyOn(false);
-                setMisclassifiedOn(false);
-              }
-            }}
-            style={{ marginTop: 12 }}
-          />
-          {!canTrain && (
-            <div className={styles.secondaryText} style={{ fontSize: 11, marginTop: -4 }}>
-              Predicted / Uncertainty views need {MIN_PER_CLASS}+ labels in at
-              least 2 classes.
-            </div>
-          )}
+          <div id="interactiveLabelerViewControls">
+            <Switch
+              label="View: Predicted / Labeled"
+              checked={viewMode === "predict"}
+              disabled={!canTrain}
+              onChange={(_e, data) => {
+                setViewMode(data.checked ? "predict" : "label");
+                // Model-driven review views are mutually exclusive.
+                if (data.checked) {
+                  setUncertaintyOn(false);
+                  setMisclassifiedOn(false);
+                }
+              }}
+              style={{ marginTop: 12 }}
+            />
+            {!canTrain && (
+              <div className={styles.secondaryText} style={{ fontSize: 11, marginTop: -4 }}>
+                Predicted / Uncertainty views need {MIN_PER_CLASS}+ labels in at
+                least 2 classes.
+              </div>
+            )}
 
-          <Switch
-            label="Footprints"
-            checked={showFootprints}
-            onChange={(_e, data) => setShowFootprints(!!data.checked)}
-          />
+            <Switch
+              label="Footprints"
+              checked={showFootprints}
+              onChange={(_e, data) => setShowFootprints(!!data.checked)}
+            />
+          </div>
 
           {metrics && (
             <div className={styles.section} style={{ fontSize: 12 }}>
@@ -2645,47 +2732,52 @@ const InteractiveLabeler = () => {
             </div>
           )}
 
-          <div
-            className={styles.secondaryText}
-            style={{
-              marginTop: 8,
-              minHeight: 18,
-              fontSize: 12,
-            }}
-          >
-            {status}
-          </div>
-          <div className={styles.secondaryText} style={{ marginTop: 4, fontSize: 12 }}>
-            {totalLabeled} labeled · {viewportPredicted} predicted in viewport
+          <div id="interactiveLabelerProgress">
+            <div
+              className={styles.secondaryText}
+              style={{
+                marginTop: 8,
+                minHeight: 18,
+                fontSize: 12,
+              }}
+            >
+              {status}
+            </div>
+            <div className={styles.secondaryText} style={{ marginTop: 4, fontSize: 12 }}>
+              {totalLabeled} labeled · {viewportPredicted} predicted in viewport
+            </div>
           </div>
 
-          <Button
-            appearance="primary"
-            disabled={isSaving || totalLabeled === 0}
-            onClick={handleSaveLabels}
-            style={{ marginTop: 16, width: "100%" }}
-          >
-            {isSaving ? "Saving…" : "Save labels"}
-          </Button>
-          <Button
-            disabled={!!fullPredict || !canTrain}
-            onClick={handlePredictAll}
-            style={{ marginTop: 8, width: "100%" }}
-            title="Run the trained model across every building in the layer (not just the viewport) and persist the predictions for the Validation / Assessment reports."
-          >
-            Predict all buildings
-          </Button>
-          <Button
-            onClick={handleClearLabels}
-            className={styles.dangerButton}
-            title="Remove every label for this model — both in-session and in the saved store."
-          >
-            Clear labels
-          </Button>
+          <div id="interactiveLabelerActions">
+            <Button
+              appearance="primary"
+              disabled={isSaving || totalLabeled === 0}
+              onClick={handleSaveLabels}
+              style={{ marginTop: 16, width: "100%" }}
+            >
+              {isSaving ? "Saving…" : "Save labels"}
+            </Button>
+            <Button
+              disabled={!!fullPredict || !canTrain}
+              onClick={handlePredictAll}
+              style={{ marginTop: 8, width: "100%" }}
+              title="Run the trained model across every building in the layer (not just the viewport) and persist the predictions for the Validation / Assessment reports."
+            >
+              Predict all buildings
+            </Button>
+            <Button
+              onClick={handleClearLabels}
+              className={styles.dangerButton}
+              title="Remove every label for this model — both in-session and in the saved store."
+            >
+              Clear labels
+            </Button>
+          </div>
 
           {/* Advanced: expandable container for the 5-fold CV report and the
               swipe (pre-event) comparison view. */}
           <Button
+            id="interactiveLabelerAdvanced"
             appearance="subtle"
             icon={<FluentIcon name={advancedOpen ? "ChevronDown" : "ChevronRight"} />}
             onClick={() => setAdvancedOpen((v) => !v)}
@@ -2864,12 +2956,13 @@ const InteractiveLabeler = () => {
           )}
           </div>
 
-          <div className={styles.footerHelp}>
+          <div id="interactiveLabelerShortcuts" className={styles.footerHelp}>
             <div style={{ marginBottom: 8 }}>
               Click a building to label it · right-click to clear it
             </div>
             <KeyboardShortcutHelp
               shortcuts={INTERACTIVE_LABELER_SHORTCUTS}
+              defaultExpanded={false}
             />
           </div>
         </div>
