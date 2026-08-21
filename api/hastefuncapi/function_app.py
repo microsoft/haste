@@ -1466,32 +1466,48 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse("Error loading model.", status_code=500)
 
     if layer_url_field is not None:
-        # Layer-scoped artifact: take an explicit imageLayerId when the
-        # caller passes one, otherwise the model's own layer — a client
-        # holding a modelId always means that model's footprints.
-        image_layer_id = req.params.get("imageLayerId") or (
-            document or {}
-        ).get("imageLayerId")
-        if not image_layer_id or not _GUID_RE.match(str(image_layer_id)):
-            return _bad_request("Invalid or missing parameter: imageLayerId")
-        try:
-            document = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().IMAGELAYER.value,
-                    partition_key=project_id,
-                ).load,
-                image_layer_id,
-            )
-        except FileNotFoundError:
-            return func.HttpResponse("Image layer not found.", status_code=404)
-        except Exception as e:
-            logger.error(
-                f"GetModelArtifact image layer load failed: {e}\n"
-                f"{traceback.format_exc()}"
-            )
-            return func.HttpResponse(
-                "Error loading image layer.", status_code=500
-            )
+        model_document = document or {}
+        # The embedding workflow already tiles these footprints from the
+        # same archive, keyed on the same row-index id, so reuse the
+        # model's own PMTiles rather than making the caller wait for an
+        # identical layer-scoped rebuild.
+        reused_url = ""
+        if kind == "footprint_pmtiles":
+            reused_url = model_document.get("pmtilesUrl") or ""
+        if reused_url:
+            document = {url_field: reused_url}
+        else:
+            # Layer-scoped artifact: take an explicit imageLayerId when
+            # the caller passes one, otherwise the model's own layer — a
+            # client holding a modelId always means that model's
+            # footprints.
+            image_layer_id = req.params.get(
+                "imageLayerId"
+            ) or model_document.get("imageLayerId")
+            if not image_layer_id or not _GUID_RE.match(str(image_layer_id)):
+                return _bad_request(
+                    "Invalid or missing parameter: imageLayerId"
+                )
+            try:
+                document = await asyncio.to_thread(
+                    MetadataProcessor(
+                        data_type=config.get_metadata_types().IMAGELAYER.value,
+                        partition_key=project_id,
+                    ).load,
+                    image_layer_id,
+                )
+            except FileNotFoundError:
+                return func.HttpResponse(
+                    "Image layer not found.", status_code=404
+                )
+            except Exception as e:
+                logger.error(
+                    f"GetModelArtifact image layer load failed: {e}\n"
+                    f"{traceback.format_exc()}"
+                )
+                return func.HttpResponse(
+                    "Error loading image layer.", status_code=500
+                )
 
     blob_url = (document or {}).get(url_field) or ""
     if not blob_url:

@@ -91,6 +91,32 @@ class TestNeedsPreparation(unittest.TestCase):
         self.assertFalse(needs_pmtiles)
         self.assertTrue(needs_attrs)
 
+    def test_embedding_model_pmtiles_are_reused(self):
+        """The embedding workflow already tiles the same footprints.
+
+        Rebuilding them would spawn a multi-gigabyte container job to
+        produce a byte-for-byte equivalent archive.
+        """
+        from hastegeo.core.processors.prediction_tiles import needs_preparation
+
+        model = _model(pmtilesUrl="https://acct/buildings_5553.pmtiles")
+        needs_pmtiles, needs_attrs = needs_preparation(model, _layer())
+        self.assertFalse(needs_pmtiles)
+        self.assertTrue(needs_attrs)
+
+    def test_resolve_tiles_url_prefers_the_model_archive(self):
+        from hastegeo.core.processors.prediction_tiles import resolve_tiles_url
+
+        model = _model(pmtilesUrl="https://acct/model.pmtiles")
+        layer = _layer(footprintPmtilesUrl="https://acct/layer.pmtiles")
+        self.assertEqual(
+            resolve_tiles_url(model, layer), "https://acct/model.pmtiles"
+        )
+        self.assertEqual(
+            resolve_tiles_url(_model(), layer), "https://acct/layer.pmtiles"
+        )
+        self.assertIsNone(resolve_tiles_url(_model(), _layer()))
+
 
 class TestPreprocessor(unittest.TestCase):
     def test_enqueues_when_work_is_outstanding(self):

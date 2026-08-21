@@ -157,6 +157,18 @@ def enqueue_prediction_tiles(
     return message
 
 
+def resolve_tiles_url(model: Model, image_layer: ImageLayer) -> Optional[str]:
+    """Return the PMTiles archive the editor should read, if any.
+
+    The embedding workflow already tiles the same footprints from the
+    same PMTiles archive, keyed on the same integer row-index ``id``
+    (see ``workflows/embed_buildings.py``), so those tiles are reused
+    rather than rebuilt. Only trained-inference models need a layer
+    level archive built for them.
+    """
+    return model.pmtilesUrl or image_layer.footprintPmtilesUrl
+
+
 def needs_preparation(
     model: Model, image_layer: ImageLayer
 ) -> Tuple[bool, bool]:
@@ -164,10 +176,10 @@ def needs_preparation(
 
     Returns:
         ``(needs_pmtiles, needs_attrs)``. Footprint tiles are shared by
-        every model on a layer, so they are only built when the layer
-        has no ``footprintPmtilesUrl`` yet.
+        every model on a layer, so they are only built when neither the
+        model nor the layer already has a usable archive.
     """
-    needs_pmtiles = not bool(image_layer.footprintPmtilesUrl)
+    needs_pmtiles = not bool(resolve_tiles_url(model, image_layer))
     needs_attrs = not bool(model.predictionAttrsUrl)
     return needs_pmtiles, needs_attrs
 

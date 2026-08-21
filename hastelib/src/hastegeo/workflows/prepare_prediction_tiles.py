@@ -458,20 +458,30 @@ def store_artifacts(
     Returns:
         ``{artifact_name: download_url}`` for everything stored.
     """
-    from hastegeo.core.processors.artifacts import ArtifactProcessor
+    # Use the storage layer directly rather than ArtifactProcessor: that
+    # processor also drives zip jobs and therefore imports the queue SDK,
+    # which the training image does not install. This workflow only ever
+    # needs to put bytes in blob storage.
+    from hastegeo.core.artifact_storage.unified_artifact_storage import (
+        UnifiedArtifactStorage,
+    )
 
     config = config or Config()
-    processor = ArtifactProcessor(partition_key=project_id, config=config)
+    storage = UnifiedArtifactStorage(
+        storage_type=config.artifact_storage_type,
+        partition_key=project_id,
+        **config.artifact_storage_config,
+    )
     urls: Dict[str, str] = {}
     for artifact_name, local_path in artifacts.items():
         if not os.path.exists(local_path):
             raise FileNotFoundError(
                 f"Artifact {artifact_name} not found at {local_path}"
             )
-        processor.store_artifact(
+        storage.store_artifact(
             artifact_name=artifact_name, src_path=local_path
         )
-        urls[artifact_name] = processor.get_download_url(
+        urls[artifact_name] = storage.get_download_url(
             identifier=artifact_name
         )
         logger.info("Stored artifact %s", artifact_name)
