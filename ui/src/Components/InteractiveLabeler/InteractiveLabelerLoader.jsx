@@ -8,6 +8,7 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
+import { formatBytes, getLoadProgress } from "./interactiveLabelerLoading.js";
 
 const LOAD_STEPS = [
   "Loading imagery configuration",
@@ -103,18 +104,6 @@ const useStyles = makeStyles({
   },
 });
 
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "";
-  const units = ["B", "KB", "MB", "GB"];
-  const unitIndex = Math.min(
-    Math.floor(Math.log(bytes) / Math.log(1024)),
-    units.length - 1
-  );
-  const value = bytes / 1024 ** unitIndex;
-  const decimalPlaces = unitIndex === 2 ? 1 : unitIndex === 0 || value >= 10 ? 0 : 1;
-  return `${value.toFixed(decimalPlaces)} ${units[unitIndex]}`;
-}
-
 const InteractiveLabelerLoader = ({ loadState }) => {
   const styles = useStyles();
   if (!loadState) return null;
@@ -138,7 +127,7 @@ const InteractiveLabelerLoader = ({ loadState }) => {
           </span>
         </div>
         <ProgressBar
-          value={activeStep / LOAD_STEPS.length}
+          value={getLoadProgress(activeStep, LOAD_STEPS.length)}
           max={1}
           aria-label={`Loading step ${activeStep + 1} of ${LOAD_STEPS.length}`}
         />

@@ -13,6 +13,7 @@ import {
   setGuidedTourState,
   validateIsGuidedTourDisabled,
 } from "./GuidedTourHelper.js";
+import { getTourCardStyle } from "./guidedTourLayout.js";
 
 /** True only when the element exists AND is actually rendered/visible.
  *  Guards against targets that are in the DOM but hidden (e.g. tables
@@ -118,37 +119,11 @@ const GuidedTour = () => {
     const holeW = spot.width + pad * 2;
     const holeH = spot.height + pad * 2;
 
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const cardW = Math.min(340, vw - 32);
-    const viewportMargin = 16;
-    const cardGap = 14;
-    const preferredCardHeight = 280;
-    const targetBottom = spot.top + spot.height;
-    const spaceBelow = vh - targetBottom - cardGap - viewportMargin;
-    const spaceAbove = spot.top - cardGap - viewportMargin;
-
-    const cardStyle = {
-      position: "fixed",
-      width: cardW,
-      left: Math.max(16, Math.min(holeLeft, vw - cardW - 16)),
-    };
-    if (spaceBelow >= preferredCardHeight) {
-      cardStyle.top = targetBottom + cardGap;
-      cardStyle.maxHeight = vh - cardStyle.top - viewportMargin;
-    } else if (spaceAbove >= preferredCardHeight) {
-      cardStyle.bottom = vh - spot.top + cardGap;
-      cardStyle.maxHeight = spaceAbove;
-    } else {
-      cardStyle.top = Math.max(
-        viewportMargin,
-        Math.min(
-          spot.top + cardGap,
-          vh - preferredCardHeight - viewportMargin
-        )
-      );
-      cardStyle.maxHeight = vh - cardStyle.top - viewportMargin;
-    }
+    const cardStyle = getTourCardStyle(
+      spot,
+      window.innerWidth,
+      window.innerHeight
+    );
 
     const totalSteps = filteedTourSteps.length;
 

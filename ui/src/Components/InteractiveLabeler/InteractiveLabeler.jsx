@@ -58,6 +58,7 @@ import {
 } from "./interactiveModel.js";
 import { getGpu } from "./gpuLogreg.js";
 import InteractiveLabelerLoader from "./InteractiveLabelerLoader.jsx";
+import { waitForMapReady } from "./interactiveLabelerLoading.js";
 import KeyboardShortcutHelp from "../KeyboardShortcutHelp.jsx";
 import {
   INTERACTIVE_LABELER_SHORTCUTS,
@@ -141,8 +142,8 @@ async function readResponseBuffer(response, onProgress) {
   return bytes.buffer;
 }
 
-async function fetchArtifactBuffer(url, onProgress) {
-  const resp = await fetch(url);
+async function fetchArtifactBuffer(url, onProgress, signal) {
+  const resp = await fetch(url, { signal });
   if (!resp.ok) {
     throw new Error(
       `Failed to fetch PMTiles archive (HTTP ${resp.status}) at ${url}`
@@ -475,9 +476,9 @@ function normalizedEntropy(probs) {
 const SIDECAR_MAGIC = [0x48, 0x46, 0x54, 0x52]; // "HFTR"
 const SIDECAR_VERSION = 1;
 
-async function fetchFeaturesSidecar(url, onProgress) {
+async function fetchFeaturesSidecar(url, onProgress, signal) {
   const t0 = performance.now();
-  const resp = await fetch(url);
+  const resp = await fetch(url, { signal });
   if (!resp.ok) {
     throw new Error(
       `Failed to fetch features sidecar (HTTP ${resp.status}) at ${url}`
@@ -692,22 +693,49 @@ const InteractiveLabeler = () => {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
     const init = async () => {
-      if (!window.atlas) return;
       try {
-        await createMap();
+        if (!window.atlas) {
+          throw new Error("Azure Maps is unavailable.");
+        }
+        await createMap(controller.signal);
         setIsMapReady(true);
         setInitialLoad(null);
       } catch (e) {
+        if (e?.name === "AbortError") return;
         console.error("Error initializing interactive labeler:", e);
+        setInitialLoad(null);
+        if (mapRef.current) {
+          mapRef.current.dispose();
+          mapRef.current = null;
+        }
         setDialog(
-          "Error",
-          `Failed to load the interactive labeler: ${e?.message || e}`
+          "Interactive Labeler could not load",
+          `Failed to load the interactive labeler: ${e?.message || e}`,
+          [
+            {
+              type: "primary",
+              key: "back",
+              text: "Go back",
+              onClick: () => {
+                setDialog();
+                navigate(-1);
+              },
+            },
+            {
+              type: "default",
+              key: "close",
+              text: "Close",
+              onClick: () => setDialog(),
+            },
+          ]
         );
       }
     };
     init();
     return () => {
+      controller.abort();
       initCurrentTour(null);
       setAppHeaderRightButtons([]);
       // Read at teardown on purpose: setupBoxSelect registers this well after
@@ -756,7 +784,8 @@ const InteractiveLabeler = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMapReady]);
 
-  async function createMap() {
+  async function createMap(signal) {
+    signal.throwIfAborted();
     setInitialLoad({ step: 0, loaded: null, total: null });
     let layerData = null;
     try {
@@ -766,6 +795,7 @@ const InteractiveLabeler = () => {
     } catch {
       // Imagery is optional — labeling works without it.
     }
+    signal.throwIfAborted();
     // Cache the imagery URLs for the Advanced → Swipe view, which loads the
     // pre-event tiles onto its secondary map (falls back to satellite when
     // the layer has no pre-event imagery).
@@ -789,6 +819,7 @@ const InteractiveLabeler = () => {
     } catch (e) {
       console.warn("Could not fetch model URLs:", e);
     }
+    signal.throwIfAborted();
     if (!pmtilesUrl) {
       throw new Error(
         "No PMTiles available for this model — the embedding workflow has not produced building tiles."
@@ -825,7 +856,8 @@ const InteractiveLabeler = () => {
     try {
       const pmtilesBuffer = await fetchArtifactBuffer(
         browserPmtilesUrl,
-        (loaded, total) => setInitialLoad({ step: 2, loaded, total })
+        (loaded, total) => setInitialLoad({ step: 2, loaded, total }),
+        signal
       );
       const pm = new PMTiles(
         new InMemoryPMTilesSource(browserPmtilesUrl, pmtilesBuffer)
@@ -847,7 +879,8 @@ const InteractiveLabeler = () => {
     setInitialLoad({ step: 3, loaded: 0, total: null });
     sidecarRef.current = await fetchFeaturesSidecar(
       browserSidecarUrl,
-      (loaded, total) => setInitialLoad({ step: 3, loaded, total })
+      (loaded, total) => setInitialLoad({ step: 3, loaded, total }),
+      signal
     );
 
     // Restore this model's previously-saved interactive labels (separate from
@@ -871,6 +904,7 @@ const InteractiveLabeler = () => {
       savedLabelsLoadedRef.current = false;
       console.error("Failed to load saved interactive labels:", e);
     }
+    signal.throwIfAborted();
     // Restore everything we can before the map exists. Labels saved with a
     // rowId resolve straight against the sidecar, so the counts are right on
     // first paint instead of climbing as the user pans. Anything older falls
@@ -908,8 +942,9 @@ const InteractiveLabeler = () => {
       language: "en-US",
       authOptions: getAzureMapsAuthOptions(),
     });
+    mapRef.current = map;
 
-    await new Promise((resolve) => map.events.add("ready", () => {
+    await waitForMapReady(map, { signal, onReady: () => {
       map.setUserInteraction({
         dragRotateInteraction: false,
         scrollZoomInteraction: true,
@@ -1104,10 +1139,7 @@ const InteractiveLabeler = () => {
       };
       map.events.add("move", syncInfo);
       syncInfo();
-      resolve();
-    }));
-
-    mapRef.current = map;
+    }});
   }
 
   // ── Internal-map helpers ──────────────────────────────────────────────────
