@@ -45,7 +45,7 @@ dependencies = [
   "requests-auth",
   "rasterio",
   "opencv-python",
-  "gdal==3.9.2",
+  "gdal==3.13.3",
   "shapely",
   "fiona",
   "geopandas",
