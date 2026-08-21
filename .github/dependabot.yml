@@ -1,7 +1,7 @@
 ---
 # Dependabot configuration for HASTE.
 #
-# Covers five ecosystems: npm (root build tooling + UI), pip (Azure
+# Covers four ecosystems: npm (root build tooling + UI), pip (Azure
 # Functions apps, container requirements, docs, core library), Docker
 # base images, and GitHub Actions.
 #
