@@ -796,7 +796,7 @@ def _determine_scale_rgb_params(source_type):
     Returns:
         bool: True if scale RGB parameters are needed, False otherwise.
     """
-    if source_type in ["planet_scope", "planet_skysat", "mercy_corps"]:
+    if source_type in ["planet_scope", "planet_skysat"]:
         return True
     return False
 

@@ -30,7 +30,10 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import shapely.geometry
-from hastegeo.workflows.prepare_imagery import ImageryWorkflow
+from hastegeo.workflows.prepare_imagery import (
+    ImageryWorkflow,
+    _determine_scale_rgb_params,
+)
 
 
 def _fake_polygon():
@@ -555,6 +558,16 @@ class TestProcessUserBuildingFootprintsStep(unittest.TestCase):
                 kwargs = mock_get.call_args.kwargs
                 self.assertFalse(kwargs.get("allow_redirects", True))
                 self.assertEqual(kwargs.get("timeout"), 30)
+
+
+class TestDetermineScaleRgbParams(unittest.TestCase):
+    def test_planet_sources_enable_scaling(self):
+        for source_type in ("planet_scope", "planet_skysat"):
+            with self.subTest(source_type=source_type):
+                self.assertTrue(_determine_scale_rgb_params(source_type))
+
+    def test_rgb_no_processing_does_not_enable_scaling(self):
+        self.assertFalse(_determine_scale_rgb_params("rgb/no_processing"))
 
 
 if __name__ == "__main__":
