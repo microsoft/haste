@@ -4,7 +4,7 @@
   "description": "High-speed Assessment and Satellite Tracking for Emergencies",
   "private": true,
   "dependencies": {
-    "vite": "^8.0.16"
+    "vite": "^8.2.1"
   },
   "overrides": {
     "xml2js": "^0.6.2",
