@@ -6,6 +6,7 @@
 from typing import Any, Optional
 
 import kornia.augmentation as K
+import torch
 import torch.nn.functional as F
 from lightning.pytorch.callbacks import Callback
 from torch import Tensor
@@ -17,14 +18,30 @@ def constraint_segmentation_loss(
     y: Tensor,
     no_damage_index: int,
     damaged_class_index: int = 3,
+    ignore_index: int = 0,
 ) -> Tensor:
     """Constraint loss for weakly-supervised "No Damage" labels.
 
     Standard cross-entropy is applied to every labeled pixel *except* those of
     the "No Damage" class. At a "No Damage" pixel we don't know the true class
-    (building vs. background), only that the building is *not* damaged -- so
-    instead of a hard label we add a penalty on the predicted probability of
-    the "Damaged Building" class there.
+    -- only that the building is *not* damaged -- so instead of a hard label
+    we apply a partial-label term over the classes that remain possible.
+
+    "No Damage" is a statement about a building, not something visible in the
+    imagery, so it is never a legitimate *output*. At a "No Damage" pixel the
+    true class is one of the remaining visual classes: everything except
+    "Damaged Building", the "No Damage" channel itself, and the unlabeled /
+    nodata channel. Maximizing the total probability of that allowed set --
+    ``-log sum_{c in allowed} p_c`` -- pushes all three excluded channels
+    toward zero while leaving the choice among the allowed ones free, which is
+    exactly the supervision a "No Damage" label carries.
+
+    An earlier form penalized only ``p(Damaged Building)`` here. That is
+    under-constrained: it leaves every other channel untouched, so the
+    cheapest way to satisfy it is to dump probability on the unsupervised
+    "No Damage" channel, and the model duly learns to emit "No Damage" as a
+    predicted class. Optimizing raw logits against that objective leaves the
+    remaining channels at a dead-even split rather than favoring a real class.
 
     Args:
         y_hat: Predicted logits of shape ``(N, C, H, W)``.
@@ -35,12 +52,16 @@ def constraint_segmentation_loss(
             the project's class list, so it must be passed in rather than
             hardcoded.
         damaged_class_index: Output channel / mask value of the "Damaged
-            Building" class that is penalized at "No Damage" pixels.
+            Building" class, which a "No Damage" pixel cannot be.
+        ignore_index: Channel reserved for unlabeled pixels; never a valid
+            prediction.
 
     Returns:
         The scalar loss.
     """
-    ce_loss = F.cross_entropy(y_hat, y, ignore_index=0, reduction="none")
+    ce_loss = F.cross_entropy(
+        y_hat, y, ignore_index=ignore_index, reduction="none"
+    )
     standard_mask = (y > 0) & (y != no_damage_index)
     if standard_mask.any():
         loss = ce_loss[standard_mask].mean()
@@ -52,9 +73,14 @@ def constraint_segmentation_loss(
 
     constraint_mask = y == no_damage_index
     if constraint_mask.any():
-        probs = F.softmax(y_hat, dim=1)
-        penalty = probs[:, damaged_class_index, :, :][constraint_mask]
-        loss = loss + penalty.mean()
+        excluded = {ignore_index, damaged_class_index, no_damage_index}
+        allowed = [c for c in range(y_hat.shape[1]) if c not in excluded]
+        if allowed:
+            # log-sum-exp over the allowed channels' log-probabilities is
+            # log(sum p_c) computed stably.
+            log_probs = F.log_softmax(y_hat, dim=1)
+            allowed_logp = torch.logsumexp(log_probs[:, allowed], dim=1)
+            loss = loss + (-allowed_logp)[constraint_mask].mean()
 
     return loss
 
@@ -82,8 +108,8 @@ class CustomSemanticSegmentationTask(SemanticSegmentationTask):
         # project's class list and is passed in by fine_tune.py rather than
         # hardcoded.
         self.no_damage_index = no_damage_index
-        # Output channel / mask value of the "Damaged Building" class that is
-        # penalized at "No Damage" pixels.
+        # Output channel / mask value of the "Damaged Building" class, which
+        # a "No Damage" pixel is known not to be.
         self.damaged_class_index = damaged_class_index
 
         self.train_augs = K.AugmentationSequential(
