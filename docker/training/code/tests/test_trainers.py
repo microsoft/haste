@@ -201,6 +201,27 @@ class TestConstraintSegmentationLoss(unittest.TestCase):
         self.assertGreater(allowed.sum().item(), 0.99)
         self.assertLess((allowed.max() - allowed.min()).item(), 0.05)
 
+    def test_metric_predictions_match_what_inference_emits(self):
+        """Reported accuracy must measure the deployed prediction.
+
+        Handing raw logits to the metrics argmaxes over channel 0 too, and
+        that channel gets no gradient -- a stray logit there would be counted
+        as a prediction the deployed model can never make.
+        """
+        torch.manual_seed(11)
+        y_hat = torch.randn(2, FIVE_CLASS["num_channels"], 4, 4)
+        # Make channel 0 the argmax winner everywhere, as an untrained
+        # channel can be.
+        y_hat[:, 0] = 100.0
+
+        metric_preds = supervised_logits(y_hat, 5).argmax(dim=1) + 1
+        inference_preds = y_hat[:, 1:].argmax(dim=1) + 1
+
+        self.assertTrue(torch.equal(metric_preds, inference_preds))
+        self.assertFalse(bool((metric_preds == 0).any()))
+        # The naive call would have scored channel 0 for every pixel.
+        self.assertTrue(bool((y_hat.argmax(dim=1) == 0).all()))
+
     def test_unlabeled_channel_receives_no_gradient(self):
         """Channel 0 is emitted for shape compatibility, never trained."""
         y_hat = torch.randn(

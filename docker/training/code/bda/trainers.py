@@ -188,6 +188,17 @@ class CustomSemanticSegmentationTask(SemanticSegmentationTask):
         metric_targets[metric_targets == self.no_damage_index] = 0
         return metric_targets
 
+    def _constraint_metric_preds(self, y_hat: Tensor) -> Tensor:
+        """Reduce logits to the class indices inference would produce.
+
+        Handing the raw logits to the metrics would argmax over channel 0 as
+        well, and that channel gets no gradient -- a stray logit there can win
+        and be counted as a prediction the deployed model can never make.
+        Reducing to indices here the same way ``inference.py`` does makes the
+        reported accuracy measure what actually ships.
+        """
+        return supervised_logits(y_hat, self.no_damage_index).argmax(dim=1) + 1
+
     def configure_callbacks(self) -> list[Callback]:
         """Configures the callbacks for the trainer.
 
@@ -218,6 +229,7 @@ class CustomSemanticSegmentationTask(SemanticSegmentationTask):
 
         if self.use_constraint_loss:
             ce_loss, constraint_loss, loss = self._constraint_losses(y_hat, y)
+            metric_preds = self._constraint_metric_preds(y_hat)
             metric_targets = self._constraint_metric_targets(y)
             self.log("train_ce_loss", ce_loss, batch_size=batch_size)
             self.log(
@@ -225,10 +237,10 @@ class CustomSemanticSegmentationTask(SemanticSegmentationTask):
             )
         else:
             loss = self.criterion(y_hat, y)
-            metric_targets = y
+            metric_preds, metric_targets = y_hat, y
 
         self.log("train_loss", loss, batch_size=batch_size)
-        self.train_metrics(y_hat, metric_targets)
+        self.train_metrics(metric_preds, metric_targets)
         # NOTE: kept deliberately, unlike upstream, which dropped this line.
         # hastegeo's tbparser reads `train_MulticlassAccuracy` out of the
         # TensorBoard events to build the model's reported metrics, and
@@ -262,7 +274,10 @@ class CustomSemanticSegmentationTask(SemanticSegmentationTask):
         self.log("val_ce_loss", ce_loss, batch_size=batch_size)
         self.log("val_constraint_loss", constraint_loss, batch_size=batch_size)
         self.log("val_loss", loss, batch_size=batch_size)
-        self.val_metrics(y_hat, self._constraint_metric_targets(y))
+        self.val_metrics(
+            self._constraint_metric_preds(y_hat),
+            self._constraint_metric_targets(y),
+        )
         self.log_dict(self.val_metrics, batch_size=batch_size)
 
     def test_step(
@@ -289,5 +304,8 @@ class CustomSemanticSegmentationTask(SemanticSegmentationTask):
             "test_constraint_loss", constraint_loss, batch_size=batch_size
         )
         self.log("test_loss", loss, batch_size=batch_size)
-        self.test_metrics(y_hat, self._constraint_metric_targets(y))
+        self.test_metrics(
+            self._constraint_metric_preds(y_hat),
+            self._constraint_metric_targets(y),
+        )
         self.log_dict(self.test_metrics, batch_size=batch_size)
