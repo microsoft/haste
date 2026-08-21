@@ -58,6 +58,12 @@ import {
   INTERACTIVE_LABELER_SHORTCUTS,
   shouldIgnoreShortcut,
 } from "../keyboardShortcuts.js";
+import {
+  VALIDATION_TO_CLASS,
+  mergeLabelsForSave,
+  selectRestorableByRowId,
+  tallyLabels,
+} from "./labelStore.js";
 
 // Register the pmtiles protocol once at module load. After this, any
 // VectorTileSource configured with `url: "pmtiles://<url>"` will route
@@ -272,18 +278,6 @@ const useStyles = makeStyles({
     },
   },
 });
-
-// In-browser class -> validation-report vocabulary (Damaged/NotDamaged/Unknown).
-const CLASS_TO_VALIDATION = {
-  [CLASS_INTACT]: "NotDamaged",
-  [CLASS_DAMAGED]: "Damaged",
-  [CLASS_CLOUDY]: "Unknown",
-};
-const VALIDATION_TO_CLASS = {
-  NotDamaged: CLASS_INTACT,
-  Damaged: CLASS_DAMAGED,
-  Unknown: CLASS_CLOUDY,
-};
 
 const CLASS_OPTIONS = [
   { key: String(CLASS_INTACT), text: "Intact" },
@@ -574,6 +568,9 @@ const InteractiveLabeler = () => {
   const [viewMode, setViewMode] = useState("label"); // "label" | "predict"
   const [showFootprints, setShowFootprints] = useState(true);
   const [counts, setCounts] = useState({ 0: 0, 1: 0, 2: 0 });
+  // Subset of `counts` backed by a usable feature vector — what the
+  // in-browser model can actually train on. See refreshCounts.
+  const [trainableCounts, setTrainableCounts] = useState({ 0: 0, 1: 0, 2: 0 });
   const [viewportPredicted, setViewportPredicted] = useState(0);
   const [metrics, setMetrics] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -765,6 +762,11 @@ const InteractiveLabeler = () => {
     } catch {
       // No saved labels yet — start fresh.
     }
+    // Restore everything we can before the map exists. Labels saved with a
+    // rowId resolve straight against the sidecar, so the counts are right on
+    // first paint instead of climbing as the user pans. Anything older falls
+    // back to the per-tile path in hydrateViewport.
+    restoreSavedLabelsByRowId();
 
     // Resolve an initial camera position from the PMTiles header. The Map
     // constructor accepts {center, zoom} reliably (the {bounds} variant is
@@ -1016,6 +1018,59 @@ const InteractiveLabeler = () => {
     );
   }
 
+  // Restore every saved label that carries a rowId, without waiting for its
+  // building's tile to render.
+  //
+  // The saved store is keyed by Overture id, but feature vectors, feature-
+  // state and the counts are all keyed by the sidecar's row index. Those two
+  // id spaces only meet on a rendered vector-tile feature, which is why the
+  // labeler used to "discover" its own labels as the user panned. Persisting
+  // rowId at save time gives us the bridge up front: the sidecar is
+  // model-scoped, and so are these labels, so the row index is valid for
+  // exactly the model we just loaded.
+  //
+  // Row ids are treated as a hint, not gospel — hydrateViewport re-checks
+  // each one against the tile's overture_id and corrects any that disagree.
+  function restoreSavedLabelsByRowId() {
+    const saved = savedLabelsRef.current;
+    if (!saved || !sidecarRef.current) return 0;
+
+    const { candidates, legacy } = selectRestorableByRowId(
+      saved,
+      labeledMapRef.current
+    );
+
+    let restored = 0;
+    for (const { rowId, cls, overtureId } of candidates) {
+      // Out-of-range means the sidecar doesn't match what this label was
+      // saved against; leave it to the tile-driven path rather than pointing
+      // at the wrong building.
+      const vec = lookupFeatureVector(rowId);
+      if (!vec) continue;
+      labeledMapRef.current[rowId] = {
+        label: cls,
+        features: vec,
+        overtureId,
+      };
+      restored++;
+    }
+
+    if (restored > 0) {
+      labelsDirtyRef.current = true;
+      refreshCounts();
+    }
+    if (restored > 0 || legacy > 0) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[InteractiveLabeler] restored ${restored} saved label(s) by rowId` +
+          (legacy > 0
+            ? `; ${legacy} older label(s) will restore as their tiles render`
+            : "")
+      );
+    }
+    return restored;
+  }
+
   // Read all currently-rendered features from the buildings layer, hydrate
   // featureKeys / saved labels / viewport predictions. Idempotent.
   function hydrateViewport(map) {
@@ -1037,9 +1092,29 @@ const InteractiveLabeler = () => {
     const saved = savedLabelsRef.current;
     if (saved && Object.keys(saved).length > 0) {
       let restored = 0;
+      let corrected = 0;
       for (const f of features) {
         const id = f.id;
-        if (id == null || labeledMapRef.current[id]) continue;
+        if (id == null) continue;
+        const existing = labeledMapRef.current[id];
+        if (existing) {
+          // The tile is authoritative for the row-index -> overture_id
+          // mapping. If a rowId-restored entry disagrees, it was saved
+          // against a different sidecar; drop it so the lookup below can
+          // re-place it from the tile's own overture_id.
+          const tileOvertureId = f.properties?.overture_id;
+          if (
+            tileOvertureId != null &&
+            existing.overtureId != null &&
+            String(existing.overtureId) !== String(tileOvertureId)
+          ) {
+            delete labeledMapRef.current[id];
+            clearFeatureStateLabel(f.source, id);
+            corrected++;
+          } else {
+            continue;
+          }
+        }
         const overtureId = f.properties?.overture_id ?? id;
         const entry = saved[overtureId];
         if (!entry) continue;
@@ -1055,10 +1130,17 @@ const InteractiveLabeler = () => {
         setFeatureStateLabel(f.source, id, cls);
         restored++;
       }
-      if (restored > 0) {
+      if (restored > 0 || corrected > 0) {
         labelsDirtyRef.current = true;
         labelsRevisionRef.current += 1;
         refreshCounts();
+      }
+      if (corrected > 0) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[InteractiveLabeler] re-placed ${corrected} label(s) whose saved` +
+            " rowId did not match the tile's overture_id (stale sidecar?)"
+        );
       }
     }
 
@@ -1341,6 +1423,9 @@ const InteractiveLabeler = () => {
     }
   }
   function clearLabel(id) {
+    // Drop it from the saved mirror too. The save path now merges that
+    // mirror into the payload, so leaving it behind would resurrect a label
+    // the user just cleared.
     const entry = labeledMapRef.current[id];
     if (entry) {
       delete savedLabelsRef.current[entry.overtureId ?? id];
@@ -1358,16 +1443,25 @@ const InteractiveLabeler = () => {
       hydrateViewport(mapRef.current);
     }
   }
+  // `counts` is what the user has labeled; `trainableCounts` is the subset
+  // the in-browser model can actually fit. They differ only for labels saved
+  // before rowId existed, which stay uncounted for training until their tile
+  // renders and supplies a feature vector — reporting the full tally keeps
+  // the panel honest without pretending those are trainable yet.
   function refreshCounts() {
-    const next = { 0: 0, 1: 0, 2: 0 };
-    Object.values(labeledMapRef.current).forEach((e) => {
-      next[e.label] = (next[e.label] || 0) + 1;
-    });
+    const { counts: next, trainable } = tallyLabels(
+      labeledMapRef.current,
+      savedLabelsRef.current,
+      isValidVector
+    );
+    // Gate training on the TRAINABLE subset, not the displayed tally: a
+    // saved label that hasn't been bridged to a row index yet has no feature
+    // vector, so it cannot contribute to a fit.
     const nextCanTrain =
       [
-        next[CLASS_INTACT],
-        next[CLASS_DAMAGED],
-        next[CLASS_CLOUDY],
+        trainable[CLASS_INTACT],
+        trainable[CLASS_DAMAGED],
+        trainable[CLASS_CLOUDY],
       ].filter((count) => count >= MIN_PER_CLASS).length >= 2;
     canTrainRef.current = nextCanTrain;
     if (!nextCanTrain) {
@@ -1376,6 +1470,7 @@ const InteractiveLabeler = () => {
       setViewMode("label");
     }
     setCounts(next);
+    setTrainableCounts(trainable);
   }
 
   // ── Ctrl+drag box-select (viewport-scoped) ────────────────────────────────
@@ -1872,21 +1967,24 @@ const InteractiveLabeler = () => {
     setIsSaving(true);
     setIsLoading(true, "Saving labels…");
     try {
-      const labels = {};
-      for (const [id, entry] of Object.entries(labeledMapRef.current)) {
-        const overtureId = entry.overtureId ?? id;
-        labels[overtureId] = {
-          id: overtureId,
-          label: CLASS_TO_VALIDATION[entry.label],
-          updatedAt: new Date().toISOString(),
-        };
-      }
+      // PutInteractiveLabels REPLACES the stored document, so the payload
+      // has to be the complete label set — not just what this session has
+      // hydrated. Start from the saved set and layer this session's labels
+      // over it, otherwise saving before every labeled tile has rendered
+      // silently destroys the rest (github.com/microsoft/haste/issues/113).
+      const labels = mergeLabelsForSave(
+        savedLabelsRef.current,
+        labeledMapRef.current,
+        new Date().toISOString()
+      );
       await apiPut("PutInteractiveLabels", {
         projectId,
         imageLayerId,
         modelId,
         labels,
       });
+      // Keep the in-memory mirror in step with what the server now holds, so
+      // a subsequent save in the same session doesn't resurrect deletions.
       savedLabelsRef.current = labels;
       setDialog("Saved", "Labels saved successfully.", [
         {
@@ -2136,11 +2234,17 @@ const InteractiveLabeler = () => {
   const totalLabeled = counts[0] + counts[1] + counts[2];
   // Predicted, Uncertainty, and Misclassified views need a trained model,
   // which needs at least MIN_PER_CLASS labels in 2+ classes.
+  //
+  // Gate on the TRAINABLE subset rather than the displayed tally: a saved
+  // label not yet bridged to a row index has no feature vector, so enabling
+  // the toggle would only produce "Need N+ labels in at least 2 classes"
+  // from the training path. refreshCounts keeps canTrainRef in step and
+  // resets the model-driven views when this drops back to false.
   const canTrain =
     [
-      counts[CLASS_INTACT],
-      counts[CLASS_DAMAGED],
-      counts[CLASS_CLOUDY],
+      trainableCounts[CLASS_INTACT],
+      trainableCounts[CLASS_DAMAGED],
+      trainableCounts[CLASS_CLOUDY],
     ].filter((count) => count >= MIN_PER_CLASS).length >= 2;
 
   return (
