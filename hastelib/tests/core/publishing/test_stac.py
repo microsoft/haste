@@ -491,6 +491,57 @@ class TestStacObjects(unittest.TestCase):
         self.assertNotIn("imagery", updated["haste:datasets"][0])
         self.assertNotIn("providers", updated)
 
+    def test_rebuild_collection_after_removal_reunions_providers(self) -> None:
+        from hastegeo.core.publishing.stac import (
+            rebuild_collection_after_removal,
+        )
+
+        existing = {
+            "id": "haste-x",
+            "providers": [{"name": "Vantor"}, {"name": "Planet Labs PBC"}],
+            "haste:datasets": [
+                {
+                    "id": str(self.dataset.datasetId),
+                    "name": "gone",
+                    "imagery": ["WorldView-3"],
+                },
+                {"id": "keep", "name": "Keep", "imagery": ["Planet"]},
+            ],
+        }
+
+        updated = rebuild_collection_after_removal(existing, self.dataset)
+
+        self.assertEqual(
+            [e["id"] for e in updated["haste:datasets"]], ["keep"]
+        )
+        # The removed dataset's Vantor source drops out; Planet remains.
+        names = {p["name"] for p in updated["providers"]}
+        self.assertEqual(names, {"Planet Labs PBC"})
+
+    def test_rebuild_collection_after_removal_clears_last_providers(
+        self,
+    ) -> None:
+        from hastegeo.core.publishing.stac import (
+            rebuild_collection_after_removal,
+        )
+
+        existing = {
+            "id": "haste-x",
+            "providers": [{"name": "Vantor"}],
+            "haste:datasets": [
+                {
+                    "id": str(self.dataset.datasetId),
+                    "name": "gone",
+                    "imagery": ["WorldView-3"],
+                }
+            ],
+        }
+
+        updated = rebuild_collection_after_removal(existing, self.dataset)
+
+        self.assertEqual(updated["haste:datasets"], [])
+        self.assertNotIn("providers", updated)
+
     def test_no_preview_link_without_a_viewer_url(self) -> None:
         objects = self._build(
             ArtifactBundle(

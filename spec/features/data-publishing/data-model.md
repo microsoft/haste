@@ -37,6 +37,8 @@ an array of `PublishedDataset`:
   "datasetId": "uuid",                 // primary key within the array
   "name": "Hurricane Harvey – Layer 1",// user-edited, prefilled '<project> – <layer>'
   "description": "string",             // prefilled from assessment report summary
+  "interactiveViewerUrl": "https://… | null", // optional, editable; PC rel=preview link
+  "imagerySources": ["Vantor"],        // provider attribution; inferred, editable override
   "projectId": "uuid",
   "imageLayerId": "string",
   "modelId": "string",                 // source model whose artifacts were published

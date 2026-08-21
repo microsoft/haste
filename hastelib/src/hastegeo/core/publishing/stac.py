@@ -500,14 +500,33 @@ def render_collection_description(
     return "\n".join(lines)
 
 
+def _apply_collection_providers(
+    collection: Dict[str, Any],
+    entries: Sequence[Mapping[str, Any]],
+    organization: Optional[Mapping[str, Optional[str]]],
+) -> None:
+    """Recompute the collection provider union in place from its datasets."""
+    providers = build_providers(
+        organization, _collection_imagery_sources(entries)
+    )
+    if providers:
+        collection["providers"] = [
+            provider.to_dict() for provider in providers
+        ]
+    else:
+        collection.pop("providers", None)
+
+
 def rebuild_collection_after_removal(
     existing_collection: Mapping[str, Any],
     dataset: PublishedDataset,
+    organization: Optional[Mapping[str, Optional[str]]] = None,
 ) -> Dict[str, Any]:
     """Drop ``dataset`` from the collection's rolling summary (for unpublish).
 
     Returns a copy of the existing collection document with this dataset removed
-    from ``haste:datasets`` and the description re-rendered from what remains.
+    from ``haste:datasets``, the description re-rendered, and the provider union
+    recomputed from the datasets that remain.
     """
     updated = dict(existing_collection)
     stored = updated.get(COLLECTION_DATASETS_FIELD)
@@ -521,6 +540,7 @@ def rebuild_collection_after_removal(
         ]
     updated[COLLECTION_DATASETS_FIELD] = entries
     updated["description"] = render_collection_description(dataset, entries)
+    _apply_collection_providers(updated, entries, organization)
     return updated
 
 
@@ -554,13 +574,7 @@ def refresh_collection_after_edit(
         entries.append(record)
     updated[COLLECTION_DATASETS_FIELD] = entries
     updated["description"] = render_collection_description(dataset, entries)
-    providers = build_providers(
-        organization, _collection_imagery_sources(entries)
-    )
-    if providers:
-        updated["providers"] = [provider.to_dict() for provider in providers]
-    else:
-        updated.pop("providers", None)
+    _apply_collection_providers(updated, entries, organization)
     return updated
 
 

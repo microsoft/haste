@@ -351,10 +351,16 @@ assessment response.
   `stac.py`) so it can be changed in one place.
 - **Providers:** a STAC `providers` list layers attribution — the imagery
   source(s) as `producer`/`licensor` (inferred from the image layer's
-  `sourceType*` via a small canonical map, unknown types passed through), and the
-  deployment's operating organization as `processor` (from
+  `sourceType*` via a small canonical map, unknown types passed through,
+  non-vendor placeholders like `n/a`/`rgb/no_processing`/`mercy_corps` dropped),
+  and the deployment's operating organization as `processor` (from
   `PUBLISHING_ORGANIZATION_NAME`/`_URL`; omitted when unset). Present on the item
-  (per-dataset) and unioned onto the collection.
+  (per-dataset) and unioned onto the collection. Operators can **override** the
+  inferred imagery sources per dataset via the Edit-metadata form; the value is
+  persisted on `PublishedDataset.imagerySources`. Editing re-emits the item
+  `providers` and recomputes the collection union; unpublish likewise re-unions
+  the collection from the datasets that remain (`stac.py` helpers
+  `refresh_collection_after_edit` / `rebuild_collection_after_removal`).
 - `stac_extensions: [projection/v2.0.0]`; `item["collection"] = collection_id`;
   **item id sanitized** to the GeoCatalog charset (no `-_+().`).
 

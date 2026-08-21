@@ -830,7 +830,9 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
         if self.sdk.list_item_ids(collection_id):
             self.sdk.replace_collection(
                 collection_id,
-                rebuild_collection_after_removal(existing, dataset),
+                rebuild_collection_after_removal(
+                    existing, dataset, self.organization
+                ),
             )
             return PublishResult(
                 providerMetadata=self._stable_metadata(dataset)
