@@ -34,7 +34,7 @@ hosts a few public post-disaster samples you can drop straight into an image lay
 |---------|------|--------|----------|
 | **Black River** (Planet) | [`black-river_visual_mosaic_cog.tif`](https://opendata.aiforgood.ai/damage-assessment/demo-data/black-river_visual_mosaic_cog.tif) | Post-event imagery | Either workflow |
 | **Black River** (Planet) | [`black-river_footprints.gpkg`](https://opendata.aiforgood.ai/damage-assessment/demo-data/black-river_footprints.gpkg) | Custom building footprints | Rapid Building Assessment |
-| **Lahaina, Maui** — Vantor / Maxar, 12 Aug 2023 | [`maxar_lahaina_8_12_2023-visual.tif`](https://opendata.aiforgood.ai/damage-assessment/demo-data/maxar_lahaina_8_12_2023-visual.tif) | Post-event imagery | Damage Mapping (train a model) |
+| **Lahaina, Maui** — Vantor, 12 Aug 2023 | [`maxar_lahaina_8_12_2023-visual.tif`](https://opendata.aiforgood.ai/damage-assessment/demo-data/maxar_lahaina_8_12_2023-visual.tif) | Post-event imagery | Damage Mapping (train a model) |
 
 **How to use them**
 

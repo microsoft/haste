@@ -155,7 +155,7 @@ Notes on why each non-`'self'` source is present — tighten if your build remov
 - **`c.s-microsoft.com` and `*.cdn.office.net`** (font) — Fluent UI loads Segoe UI and its icon/language fonts from these Microsoft CDNs at runtime. To drop them, self-host the Fluent fonts and register them locally.
 - **`blob:`** (img, worker, child) — the Azure Maps control renders tiles and spawns web workers from blob URLs.
 - **`*.tile.openstreetmap.org`** (img, connect) — only needed if you configure an OSM basemap; remove otherwise.
-- **`vantor-opendata.s3.amazonaws.com` and `data.source.coop`** (img, connect) — the Open Data Catalog explorer fetches the Vantor/Maxar and Planet STAC catalogs (and scene thumbnails) directly from the browser. Remove if the Open Data Catalog is not enabled, or move discovery behind a same-origin backend proxy so only `'self'` is needed.
+- **`vantor-opendata.s3.amazonaws.com` and `data.source.coop`** (img, connect) — the Open Data Catalog explorer fetches the Vantor and Planet STAC catalogs (and scene thumbnails) directly from the browser. Remove if the Open Data Catalog is not enabled, or move discovery behind a same-origin backend proxy so only `'self'` is needed.
 
 **Per-deployment adjustment:** if your `VITE_API_URL` points at a separate origin (a direct `*.azurewebsites.net` Function App rather than the same-origin SWA `/api` linked-backend route), add that origin to `connect-src`. The default policy assumes the recommended same-origin linked-backend topology (§3.1).
 

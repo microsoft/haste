@@ -404,7 +404,7 @@ const CreateEditImageLayerModal = () => {
                       Browse Open Data Catalog
                     </Button>
                     <Text size={200} className="d-block mt-1" style={{ color: "#616161" }}>
-                      Explore Vantor/Maxar and Planet open imagery for a disaster
+                      Explore Vantor and Planet open imagery for a disaster
                       and add scenes straight into the sections below.
                     </Text>
                   </div>

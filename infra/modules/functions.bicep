@@ -112,6 +112,12 @@ param pcCollectionPrefix string = 'haste-'
 @description('STAC license id applied to published PC collections/items (e.g. CC-BY-4.0).')
 param pcPublishingLicense string = 'CC-BY-4.0'
 
+@description('Organization operating this deployment, recorded as the STAC "processor" provider on published datasets. Empty = omit.')
+param publishingOrganizationName string = ''
+
+@description('URL for the publishing organization (optional companion to publishingOrganizationName).')
+param publishingOrganizationUrl string = ''
+
 @description('Network-reachable storage account URL the GeoCatalog ingests published assets from. Empty = reference assets in place from the primary store.')
 param publishStorageAccountUrl string = ''
 
@@ -195,6 +201,8 @@ var appConfigSettings = [
   { name: 'PC_INGESTION_SOURCE', value: pcIngestionSource }
   { name: 'PC_COLLECTION_PREFIX', value: pcCollectionPrefix }
   { name: 'PC_PUBLISHING_LICENSE', value: pcPublishingLicense }
+  { name: 'PUBLISHING_ORGANIZATION_NAME', value: publishingOrganizationName }
+  { name: 'PUBLISHING_ORGANIZATION_URL', value: publishingOrganizationUrl }
   { name: 'PUBLISH_STORAGE_ACCOUNT_URL', value: publishStorageAccountUrl }
   { name: 'PUBLISH_BLOB_CONTAINER', value: publishBlobContainer }
 ]

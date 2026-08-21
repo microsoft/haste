@@ -576,7 +576,7 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
         self.assertEqual(self.sdk.delete_collection_calls, 0)
         self.assertIn(collection_id, self.sdk.collections)
         # Its rolling summary drops the unpublished dataset.
-        remaining = self.sdk.collections[collection_id]["ai4g:datasets"]
+        remaining = self.sdk.collections[collection_id]["haste:datasets"]
         self.assertNotIn(
             str(self.dataset.datasetId),
             [entry["id"] for entry in remaining],
@@ -928,6 +928,60 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
     def test_update_published_metadata_noops_when_item_missing(self) -> None:
         self.provider.update_published_metadata(self.dataset)
         self.assertEqual(self.sdk.item_updates, [])
+
+    def test_update_published_metadata_reemits_providers(self) -> None:
+        self._seed_published_item()
+        edited = self.dataset.model_copy(
+            update={"imagerySources": ["Maxar WorldView-3"]}
+        )
+
+        self.provider.update_published_metadata(edited)
+
+        _, _, body = self.sdk.item_updates[0]
+        providers = body["properties"]["providers"]
+        names = {provider["name"] for provider in providers}
+        self.assertIn("Vantor", names)
+
+    def test_update_published_metadata_clears_providers_when_empty(
+        self,
+    ) -> None:
+        self._seed_published_item()
+        edited = self.dataset.model_copy(update={"imagerySources": []})
+
+        self.provider.update_published_metadata(edited)
+
+        _, _, body = self.sdk.item_updates[0]
+        self.assertNotIn("providers", body["properties"])
+
+    def test_update_published_metadata_refreshes_collection_union(
+        self,
+    ) -> None:
+        collection_id, _ = self._seed_published_item()
+        self.sdk.collections[collection_id] = {
+            "id": collection_id,
+            "description": "old",
+            "providers": [{"name": "OldSource", "roles": ["producer"]}],
+            "haste:datasets": [
+                {
+                    "id": str(self.dataset.datasetId),
+                    "name": "old",
+                    "imagery": ["OldSource"],
+                }
+            ],
+        }
+        edited = self.dataset.model_copy(
+            update={"name": "New name", "imagerySources": ["Planet"]}
+        )
+
+        self.provider.update_published_metadata(edited)
+
+        collection = self.sdk.collections[collection_id]
+        names = {p["name"] for p in collection.get("providers", [])}
+        self.assertIn("Planet Labs PBC", names)
+        self.assertNotIn("OldSource", names)
+        entry = collection["haste:datasets"][0]
+        self.assertEqual(entry["name"], "New name")
+        self.assertEqual(entry["imagery"], ["Planet"])
 
     def test_viewer_url_changes_the_request_fingerprint(self) -> None:
         from hastegeo.core.models.publishing import (

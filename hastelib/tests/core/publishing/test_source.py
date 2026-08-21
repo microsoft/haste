@@ -1,14 +1,77 @@
 import unittest
 import uuid
 
-from hastegeo.core.models.publishing import ArtifactKind, PublishRequest
+from hastegeo.core.models.projects import ImageLayer
+from hastegeo.core.models.publishing import (
+    ArtifactKind,
+    PublishMetadataUpdate,
+    PublishRequest,
+)
 from hastegeo.core.publishing.source import (
     PublishingArtifactUnavailableError,
     PublishingSourceNotEligibleError,
     PublishingSourceNotFoundError,
     PublishingSourceResolver,
+    _imagery_sources,
 )
 from hastegeo.core.utils.metadata import MetadataUtils
+
+
+class TestImagerySources(unittest.TestCase):
+    def test_collects_distinct_ordered_provider_sources(self) -> None:
+        layer = ImageLayer(
+            sourceTypePreEvent="WorldView-3",
+            sourceTypePostEvent="Sentinel-2",
+        )
+        self.assertEqual(
+            _imagery_sources(layer), ["WorldView-3", "Sentinel-2"]
+        )
+
+    def test_dedupes_case_insensitively_preserving_first(self) -> None:
+        layer = ImageLayer(
+            sourceTypePreEvent="Maxar",
+            sourceTypePostEvent="maxar",
+            sourceType="MAXAR",
+        )
+        self.assertEqual(_imagery_sources(layer), ["Maxar"])
+
+    def test_drops_placeholders_and_blanks(self) -> None:
+        # "n/a" (the Unknown dropdown value), "rgb/no_processing" (bring-your-
+        # own) and "mercy_corps" (a processing profile) are not imagery vendors.
+        layer = ImageLayer(
+            sourceTypePreEvent="n/a",
+            sourceTypePostEvent="rgb/no_processing",
+        )
+        self.assertEqual(_imagery_sources(layer), [])
+        self.assertEqual(
+            _imagery_sources(ImageLayer(sourceTypePostEvent="mercy_corps")), []
+        )
+
+    def test_keeps_real_source_alongside_placeholder(self) -> None:
+        layer = ImageLayer(
+            sourceTypePreEvent="n/a",
+            sourceTypePostEvent="maxar",
+        )
+        self.assertEqual(_imagery_sources(layer), ["maxar"])
+
+
+class TestPublishMetadataUpdateImagery(unittest.TestCase):
+    def _update(self, **kwargs) -> PublishMetadataUpdate:
+        return PublishMetadataUpdate(
+            projectId=uuid.uuid4(), datasetId=uuid.uuid4(), **kwargs
+        )
+
+    def test_none_leaves_unchanged(self) -> None:
+        self.assertIsNone(self._update().imagerySources)
+
+    def test_empty_list_clears(self) -> None:
+        self.assertEqual(self._update(imagerySources=[]).imagerySources, [])
+
+    def test_trims_dedupes_and_drops_blanks(self) -> None:
+        update = self._update(
+            imagerySources=["  Vantor ", "Planet", "vantor", "  "]
+        )
+        self.assertEqual(update.imagerySources, ["Vantor", "Planet"])
 
 
 class FakeTypes:

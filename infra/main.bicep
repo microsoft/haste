@@ -141,6 +141,12 @@ param pcCollectionPrefix string = 'haste-'
 @description('STAC license id applied to published PC collections/items (e.g. CC-BY-4.0).')
 param pcPublishingLicense string = 'CC-BY-4.0'
 
+@description('Organization operating this deployment, recorded as the STAC "processor" provider on published datasets. Empty = omit.')
+param publishingOrganizationName string = ''
+
+@description('URL for the publishing organization (optional companion to publishingOrganizationName).')
+param publishingOrganizationUrl string = ''
+
 @description('Network-reachable storage account URL the GeoCatalog ingests published assets from. Empty = reference assets in place from the primary store.')
 param publishStorageAccountUrl string = ''
 
@@ -330,6 +336,8 @@ module functions 'modules/functions.bicep' = {
     pcIngestionSource: pcIngestionSource
     pcCollectionPrefix: pcCollectionPrefix
     pcPublishingLicense: pcPublishingLicense
+    publishingOrganizationName: publishingOrganizationName
+    publishingOrganizationUrl: publishingOrganizationUrl
     publishStorageAccountUrl: publishStorageAccountUrl
     publishBlobContainer: publishBlobContainer
     tags: tags

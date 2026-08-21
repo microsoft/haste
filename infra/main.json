@@ -5,8 +5,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.45.15.27210",
-      "templateHash": "7848471694437751621"
+      "version": "0.46.1.21595",
+      "templateHash": "13625383512199682620"
     }
   },
   "parameters": {
@@ -209,6 +209,90 @@
       "metadata": {
         "description": "Runner auto-creates/resizes its pool. False for pre-created autoscale pools."
       }
+    },
+    "publishingEnabled": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Enable the data publishing feature (Published Datasets section + Publish action). On by default."
+      }
+    },
+    "pcProviderEnabled": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Register/expose the Planetary Computer publishing provider."
+      }
+    },
+    "pcGeocatalogUrl": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "MPC Pro GeoCatalog base URL (no trailing slash). Operator-provisioned."
+      }
+    },
+    "pcExplorerUrl": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "GeoCatalog Explorer base URL used to build published-dataset links."
+      }
+    },
+    "pcIngestionSource": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "GeoCatalog ingestion-source name for private HASTE containers. Empty for public containers."
+      }
+    },
+    "pcCollectionPrefix": {
+      "type": "string",
+      "defaultValue": "haste-",
+      "metadata": {
+        "description": "STAC Collection id prefix (one collection per project/event)."
+      }
+    },
+    "pcPublishingLicense": {
+      "type": "string",
+      "defaultValue": "CC-BY-4.0",
+      "metadata": {
+        "description": "STAC license id applied to published PC collections/items (e.g. CC-BY-4.0)."
+      }
+    },
+    "publishingOrganizationName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Organization operating this deployment, recorded as the STAC \"processor\" provider on published datasets. Empty = omit."
+      }
+    },
+    "publishingOrganizationUrl": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "URL for the publishing organization (optional companion to publishingOrganizationName)."
+      }
+    },
+    "publishStorageAccountUrl": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Network-reachable storage account URL the GeoCatalog ingests published assets from. Empty = reference assets in place from the primary store."
+      }
+    },
+    "publishBlobContainer": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Blob container (on the publish storage account) that HASTE copies published PC assets into."
+      }
+    },
+    "pcGeoCatalogIngestPrincipalId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Object id of the GeoCatalog managed identity to grant Storage Blob Data Reader on HASTE storage (asset ingestion). Empty = skip."
+      }
     }
   },
   "variables": {
@@ -280,8 +364,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "6467876281697702392"
+              "version": "0.46.1.21595",
+              "templateHash": "11064455677118594323"
             }
           },
           "parameters": {
@@ -363,8 +447,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "12082330447741191629"
+              "version": "0.46.1.21595",
+              "templateHash": "4809665072443009441"
             }
           },
           "parameters": {
@@ -457,8 +541,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "5477339931418214373"
+              "version": "0.46.1.21595",
+              "templateHash": "18111911747360907655"
             }
           },
           "parameters": {
@@ -672,8 +756,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "15711586232981596113"
+              "version": "0.46.1.21595",
+              "templateHash": "5742332482666125630"
             }
           },
           "parameters": {
@@ -923,8 +1007,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "11423466976742084469"
+              "version": "0.46.1.21595",
+              "templateHash": "15694273866306326963"
             }
           },
           "parameters": {
@@ -1076,8 +1160,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "2129528397301155805"
+              "version": "0.46.1.21595",
+              "templateHash": "8822775095973828812"
             }
           },
           "parameters": {
@@ -1305,6 +1389,39 @@
           "managePools": {
             "value": "[parameters('managePools')]"
           },
+          "publishingEnabled": {
+            "value": "[parameters('publishingEnabled')]"
+          },
+          "pcProviderEnabled": {
+            "value": "[parameters('pcProviderEnabled')]"
+          },
+          "pcGeocatalogUrl": {
+            "value": "[parameters('pcGeocatalogUrl')]"
+          },
+          "pcExplorerUrl": {
+            "value": "[parameters('pcExplorerUrl')]"
+          },
+          "pcIngestionSource": {
+            "value": "[parameters('pcIngestionSource')]"
+          },
+          "pcCollectionPrefix": {
+            "value": "[parameters('pcCollectionPrefix')]"
+          },
+          "pcPublishingLicense": {
+            "value": "[parameters('pcPublishingLicense')]"
+          },
+          "publishingOrganizationName": {
+            "value": "[parameters('publishingOrganizationName')]"
+          },
+          "publishingOrganizationUrl": {
+            "value": "[parameters('publishingOrganizationUrl')]"
+          },
+          "publishStorageAccountUrl": {
+            "value": "[parameters('publishStorageAccountUrl')]"
+          },
+          "publishBlobContainer": {
+            "value": "[parameters('publishBlobContainer')]"
+          },
           "tags": {
             "value": "[parameters('tags')]"
           }
@@ -1315,8 +1432,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "11668276010925679796"
+              "version": "0.46.1.21595",
+              "templateHash": "15205294015023622587"
             }
           },
           "parameters": {
@@ -1488,6 +1605,83 @@
                 "description": "Runner auto-creates/resizes its pool. False for pre-created autoscale pools."
               }
             },
+            "publishingEnabled": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Enable the Published Datasets section + Publish action (feature flag). On by default."
+              }
+            },
+            "pcProviderEnabled": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Register/expose the Planetary Computer publishing provider."
+              }
+            },
+            "pcGeocatalogUrl": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "MPC Pro GeoCatalog base URL (no trailing slash). Operator-provisioned."
+              }
+            },
+            "pcExplorerUrl": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "GeoCatalog Explorer base URL used to build published-dataset links."
+              }
+            },
+            "pcIngestionSource": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "GeoCatalog ingestion-source name for private HASTE containers (SasToken source). Empty for public containers."
+              }
+            },
+            "pcCollectionPrefix": {
+              "type": "string",
+              "defaultValue": "haste-",
+              "metadata": {
+                "description": "STAC Collection id prefix (one collection per project/event)."
+              }
+            },
+            "pcPublishingLicense": {
+              "type": "string",
+              "defaultValue": "CC-BY-4.0",
+              "metadata": {
+                "description": "STAC license id applied to published PC collections/items (e.g. CC-BY-4.0)."
+              }
+            },
+            "publishingOrganizationName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Organization operating this deployment, recorded as the STAC \"processor\" provider on published datasets. Empty = omit."
+              }
+            },
+            "publishingOrganizationUrl": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "URL for the publishing organization (optional companion to publishingOrganizationName)."
+              }
+            },
+            "publishStorageAccountUrl": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Network-reachable storage account URL the GeoCatalog ingests published assets from. Empty = reference assets in place from the primary store."
+              }
+            },
+            "publishBlobContainer": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Blob container (on the publish storage account) that HASTE copies published PC assets into."
+              }
+            },
             "tags": {
               "type": "object",
               "defaultValue": {},
@@ -1538,172 +1732,7 @@
                     "value": "[parameters('logAnalyticsId')]"
                   },
                   "appSettings": {
-                    "value": [
-                      {
-                        "name": "env",
-                        "value": "prod"
-                      },
-                      {
-                        "name": "DEVELOPMENT_MODE",
-                        "value": "[if(parameters('developmentMode'), 'true', 'false')]"
-                      },
-                      {
-                        "name": "IMAGE_QUEUE_NAME",
-                        "value": "image-layers-queue"
-                      },
-                      {
-                        "name": "INFERENCE_QUEUE_NAME",
-                        "value": "inference-queue"
-                      },
-                      {
-                        "name": "STATS_QUEUE_NAME",
-                        "value": "stats-queue"
-                      },
-                      {
-                        "name": "TRAIN_QUEUE_NAME",
-                        "value": "train-queue"
-                      },
-                      {
-                        "name": "ZIP_QUEUE_NAME",
-                        "value": "zip-queue"
-                      },
-                      {
-                        "name": "EMBEDDING_QUEUE_NAME",
-                        "value": "embedding-queue"
-                      },
-                      {
-                        "name": "IMAGERY_STORAGE_TYPE",
-                        "value": "blob"
-                      },
-                      {
-                        "name": "METADATA_STORAGE_TYPE",
-                        "value": "blob"
-                      },
-                      {
-                        "name": "ARTIFACT_STORAGE_TYPE",
-                        "value": "blob"
-                      },
-                      {
-                        "name": "RUNNER_TYPE",
-                        "value": "azure_batch"
-                      },
-                      {
-                        "name": "TEMP_DATA_PATH",
-                        "value": "/data"
-                      },
-                      {
-                        "name": "DATA_PATH",
-                        "value": "/data"
-                      },
-                      {
-                        "name": "TITILER_ENDPOINT",
-                        "value": "/api/titiler/"
-                      },
-                      {
-                        "name": "BLOB_CONTAINER",
-                        "value": "data"
-                      },
-                      {
-                        "name": "BLOB_ACCOUNT_URL",
-                        "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob]"
-                      },
-                      {
-                        "name": "QUEUE_ACCOUNT_URL",
-                        "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue]"
-                      },
-                      {
-                        "name": "BLOB_CONNECTION_STRING",
-                        "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_ACCOUNT_NAME",
-                        "value": "[parameters('batchAccountName')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_URL",
-                        "value": "[format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_ACCOUNT_KEY",
-                        "value": "[parameters('batchAccountKey')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_DOCKER_IMAGE",
-                        "value": "[format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE",
-                        "value": "[format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_OUTPUT_CONTAINER_URL",
-                        "value": "[format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_TRAINING_POOL_ID",
-                        "value": "[parameters('batchPoolName')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_IMAGERYPREP_POOL_ID",
-                        "value": "[parameters('batchPoolName')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_REGISTRY_SERVER",
-                        "value": "[parameters('acrLoginServer')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_REGISTRY_IMAGE",
-                        "value": "[format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID",
-                        "value": "[parameters('umiResourceId')]"
-                      },
-                      {
-                        "name": "STATIC_APP_SUBSCRIPTION_ID",
-                        "value": "[subscription().subscriptionId]"
-                      },
-                      {
-                        "name": "STATIC_APP_RESOURCE_GROUP",
-                        "value": "[resourceGroup().name]"
-                      },
-                      {
-                        "name": "STATIC_APP_NAME",
-                        "value": "[parameters('staticWebAppName')]"
-                      },
-                      {
-                        "name": "STATIC_APP_DOMAIN",
-                        "value": "[parameters('staticAppDomain')]"
-                      },
-                      {
-                        "name": "EMAIL_CONNECTION_STRING",
-                        "value": "[parameters('emailConnectionString')]"
-                      },
-                      {
-                        "name": "EMAIL_SENDER",
-                        "value": "[format('DoNotReply@{0}', parameters('emailSenderDomain'))]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_TRAINING_POOL_IDS",
-                        "value": "[parameters('trainingPoolIds')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_INFERENCE_POOL_IDS",
-                        "value": "[parameters('inferencePoolIds')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_IMAGERYPREP_POOL_IDS",
-                        "value": "[parameters('imageryprepPoolIds')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_USE_SAS",
-                        "value": "[if(parameters('useSas'), 'true', 'false')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_MANAGE_POOLS",
-                        "value": "[if(parameters('managePools'), 'true', 'false')]"
-                      }
-                    ]
+                    "value": "[concat(createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', '/data'), createObject('name', 'DATA_PATH', 'value', '/data'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer'))), createArray(createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionApiName'), 0, min(32, length(parameters('functionApiName'))))))))]"
                   },
                   "tags": {
                     "value": "[parameters('tags')]"
@@ -1715,8 +1744,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.45.15.27210",
-                      "templateHash": "11828726585656867764"
+                      "version": "0.46.1.21595",
+                      "templateHash": "3022688711020356921"
                     }
                   },
                   "parameters": {
@@ -2013,8 +2042,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.45.15.27210",
-                      "templateHash": "11828726585656867764"
+                      "version": "0.46.1.21595",
+                      "templateHash": "3022688711020356921"
                     }
                   },
                   "parameters": {
@@ -2305,172 +2334,7 @@
                     "value": "[parameters('logAnalyticsId')]"
                   },
                   "appSettings": {
-                    "value": [
-                      {
-                        "name": "env",
-                        "value": "prod"
-                      },
-                      {
-                        "name": "DEVELOPMENT_MODE",
-                        "value": "[if(parameters('developmentMode'), 'true', 'false')]"
-                      },
-                      {
-                        "name": "IMAGE_QUEUE_NAME",
-                        "value": "image-layers-queue"
-                      },
-                      {
-                        "name": "INFERENCE_QUEUE_NAME",
-                        "value": "inference-queue"
-                      },
-                      {
-                        "name": "STATS_QUEUE_NAME",
-                        "value": "stats-queue"
-                      },
-                      {
-                        "name": "TRAIN_QUEUE_NAME",
-                        "value": "train-queue"
-                      },
-                      {
-                        "name": "ZIP_QUEUE_NAME",
-                        "value": "zip-queue"
-                      },
-                      {
-                        "name": "EMBEDDING_QUEUE_NAME",
-                        "value": "embedding-queue"
-                      },
-                      {
-                        "name": "IMAGERY_STORAGE_TYPE",
-                        "value": "blob"
-                      },
-                      {
-                        "name": "METADATA_STORAGE_TYPE",
-                        "value": "blob"
-                      },
-                      {
-                        "name": "ARTIFACT_STORAGE_TYPE",
-                        "value": "blob"
-                      },
-                      {
-                        "name": "RUNNER_TYPE",
-                        "value": "azure_batch"
-                      },
-                      {
-                        "name": "TEMP_DATA_PATH",
-                        "value": "/data"
-                      },
-                      {
-                        "name": "DATA_PATH",
-                        "value": "/data"
-                      },
-                      {
-                        "name": "TITILER_ENDPOINT",
-                        "value": "/api/titiler/"
-                      },
-                      {
-                        "name": "BLOB_CONTAINER",
-                        "value": "data"
-                      },
-                      {
-                        "name": "BLOB_ACCOUNT_URL",
-                        "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob]"
-                      },
-                      {
-                        "name": "QUEUE_ACCOUNT_URL",
-                        "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue]"
-                      },
-                      {
-                        "name": "BLOB_CONNECTION_STRING",
-                        "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_ACCOUNT_NAME",
-                        "value": "[parameters('batchAccountName')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_URL",
-                        "value": "[format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_ACCOUNT_KEY",
-                        "value": "[parameters('batchAccountKey')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_DOCKER_IMAGE",
-                        "value": "[format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE",
-                        "value": "[format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_OUTPUT_CONTAINER_URL",
-                        "value": "[format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_TRAINING_POOL_ID",
-                        "value": "[parameters('batchPoolName')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_IMAGERYPREP_POOL_ID",
-                        "value": "[parameters('batchPoolName')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_REGISTRY_SERVER",
-                        "value": "[parameters('acrLoginServer')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_REGISTRY_IMAGE",
-                        "value": "[format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID",
-                        "value": "[parameters('umiResourceId')]"
-                      },
-                      {
-                        "name": "STATIC_APP_SUBSCRIPTION_ID",
-                        "value": "[subscription().subscriptionId]"
-                      },
-                      {
-                        "name": "STATIC_APP_RESOURCE_GROUP",
-                        "value": "[resourceGroup().name]"
-                      },
-                      {
-                        "name": "STATIC_APP_NAME",
-                        "value": "[parameters('staticWebAppName')]"
-                      },
-                      {
-                        "name": "STATIC_APP_DOMAIN",
-                        "value": "[parameters('staticAppDomain')]"
-                      },
-                      {
-                        "name": "EMAIL_CONNECTION_STRING",
-                        "value": "[parameters('emailConnectionString')]"
-                      },
-                      {
-                        "name": "EMAIL_SENDER",
-                        "value": "[format('DoNotReply@{0}', parameters('emailSenderDomain'))]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_TRAINING_POOL_IDS",
-                        "value": "[parameters('trainingPoolIds')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_INFERENCE_POOL_IDS",
-                        "value": "[parameters('inferencePoolIds')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_IMAGERYPREP_POOL_IDS",
-                        "value": "[parameters('imageryprepPoolIds')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_USE_SAS",
-                        "value": "[if(parameters('useSas'), 'true', 'false')]"
-                      },
-                      {
-                        "name": "AZURE_BATCH_MANAGE_POOLS",
-                        "value": "[if(parameters('managePools'), 'true', 'false')]"
-                      }
-                    ]
+                    "value": "[concat(createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', '/data'), createObject('name', 'DATA_PATH', 'value', '/data'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer'))), createArray(createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionQueueName'), 0, min(32, length(parameters('functionQueueName'))))))))]"
                   },
                   "tags": {
                     "value": "[parameters('tags')]"
@@ -2482,8 +2346,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.45.15.27210",
-                      "templateHash": "11828726585656867764"
+                      "version": "0.46.1.21595",
+                      "templateHash": "3022688711020356921"
                     }
                   },
                   "parameters": {
@@ -2798,8 +2662,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "7962398216361329093"
+              "version": "0.46.1.21595",
+              "templateHash": "5532319181004507698"
             }
           },
           "parameters": {
@@ -2931,8 +2795,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "13617399659586966284"
+              "version": "0.46.1.21595",
+              "templateHash": "583350182862945455"
             }
           },
           "parameters": {
@@ -3017,7 +2881,7 @@
               "name": "[format('{0}/{1}/{2}', parameters('apimName'), parameters('functionApiName'), 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__BID__', parameters('functionApiName'))]"
+                "value": "[replace('<policies>\n  <inbound>\n    <base />\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__BID__', parameters('functionApiName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionApiName'))]",
@@ -3066,7 +2930,7 @@
               "name": "[format('{0}/{1}/{2}', parameters('apimName'), parameters('functionTitilerName'), 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__BID__', parameters('functionTitilerName'))]"
+                "value": "[replace('<policies>\n  <inbound>\n    <base />\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__BID__', parameters('functionTitilerName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionTitilerName'))]",
@@ -3169,7 +3033,7 @@
               "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'hastestorageapi', 'get-artifacts', 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\r\n  <inbound>\r\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\r\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"modelDir\"]+ \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\r\n      <set-method>GET</set-method>\r\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\r\n        <value>2019-07-07</value>\r\n      </set-header>\r\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\r\n    </send-request>\r\n    <return-response response-variable-name=\"blobdata\" />\r\n    <base />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__SA__', parameters('storageAccountName'))]"
+                "value": "[replace('<policies>\n  <inbound>\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"modelDir\"]+ \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\n      <set-method>GET</set-method>\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\n        <value>2019-07-07</value>\n      </set-header>\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\n    </send-request>\n    <return-response response-variable-name=\"blobdata\" />\n    <base />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__SA__', parameters('storageAccountName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'hastestorageapi', 'get-artifacts')]"
@@ -3211,7 +3075,7 @@
               "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'hastestorageapi', 'get-project-artifacts', 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\r\n  <inbound>\r\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\r\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\r\n      <set-method>GET</set-method>\r\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\r\n        <value>2019-07-07</value>\r\n      </set-header>\r\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\r\n    </send-request>\r\n    <return-response response-variable-name=\"blobdata\" />\r\n    <base />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__SA__', parameters('storageAccountName'))]"
+                "value": "[replace('<policies>\n  <inbound>\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\n      <set-method>GET</set-method>\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\n        <value>2019-07-07</value>\n      </set-header>\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\n    </send-request>\n    <return-response response-variable-name=\"blobdata\" />\n    <base />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__SA__', parameters('storageAccountName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'hastestorageapi', 'get-project-artifacts')]"
@@ -3245,6 +3109,12 @@
           },
           "functionSystemPrincipalId": {
             "value": "[reference('functions').outputs.apiSystemPrincipalId.value]"
+          },
+          "storageAccountName": {
+            "value": "[variables('storageAccountName')]"
+          },
+          "pcGeoCatalogIngestPrincipalId": {
+            "value": "[parameters('pcGeoCatalogIngestPrincipalId')]"
           }
         },
         "template": {
@@ -3253,8 +3123,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "10647381514548241981"
+              "version": "0.46.1.21595",
+              "templateHash": "10920303468385780104"
             }
           },
           "parameters": {
@@ -3274,6 +3144,19 @@
               "type": "string",
               "metadata": {
                 "description": "System-assigned principal id of the API function app."
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "HASTE storage account name (source of publishable artifacts)."
+              }
+            },
+            "pcGeoCatalogIngestPrincipalId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Object (principal) id of the Planetary Computer GeoCatalog managed identity, to grant read access on HASTE storage for asset ingestion. Empty = skip (public containers or SasToken ingestion source)."
               }
             }
           },
@@ -3325,6 +3208,18 @@
                 "principalId": "[parameters('functionSystemPrincipalId')]",
                 "principalType": "ServicePrincipal"
               }
+            },
+            {
+              "condition": "[not(empty(parameters('pcGeoCatalogIngestPrincipalId')))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('pcGeoCatalogIngestPrincipalId'), 'StorageBlobDataReader')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')]",
+                "principalId": "[parameters('pcGeoCatalogIngestPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
             }
           ],
           "outputs": {
@@ -3368,8 +3263,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "16042433164648747777"
+              "version": "0.46.1.21595",
+              "templateHash": "6727294718729000805"
             }
           },
           "parameters": {
@@ -3467,8 +3362,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "13664756888266805551"
+              "version": "0.46.1.21595",
+              "templateHash": "17197306363257697796"
             }
           },
           "parameters": {
@@ -3624,8 +3519,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "17391401701000584075"
+              "version": "0.46.1.21595",
+              "templateHash": "10615611227258247138"
             }
           },
           "parameters": {
@@ -3692,8 +3587,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.45.15.27210",
-              "templateHash": "3909520050142538177"
+              "version": "0.46.1.21595",
+              "templateHash": "17045354249437602171"
             }
           },
           "parameters": {

@@ -1,6 +1,6 @@
 ---
 name: imagery-provider-adaptation
-description: "Imagery provider adaptation skill for HASTE. Encapsulates provider-specific logic for satellite imagery sources (Planet, Maxar, Airbus, etc.). Use when: 'new imagery provider', 'add source type', 'satellite provider', 'Planet', 'Maxar', 'Airbus', 'Pleiades', 'WorldView', 'SkySat', 'imagery ingestion', 'provider adapter'."
+description: "Imagery provider adaptation skill for HASTE. Encapsulates provider-specific logic for satellite imagery sources (Planet, Vantor, Airbus, etc.). Use when: 'new imagery provider', 'add source type', 'satellite provider', 'Planet', 'Vantor', 'Maxar', 'Airbus', 'Pleiades', 'WorldView', 'SkySat', 'imagery ingestion', 'provider adapter'."
 source: "HASTE imagery processing pipeline, satellite provider documentation"
 domain: "geospatial"
 level: "advanced"
@@ -23,7 +23,7 @@ Structured process for adding new satellite imagery providers to HASTE. Each pro
 
 | Provider | Satellites | Format | Bands | Delivery |
 |----------|-----------|--------|-------|----------|
-| Maxar | WorldView-2/3/4, GeoEye-1 | GeoTIFF | 4-8 bands (BGRN + extras) | S3, STAC, Direct URL |
+| Vantor | WorldView-2/3/4, GeoEye-1 | GeoTIFF | 4-8 bands (BGRN + extras) | S3, STAC, Direct URL |
 | Planet | PlanetScope, SkySat | GeoTIFF, COG | 4 bands (BGRN) | Planet API, S3 |
 | Airbus | Pleiades, Pleiades Neo, SPOT | GeoTIFF, DIMAP | 4 bands (BGRN) | OneAtlas, S3 |
 
@@ -95,7 +95,7 @@ Update `ImageryPreProcessor` to route to the new handler based on source type.
 
 | Provider | Gotcha | Mitigation |
 |----------|--------|------------|
-| Maxar | Multiple UTM zones in a single order | Check CRS per file, reproject to consistent zone |
+| Vantor | Multiple UTM zones in a single order | Check CRS per file, reproject to consistent zone |
 | Planet | UDM2 quality masks delivered separately | Download and apply quality mask before processing |
 | Airbus | DIMAP format metadata | Parse XML metadata alongside GeoTIFF |
 | All | Different nodata conventions | Standardize nodata to 0 or NaN during preprocessing |

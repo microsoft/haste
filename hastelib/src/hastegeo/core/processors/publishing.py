@@ -246,6 +246,7 @@ class PublishingProcessor:
             imageLayerName=options.imageLayerName,
             modelId=request.modelId,
             modelName=options.modelName,
+            imagerySources=options.imagerySources,
             target=request.target,
             status=PublishStatus.PENDING,
             publishedByUser=prepared.publisher_id.strip().lower(),
@@ -382,10 +383,20 @@ class PublishingProcessor:
         self._require_enabled()
         dataset = self.repository.load(project_id, dataset_id)
         self._require_owner(dataset, caller_id, is_admin)
-        editable = {"name", "description", "interactiveViewerUrl"}
+        editable = {
+            "name",
+            "description",
+            "interactiveViewerUrl",
+            "imagerySources",
+        }
         updates = {k: v for k, v in fields.items() if k in editable}
         if updates.get("description") is None and "description" in updates:
             updates["description"] = ""
+        if (
+            updates.get("imagerySources") is None
+            and "imagerySources" in updates
+        ):
+            updates["imagerySources"] = []
         if not updates:
             return dataset
         updates["updatedDate"] = _utc_timestamp()

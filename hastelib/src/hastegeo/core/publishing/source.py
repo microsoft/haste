@@ -27,6 +27,40 @@ class PublishingArtifactUnavailableError(RuntimeError):
     """Raised when a requested or supporting artifact is unavailable."""
 
 
+# Source-type dropdown values that carry no imagery-provider meaning (the
+# "Unknown" option and bring-your-own / processing-profile placeholders).
+# Excluded from provider attribution so they don't surface as bogus STAC
+# providers. "mercy_corps" is a processing profile, not an imagery vendor.
+_NON_PROVIDER_SOURCE_TYPES = frozenset(
+    {"", "n/a", "na", "none", "unknown", "rgb/no_processing", "mercy_corps"}
+)
+
+
+def _imagery_sources(image_layer: ImageLayer) -> list:
+    """Distinct imagery source types for provider attribution, in order.
+
+    Pulls the pre/post-event source types (and the legacy ``sourceType``) from
+    the image layer, preserving order and dropping blanks/duplicates and
+    non-provider placeholders (e.g. ``n/a``, ``rgb/no_processing``).
+    """
+    sources: list = []
+    seen = set()
+    for value in (
+        image_layer.sourceTypePreEvent,
+        image_layer.sourceTypePostEvent,
+        image_layer.sourceType,
+    ):
+        if not value:
+            continue
+        normalized = value.strip()
+        key = normalized.lower()
+        if key in _NON_PROVIDER_SOURCE_TYPES or key in seen:
+            continue
+        seen.add(key)
+        sources.append(normalized)
+    return sources
+
+
 ARTIFACT_FIELDS: Dict[ArtifactKind, Tuple[str, str, str]] = {
     ArtifactKind.GPKG: (
         "model",
@@ -409,6 +443,7 @@ class PublishingSourceResolver:
             modelId=model_id,
             modelName=model.name or model_id,
             defaultName=f"{project_name} – {image_layer_name}",
+            imagerySources=_imagery_sources(image_layer),
             availableArtifacts=available_artifacts,
         )
 

@@ -52,10 +52,107 @@ ASSET_TITLES = {
     ArtifactKind.FOOTPRINTS: "Building footprints",
 }
 
+# Namespace for HASTE's custom STAC fields. Kept as a single constant so the
+# published identifier is tool-neutral and can be changed in one place.
+PROPERTY_PREFIX = "haste"
+PROJECT_ID_PROPERTY = f"{PROPERTY_PREFIX}:project_id"
+
 # Compact per-dataset summaries persisted on the (project-level) collection so
 # its description can be rendered as a rolling summary of every dataset it
 # holds. Read back from the existing collection on the next publish/unpublish.
-COLLECTION_DATASETS_FIELD = "ai4g:datasets"
+COLLECTION_DATASETS_FIELD = f"{PROPERTY_PREFIX}:datasets"
+
+# Well-known Earth-observation imagery sources, keyed by lowercase substrings
+# that may appear in an image layer's free-text source type (e.g. "WorldView-3"
+# → Vantor). The first table whose keys match wins; unmatched source types are
+# passed through verbatim as the provider name (no URL). Intentionally small and
+# easy to extend — add rows as new sensors/vendors are onboarded.
+# Note: the legacy "maxar" key is retained because that is still the stored
+# ``sourceType`` value for Vantor (formerly Maxar) Open Data layers.
+_IMAGERY_PROVIDERS: Tuple[Tuple[Tuple[str, ...], Tuple[str, Optional[str]]], ...] = (
+    (
+        ("worldview", "geoeye", "quickbird", "maxar", "vantor"),
+        ("Vantor", "https://vantor.com"),
+    ),
+    (
+        ("planet", "planetscope", "skysat", "rapideye", "dove"),
+        ("Planet Labs PBC", "https://www.planet.com"),
+    ),
+    (
+        ("pleiades", "spot", "airbus"),
+        ("Airbus Defence and Space", "https://space-solutions.airbus.com"),
+    ),
+    (
+        ("sentinel",),
+        ("European Space Agency (Copernicus)", "https://www.copernicus.eu"),
+    ),
+    (
+        ("landsat",),
+        ("USGS / NASA Landsat", "https://www.usgs.gov/landsat-missions"),
+    ),
+    (
+        ("naip",),
+        ("USDA NAIP", "https://naip-usdaonline.hub.arcgis.com"),
+    ),
+)
+
+
+def _imagery_provider_info(source_type: str) -> Optional[Dict[str, Optional[str]]]:
+    """Map a free-text imagery source type to a provider name (and URL).
+
+    Unmatched, non-empty source types are passed through as the provider name
+    with no URL. Empty/whitespace source types yield ``None``.
+    """
+    normalized = source_type.strip()
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    for keys, (name, url) in _IMAGERY_PROVIDERS:
+        if any(key in lowered for key in keys):
+            return {"name": name, "url": url}
+    return {"name": normalized, "url": None}
+
+
+def build_providers(
+    organization: Optional[Mapping[str, Optional[str]]],
+    imagery_sources: Optional[Sequence[str]],
+) -> list:
+    """Build the STAC ``providers`` list for a collection or item.
+
+    Imagery sources are attributed as producers/licensors of the underlying
+    data; the deployment's processing organization (if configured) as the
+    processor that derived the assessment. Deduplicated by provider name.
+    """
+    pystac = _load_pystac()
+    providers = []
+    seen = set()
+    for source in imagery_sources or []:
+        info = _imagery_provider_info(source)
+        if info is None or info["name"].lower() in seen:
+            continue
+        seen.add(info["name"].lower())
+        providers.append(
+            pystac.Provider(
+                name=info["name"],
+                url=info["url"],
+                roles=[
+                    pystac.ProviderRole.PRODUCER,
+                    pystac.ProviderRole.LICENSOR,
+                ],
+            )
+        )
+    if organization and organization.get("name"):
+        name = str(organization["name"]).strip()
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            providers.append(
+                pystac.Provider(
+                    name=name,
+                    url=organization.get("url") or None,
+                    roles=[pystac.ProviderRole.PROCESSOR],
+                )
+            )
+    return providers
 
 
 @dataclass(frozen=True)
@@ -203,6 +300,7 @@ def build_vector_item(
     valid_mask_crs: str = "EPSG:4326",
     collection_prefix: str = "haste-",
     license_id: str = "proprietary",
+    organization: Optional[Mapping[str, Optional[str]]] = None,
 ) -> Any:
     pystac = _load_pystac()
     if not source.selectedArtifacts:
@@ -274,6 +372,16 @@ def build_vector_item(
             item.properties["proj:code"] = selected_projections[kind]
             break
 
+    # Attribution: imagery source(s) as producers/licensors, the deployment's
+    # processing organization as processor. Item-level for per-dataset accuracy.
+    providers = build_providers(
+        organization, getattr(dataset, "imagerySources", None)
+    )
+    if providers:
+        item.properties["providers"] = [
+            provider.to_dict() for provider in providers
+        ]
+
     # Optional operator-provided link to an interactive web viewer for this
     # dataset (rel=preview, text/html) — the vendored pattern, in place of an
     # image thumbnail on the item.
@@ -300,13 +408,20 @@ def _collection_dataset_entry(
         "name": dataset.name,
     }
     for source_key, target_key in (
-        ("ai4g:buildings_damaged", "buildings_damaged"),
-        ("ai4g:buildings_total", "buildings_total"),
-        ("ai4g:aoi_area_km2", "area_km2"),
+        (f"{PROPERTY_PREFIX}:buildings_damaged", "buildings_damaged"),
+        (f"{PROPERTY_PREFIX}:buildings_total", "buildings_total"),
+        (f"{PROPERTY_PREFIX}:aoi_area_km2", "area_km2"),
     ):
         value = properties.get(source_key)
         if value is not None:
             entry[target_key] = value
+    imagery = [
+        source
+        for source in (getattr(dataset, "imagerySources", None) or [])
+        if source
+    ]
+    if imagery:
+        entry["imagery"] = imagery
     return entry
 
 
@@ -330,6 +445,21 @@ def merge_collection_datasets(
         key=lambda item: (str(item.get("name") or ""), str(item.get("id")))
     )
     return merged
+
+
+def _collection_imagery_sources(
+    entries: Sequence[Mapping[str, Any]]
+) -> list:
+    """Union of imagery source types across every dataset in the collection."""
+    sources: list = []
+    seen = set()
+    for entry in entries:
+        for source in entry.get("imagery") or []:
+            key = str(source).strip()
+            if key and key.lower() not in seen:
+                seen.add(key.lower())
+                sources.append(key)
+    return sources
 
 
 def _format_count(value: Any) -> Optional[str]:
@@ -377,7 +507,7 @@ def rebuild_collection_after_removal(
     """Drop ``dataset`` from the collection's rolling summary (for unpublish).
 
     Returns a copy of the existing collection document with this dataset removed
-    from ``ai4g:datasets`` and the description re-rendered from what remains.
+    from ``haste:datasets`` and the description re-rendered from what remains.
     """
     updated = dict(existing_collection)
     stored = updated.get(COLLECTION_DATASETS_FIELD)
@@ -394,6 +524,46 @@ def rebuild_collection_after_removal(
     return updated
 
 
+def refresh_collection_after_edit(
+    existing_collection: Mapping[str, Any],
+    dataset: PublishedDataset,
+    organization: Optional[Mapping[str, Optional[str]]] = None,
+) -> Dict[str, Any]:
+    """Re-sync the collection to a dataset's edited metadata (for edit).
+
+    Updates the dataset's entry (name + imagery sources) in ``haste:datasets``,
+    re-renders the rolling description, and recomputes the collection-level
+    provider union so imagery attribution stays consistent with the item.
+    """
+    updated = dict(existing_collection)
+    stored = updated.get(COLLECTION_DATASETS_FIELD)
+    entries: list = []
+    for entry in stored if isinstance(stored, list) else []:
+        if not isinstance(entry, Mapping):
+            continue
+        record = dict(entry)
+        if record.get("id") == str(dataset.datasetId):
+            record["name"] = dataset.name
+            imagery = [
+                source for source in (dataset.imagerySources or []) if source
+            ]
+            if imagery:
+                record["imagery"] = imagery
+            else:
+                record.pop("imagery", None)
+        entries.append(record)
+    updated[COLLECTION_DATASETS_FIELD] = entries
+    updated["description"] = render_collection_description(dataset, entries)
+    providers = build_providers(
+        organization, _collection_imagery_sources(entries)
+    )
+    if providers:
+        updated["providers"] = [provider.to_dict() for provider in providers]
+    else:
+        updated.pop("providers", None)
+    return updated
+
+
 def build_collection(
     dataset: PublishedDataset,
     item: Any,
@@ -402,6 +572,7 @@ def build_collection(
     existing_collection: Optional[Mapping[str, Any]] = None,
     collection_prefix: str = "haste-",
     license_id: str = "proprietary",
+    organization: Optional[Mapping[str, Optional[str]]] = None,
 ) -> Any:
     pystac = _load_pystac()
     collection_id = build_collection_id(dataset, collection_prefix)
@@ -414,6 +585,8 @@ def build_collection(
         existing_collection,
         _collection_dataset_entry(dataset, item),
     )
+    imagery_sources = _collection_imagery_sources(datasets)
+    providers = build_providers(organization, imagery_sources)
     collection = pystac.Collection(
         id=collection_id,
         title=dataset.projectName or collection_id,
@@ -424,18 +597,13 @@ def build_collection(
             "disaster assessment",
             "building damage",
         ],
-        providers=[
-            pystac.Provider(
-                name="Microsoft AI for Good Lab",
-                roles=[pystac.ProviderRole.PRODUCER],
-            )
-        ],
+        providers=providers or None,
         extent=pystac.Extent(
             spatial=pystac.SpatialExtent([spatial_bbox]),
             temporal=pystac.TemporalExtent([temporal_interval]),
         ),
         summaries=pystac.Summaries(
-            {"ai4g:project_id": [str(dataset.projectId)]}
+            {PROJECT_ID_PROPERTY: [str(dataset.projectId)]}
         ),
         stac_extensions=[ITEM_ASSETS_EXTENSION],
         extra_fields={
@@ -470,6 +638,7 @@ def build_stac_objects(
     existing_collection: Optional[Mapping[str, Any]] = None,
     collection_prefix: str = "haste-",
     license_id: str = "proprietary",
+    organization: Optional[Mapping[str, Optional[str]]] = None,
 ) -> StacObjects:
     item = build_vector_item(
         dataset,
@@ -481,6 +650,7 @@ def build_stac_objects(
         valid_mask_crs=valid_mask_crs,
         collection_prefix=collection_prefix,
         license_id=license_id,
+        organization=organization,
     )
     collection = build_collection(
         dataset,
@@ -489,6 +659,7 @@ def build_stac_objects(
         existing_collection=existing_collection,
         collection_prefix=collection_prefix,
         license_id=license_id,
+        organization=organization,
     )
     return StacObjects(collection=collection, item=item)
 
@@ -551,8 +722,8 @@ def _merge_collection_extent(
         if existing_collection.get("id") != collection_id:
             raise ValueError("Existing STAC collection ID does not match")
         summaries = existing_collection.get("summaries") or {}
-        project_ids = summaries.get("ai4g:project_id") or []
-        if project_ids != [str(item.properties["ai4g:project_id"])]:
+        project_ids = summaries.get(PROJECT_ID_PROPERTY) or []
+        if project_ids != [str(item.properties[PROJECT_ID_PROPERTY])]:
             raise ValueError(
                 "Existing STAC collection project provenance does not match"
             )
@@ -667,50 +838,51 @@ def _build_item_properties(
     predictions = summary.get("predictions") or {}
     metrics = summary.get("metrics") or {}
     population = summary.get("populationEstimate") or {}
+    p = PROPERTY_PREFIX
     properties = {
         "title": dataset.name,
         "description": dataset.description,
         "license": license_id,
-        "ai4g:project_id": str(dataset.projectId),
-        "ai4g:image_layer_id": dataset.imageLayerId,
-        "ai4g:model_id": dataset.modelId,
-        "ai4g:aoi_area_km2": round(area_square_kilometers, 6),
-        "ai4g:buildings_total": _first_present(
+        f"{p}:project_id": str(dataset.projectId),
+        f"{p}:image_layer_id": dataset.imageLayerId,
+        f"{p}:model_id": dataset.modelId,
+        f"{p}:aoi_area_km2": round(area_square_kilometers, 6),
+        f"{p}:buildings_total": _first_present(
             predictions, "total", fallback=summary.get("buildingsTotal")
         ),
-        "ai4g:buildings_cloud": _first_present(
+        f"{p}:buildings_cloud": _first_present(
             predictions, "cloudy", fallback=summary.get("buildingsCloud")
         ),
-        "ai4g:buildings_clear": _first_present(
+        f"{p}:buildings_clear": _first_present(
             predictions,
             "knownNonCloudy",
             fallback=summary.get("buildingsClear"),
         ),
-        "ai4g:buildings_damaged": _first_present(
+        f"{p}:buildings_damaged": _first_present(
             predictions,
             "predictedDamaged",
             fallback=summary.get("predictedDamaged"),
         ),
-        "ai4g:damaged_pct_of_clear": _first_present(
+        f"{p}:damaged_pct_of_clear": _first_present(
             predictions,
             "predictedDamagedPctOfKnown",
             fallback=summary.get("damagedPctOfClear"),
         ),
-        "ai4g:validation_precision": _first_present(
+        f"{p}:validation_precision": _first_present(
             metrics, "precision", fallback=summary.get("precision")
         ),
-        "ai4g:validation_recall": _first_present(
+        f"{p}:validation_recall": _first_present(
             metrics, "recall", fallback=summary.get("recall")
         ),
-        "ai4g:validation_extrapolated_damaged": _first_present(
+        f"{p}:validation_extrapolated_damaged": _first_present(
             population,
             "estimatedDamaged",
             fallback=summary.get("estimatedDamaged"),
         ),
-        "ai4g:validation_ci_lower": _first_present(
+        f"{p}:validation_ci_lower": _first_present(
             population, "ciLower", fallback=summary.get("ciLower")
         ),
-        "ai4g:validation_ci_upper": _first_present(
+        f"{p}:validation_ci_upper": _first_present(
             population, "ciUpper", fallback=summary.get("ciUpper")
         ),
     }

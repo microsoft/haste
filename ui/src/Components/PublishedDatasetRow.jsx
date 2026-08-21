@@ -42,6 +42,7 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editViewer, setEditViewer] = useState("");
+  const [editImagery, setEditImagery] = useState("");
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState("");
   const preds = item.assessmentSummary?.predictions;
@@ -98,6 +99,7 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
     setEditName(item.name || "");
     setEditDescription(item.description || "");
     setEditViewer(item.interactiveViewerUrl || "");
+    setEditImagery((item.imagerySources || []).join(", "));
     setEditError("");
     setEditing(!!edit);
     setShowDetails(true);
@@ -113,6 +115,10 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
         name: editName.trim(),
         description: editDescription.trim(),
         interactiveViewerUrl: editViewer.trim() || null,
+        imagerySources: editImagery
+          .split(",")
+          .map((source) => source.trim())
+          .filter(Boolean),
       });
       setEditing(false);
       setShowDetails(false);
@@ -387,6 +393,17 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
                           placeholder="https://…"
                           value={editViewer}
                           onChange={(_, d) => setEditViewer(d.value)}
+                          disabled={saving}
+                        />
+                      </Field>
+                      <Field
+                        label="Imagery sources"
+                        hint="Optional, comma-separated (e.g. Vantor, Planet). Overrides the auto-detected attribution. Leave blank to omit."
+                      >
+                        <Input
+                          placeholder="Vantor, Planet"
+                          value={editImagery}
+                          onChange={(_, d) => setEditImagery(d.value)}
                           disabled={saving}
                         />
                       </Field>

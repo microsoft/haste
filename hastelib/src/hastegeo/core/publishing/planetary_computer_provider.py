@@ -38,8 +38,10 @@ from .stac import (
     StacObjects,
     build_collection_id,
     build_item_id,
+    build_providers,
     build_stac_objects,
     rebuild_collection_after_removal,
+    refresh_collection_after_edit,
     serialize_stac_objects,
     validate_stac_objects,
 )
@@ -104,6 +106,14 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
         self.license_id = str(
             settings.get("pc_publishing_license") or "CC-BY-4.0"
         )
+        self.organization = {
+            "name": str(
+                settings.get("publishing_organization_name") or ""
+            ).strip(),
+            "url": str(
+                settings.get("publishing_organization_url") or ""
+            ).strip(),
+        }
         self.max_verify_attempts = int(settings.get("pc_verify_attempts") or 5)
         self.artifact_storage = artifact_storage or UnifiedArtifactStorage(
             storage_type=self.config.artifact_storage_type,
@@ -599,6 +609,15 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             properties["description"] = dataset.description
         else:
             properties.pop("description", None)
+        # Re-emit provider attribution from the dataset's (possibly edited)
+        # imagery sources plus the deployment organization.
+        providers = build_providers(self.organization, dataset.imagerySources)
+        if providers:
+            properties["providers"] = [
+                provider.to_dict() for provider in providers
+            ]
+        else:
+            properties.pop("providers", None)
         item["properties"] = properties
         links = [
             link
@@ -622,6 +641,17 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             )
         item["links"] = links
         self.sdk.update_item(collection_id, item_id, item)
+
+        # Keep the collection's rolling summary and provider union in sync with
+        # this dataset's edited name / imagery sources.
+        existing_collection = self.sdk.get_collection(collection_id)
+        if existing_collection is not None:
+            self.sdk.replace_collection(
+                collection_id,
+                refresh_collection_after_edit(
+                    existing_collection, dataset, self.organization
+                ),
+            )
 
     def _drain_collection_operation(
         self,
@@ -1314,6 +1344,7 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             existing_collection=existing_collection,
             collection_prefix=self.collection_prefix,
             license_id=self.license_id,
+            organization=self.organization,
         )
         self.stac_validator(objects)
         return serialize_stac_objects(objects)

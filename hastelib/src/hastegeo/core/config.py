@@ -348,6 +348,15 @@ class Config:
             "pc_publishing_license": os.getenv(
                 "PC_PUBLISHING_LICENSE", "CC-BY-4.0"
             ),
+            # Attribution: the organization operating this deployment, recorded
+            # as the STAC "processor" provider on published datasets. Empty =
+            # omit the provider (no default org for the open-source build).
+            "publishing_organization_name": os.getenv(
+                "PUBLISHING_ORGANIZATION_NAME", ""
+            ),
+            "publishing_organization_url": os.getenv(
+                "PUBLISHING_ORGANIZATION_URL", ""
+            ),
             # Network-reachable container the GeoCatalog ingests from. When set,
             # the PC provider copies published assets here (out of the
             # firewalled data store) and points STAC hrefs at it. Empty =

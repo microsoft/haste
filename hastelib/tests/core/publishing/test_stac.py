@@ -311,20 +311,20 @@ class TestStacObjects(unittest.TestCase):
             "application/geopackage+sqlite3",
         )
         self.assertEqual(item["assets"]["footprints"]["roles"], ["data"])
-        self.assertEqual(item["properties"]["ai4g:buildings_total"], 100)
-        self.assertEqual(item["properties"]["ai4g:buildings_cloud"], 10)
-        self.assertEqual(item["properties"]["ai4g:buildings_clear"], 90)
-        self.assertEqual(item["properties"]["ai4g:buildings_damaged"], 18)
-        self.assertEqual(item["properties"]["ai4g:damaged_pct_of_clear"], 20.0)
-        self.assertEqual(item["properties"]["ai4g:validation_precision"], 0.8)
-        self.assertEqual(item["properties"]["ai4g:validation_recall"], 0.75)
+        self.assertEqual(item["properties"]["haste:buildings_total"], 100)
+        self.assertEqual(item["properties"]["haste:buildings_cloud"], 10)
+        self.assertEqual(item["properties"]["haste:buildings_clear"], 90)
+        self.assertEqual(item["properties"]["haste:buildings_damaged"], 18)
+        self.assertEqual(item["properties"]["haste:damaged_pct_of_clear"], 20.0)
+        self.assertEqual(item["properties"]["haste:validation_precision"], 0.8)
+        self.assertEqual(item["properties"]["haste:validation_recall"], 0.75)
         self.assertEqual(
-            item["properties"]["ai4g:validation_extrapolated_damaged"],
+            item["properties"]["haste:validation_extrapolated_damaged"],
             19.2,
         )
-        self.assertEqual(item["properties"]["ai4g:validation_ci_lower"], 15.0)
-        self.assertEqual(item["properties"]["ai4g:validation_ci_upper"], 24.0)
-        self.assertGreater(item["properties"]["ai4g:aoi_area_km2"], 0)
+        self.assertEqual(item["properties"]["haste:validation_ci_lower"], 15.0)
+        self.assertEqual(item["properties"]["haste:validation_ci_upper"], 24.0)
+        self.assertGreater(item["properties"]["haste:aoi_area_km2"], 0)
 
     def test_interactive_viewer_link_added_when_set(self) -> None:
         dataset = self.dataset.model_copy(
@@ -355,6 +355,141 @@ class TestStacObjects(unittest.TestCase):
         # No image thumbnail on the item or the collection.
         self.assertNotIn("thumbnail", documents.item.get("assets") or {})
         self.assertNotIn("thumbnail", documents.collection.get("assets") or {})
+
+    def test_providers_map_imagery_source_and_organization(self) -> None:
+        dataset = self.dataset.model_copy(
+            update={"imagerySources": ["Maxar WorldView-3", "Sentinel-2"]}
+        )
+        objects = build_stac_objects(
+            dataset,
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            ),
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
+            organization={
+                "name": "Acme Relief",
+                "url": "https://acme.example.org",
+            },
+        )
+        validate_stac_objects(objects)
+        documents = serialize_stac_objects(objects)
+
+        for providers in (
+            documents.item["properties"]["providers"],
+            documents.collection["providers"],
+        ):
+            by_name = {p["name"]: p for p in providers}
+            # "Maxar WorldView-3" (legacy stored sourceType) canonicalizes to
+            # the Vantor provider; Sentinel-2 to the ESA/Copernicus provider.
+            self.assertIn("Vantor", by_name)
+            self.assertEqual(by_name["Vantor"]["url"], "https://vantor.com")
+            self.assertEqual(
+                sorted(by_name["Vantor"]["roles"]), ["licensor", "producer"]
+            )
+            self.assertIn("European Space Agency (Copernicus)", by_name)
+            # Deployment organization is the processor.
+            self.assertIn("Acme Relief", by_name)
+            self.assertEqual(by_name["Acme Relief"]["roles"], ["processor"])
+
+    def test_unknown_imagery_source_passes_through_without_url(self) -> None:
+        dataset = self.dataset.model_copy(
+            update={"imagerySources": ["Acme Aerial Survey"]}
+        )
+        objects = build_stac_objects(
+            dataset,
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            ),
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
+        )
+        documents = serialize_stac_objects(objects)
+        providers = documents.item["properties"]["providers"]
+        by_name = {p["name"]: p for p in providers}
+        self.assertIn("Acme Aerial Survey", by_name)
+        self.assertNotIn("url", by_name["Acme Aerial Survey"])
+        self.assertEqual(
+            sorted(by_name["Acme Aerial Survey"]["roles"]),
+            ["licensor", "producer"],
+        )
+
+    def test_no_providers_emitted_when_no_imagery_or_org(self) -> None:
+        objects = self._build(
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            ),
+        )
+        documents = serialize_stac_objects(objects)
+        self.assertNotIn("providers", documents.item["properties"])
+        self.assertNotIn("providers", documents.collection)
+
+    def test_refresh_collection_after_edit_resyncs_imagery(self) -> None:
+        from hastegeo.core.publishing.stac import (
+            refresh_collection_after_edit,
+        )
+
+        existing = {
+            "id": "haste-x",
+            "description": "old",
+            "providers": [{"name": "Vantor"}],
+            "haste:datasets": [
+                {
+                    "id": str(self.dataset.datasetId),
+                    "name": "old",
+                    "imagery": ["WorldView-3"],
+                },
+                {"id": "other", "name": "Other", "imagery": ["Planet"]},
+            ],
+        }
+        edited = self.dataset.model_copy(
+            update={"name": "New name", "imagerySources": ["Sentinel-2"]}
+        )
+
+        updated = refresh_collection_after_edit(existing, edited)
+
+        entry = next(
+            e
+            for e in updated["haste:datasets"]
+            if e["id"] == str(self.dataset.datasetId)
+        )
+        self.assertEqual(entry["name"], "New name")
+        self.assertEqual(entry["imagery"], ["Sentinel-2"])
+        # Union across both datasets: this one's new source + the other's Planet.
+        names = {p["name"] for p in updated["providers"]}
+        self.assertEqual(
+            names, {"European Space Agency (Copernicus)", "Planet Labs PBC"}
+        )
+
+    def test_refresh_collection_after_edit_clears_imagery(self) -> None:
+        from hastegeo.core.publishing.stac import (
+            refresh_collection_after_edit,
+        )
+
+        existing = {
+            "id": "haste-x",
+            "providers": [{"name": "Vantor"}],
+            "haste:datasets": [
+                {
+                    "id": str(self.dataset.datasetId),
+                    "name": "old",
+                    "imagery": ["WorldView-3"],
+                }
+            ],
+        }
+        edited = self.dataset.model_copy(update={"imagerySources": []})
+
+        updated = refresh_collection_after_edit(existing, edited)
+
+        self.assertNotIn("imagery", updated["haste:datasets"][0])
+        self.assertNotIn("providers", updated)
 
     def test_no_preview_link_without_a_viewer_url(self) -> None:
         objects = self._build(
@@ -393,7 +528,7 @@ class TestStacObjects(unittest.TestCase):
             "18 of 100 buildings assessed as damaged",
             first_collection["description"],
         )
-        entries = first_collection["ai4g:datasets"]
+        entries = first_collection["haste:datasets"]
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["id"], str(self.dataset.datasetId))
         self.assertEqual(entries[0]["buildings_damaged"], 18)
@@ -430,12 +565,12 @@ class TestStacObjects(unittest.TestCase):
         self.assertIn(
             "Second layer assessment", second_collection["description"]
         )
-        self.assertEqual(len(second_collection["ai4g:datasets"]), 2)
+        self.assertEqual(len(second_collection["haste:datasets"]), 2)
 
     def test_collection_extent_merges_existing_project_items(self) -> None:
         existing_collection = {
             "id": build_collection_id(self.dataset),
-            "summaries": {"ai4g:project_id": [str(self.dataset.projectId)]},
+            "summaries": {"haste:project_id": [str(self.dataset.projectId)]},
             "extent": {
                 "spatial": {"bbox": [[-70, 8, -69, 9]]},
                 "temporal": {
@@ -470,7 +605,7 @@ class TestStacObjects(unittest.TestCase):
     def test_collection_extent_rejects_reversed_interval(self) -> None:
         existing_collection = {
             "id": build_collection_id(self.dataset),
-            "summaries": {"ai4g:project_id": [str(self.dataset.projectId)]},
+            "summaries": {"haste:project_id": [str(self.dataset.projectId)]},
             "extent": {
                 "spatial": {"bbox": [[-70, 8, -69, 9]]},
                 "temporal": {
@@ -521,7 +656,7 @@ class TestStacObjects(unittest.TestCase):
             existing_collection = dict(base_collection)
             if project_ids is not None:
                 existing_collection["summaries"] = {
-                    "ai4g:project_id": project_ids
+                    "haste:project_id": project_ids
                 }
             with self.subTest(project_ids=project_ids):
                 with self.assertRaisesRegex(ValueError, "provenance"):
@@ -666,14 +801,14 @@ class TestStacObjects(unittest.TestCase):
         )
         properties = serialize_stac_objects(objects).item["properties"]
 
-        self.assertEqual(properties["ai4g:buildings_damaged"], 12)
-        self.assertEqual(properties["ai4g:validation_precision"], 0.7)
-        self.assertEqual(properties["ai4g:validation_recall"], 0.6)
+        self.assertEqual(properties["haste:buildings_damaged"], 12)
+        self.assertEqual(properties["haste:validation_precision"], 0.7)
+        self.assertEqual(properties["haste:validation_recall"], 0.6)
         self.assertEqual(
-            properties["ai4g:validation_extrapolated_damaged"], 15.5
+            properties["haste:validation_extrapolated_damaged"], 15.5
         )
-        self.assertEqual(properties["ai4g:validation_ci_lower"], 10.0)
-        self.assertEqual(properties["ai4g:validation_ci_upper"], 20.0)
+        self.assertEqual(properties["haste:validation_ci_lower"], 10.0)
+        self.assertEqual(properties["haste:validation_ci_upper"], 20.0)
 
 
 if __name__ == "__main__":

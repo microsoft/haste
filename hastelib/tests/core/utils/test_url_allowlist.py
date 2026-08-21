@@ -30,7 +30,7 @@ class TestValidateImageryUrl(unittest.TestCase):
     def test_accepts_aws_s3_host(self):
         self.assertEqual(
             validate_imagery_url(
-                "https://maxar-opendata.s3.amazonaws.com/x/y.tif"
+                "https://vantor-opendata.s3.amazonaws.com/x/y.tif"
             ),
             "awss3",
         )

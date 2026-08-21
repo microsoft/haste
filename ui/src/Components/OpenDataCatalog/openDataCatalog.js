@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 //
 // Open Data Catalog — discover + fetch + normalize open disaster-response
-// imagery from the Vantor/Maxar Open Data Program (S3 STAC) and the Planet
+// imagery from the Vantor Open Data Program (S3 STAC) and the Planet
 // Open Data Program (Source Cooperative STAC). Adapted from the standalone
 // prototype (Open Disaster Response Data Visualizer):
 // https://visualizers.aiforgood.ai/damage-assessment/venezuela_earthqake_data_explorer.html

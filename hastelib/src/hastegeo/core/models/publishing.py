@@ -97,6 +97,7 @@ class PublishDatasetOptions(BaseModel):
     modelId: str
     modelName: str
     defaultName: str
+    imagerySources: List[str] = Field(default_factory=list)
     availableArtifacts: List[SourceArtifact] = Field(default_factory=list)
 
 
@@ -170,6 +171,28 @@ class PublishMetadataUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=4000)
     interactiveViewerUrl: Optional[str] = Field(default=None, max_length=2000)
+    # Optional operator override for imagery-source attribution. None leaves the
+    # (publish-time inferred) value unchanged; [] clears it; a list replaces it.
+    imagerySources: Optional[List[str]] = Field(default=None)
+
+    @field_validator("imagerySources")
+    @classmethod
+    def normalize_imagery_sources(
+        cls, value: Optional[List[str]]
+    ) -> Optional[List[str]]:
+        if value is None:
+            return None
+        normalized: List[str] = []
+        seen = set()
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            text = unicodedata.normalize("NFC", item).strip()[:200]
+            key = text.lower()
+            if text and key not in seen:
+                seen.add(key)
+                normalized.append(text)
+        return normalized[:20]
 
     @field_validator("name")
     @classmethod
@@ -217,6 +240,7 @@ class PublishedDataset(BaseModel):
     imageLayerName: str = ""
     modelId: str
     modelName: str = ""
+    imagerySources: List[str] = Field(default_factory=list)
     target: PublishTarget
     status: PublishStatus
     statusMessage: str = ""

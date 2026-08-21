@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 //
 // Open Data Catalog explorer — a side panel on the Create Image Layer form
-// that browses Vantor/Maxar and Planet open disaster imagery and adds a
+// that browses Vantor and Planet open disaster imagery and adds a
 // scene's COG URL straight into the pre/post imagery inputs.
 // See spec/features/open-data-catalog/.
 //
@@ -374,7 +374,7 @@ const OpenDataCatalogPanel = ({
         {/* Header controls (full width) */}
         <div className={styles.controls}>
           <Text size={200} block className={styles.description}>
-            Browse open disaster imagery from the Vantor/Maxar and Planet Open
+            Browse open disaster imagery from the Vantor and Planet Open
             Data Programs, then add a scene directly to your pre- or post-event
             imagery. Imagery is licensed CC&nbsp;BY-NC&nbsp;4.0.
           </Text>

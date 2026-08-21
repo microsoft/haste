@@ -278,7 +278,7 @@ class ImageryUtils:
         Determines the order of bands to use for RGB conversion based on the imagery product.
         Planet Specs:
         https://assets.planet.com/docs/Planet_Combined_Imagery_Product_Specs_letter_screen.pdf
-        Maxar Specs:
+        Vantor / Maxar ARD Specs:
         https://ard.maxar.com/docs/ard-order-delivery/metadata/tile-metadata/#eobands
         Sentinel2 Specs:
         https://docs.sentinel-hub.com/api/latest/data/sentinel-2-l2a/
@@ -293,7 +293,7 @@ class ImageryUtils:
               - Multispectral (4 bands): Blue, Green, Red, NIR (returning RGB as Red, Green, Blue).
               - Panchromatic: single band.
 
-          Maxar:
+          Vantor:
               - Visual RGB: Red, Green, Blue.
               - Multispectral 4-band: Blue, Green, Red, NIR1 (RGB extracted as Red, Green, Blue).
               - Multispectral 8-band: Blue, Coastal Blue, Green, Red, NIR1, Yellow, Red Edge, NIR2 (RGB extracted as Red, Green, Blue).
