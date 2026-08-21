@@ -352,7 +352,7 @@ assessment response.
 - **Providers:** a STAC `providers` list layers attribution — the imagery
   source(s) as `producer`/`licensor` (inferred from the image layer's
   `sourceType*` via a small canonical map, unknown types passed through,
-  non-vendor placeholders like `n/a`/`rgb/no_processing`/`mercy_corps` dropped),
+  non-vendor placeholders like `n/a`/`rgb/no_processing` dropped),
   and the deployment's operating organization as `processor` (from
   `PUBLISHING_ORGANIZATION_NAME`/`_URL`; omitted when unset). Present on the item
   (per-dataset) and unioned onto the collection. Operators can **override** the

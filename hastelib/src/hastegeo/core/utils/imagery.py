@@ -370,23 +370,6 @@ class ImageryUtils:
                     )
                     return [mapping["red"], mapping["green"], mapping["blue"]]
 
-            elif source_type == "mercy_corps":
-                # Mercy Corps specific 8-band order: Coastal Blue, Blue, Green, Yellow, Red, Red Edge, NIR1, NIR2
-                if num_bands == 8:
-                    mapping = map_bands(
-                        [
-                            "coastal blue",
-                            "blue",
-                            "green",
-                            "yellow",
-                            "red",
-                            "red edge",
-                            "nir1",
-                            "nir2",
-                        ]
-                    )
-                    return [mapping["red"], mapping["green"], mapping["blue"]]
-
             elif source_type == "sentinel_2":
                 if num_bands == 13:
                     mapping = map_bands(
@@ -652,12 +635,8 @@ class ImageryUtils:
                     # Use the 2nd and 98th percentiles to reduce the effect of outliers
                     # NOTE: need to identify suitable defaults to use if np.nan.
                     # np.nan will break gdal translate.
-                    lower_percentile = 1 if source_type == "mercy_corps" else 2
-                    upper_percentile = (
-                        99 if source_type == "mercy_corps" else 98
-                    )
-                    p_low = np.percentile(array, lower_percentile)
-                    p_high = np.percentile(array, upper_percentile)
+                    p_low = np.percentile(array, 2)
+                    p_high = np.percentile(array, 98)
                     scale_params.append([p_low, p_high, 0, 255])
                 return scale_params
         except Exception as e:

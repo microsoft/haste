@@ -57,8 +57,8 @@ labels, or the arrow next to **Save** to save and start training in one step.
 
 To make damage easier to see while you label, tune the view of the pre-/post-event imagery:
 **Opacity**, **Contrast**, **Hue Rotation**, and **Saturation** sliders (with **Reset**).
-Toggle between post- and pre-event imagery with the imagery switch or `Ctrl+Alt+C` — if you
-didn't upload pre-event imagery, the tool falls back to the Azure Basemap.
+Toggle between post- and pre-event imagery with the imagery switch. Press `A` for pre-event
+(or the Azure Basemap fallback) and `D` for post-event imagery.
 
 ![Labeling imagery properties panel](../_static/usage/labeling/labeling-imagery-properties.png)
 
@@ -138,7 +138,8 @@ use the predictions.
 control, the predicted damage layer overlaid on both, and an optional **raw predictions**
 layer you can toggle on. Imagery sliders (opacity, contrast, hue, saturation) and keyboard
 shortcuts — `A` (all pre-event), `S` (split), `D` (all post-event) — help you inspect and
-share the result.
+share the result. See {doc}`Keyboard shortcuts <keyboard-shortcuts>` for the complete
+reference.
 
 ![The raw per-pixel predictions layer toggled on](../_static/usage/results/raw-predictions-layer.png)
 

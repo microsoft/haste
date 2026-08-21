@@ -28,11 +28,10 @@ class PublishingArtifactUnavailableError(RuntimeError):
 
 
 # Source-type dropdown values that carry no imagery-provider meaning (the
-# "Unknown" option and bring-your-own / processing-profile placeholders).
-# Excluded from provider attribution so they don't surface as bogus STAC
-# providers. "mercy_corps" is a processing profile, not an imagery vendor.
+# "Unknown" option and bring-your-own placeholders). Excluded from provider
+# attribution so they don't surface as bogus STAC providers.
 _NON_PROVIDER_SOURCE_TYPES = frozenset(
-    {"", "n/a", "na", "none", "unknown", "rgb/no_processing", "mercy_corps"}
+    {"", "n/a", "na", "none", "unknown", "rgb/no_processing"}
 )
 
 

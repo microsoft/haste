@@ -12,6 +12,8 @@ import { FluentIcon } from "../../util/icons";
 import { useState, useContext } from "react";
 import PropType from "prop-types";
 import { AppContext } from "../../AppContext";
+import KeyboardShortcutHelp from "../KeyboardShortcutHelp";
+import { VISUALIZER_SHORTCUTS } from "../keyboardShortcuts";
 
 const DAMAGE_LEGEND = [
   { label: "0 - 20% damaged", color: "#FFFFFF" },
@@ -143,6 +145,7 @@ const InfoPanel = ({
               Reset map position
             </Button>
 
+            <KeyboardShortcutHelp shortcuts={VISUALIZER_SHORTCUTS} />
           </div>
         </div>
       </div>

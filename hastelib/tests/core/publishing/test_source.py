@@ -36,16 +36,13 @@ class TestImagerySources(unittest.TestCase):
         self.assertEqual(_imagery_sources(layer), ["Maxar"])
 
     def test_drops_placeholders_and_blanks(self) -> None:
-        # "n/a" (the Unknown dropdown value), "rgb/no_processing" (bring-your-
-        # own) and "mercy_corps" (a processing profile) are not imagery vendors.
+        # "n/a" (the Unknown dropdown value) and "rgb/no_processing"
+        # (bring-your-own) are not imagery vendors.
         layer = ImageLayer(
             sourceTypePreEvent="n/a",
             sourceTypePostEvent="rgb/no_processing",
         )
         self.assertEqual(_imagery_sources(layer), [])
-        self.assertEqual(
-            _imagery_sources(ImageLayer(sourceTypePostEvent="mercy_corps")), []
-        )
 
     def test_keeps_real_source_alongside_placeholder(self) -> None:
         layer = ImageLayer(

@@ -83,15 +83,22 @@ panel with the class selector, counts, a view toggle, and quality metrics.
 - **Classes:** **Intact** (green), **Damaged** (red), **Cloudy** (purple) for obscured
   buildings; unlabeled buildings are gray.
 - **Shortcuts:** `1`/`2`/`3` pick a class, `T` cycles, `P` toggles Labeled/Predicted view,
-  `Space` shows/hides footprints.
+  `Space` shows/hides footprints, and `Ctrl+drag` box-labels buildings. Swipe comparison is
+  on by default; `A`/`S`/`D` move its divider left/to an even split/right.
+  See {doc}`Keyboard shortcuts <keyboard-shortcuts>` for the complete reference.
 
-Once you've labeled at least **3 buildings across 2+ classes**, an in-browser model
+Once you've labeled at least **3 buildings in each of 2+ classes**, an in-browser model
 (logistic regression, WebGPU-accelerated when available) trains automatically and predicts
 damage for every building in view. Toggle **View: Labeled ↔ Predicted** to compare. The
 panel shows holdout **precision / recall / F1 for the Damaged class** so you can watch
 quality improve as you label diverse examples.
 
 ![The Interactive Labeler in Predicted view, with holdout metrics](../_static/usage/interactive/labeler-predicted.png)
+
+Under **Advanced**, **Show misclassified buildings** trains or reuses the current in-browser
+model and highlights only human-labeled buildings whose current prediction differs. Correctly
+classified and unlabeled buildings are not highlighted. This view is mutually exclusive with
+Predicted and Uncertainty views and turns off if labels fall below the training threshold.
 
 ## Step 3 — Predict all buildings
 
@@ -115,7 +122,8 @@ sample of footprints (~200 by default) with the pre-/post-event imagery.
 
 - Select a building and label it **Damaged**, **Not Damaged**, or **Unknown**.
 - **Shortcuts:** `1`/`2`/`3` to label; arrow keys to move Prev/Next (auto-advances to the
-  next unlabeled). Filter by label status; a progress bar tracks your coverage.
+  next unlabeled); `A` shows pre-event imagery (or basemap) and `D` shows post-event imagery.
+  Filter by label status; a progress bar tracks your coverage.
 - **Save Labels** to persist, or **Download GeoJSON** to export the labeled sample.
 
 These human labels are the **ground truth** the reports compare predictions against

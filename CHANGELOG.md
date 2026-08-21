@@ -31,6 +31,9 @@ Versioning follows the Docker image tags defined in the CI workflows (see [.gith
 - **Generic-default IaC for reuse by other partners** — `HASTE_RESOURCE_PREFIX` now defaults to the neutral `haste` (overridable per deployment); the shared-pools template keeps its account/ACR as bring-your-own params. The `api`/`queues` Function App identity is granted **Storage Blob Delegator** (in `functionApp.bicep`) so it can mint user-delegation SAS.
 - **Pinned `azure-batch==14.2.0`** — the 15.x track-2 rewrite restructures the batch models this code uses; migration is tracked separately.
 
+### Removed
+- **Unused custom imagery source** — Removed the unused source option and its special-case eight-band preprocessing path. `RGB/NoProcessing` remains available for imagery that does not need provider-specific handling.
+
 ---
 
 ## [v2.0.0] — Building labeling workflow & one-step `azd` setup

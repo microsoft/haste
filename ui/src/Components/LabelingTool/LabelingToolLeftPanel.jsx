@@ -13,6 +13,11 @@ import { saveLabels, checkLabelsState } from "./LabelingToolHelper";
 
 import PropType from "prop-types";
 import { useNavigate } from "react-router-dom";
+import KeyboardShortcutHelp from "../KeyboardShortcutHelp";
+import {
+  LABELING_TOOL_SHORTCUTS,
+  shouldIgnoreShortcut,
+} from "../keyboardShortcuts";
 
 const LabelingToolLeftPanel = ({
   mapRef,
@@ -168,19 +173,21 @@ const LabelingToolLeftPanel = ({
   }, [eventImageryVisibilityState]);
 
 
-  // need a listener to update the post event imagery layer visibility on ctrl + p
+  // A/D are the standard pre/post controls.
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.ctrlKey && e.altKey && e.key === "c") {
-        setEventImageryVisibilityState((prevState) => !prevState);
-      }
+      if (shouldIgnoreShortcut(e)) return;
+      const key = e.key.toLowerCase();
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      if (key === "a") setEventImageryVisibilityState(false);
+      else if (key === "d") setEventImageryVisibilityState(true);
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [eventImageryVisibilityState]);
+  }, []);
 
   // Close the imagery settings panel when the user clicks on the map.
   useEffect(() => {
@@ -374,6 +381,7 @@ const LabelingToolLeftPanel = ({
                   }
                 />
               </div>
+              <KeyboardShortcutHelp shortcuts={LABELING_TOOL_SHORTCUTS} />
         </div>
       )}
 
