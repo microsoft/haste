@@ -22,14 +22,23 @@ labels:
   buffer_in_meters: 3  # Buffer this many meters around each `class_to_buffer` polygon with the `class_to_buffer_by` class value
   class_to_buffer: Building
   class_to_buffer_by: Background
+  # Optional: tile the labels onto a grid of this cell size (in the units of the
+  # imagery CRS) and emit one image/mask pair per populated cell. Useful when the
+  # labeled buildings are sparse and spread across a large scene. Omit or set to
+  # null to crop a single image/mask pair covering the whole label extent.
+  cluster_size_in_meters: null
+  min_pixels_per_cluster: 1000  # Clusters with fewer labeled pixels than this are discarded
 
 training:
   learning_rate: 0.0001
   max_epochs: 10
   batch_size: 32
   gpu_id: 1
+  gpu_ids: null  # Optional: list of GPU ids for multi-GPU (DDP) training, e.g. [0, 1]. Overrides gpu_id.
+  preload: true  # Read all tiles into RAM instead of decompressing each patch from disk. Set false if they don't fit.
   log_dir: logs/
   checkpoint_subdir: checkpoints/ # Where the weights will be saved during training, relative to experiment_dir
+  use_constraint_loss: false  # Weakly-supervised "No Damage" loss; requires "No Damage" and "Damaged Building" in labels.classes (matched ignoring case/separators, so "no_damage" also works)
   initial_weights_fn: null  # Path to a checkpoint file to initialize model weights from, or null to use ImageNet weights.
 
 inference:
