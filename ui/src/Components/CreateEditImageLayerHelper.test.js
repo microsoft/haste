@@ -25,3 +25,11 @@ test("keeps RGB no-processing available as a generic source", () => {
   assert.equal(option?.text, "RGB/NoProcessing");
   assert.equal(option?.visualizerText, "RGB/NoProcessing");
 });
+
+test("uses Vantor display metadata for the existing provider key", () => {
+  const option = sourceTypeOptions.find(({ key }) => key === "maxar");
+
+  assert.equal(option?.text, "Vantor");
+  assert.equal(option?.visualizerText, "Vantor Open Data Program");
+  assert.equal(option?.url, "https://vantor.com/");
+});
