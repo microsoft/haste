@@ -16,6 +16,7 @@ out over a large scene.
 """
 
 import argparse
+import glob
 import os
 import shutil
 import subprocess
@@ -126,6 +127,71 @@ def get_class_names_from_labels(labels_fn: str, key: str = "class") -> set:
         for feature in f:
             class_names.add(feature["properties"][key])
     return class_names
+
+
+def artifact_paths(output_dir: str, name: str, suffix: str) -> dict:
+    """Every file `create_mask_for_labels` writes for one image/mask pair.
+
+    Shared so the cleanup paths can't drift from the paths that produced
+    them.
+
+    Args:
+        output_dir (str): The experiment directory.
+        name (str): Base name of the input image, without extension.
+        suffix (str): Per-cluster suffix, or "" when not clustering.
+
+    Returns:
+        dict: Keys 'image' and 'mask' (kept outputs) plus 'warped_labels' and
+            'raw_mask' (intermediates normally deleted on success).
+    """
+    return {
+        "image": os.path.join(
+            output_dir, "images", f"{name}{suffix}_cropped.tif"
+        ),
+        "mask": os.path.join(
+            output_dir, "masks", f"{name}{suffix}_buffered.tif"
+        ),
+        "warped_labels": os.path.join(
+            output_dir, f"{name}{suffix}_labels_warped.geojson"
+        ),
+        "raw_mask": os.path.join(output_dir, f"{name}{suffix}_mask.tif"),
+    }
+
+
+def remove_files(paths) -> None:
+    """Delete each path that exists, ignoring the rest."""
+    for path in paths:
+        if path and os.path.exists(path):
+            os.remove(path)
+
+
+def remove_previous_outputs(output_dir: str, name: str) -> None:
+    """Delete every image/mask pair a previous run produced for this image.
+
+    `--overwrite` only ever overwrote the pairs the *current* run happens to
+    regenerate. Lowering the cluster size, or editing the labels, leaves the
+    old `_cluster_N` files behind -- and SegmentationDataModule loads every
+    TIFF in `images/`, so stale tiles silently join the new training set.
+    Clearing first makes the run's output reflect only the run's inputs.
+
+    Both the clustered and unclustered names are removed so switching between
+    the two modes doesn't leave the other's output behind. The `_cluster_`
+    infix keeps this from matching a different image whose name merely shares
+    a prefix.
+
+    Args:
+        output_dir (str): The experiment directory.
+        name (str): Base name of the input image, without extension.
+    """
+    stale = []
+    for suffix_glob in ("", "_cluster_*"):
+        paths = artifact_paths(output_dir, name, suffix_glob)
+        for key in ("image", "mask", "warped_labels", "raw_mask"):
+            stale.extend(glob.glob(paths[key]))
+
+    if stale:
+        print(f"Removing {len(stale)} file(s) from a previous run...")
+        remove_files(stale)
 
 
 def validate_cluster_crs(image_crs, input_image_fn: str) -> None:
@@ -320,16 +386,15 @@ def create_mask_for_labels(
     """
     name = os.path.basename(input_image_fn).replace(".tif", "")
 
-    output_mask_fn = os.path.join(output_dir, f"{name}{suffix}_mask.tif")
-    output_warped_label_fn = os.path.join(
-        output_dir, f"{name}{suffix}_labels_warped.geojson"
-    )
-    output_cropped_image_fn = os.path.join(
-        output_dir, "images", f"{name}{suffix}_cropped.tif"
-    )
-    output_buffered_mask_fn = os.path.join(
-        output_dir, "masks", f"{name}{suffix}_buffered.tif"
-    )
+    paths = artifact_paths(output_dir, name, suffix)
+    output_mask_fn = paths["raw_mask"]
+    output_warped_label_fn = paths["warped_labels"]
+    output_cropped_image_fn = paths["image"]
+    output_buffered_mask_fn = paths["mask"]
+
+    # ogr2ogr refuses to write over an existing GeoJSON, so a leftover from an
+    # aborted run would fail this cluster on every retry.
+    remove_files([output_warped_label_fn, output_mask_fn])
 
     ##########
     # Load information about the input image
@@ -560,6 +625,12 @@ def main() -> None:
         image_crs = f.crs
         dst_crs = image_crs.to_string() if image_crs is not None else None
 
+    # Start from a clean slate so the output reflects only this run's inputs.
+    # Without this, pairs from a previous run with a different cluster size or
+    # label set survive and get loaded as training data alongside the new set.
+    if overwrite:
+        remove_previous_outputs(output_dir, name)
+
     if cluster_size is not None:
         validate_cluster_crs(image_crs, input_image_fn)
         print(f"Clustering labels with grid size {cluster_size}...")
@@ -638,6 +709,10 @@ def main() -> None:
             if cluster_size is None:
                 raise
             print(f"WARNING: skipping cluster {cluster_id}: {e}")
+            # Drop whatever this cluster managed to write before failing, so
+            # the skip leaves no partial pair behind for the datamodule to
+            # pick up and no stale intermediate to trip the next attempt.
+            remove_files(artifact_paths(output_dir, name, suffix).values())
             continue
         finally:
             if cluster_size is not None and os.path.exists(temp_label_fn):
