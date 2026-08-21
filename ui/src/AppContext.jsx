@@ -253,7 +253,7 @@ export const AppProvider = ({ children }) => {
           target: "#interactiveLabelerMapArea",
           title: "Compare and label buildings",
           content:
-            "Click a building to apply the selected class, right-click to clear it, or hold Ctrl while dragging to label several buildings. Drag the swipe divider to compare pre- and post-event imagery.",
+            "Click a building to apply the selected class, right-click to clear it, or hold Ctrl while dragging to label several buildings. Open Advanced and enable Swipe to compare pre- and post-event imagery.",
         },
         {
           type: "teachingBubble",
