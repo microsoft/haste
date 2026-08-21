@@ -207,6 +207,16 @@ def resolve_constraint_indices(
             f"separators, so e.g. 'no_damage' also works. Got: {list(classes)}"
         )
 
+    if no_damage_index != len(classes):
+        raise ValueError(
+            f"training.use_constraint_loss is true but '{NO_DAMAGE_CLASS}' is "
+            f"entry {no_damage_index} of {len(classes)} in labels.classes; it "
+            "must be the LAST one. It is a weak annotation rather than a class "
+            "the model predicts, so it is given no output channel at all, "
+            "which only works when it is the final mask value. Move it to the "
+            f"end of labels.classes. Got: {list(classes)}"
+        )
+
     if damaged_class_index != DAMAGED_CLASS_INDEX:
         raise ValueError(
             f"training.use_constraint_loss is true but "

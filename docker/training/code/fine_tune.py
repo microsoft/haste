@@ -124,9 +124,7 @@ def main() -> None:
         stds=args["imagery"]["normalization_stds"],
     )
 
-    # we include +1 to account for our 0 "not labeled" class
     classes = args["labels"]["classes"]
-    num_classes = len(classes) + 1
 
     # Resolve the mask values the constraint loss operates on. "No Damage" is
     # derived from the class list; "Damaged Building" is required to stay at
@@ -141,6 +139,14 @@ def main() -> None:
             f"Constraint loss enabled: penalizing P(Damaged Building="
             f"{damaged_class_index}) at No Damage (={no_damage_index}) pixels"
         )
+
+    # Normally one channel per class plus channel 0 for "not labeled". With
+    # the constraint loss, "No Damage" is a weak annotation rather than
+    # something the model predicts, so it gets no channel -- the count drops
+    # by one and "No Damage" is left as the final mask value with nowhere to
+    # land. Channel 0 is still emitted but never supervised, so inference
+    # excludes it from the argmax.
+    num_classes = len(classes) if use_constraint_loss else len(classes) + 1
 
     initial_weights_path = args["training"].get("initial_weights_fn", None)
     if initial_weights_path:

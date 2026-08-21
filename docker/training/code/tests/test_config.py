@@ -159,10 +159,11 @@ class TestResolveConstraintIndices(unittest.TestCase):
         self.assertEqual(damaged, DAMAGED_CLASS_INDEX)
 
     def test_ui_picker_order_is_supported(self):
-        """The full list from ui/src/assets/json/settings.json, in order.
+        """The UI catalog order, minus the classes that follow No Damage.
 
-        Cloud sits between Damaged Building and No Damage there, which is the
-        layout the old hardcoded `y == 4` got wrong.
+        Cloud sits between Damaged Building and No Damage in
+        ui/src/assets/json/settings.json, which is the layout the old
+        hardcoded `y == 4` got wrong.
         """
         classes = [
             "Background",
@@ -170,13 +171,31 @@ class TestResolveConstraintIndices(unittest.TestCase):
             "Damaged Building",
             "Cloud",
             "No Damage",
-            "Flood Extent",
         ]
         no_damage, damaged = resolve_constraint_indices(
             classes, use_constraint_loss=True
         )
         self.assertEqual(no_damage, 5)
         self.assertEqual(damaged, DAMAGED_CLASS_INDEX)
+
+    def test_no_damage_must_be_the_final_class(self):
+        """It has no output channel, so it has to be the last mask value.
+
+        Note this rules out the UI catalog's full order, where Flood Extent
+        follows No Damage.
+        """
+        classes = [
+            "Background",
+            "Building",
+            "Damaged Building",
+            "No Damage",
+            "Flood Extent",
+        ]
+        with self.assertRaises(ValueError) as ctx:
+            resolve_constraint_indices(classes, use_constraint_loss=True)
+        message = str(ctx.exception)
+        self.assertIn("LAST", message)
+        self.assertIn("Flood Extent", message)
 
     def test_error_lists_the_configured_classes(self):
         """The message has to show what was actually there to be actionable."""

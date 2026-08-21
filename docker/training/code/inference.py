@@ -159,6 +159,15 @@ def main() -> None:
         collate_fn=stack_samples,
     )
 
+    # A constraint-loss model has one fewer output channel ("No Damage" gets
+    # none) and leaves channel 0 unsupervised, so its argmax needs handling.
+    use_constraint_loss = args["training"]["use_constraint_loss"]
+    if use_constraint_loss:
+        print(
+            "Checkpoint was trained with the constraint loss: excluding the"
+            " unsupervised channel 0 from predictions."
+        )
+
     # Run inference
     tic = time.time()
 
@@ -174,9 +183,16 @@ def main() -> None:
         batch_size = images.shape[0]
         with torch.inference_mode():
             predictions = task(images)
-            predictions = (
-                predictions.argmax(axis=1).cpu().numpy().astype(np.uint8)
-            )
+            if use_constraint_loss:
+                # Channel 0 ("Unlabeled") is emitted but never supervised
+                # under the constraint loss, so its logits are meaningless
+                # and it must not be allowed to win. Drop it and shift the
+                # indices back onto the 1-based mask values. "No Damage" has
+                # no channel at all, so it can't be predicted either.
+                predictions = predictions[:, 1:].argmax(axis=1) + 1
+            else:
+                predictions = predictions.argmax(axis=1)
+            predictions = predictions.cpu().numpy().astype(np.uint8)
 
         for i in range(batch_size):
             height, width = predictions[i].shape

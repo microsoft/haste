@@ -13,76 +13,120 @@ from torch import Tensor
 from torchgeo.trainers import SemanticSegmentationTask
 
 
+def supervised_logits(y_hat: Tensor, no_damage_index: int) -> Tensor:
+    """Return only the logits for classes that receive supervision.
+
+    Channel 0 is kept in the model output as the "Unlabeled" channel but is
+    sliced off here so it never receives a gradient. "No Damage" is a weak
+    mask annotation rather than a class the model predicts, so it has no
+    output channel at all -- it must be the final mask value, which makes
+    ``no_damage_index`` equal to the channel count.
+
+    Args:
+        y_hat: Predicted logits of shape ``(N, C, H, W)``.
+        no_damage_index: Mask value of the "No Damage" class.
+
+    Returns:
+        Logits for the deployable classes, shape ``(N, C - 1, H, W)``.
+
+    Raises:
+        ValueError: If the model was built with an output channel for
+            "No Damage".
+    """
+    num_channels = y_hat.shape[1]
+    if no_damage_index != num_channels:
+        raise ValueError(
+            f"no_damage_index ({no_damage_index}) must equal the number of"
+            f" output channels ({num_channels}); 'No Damage' is a weak label"
+            " that must be the final mask value and carry no output channel"
+            " of its own."
+        )
+    return y_hat[:, 1:]
+
+
 def constraint_segmentation_loss(
     y_hat: Tensor,
     y: Tensor,
     no_damage_index: int,
     damaged_class_index: int = 3,
-    ignore_index: int = 0,
 ) -> Tensor:
-    """Constraint loss for weakly-supervised "No Damage" labels.
+    """Return the combined CE and weak-label constraint loss."""
+    ce_loss, constraint_loss = constraint_segmentation_loss_components(
+        y_hat, y, no_damage_index, damaged_class_index
+    )
+    return ce_loss + constraint_loss
 
-    Standard cross-entropy is applied to every labeled pixel *except* those of
-    the "No Damage" class. At a "No Damage" pixel we don't know the true class
-    -- only that the building is *not* damaged -- so instead of a hard label
-    we apply a partial-label term over the classes that remain possible.
 
-    "No Damage" is a statement about a building, not something visible in the
-    imagery, so it is never a legitimate *output*. At a "No Damage" pixel the
-    true class is one of the remaining visual classes: everything except
-    "Damaged Building", the "No Damage" channel itself, and the unlabeled /
-    nodata channel. Maximizing the total probability of that allowed set --
-    ``-log sum_{c in allowed} p_c`` -- pushes all three excluded channels
-    toward zero while leaving the choice among the allowed ones free, which is
-    exactly the supervision a "No Damage" label carries.
+def constraint_segmentation_loss_components(
+    y_hat: Tensor,
+    y: Tensor,
+    no_damage_index: int,
+    damaged_class_index: int = 3,
+) -> tuple:
+    """Compute the CE and weak-label constraint terms separately.
 
-    An earlier form penalized only ``p(Damaged Building)`` here. That is
-    under-constrained: it leaves every other channel untouched, so the
-    cheapest way to satisfy it is to dump probability on the unsupervised
-    "No Damage" channel, and the model duly learns to emit "No Damage" as a
-    predicted class. Optimizing raw logits against that objective leaves the
-    remaining channels at a dead-even split rather than favoring a real class.
+    Cross-entropy is applied to every labeled pixel *except* those of the
+    "No Damage" class. At a "No Damage" pixel we don't know the true class --
+    only that the building is *not* damaged -- so instead of a hard label its
+    predicted "Damaged Building" probability is penalized.
+
+    Both non-deployable concepts are kept out of the softmax entirely. The
+    unlabeled channel is sliced off by :func:`supervised_logits`, and
+    "No Damage" has no channel to begin with, so neither can ever be
+    predicted and neither can absorb probability mass to cheapen the penalty.
+    An earlier form left both in: with the "No Damage" channel unsupervised,
+    dumping mass there drove p(Damaged Building) to zero at no cost, and the
+    model learned to emit "No Damage" as a predicted class.
 
     Args:
-        y_hat: Predicted logits of shape ``(N, C, H, W)``.
+        y_hat: Predicted logits of shape ``(N, C, H, W)``. Channel 0 is the
+            non-deployable "Unlabeled" output and receives no gradient.
         y: Integer mask of shape ``(N, H, W)``; 0 is the unlabeled/ignored
             class.
         no_damage_index: Mask value of the "No Damage" class. This equals
-            ``labels.classes.index("No Damage") + 1`` and therefore depends on
-            the project's class list, so it must be passed in rather than
-            hardcoded.
-        damaged_class_index: Output channel / mask value of the "Damaged
-            Building" class, which a "No Damage" pixel cannot be.
-        ignore_index: Channel reserved for unlabeled pixels; never a valid
-            prediction.
+            ``labels.classes.index("No Damage") + 1``, and must equal the
+            model's output channel count.
+        damaged_class_index: Mask value of the "Damaged Building" class,
+            which a "No Damage" pixel is known not to be.
 
     Returns:
-        The scalar loss.
+        The ``(cross_entropy_loss, constraint_loss)`` pair.
     """
-    ce_loss = F.cross_entropy(
-        y_hat, y, ignore_index=ignore_index, reduction="none"
-    )
+    logits = supervised_logits(y_hat, no_damage_index)
+
+    # Supervised logits are zero-indexed while deployable mask values start
+    # at 1, so shift the targets down. Unlabeled and "No Damage" pixels get a
+    # dedicated ignored target rather than a class.
+    ce_targets = torch.full_like(y, -100)
     standard_mask = (y > 0) & (y != no_damage_index)
+    ce_targets[standard_mask] = y[standard_mask] - 1
+
+    ce_loss = F.cross_entropy(
+        logits, ce_targets, ignore_index=-100, reduction="none"
+    )
     if standard_mask.any():
-        loss = ce_loss[standard_mask].mean()
+        ce_loss = ce_loss[standard_mask].mean()
     else:
         # No "standard" labeled pixels in this batch (e.g. a patch that is
         # entirely "No Damage" + unlabeled). Avoid a NaN from mean() over an
         # empty tensor while staying attached to the autograd graph.
-        loss = y_hat.sum() * 0.0
+        ce_loss = logits.sum() * 0.0
 
     constraint_mask = y == no_damage_index
     if constraint_mask.any():
-        excluded = {ignore_index, damaged_class_index, no_damage_index}
-        allowed = [c for c in range(y_hat.shape[1]) if c not in excluded]
-        if allowed:
-            # log-sum-exp over the allowed channels' log-probabilities is
-            # log(sum p_c) computed stably.
-            log_probs = F.log_softmax(y_hat, dim=1)
-            allowed_logp = torch.logsumexp(log_probs[:, allowed], dim=1)
-            loss = loss + (-allowed_logp)[constraint_mask].mean()
+        if not 0 < damaged_class_index < no_damage_index:
+            raise ValueError(
+                "damaged_class_index must identify a supervised mask class"
+                " before no_damage_index"
+            )
+        probs = F.softmax(logits, dim=1)
+        constraint_loss = probs[:, damaged_class_index - 1, :, :][
+            constraint_mask
+        ].mean()
+    else:
+        constraint_loss = logits.sum() * 0.0
 
-    return loss
+    return ce_loss, constraint_loss
 
 
 class CustomSemanticSegmentationTask(SemanticSegmentationTask):
@@ -120,6 +164,30 @@ class CustomSemanticSegmentationTask(SemanticSegmentationTask):
             keepdim=True,
         )
 
+    def _constraint_losses(self, y_hat: Tensor, y: Tensor) -> tuple:
+        """Compute and return the CE, constraint, and total losses."""
+        if self.no_damage_index is None:
+            raise ValueError(
+                "use_constraint_loss is True but no_damage_index is not set."
+                " Pass the mask value of the 'No Damage' class (see"
+                " fine_tune.py)."
+            )
+        ce_loss, constraint_loss = constraint_segmentation_loss_components(
+            y_hat, y, self.no_damage_index, self.damaged_class_index
+        )
+        return ce_loss, constraint_loss, ce_loss + constraint_loss
+
+    def _constraint_metric_targets(self, y: Tensor) -> Tensor:
+        """Fold "No Damage" into the ignored class for metrics.
+
+        The metrics are configured for the model's output channels, and
+        "No Damage" has none -- passing its mask value straight through would
+        be an out-of-range target.
+        """
+        metric_targets = y.clone()
+        metric_targets[metric_targets == self.no_damage_index] = 0
+        return metric_targets
+
     def configure_callbacks(self) -> list[Callback]:
         """Configures the callbacks for the trainer.
 
@@ -149,19 +217,77 @@ class CustomSemanticSegmentationTask(SemanticSegmentationTask):
         y_hat = self(x)
 
         if self.use_constraint_loss:
-            if self.no_damage_index is None:
-                raise ValueError(
-                    "use_constraint_loss is True but no_damage_index is not"
-                    " set. Pass the mask value of the 'No Damage' class (see"
-                    " fine_tune.py)."
-                )
-            loss = constraint_segmentation_loss(
-                y_hat, y, self.no_damage_index, self.damaged_class_index
+            ce_loss, constraint_loss, loss = self._constraint_losses(y_hat, y)
+            metric_targets = self._constraint_metric_targets(y)
+            self.log("train_ce_loss", ce_loss, batch_size=batch_size)
+            self.log(
+                "train_constraint_loss", constraint_loss, batch_size=batch_size
             )
         else:
             loss = self.criterion(y_hat, y)
+            metric_targets = y
 
         self.log("train_loss", loss, batch_size=batch_size)
-        self.train_metrics(y_hat, y)
+        self.train_metrics(y_hat, metric_targets)
+        # NOTE: kept deliberately, unlike upstream, which dropped this line.
+        # hastegeo's tbparser reads `train_MulticlassAccuracy` out of the
+        # TensorBoard events to build the model's reported metrics, and
+        # without this the tag is never written.
         self.log_dict(self.train_metrics, batch_size=batch_size)
         return loss
+
+    def validation_step(
+        self, batch: Any, batch_idx: int, dataloader_idx: int = 0
+    ) -> None:
+        """Compute the validation loss with the same weak-label semantics.
+
+        The base implementation would hand "No Damage" targets straight to a
+        criterion whose output has no channel for them, so it has to be
+        overridden whenever the constraint loss is in use.
+
+        Args:
+            batch: The output of your DataLoader.
+            batch_idx: Integer displaying index of this batch.
+            dataloader_idx: Index of the current dataloader.
+        """
+        if not self.use_constraint_loss:
+            return super().validation_step(batch, batch_idx, dataloader_idx)
+
+        x = batch["image"]
+        y = batch["mask"]
+        batch_size = x.shape[0]
+        y_hat = self(x)
+
+        ce_loss, constraint_loss, loss = self._constraint_losses(y_hat, y)
+        self.log("val_ce_loss", ce_loss, batch_size=batch_size)
+        self.log("val_constraint_loss", constraint_loss, batch_size=batch_size)
+        self.log("val_loss", loss, batch_size=batch_size)
+        self.val_metrics(y_hat, self._constraint_metric_targets(y))
+        self.log_dict(self.val_metrics, batch_size=batch_size)
+
+    def test_step(
+        self, batch: Any, batch_idx: int, dataloader_idx: int = 0
+    ) -> None:
+        """Compute the test loss with the same weak-label semantics.
+
+        Args:
+            batch: The output of your DataLoader.
+            batch_idx: Integer displaying index of this batch.
+            dataloader_idx: Index of the current dataloader.
+        """
+        if not self.use_constraint_loss:
+            return super().test_step(batch, batch_idx, dataloader_idx)
+
+        x = batch["image"]
+        y = batch["mask"]
+        batch_size = x.shape[0]
+        y_hat = self(x)
+
+        ce_loss, constraint_loss, loss = self._constraint_losses(y_hat, y)
+        self.log("test_ce_loss", ce_loss, batch_size=batch_size)
+        self.log(
+            "test_constraint_loss", constraint_loss, batch_size=batch_size
+        )
+        self.log("test_loss", loss, batch_size=batch_size)
+        self.test_metrics(y_hat, self._constraint_metric_targets(y))
+        self.log_dict(self.test_metrics, batch_size=batch_size)

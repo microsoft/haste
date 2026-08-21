@@ -67,8 +67,27 @@ class TestFindClassValue(unittest.TestCase):
 
 
 class TestShouldUseConstraintLoss(unittest.TestCase):
-    def test_enabled_for_the_full_ui_catalog(self):
-        self.assertTrue(should_use_constraint_loss(UI_CATALOG))
+    def test_disabled_for_the_full_ui_catalog(self):
+        """Flood Extent follows No Damage there, which the loss can't use.
+
+        No Damage carries no output channel, so it has to be the final class.
+        Declining here keeps us from submitting a job fine_tune.py rejects.
+        """
+        self.assertEqual(UI_CATALOG[-1], "Flood Extent")
+        self.assertFalse(should_use_constraint_loss(UI_CATALOG))
+
+    def test_enabled_for_the_ui_catalog_ending_at_no_damage(self):
+        self.assertTrue(should_use_constraint_loss(UI_CATALOG[:-1]))
+
+    def test_disabled_when_no_damage_is_not_last(self):
+        classes = [
+            "Background",
+            "Building",
+            "Damaged Building",
+            "No Damage",
+            "Flood Extent",
+        ]
+        self.assertFalse(should_use_constraint_loss(classes))
 
     def test_enabled_for_the_minimal_viable_list(self):
         classes = ["Background", "Building", "Damaged Building", "No Damage"]

@@ -117,6 +117,21 @@ def should_use_constraint_loss(classes: Optional[List[str]]) -> bool:
         )
         return False
 
+    if no_damage_value != len(classes):
+        logger.warning(
+            "Label classes include '%s', but it is entry %d of %d rather than "
+            "the last. It is a weak label and is given no output channel, "
+            "which requires it to be the final class. Leaving the constraint "
+            "loss off; move '%s' to the end of the project's classes to use "
+            "it. Classes: %s",
+            NO_DAMAGE_CLASS,
+            no_damage_value,
+            len(classes),
+            NO_DAMAGE_CLASS,
+            classes,
+        )
+        return False
+
     if damaged_value != DAMAGED_CLASS_INDEX:
         logger.warning(
             "Label classes include '%s', but '%s' is class value %d rather "
