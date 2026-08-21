@@ -30,7 +30,7 @@ import rasterio
 import rasterio.mask
 import shapely  # shapely>=2 (via geopandas) for STRtree
 import shapely.geometry
-from bda.config import get_args
+from bda.config import find_class_value, get_args
 
 
 def add_create_masks_parser(
@@ -589,14 +589,26 @@ def main() -> None:
         class_name: idx + 1 for idx, class_name in enumerate(class_names)
     }
 
+    # Resolve the buffer classes leniently. train.py hardcodes "Building" and
+    # "Background", but labels.classes comes from the project's primary
+    # classes, whose names are unconstrained -- a project spelling them
+    # "building"/"background" would otherwise silently lose buffering
+    # entirely. This maps config values onto other config values, so it does
+    # not affect how label-file class strings are matched by gdal_rasterize.
+    buffer_value = find_class_value(class_names, class_to_buffer)
+    buffer_by_value = find_class_value(class_names, class_to_buffer_by)
+
     do_buffering = True
-    if (class_to_buffer not in class_names) or (
-        class_to_buffer_by not in class_names
-    ):
+    if buffer_value is None or buffer_by_value is None:
         print(
             "WARNING: The class to buffer or the class to buffer by is not in the list of classes. Not doing any buffering."
         )
         do_buffering = False
+    else:
+        # Use the canonical spelling from labels.classes so the downstream
+        # class_name_to_idx_map lookups resolve.
+        class_to_buffer = class_names[buffer_value - 1]
+        class_to_buffer_by = class_names[buffer_by_value - 1]
 
     if set(class_names) != get_class_names_from_labels(input_label_fn):
         print(

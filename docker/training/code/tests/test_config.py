@@ -17,6 +17,8 @@ from bda.config import (  # noqa: E402
     _validate_config,
     _validate_optional_config,
     _validate_optional_values,
+    find_class_value,
+    normalize_class_name,
     normalize_gpu_ids,
     resolve_constraint_indices,
 )
@@ -125,6 +127,91 @@ class TestResolveConstraintIndices(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             resolve_constraint_indices(classes, use_constraint_loss=True)
         self.assertIn("Damaged Building", str(ctx.exception))
+
+    def test_snake_case_names_are_matched(self):
+        """The PutProject docstring's own example uses `no_damage`."""
+        classes = ["background", "building", "damaged_building", "no_damage"]
+        no_damage, damaged = resolve_constraint_indices(
+            classes, use_constraint_loss=True
+        )
+        self.assertEqual(no_damage, 4)
+        self.assertEqual(damaged, DAMAGED_CLASS_INDEX)
+
+    def test_casing_and_separators_are_ignored(self):
+        classes = [
+            "BACKGROUND",
+            "building",
+            "Damaged-Building",
+            "nO   dAmAgE",
+        ]
+        no_damage, damaged = resolve_constraint_indices(
+            classes, use_constraint_loss=True
+        )
+        self.assertEqual(no_damage, 4)
+        self.assertEqual(damaged, DAMAGED_CLASS_INDEX)
+
+    def test_surrounding_whitespace_is_ignored(self):
+        classes = ["Background", "Building", " Damaged Building ", "No Damage"]
+        no_damage, damaged = resolve_constraint_indices(
+            classes, use_constraint_loss=True
+        )
+        self.assertEqual(no_damage, 4)
+        self.assertEqual(damaged, DAMAGED_CLASS_INDEX)
+
+    def test_ui_picker_order_is_supported(self):
+        """The full list from ui/src/assets/json/settings.json, in order.
+
+        Cloud sits between Damaged Building and No Damage there, which is the
+        layout the old hardcoded `y == 4` got wrong.
+        """
+        classes = [
+            "Background",
+            "Building",
+            "Damaged Building",
+            "Cloud",
+            "No Damage",
+            "Flood Extent",
+        ]
+        no_damage, damaged = resolve_constraint_indices(
+            classes, use_constraint_loss=True
+        )
+        self.assertEqual(no_damage, 5)
+        self.assertEqual(damaged, DAMAGED_CLASS_INDEX)
+
+    def test_error_lists_the_configured_classes(self):
+        """The message has to show what was actually there to be actionable."""
+        classes = ["Background", "Building", "Destroyed"]
+        with self.assertRaises(ValueError) as ctx:
+            resolve_constraint_indices(classes, use_constraint_loss=True)
+        self.assertIn("Destroyed", str(ctx.exception))
+
+
+class TestNormalizeClassName(unittest.TestCase):
+    def test_equivalent_spellings_collapse(self):
+        forms = [
+            "No Damage",
+            "no damage",
+            "NO DAMAGE",
+            "no_damage",
+            "No-Damage",
+            "  no   damage  ",
+        ]
+        normalized = {normalize_class_name(f) for f in forms}
+        self.assertEqual(normalized, {"no damage"})
+
+    def test_distinct_names_stay_distinct(self):
+        self.assertNotEqual(
+            normalize_class_name("Damaged Building"),
+            normalize_class_name("No Damage"),
+        )
+
+    def test_find_class_value_is_one_based(self):
+        classes = ["Background", "Building", "Damaged Building"]
+        self.assertEqual(find_class_value(classes, "Background"), 1)
+        self.assertEqual(find_class_value(classes, "damaged_building"), 3)
+
+    def test_find_class_value_returns_none_when_absent(self):
+        self.assertIsNone(find_class_value(["Background"], "No Damage"))
 
 
 class TestValidateOptionalConfig(unittest.TestCase):

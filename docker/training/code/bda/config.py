@@ -4,6 +4,7 @@
 """Methods to handle the parsing and merging of command line and YAML file arguments."""
 
 import argparse
+import re
 from typing import Callable, Optional, Sequence, Union
 
 import yaml
@@ -102,11 +103,59 @@ def normalize_gpu_ids(
 # it is a pipeline-wide contract rather than a free parameter.
 DAMAGED_CLASS_INDEX = 3
 
+# Class names the constraint loss looks for. These match the UI's canonical
+# picker (ui/src/assets/json/settings.json), but PrimaryClass.name is an
+# unconstrained string server-side -- the PutProject docstring's own example
+# uses "no_damage" -- so names are matched leniently rather than literally.
+NO_DAMAGE_CLASS = "No Damage"
+DAMAGED_BUILDING_CLASS = "Damaged Building"
+
+
+def normalize_class_name(name: str) -> str:
+    """Fold a class name to a form that survives casing and separator drift.
+
+    "No Damage", "no_damage", "NO-DAMAGE" and "no  damage" all normalize to
+    the same string.
+
+    Args:
+        name (str): A class name from the config.
+
+    Returns:
+        str: The normalized name.
+    """
+    return re.sub(r"[\s_\-]+", " ", str(name).strip().casefold())
+
+
+def find_class_value(classes: Sequence[str], target: str) -> Optional[int]:
+    """Return the mask value of `target` in `classes`, or None if absent.
+
+    Mask values are ``index + 1`` because 0 is reserved for "not labeled".
+    Matching is via `normalize_class_name`, so casing and separator style
+    don't matter.
+
+    Args:
+        classes (Sequence[str]): The configured ``labels.classes``.
+        target (str): The class name to look for.
+
+    Returns:
+        Optional[int]: The mask value, or None when no class matches.
+    """
+    wanted = normalize_class_name(target)
+    for idx, name in enumerate(classes):
+        if normalize_class_name(name) == wanted:
+            return idx + 1
+    return None
+
 
 def resolve_constraint_indices(
     classes: Sequence[str], use_constraint_loss: bool
 ) -> tuple:
     """Resolve the mask values the "No Damage" constraint loss operates on.
+
+    Class names are matched with `normalize_class_name`, so casing and
+    separator style don't matter -- "No Damage", "no_damage" and "NO-DAMAGE"
+    are all accepted. `PrimaryClass.name` is an unconstrained string
+    server-side, so the exact spelling a project carries is not guaranteed.
 
     Mask values are ``classes.index(name) + 1``. The two indices are not
     equally free to move:
@@ -138,31 +187,39 @@ def resolve_constraint_indices(
     if not use_constraint_loss:
         return None, DAMAGED_CLASS_INDEX
 
+    no_damage_index = find_class_value(classes, NO_DAMAGE_CLASS)
+    damaged_class_index = find_class_value(classes, DAMAGED_BUILDING_CLASS)
+
     missing = [
-        c for c in ("No Damage", "Damaged Building") if c not in classes
+        name
+        for name, value in (
+            (NO_DAMAGE_CLASS, no_damage_index),
+            (DAMAGED_BUILDING_CLASS, damaged_class_index),
+        )
+        if value is None
     ]
     if missing:
         raise ValueError(
             "training.use_constraint_loss is true but labels.classes is "
-            f"missing {missing}. The constraint loss penalizes 'Damaged "
-            "Building' probability at 'No Damage' pixels, so both classes "
-            "are required."
+            f"missing {missing}. The constraint loss penalizes "
+            f"'{DAMAGED_BUILDING_CLASS}' probability at '{NO_DAMAGE_CLASS}' "
+            "pixels, so both classes are required. Matching ignores case and "
+            f"separators, so e.g. 'no_damage' also works. Got: {list(classes)}"
         )
 
-    no_damage_index = list(classes).index("No Damage") + 1
-    damaged_class_index = list(classes).index("Damaged Building") + 1
     if damaged_class_index != DAMAGED_CLASS_INDEX:
         raise ValueError(
-            "training.use_constraint_loss is true but 'Damaged Building' is "
-            f"class value {damaged_class_index} in labels.classes (expected "
+            f"training.use_constraint_loss is true but "
+            f"'{DAMAGED_BUILDING_CLASS}' is class value "
+            f"{damaged_class_index} in labels.classes (expected "
             f"{DAMAGED_CLASS_INDEX}). Downstream steps hardcode "
             f"{DAMAGED_CLASS_INDEX} as the damaged class -- "
             "merge_with_building_footprints.py computes the damage fraction "
             "from it and inference.py colors it red -- so training against a "
             "different channel would silently report no damage. Reorder "
-            f"labels.classes so 'Damaged Building' is entry "
+            f"labels.classes so '{DAMAGED_BUILDING_CLASS}' is entry "
             f"{DAMAGED_CLASS_INDEX} (1-based), or leave use_constraint_loss "
-            "off."
+            f"off. Got: {list(classes)}"
         )
 
     return no_damage_index, damaged_class_index

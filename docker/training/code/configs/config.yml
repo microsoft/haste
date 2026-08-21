@@ -37,7 +37,7 @@ training:
   gpu_ids: null  # Optional: list of GPU ids for multi-GPU (DDP) training, e.g. [0, 1]. Overrides gpu_id.
   log_dir: logs/
   checkpoint_subdir: checkpoints/ # Where the weights will be saved during training, relative to experiment_dir
-  use_constraint_loss: false  # Weakly-supervised "No Damage" loss; requires "No Damage" and "Damaged Building" in labels.classes
+  use_constraint_loss: false  # Weakly-supervised "No Damage" loss; requires "No Damage" and "Damaged Building" in labels.classes (matched ignoring case/separators, so "no_damage" also works)
   initial_weights_fn: null  # Path to a checkpoint file to initialize model weights from, or null to use ImageNet weights.
 
 inference:
