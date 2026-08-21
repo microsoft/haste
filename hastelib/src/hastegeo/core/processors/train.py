@@ -16,6 +16,7 @@ from ..models.projects import (
 )
 from ..models.training import ExperimentConfig, Imagery, Labels, Training
 from ..utils.data import convert_json_to_geojson, extract_from_url
+from ..utils.label_classes import should_use_constraint_loss
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
@@ -399,6 +400,11 @@ class TrainPostprocessor(BaseTrainProcessor):
                 learning_rate=self.model_data.learningRate or 0.0001,
                 log_dir=f"{BATCH_JOB_WORKDIR}/logs",
                 max_epochs=self.model_data.maxEpochs or 1,
+                # "No Damage" is a weak label -- it says a building is not
+                # damaged, not what its pixels look like -- so when a project
+                # defines that class, train it with the constraint loss
+                # instead of as an ordinary hard class.
+                use_constraint_loss=should_use_constraint_loss(label_classes),
                 initial_weights_fn=(
                     f"{BATCH_JOB_WORKDIR}/inputs/{initial_weights_filename}"
                     if self.model_data.initialWeightsUrl
