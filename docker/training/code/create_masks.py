@@ -89,6 +89,16 @@ def add_create_masks_parser(
     return parser
 
 
+class CropGeometryOutsideRasterError(RuntimeError):
+    """A cluster's crop geometry does not overlap the imagery.
+
+    Reachable for a grid cell covering only imagery nodata, and the one
+    condition the clustering loop is willing to skip past. Everything else --
+    a channel-count mismatch, a failed GDAL call -- must abort the run rather
+    than be mistaken for an empty cell.
+    """
+
+
 def _run(command: List[str], what: str) -> None:
     """Runs a subprocess, raising with captured output when it fails.
 
@@ -427,7 +437,23 @@ def create_mask_for_labels(
         geom = crop_geom
 
     with rasterio.open(input_image_fn) as f:
-        data, transform = rasterio.mask.mask(f, [geom], crop=True)
+        # Preflight the overlap so a cluster that misses the raster is
+        # reported as exactly that, rather than as a generic ValueError that
+        # a caller would have to guess the meaning of.
+        raster_box = shapely.geometry.box(*f.bounds)
+        if not shapely.geometry.shape(geom).intersects(raster_box):
+            raise CropGeometryOutsideRasterError(
+                f"Crop geometry does not overlap {input_image_fn}."
+            )
+        try:
+            data, transform = rasterio.mask.mask(f, [geom], crop=True)
+        except ValueError as e:
+            # rasterio words this as "Input shapes do not overlap raster".
+            # The preflight above catches the common case; this covers
+            # degenerate slivers that intersect but yield an empty window.
+            if "overlap" in str(e).lower():
+                raise CropGeometryOutsideRasterError(str(e)) from e
+            raise
 
     if num_channels is not None and num_channels != data.shape[0]:
         if num_channels > data.shape[0]:
@@ -721,10 +747,12 @@ def main() -> None:
                 suffix,
                 num_channels,
             )
-        except ValueError as e:
-            # rasterio.mask raises when the crop geometry doesn't overlap the
-            # raster -- possible for a grid cell that only covers imagery
-            # nodata. Skip that cluster rather than failing the whole run.
+        except CropGeometryOutsideRasterError as e:
+            # A grid cell covering only imagery nodata. Skip it rather than
+            # failing the whole run. Deliberately narrow: catching every
+            # ValueError here would swallow real configuration errors -- a
+            # channel-count mismatch, say -- once per cluster and then blame
+            # the cluster sizing.
             if cluster_size is None:
                 raise
             print(f"WARNING: skipping cluster {cluster_id}: {e}")

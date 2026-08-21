@@ -103,6 +103,29 @@ class TestValidateClusterCrs(unittest.TestCase):
         self.assertIn("no CRS", str(ctx.exception))
 
 
+class TestCropGeometryOutsideRasterError(unittest.TestCase):
+    """The skip path must be narrow enough to only skip empty cells.
+
+    Catching every ValueError swallowed real configuration errors -- the
+    too-few-bands check raises one -- once per cluster, and then blamed the
+    cluster sizing in the final message.
+    """
+
+    def test_is_distinct_from_valueerror(self):
+        source = open(os.path.join(CODE_DIR, "create_masks.py")).read()
+        namespace = {}
+        start = source.index("class CropGeometryOutsideRasterError")
+        end = source.index("def _run(")
+        exec(compile(source[start:end], "create_masks.py", "exec"), namespace)
+        error = namespace["CropGeometryOutsideRasterError"]
+
+        self.assertTrue(issubclass(error, Exception))
+        self.assertFalse(issubclass(error, ValueError))
+        # ...so `except CropGeometryOutsideRasterError` cannot catch the
+        # channel-count ValueError raised elsewhere in the same function.
+        self.assertFalse(isinstance(ValueError("x"), error))
+
+
 class TestAssignFeaturesToGrid(unittest.TestCase):
     def test_single_feature_single_cell(self):
         feature = _point_box(10, 10)
