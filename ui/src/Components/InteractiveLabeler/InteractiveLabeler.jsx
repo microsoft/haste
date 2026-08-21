@@ -34,8 +34,9 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
-import { PMTiles, Protocol } from "pmtiles";
+import { PMTiles } from "pmtiles";
 import { apiGet, apiPut, buildUrl } from "../../util/api";
+import { getPmtilesProtocol } from "../../util/pmtiles.js";
 import {
   getAzureMapsAuthOptions,
   isAzureMapsPlaceholder,
@@ -75,12 +76,12 @@ import {
 // VectorTileSource configured with `url: "pmtiles://<url>"` will route
 // through pmtiles' byte-range-aware reader. Atlas v3 exposes the Mapbox-GL
 // style `addProtocol` hook (see AZURE_MAPS_INTERACTIVE_LABELER.md §2).
-const _pmtilesProtocol = new Protocol();
-if (typeof window !== "undefined" && window.atlas) {
-  // The bound `.tile` member is what addProtocol expects. Re-registering the
-  // same scheme is idempotent in atlas.
-  window.atlas.addProtocol("pmtiles", _pmtilesProtocol.tile);
-}
+//
+// The Protocol instance is shared process-wide (util/pmtiles.js): atlas keeps
+// one handler per scheme, so a second screen registering its own instance
+// would take over every tile request and fail to resolve the archives added
+// here.
+const _pmtilesProtocol = getPmtilesProtocol();
 
 // Tippecanoe writes the buildings layer with `-l buildings`. The
 // VectorTileSource references this layer name to draw the polygons.

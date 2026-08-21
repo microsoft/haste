@@ -84,6 +84,21 @@ const EmbeddingModelRow = ({
 
   const isProcessed = model.status === "Processed";
   const hasPredictions = !!model.gpkgUrl;
+  // A GeoPackage on its own is not enough to edit: "Clear labels" also writes
+  // one, with zero predicted buildings in it. predictedBuildingCount is what
+  // tells us there is actually something to review.
+  const canEditPredictions =
+    hasPredictions && (model.predictedBuildingCount ?? 0) > 0;
+  const editTooltip = canEditPredictions
+    ? "Review and edit this model's predictions, then save them as a new version"
+    : "Predict buildings in the Interactive Labeler before editing predictions";
+
+  function handleEditPredictions() {
+    if (!canEditPredictions) return;
+    navigate(
+      `/edit-predictions/${projectId}/${imageLayerId}/${model.modelId}`
+    );
+  }
   const createdDate = model.creationDate
     ? `${model.creationDate.substring(0, 10)} ${model.creationDate.substring(
         11,
@@ -336,6 +351,21 @@ const EmbeddingModelRow = ({
                   </MenuList>
                 </MenuPopover>
               </Menu>
+              <Tooltip
+                content={editTooltip}
+                relationship="description"
+                withArrow
+              >
+                <Button
+                  id={"editEmbeddingPredictions" + index}
+                  className="dashboard-button dashboard-button-light ms-2"
+                  disabled={!canEditPredictions}
+                  disabledFocusable={!canEditPredictions}
+                  onClick={handleEditPredictions}
+                >
+                  Edit
+                </Button>
+              </Tooltip>
             </div>
           </td>
         </tr>
@@ -453,6 +483,17 @@ const EmbeddingModelRow = ({
             </MenuList>
           </MenuPopover>
         </Menu>
+        <Tooltip content={editTooltip} relationship="description" withArrow>
+          <Button
+            id={"editEmbeddingPredictions" + index}
+            className="dashboard-button dashboard-button-light"
+            disabled={!canEditPredictions}
+            disabledFocusable={!canEditPredictions}
+            onClick={handleEditPredictions}
+          >
+            Edit
+          </Button>
+        </Tooltip>
         <Menu positioning="below-end">
           <MenuTrigger disableButtonEnhancement>
             <Button

@@ -54,6 +54,32 @@ export const BUILDING_VALIDATION_SHORTCUTS = [
   },
 ];
 
+// Prediction Editor (edit a model's predictions and save a new version).
+export const PREDICTION_EDITOR_SHORTCUTS = [
+  {
+    keys: ["1", "2", "3"],
+    description:
+      "Set the selected building to Damaged / Not Damaged / Unknown",
+  },
+  {
+    keys: ["←", "→"],
+    description: "Previous / next building in the current filter",
+  },
+  {
+    keys: ["Click"],
+    description: "Apply the current click action to a footprint",
+  },
+  {
+    keys: ["Ctrl", "drag"],
+    separator: " + ",
+    description: "Box-select footprints and edit them together",
+  },
+  {
+    keys: ["Right-click"],
+    description: "Undo an edit — back to the model's class",
+  },
+];
+
 // Input types that are not free-text entry. Focus can legitimately sit on
 // one of these while the user keeps driving the page from the keyboard.
 const NON_TEXT_INPUT_TYPES = new Set([

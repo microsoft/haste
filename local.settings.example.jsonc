@@ -46,6 +46,7 @@
     "STATS_QUEUE_NAME": "my-local-stats-queue",
     "ZIP_QUEUE_NAME": "my-local-zip-queue",
     "EMBEDDING_QUEUE_NAME": "my-local-embedding-queue",
+    "PREDICTION_EDIT_PREP_QUEUE_NAME": "my-local-prediction-edit-prep-queue",
 
     // ===== REQUIRED: Docker Images =====
     "AZURE_BATCH_DOCKER_IMAGE": "<ACR_NAME>.azurecr.io/hastetraining:<TAG>",

@@ -27,6 +27,10 @@ from hastegeo.core.processors.inference import (
 )
 from hastegeo.core.processors.labels import LabelTaskGenerator
 from hastegeo.core.processors.metadata import MetadataProcessor
+from hastegeo.core.processors.prediction_tiles import (
+    PredictionTilesPostprocessor,
+    needs_preparation,
+)
 from hastegeo.core.processors.publishing import PublishingProcessor
 from hastegeo.core.processors.stats import StatsPostProcessor
 from hastegeo.core.processors.train import TrainPostprocessor
@@ -601,6 +605,183 @@ async def GetRunEmbeddingQueueMessage(msg: func.QueueMessage) -> None:
                 )
 
 
+@app.function_name(name="PreparePredictionTilesQueueTrigger")
+@app.queue_trigger(
+    arg_name="msg",
+    queue_name=config.get_queue_config()["prediction_edit_prep_queue_name"],
+    connection="AzureWebJobsStorage",
+)
+async def GetPreparePredictionTilesQueueMessage(
+    msg: func.QueueMessage,
+) -> None:
+    """Build the prediction editor's footprint tiles + attribute sidecar.
+
+    Message schema (identifiers only)::
+
+        {"projectId", "imageLayerId", "modelId", "sourceGpkgUrl",
+         "sourceFootprintsUrl", "force"}
+
+    The authoritative job state is read from metadata, so a fresh
+    request and the postprocessor's own poll messages take the same
+    path. Drives the PredictionTilesPostprocessor state machine (submit
+    -> poll -> finalize). The work runs as a task in the training
+    docker image because tippecanoe only ships there. On completion the
+    model gets its attribute-sidecar URL and the image layer gets the
+    shared footprint PMTiles URL, so both documents are persisted.
+    """
+    logger.info(
+        "PreparePredictionTilesQueueTrigger function processed a message: "
+        f'{msg.get_body().decode("utf-8")}'
+    )
+    model_data = None
+    try:
+        payload = json.loads(msg.get_body().decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Queue message must be a JSON object")
+        project_id = payload.get("projectId")
+        model_id = payload.get("modelId")
+        force = bool(payload.get("force", False))
+        if not project_id or not model_id:
+            raise ValueError(
+                "Queue message requires projectId and modelId, got: "
+                f"{sorted(payload.keys())}"
+            )
+
+        try:
+            existing_model = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().MODEL.value,
+                    partition_key=project_id,
+                ).load,
+                model_id,
+            )
+        except FileNotFoundError:
+            existing_model = None
+
+        if not existing_model:
+            logger.info(
+                f"Model {model_id} not found, likely deleted, "
+                "skipping prediction tile preparation."
+            )
+            return
+
+        # Metadata is authoritative: the message only routes the work.
+        model_data = Model(**existing_model)
+        image_layer_id = payload.get("imageLayerId") or model_data.imageLayerId
+        if not image_layer_id:
+            raise ValueError(
+                f"Model {model_id} has no imageLayerId; cannot locate "
+                "the building footprints to tile."
+            )
+
+        image_layer_record = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=project_id,
+            ).load,
+            image_layer_id,
+        )
+        image_layer = ImageLayer(**image_layer_record)
+        previous_pmtiles_url = image_layer.footprintPmtilesUrl
+
+        statuses = config.get_status_types()
+        if model_data.predictionTilesStatus != statuses.IN_PROGRESS.value:
+            needs_pmtiles, needs_attrs = needs_preparation(
+                model_data, image_layer
+            )
+            if not force and not needs_pmtiles and not needs_attrs:
+                logger.info(
+                    f"Prediction tiles for model {model_id} are already "
+                    "available; nothing to do."
+                )
+                model_data.predictionTilesStatus = statuses.COMPLETED.value
+                await asyncio.to_thread(
+                    MetadataProcessor(
+                        data_type=config.get_metadata_types().MODEL.value,
+                        partition_key=project_id,
+                    ).save,
+                    model_id,
+                    model_data.dict(),
+                )
+                return
+            model_data.predictionTilesStatus = statuses.PENDING.value
+
+        processor = PredictionTilesPostprocessor(model_data, image_layer)
+        output = await asyncio.to_thread(processor.process)
+
+        await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).save,
+            model_id,
+            output.dict(),
+        )
+
+        # Footprint tiles belong to the layer, not the model. Re-read the
+        # layer before writing so a concurrent imagery update isn't lost.
+        new_pmtiles_url = processor.image_layer.footprintPmtilesUrl
+        if new_pmtiles_url and new_pmtiles_url != previous_pmtiles_url:
+            latest_layer = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().IMAGELAYER.value,
+                    partition_key=project_id,
+                ).load,
+                image_layer_id,
+            )
+            latest_layer["footprintPmtilesUrl"] = new_pmtiles_url
+            await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().IMAGELAYER.value,
+                    partition_key=project_id,
+                ).save,
+                image_layer_id,
+                latest_layer,
+            )
+    except ValidationError as e:
+        logger.error(
+            f"PreparePredictionTilesQueueTrigger: Validation error: {e}\n"
+            f"{traceback.format_exc()}"
+        )
+    except ValueError as e:
+        logger.error(
+            "PreparePredictionTilesQueueTrigger: Invalid queue message: "
+            f"{e}\n{traceback.format_exc()}"
+        )
+    except Exception as e:
+        logger.error(
+            "PreparePredictionTilesQueueTrigger: Error processing queue "
+            f"message: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        if model_data is not None:
+            try:
+                model_data.predictionTilesStatus = (
+                    config.get_status_types().FAILED.value
+                )
+                model_data.predictionTilesStatusMessage = (
+                    MetadataUtils.append_status_message(
+                        model_data.predictionTilesStatusMessage,
+                        "Prediction tile job failed: "
+                        f"{describe_exception(e)}",
+                    )
+                )
+                await asyncio.to_thread(
+                    MetadataProcessor(
+                        data_type=config.get_metadata_types().MODEL.value,
+                        partition_key=model_data.projectId,
+                    ).save,
+                    model_data.modelId,
+                    model_data.dict(),
+                )
+            except Exception as inner_e:
+                logger.error(
+                    "PreparePredictionTilesQueueTrigger: Error saving "
+                    f"failed status: {inner_e}\n{traceback.format_exc()}",
+                    stack_info=True,
+                )
+
+
 @app.function_name(name="GetRunInferenceQueueTrigger")
 @app.queue_trigger(
     arg_name="msg",
@@ -1013,7 +1194,9 @@ async def GetPublishDatasetQueueMessage(msg: func.QueueMessage) -> None:
         message = PublishQueueMessage(
             **json.loads(msg.get_body().decode("utf-8"))
         )
-        await asyncio.to_thread(PublishingProcessor(config=config).run_step, message)
+        await asyncio.to_thread(
+            PublishingProcessor(config=config).run_step, message
+        )
     except Exception as error:
         logger.error(
             "PublishDatasetQueueTrigger failed with %s",

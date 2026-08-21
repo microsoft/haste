@@ -93,6 +93,8 @@ class ArtifactTypes(Enum):
         - ${projectId}: Unique project identifier
         - ${imageLayerId}: Unique image layer identifier
         - ${modelName}: Model identifier/name
+        - ${modelId}: Unique model identifier
+        - ${version}: Monotonic version number of an edited artifact
 
     Artifact Categories:
         - PRE_EVENT_*: Pre-disaster imagery and derivatives
@@ -107,6 +109,13 @@ class ArtifactTypes(Enum):
         - INFERENCE_*: Model inference outputs
         - MODEL_*: Model artifacts and checkpoints
         - VISUALIZER: Visualization-ready outputs
+        - EDITED_PREDICTIONS_GPKG: Analyst-edited copy of a model's raw
+          prediction GeoPackage. Immutable per version, so the raw
+          prediction referenced by ``Model.gpkgUrl`` is never overwritten.
+        - PREDICTION_ATTRS: Compact per-building prediction attribute
+          payload served alongside the footprint vector tiles.
+        - LAYER_FOOTPRINT_PMTILES: PMTiles archive of an image layer's
+          building footprints (geometry + id only).
     """
 
     PRE_EVENT_RAW = Template(
@@ -153,6 +162,14 @@ class ArtifactTypes(Enum):
     BUILDING_PMTILES = Template("building_pmtiles_${modelName}")
     BUILDING_FEATURES_SIDECAR = Template("building_features_${modelName}")
     BUILDING_PREDICTIONS_GPKG = Template("building_predictions_${modelName}")
+    # Prediction editing workflow: each save writes a NEW versioned
+    # GeoPackage derived from the raw model prediction GeoPackage, plus the
+    # attribute payload and footprint tiles the editor renders against.
+    EDITED_PREDICTIONS_GPKG = Template(
+        "edited_predictions_${modelId}_v${version}"
+    )
+    PREDICTION_ATTRS = Template("prediction_attrs_${modelId}")
+    LAYER_FOOTPRINT_PMTILES = Template("footprints_${imageLayerId}")
 
 
 class InviteConfig(NamedTuple):
@@ -321,18 +338,21 @@ class Config:
             "publish_queue_name": os.getenv(
                 "PUBLISH_QUEUE_NAME", "publish-queue"
             ),
+            # Prediction editing: footprint PMTiles + per-model attribute
+            # sidecar generation. Runs in the training container because
+            # tippecanoe only ships in that image.
+            "prediction_edit_prep_queue_name": os.getenv(
+                "PREDICTION_EDIT_PREP_QUEUE_NAME",
+                "prediction-edit-prep-queue",
+            ),
         }
 
     @staticmethod
     def get_publishing_config():
         """Get publishing feature and provider configuration."""
         return {
-            "publishing_enabled": _get_bool_env(
-                "PUBLISHING_ENABLED", True
-            ),
-            "pc_provider_enabled": _get_bool_env(
-                "PC_PROVIDER_ENABLED", False
-            ),
+            "publishing_enabled": _get_bool_env("PUBLISHING_ENABLED", True),
+            "pc_provider_enabled": _get_bool_env("PC_PROVIDER_ENABLED", False),
             "max_total_bytes": _get_bounded_int_env(
                 "PUBLISH_MAX_TOTAL_BYTES", 5 * 1024**3, 1
             ),
@@ -405,6 +425,7 @@ class Config:
             EXPERIMENT_CONFIG = "experiment_config"
             IMAGERY_CONFIG = "imageryprep_config"
             EMBEDDING_CONFIG = "embedding_config"
+            PREDICTION_TILES_CONFIG = "prediction_tiles_config"
             PROCESSED_IMAGERY = "processed_imagery_post_event_cog"
             RAW_IMAGERY = "raw_imagery"
             PREVIEW_RAW_IMAGERY = "preview_raw_imagery"

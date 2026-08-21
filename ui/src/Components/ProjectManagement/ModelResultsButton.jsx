@@ -8,6 +8,7 @@ import {
   MenuPopover,
   MenuList,
   MenuItem,
+  Tooltip,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 import React, { useContext, useState } from "react";
@@ -77,6 +78,23 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
   const inferenceZipLabel = model.artifacts?.inferenceZipSize
     ? `Download Inference Artifacts (${formatFileSize(model.artifacts.inferenceZipSize)})`
     : "Download Inference Artifacts";
+
+  // Editing works off the inference outputs (footprint tiles + per-building
+  // scores), so it only opens once inference has finished AND produced a
+  // GeoPackage. `disabledFocusable` keeps the button hoverable while disabled
+  // so the tooltip can explain why.
+  const canEditPredictions =
+    model.inferenceStatus === "Processed" && !!model.gpkgUrl;
+  const editTooltip = canEditPredictions
+    ? "Review and edit this model's predictions, then save them as a new version"
+    : "Inference must finish and produce predictions before they can be edited";
+
+  function handleEditPredictions() {
+    if (!canEditPredictions) return;
+    navigate(
+      `/edit-predictions/${projectId}/${imageLayerId}/${model.modelId}`
+    );
+  }
 
   const resultsMenuOptions = (model) => ({
     items: [
@@ -185,6 +203,17 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
               </MenuList>
             </MenuPopover>
           </Menu>
+          <Tooltip content={editTooltip} relationship="description" withArrow>
+            <Button
+              id={"editPredictions" + index}
+              className="dashboard-button dashboard-button-light ms-2"
+              disabled={!canEditPredictions}
+              disabledFocusable={!canEditPredictions}
+              onClick={handleEditPredictions}
+            >
+              Edit
+            </Button>
+          </Tooltip>
           {model.artifacts && model.artifacts.zipStatusMessage && (
             <ModelResultsStatusIndicator
               statusMessage={model.artifacts.zipStatusMessage}
