@@ -35,6 +35,7 @@ training:
   batch_size: 32
   gpu_id: 1
   gpu_ids: null  # Optional: list of GPU ids for multi-GPU (DDP) training, e.g. [0, 1]. Overrides gpu_id.
+  preload: true  # Read all tiles into RAM instead of decompressing each patch from disk. Set false if they don't fit.
   log_dir: logs/
   checkpoint_subdir: checkpoints/ # Where the weights will be saved during training, relative to experiment_dir
   use_constraint_loss: false  # Weakly-supervised "No Damage" loss; requires "No Damage" and "Damaged Building" in labels.classes (matched ignoring case/separators, so "no_damage" also works)

@@ -56,6 +56,7 @@ _OPTIONAL_CONFIG = {
     },
     "training": {
         "gpu_ids": (list, type(None)),
+        "preload": (bool, type(None)),
     },
 }
 

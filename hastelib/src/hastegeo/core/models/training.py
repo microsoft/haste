@@ -52,6 +52,10 @@ class Training(BaseModel):
     gpu_id: Optional[int] = None
     # Multi-GPU (DDP) training. Takes precedence over gpu_id when set.
     gpu_ids: Optional[List[int]] = None
+    # Read every tile into RAM rather than decompressing each patch from
+    # disk. Much faster, but the tiles must fit; under DDP each process
+    # preloads independently. None leaves the container default (on).
+    preload: Optional[bool] = None
     learning_rate: Optional[float] = None
     log_dir: Optional[str] = None
     max_epochs: Optional[int] = None

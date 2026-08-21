@@ -56,6 +56,7 @@ class TileDataset(Dataset):
         transforms=None,
         sanity_check=True,
         num_channels: Optional[int] = None,
+        preload: bool = False,
     ):
         self.image_fns = image_fns
         self.mask_fns = mask_fns
@@ -99,6 +100,41 @@ class TileDataset(Dataset):
 
         self.transforms = transforms
 
+        # Reading a patch from a compressed GeoTIFF makes GDAL decompress every
+        # block the window overlaps -- a 256x256 patch straddles up to 2x2 of
+        # the 512x512 blocks, so ~8.4 MB is decoded to yield 512 KB. That
+        # dominates the training step. The tiles are usually small enough to
+        # hold in memory, so read them once and crop from the arrays instead.
+        self.image_cache = None
+        self.mask_cache = None
+        if preload:
+            self._preload()
+
+    def _preload(self):
+        """Read every tile into memory so patches need no decoding."""
+        print("Preloading tiles into memory...")
+        self.image_cache = []
+        for fns in self.image_fns:
+            stack = []
+            for fn in fns:
+                with rasterio.open(fn) as f:
+                    stack.append(f.read())
+            self.image_cache.append(np.concatenate(stack, axis=0))
+
+        if self.mask_fns is not None:
+            self.mask_cache = []
+            for fn in self.mask_fns:
+                with rasterio.open(fn) as f:
+                    self.mask_cache.append(f.read())
+
+        num_bytes = sum(a.nbytes for a in self.image_cache)
+        if self.mask_cache is not None:
+            num_bytes += sum(a.nbytes for a in self.mask_cache)
+        print(
+            f"Preloaded {len(self.image_fns)} tiles"
+            f" ({num_bytes / 1e6:.0f} MB)"
+        )
+
     def __len__(self):
         return len(self.image_fns)
 
@@ -112,14 +148,20 @@ class TileDataset(Dataset):
 
         window = rasterio.windows.Window(x, y, patch_size, patch_size)
 
-        # Load imagery
-        stack = []
-        for j in range(len(self.image_fns[i])):
-            image_fn = self.image_fns[i][j]
-            with rasterio.open(image_fn) as f:
-                image = f.read(window=window)
-            stack.append(image)
-        stack = np.concatenate(stack, axis=0)
+        # Load imagery. `.copy()` so a returned sample can never alias the
+        # cache and be mutated by a downstream transform.
+        if self.image_cache is not None:
+            stack = self.image_cache[i][
+                :, y : y + patch_size, x : x + patch_size
+            ].copy()
+        else:
+            stack = []
+            for j in range(len(self.image_fns[i])):
+                image_fn = self.image_fns[i][j]
+                with rasterio.open(image_fn) as f:
+                    image = f.read(window=window)
+                stack.append(image)
+            stack = np.concatenate(stack, axis=0)
         if self.num_channels is not None:
             # __init__ already verified there are enough bands, so this only
             # ever drops extras (e.g. an alpha band).
@@ -128,9 +170,14 @@ class TileDataset(Dataset):
 
         # Load mask
         if self.mask_fns is not None:
-            mask_fn = self.mask_fns[i]
-            with rasterio.open(mask_fn) as f:
-                mask = f.read(window=window)
+            if self.mask_cache is not None:
+                mask = self.mask_cache[i][
+                    :, y : y + patch_size, x : x + patch_size
+                ].copy()
+            else:
+                mask_fn = self.mask_fns[i]
+                with rasterio.open(mask_fn) as f:
+                    mask = f.read(window=window)
             sample["mask"] = torch.from_numpy(mask).long()
 
         if self.transforms is not None:

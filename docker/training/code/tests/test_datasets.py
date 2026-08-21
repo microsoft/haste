@@ -17,6 +17,7 @@ import unittest
 
 import numpy as np
 import rasterio
+import torch
 from rasterio.transform import from_origin
 
 # The `bda` package lives in the parent directory and is not installed.
@@ -97,6 +98,67 @@ class TestTileDatasetChannels(unittest.TestCase):
         b = self._raster("b2.tif", 1)
         with self.assertRaises(ValueError):
             TileDataset([[a, b]], mask_fns=None, num_channels=4)
+
+
+class TestTileDatasetPreload(unittest.TestCase):
+    """Preloading is a pure speed-up; it must not change what is returned."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.image = _write_raster(
+            os.path.join(self.tmp.name, "img.tif"), band_count=3, size=32
+        )
+        self.mask = _write_raster(
+            os.path.join(self.tmp.name, "mask.tif"), band_count=1, size=32
+        )
+
+    def _datasets(self):
+        common = dict(sanity_check=False)
+        return (
+            TileDataset([[self.image]], [self.mask], preload=False, **common),
+            TileDataset([[self.image]], [self.mask], preload=True, **common),
+        )
+
+    def test_patches_are_identical_to_the_disk_path(self):
+        from_disk, from_cache = self._datasets()
+
+        for y, x, size in [(0, 0, 8), (4, 12, 16), (16, 16, 16), (0, 24, 8)]:
+            a = from_disk[(0, y, x, size)]
+            b = from_cache[(0, y, x, size)]
+            self.assertTrue(
+                torch.equal(a["image"], b["image"]), f"image at {y},{x}"
+            )
+            self.assertTrue(
+                torch.equal(a["mask"], b["mask"]), f"mask at {y},{x}"
+            )
+
+    def test_returned_sample_does_not_alias_the_cache(self):
+        """A transform mutating a sample must not corrupt later reads."""
+        _, from_cache = self._datasets()
+
+        first = from_cache[(0, 0, 0, 8)]
+        first["image"] += 99.0
+        second = from_cache[(0, 0, 0, 8)]
+
+        self.assertFalse(torch.equal(first["image"], second["image"]))
+
+    def test_preload_without_masks(self):
+        ds = TileDataset(
+            [[self.image]], mask_fns=None, preload=True, sanity_check=False
+        )
+        self.assertIsNone(ds.mask_cache)
+        self.assertEqual(ds[(0, 0, 0, 8)]["image"].shape, (3, 8, 8))
+
+    def test_preload_still_clips_channels(self):
+        ds = TileDataset(
+            [[self.image]],
+            mask_fns=None,
+            preload=True,
+            sanity_check=False,
+            num_channels=2,
+        )
+        self.assertEqual(ds[(0, 0, 0, 8)]["image"].shape[0], 2)
 
 
 if __name__ == "__main__":

@@ -42,6 +42,13 @@ def add_fine_tune_parser(
     )
     parser.add_argument("--training.batch_size", type=int, help="Batch size")
     parser.add_argument(
+        "--training.preload",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Read all tiles into memory instead of reading each patch from"
+        " disk (much faster, but the tiles must fit in RAM)",
+    )
+    parser.add_argument(
         "--training.learning_rate",
         type=float,
         help="Learning rate for optimizer",
@@ -78,6 +85,10 @@ def add_fine_tune_parser(
 def main() -> None:
     """Main function for the fine_tune.py script."""
     args = get_args(description=__doc__, add_extra_parser=add_fine_tune_parser)
+
+    # Use TF32 tensor cores for fp32 matmuls where the GPU has them (Ampere
+    # and later). A no-op elsewhere.
+    torch.set_float32_matmul_precision("high")
 
     experiment_dir = args["experiment_dir"]
     assert os.path.exists(os.path.join(experiment_dir, "images/"))
@@ -122,6 +133,7 @@ def main() -> None:
         train_batches_per_epoch=train_batches_per_epoch,
         means=args["imagery"]["normalization_means"],
         stds=args["imagery"]["normalization_stds"],
+        preload=args["training"].get("preload", True) is not False,
     )
 
     classes = args["labels"]["classes"]
@@ -230,10 +242,18 @@ def main() -> None:
     accelerator = "gpu" if gpu_ids else "cpu"
     devices = gpu_ids if gpu_ids else 1
     strategy = "ddp" if world_size > 1 else "auto"
+    # bf16 needs Ampere or later. HASTE's Batch pools are not homogeneous
+    # (T4s are Turing and have no bf16), so ask the device rather than
+    # assuming, and stay in fp32 on CPU.
+    precision = (
+        "bf16-mixed"
+        if gpu_ids and torch.cuda.is_bf16_supported()
+        else "32-true"
+    )
     print(
         f"Using accelerator: {accelerator}, device(s): {devices} "
-        f"(strategy={strategy}, {train_batches_per_epoch} train"
-        " batches/epoch/process)"
+        f"(strategy={strategy}, precision={precision}, "
+        f"{train_batches_per_epoch} train batches/epoch/process)"
     )
 
     trainer = pl.Trainer(
@@ -245,6 +265,7 @@ def main() -> None:
         devices=devices,
         strategy=strategy,
         use_distributed_sampler=False,
+        precision=precision,
     )
 
     trainer.fit(model=task, datamodule=datamodule)
