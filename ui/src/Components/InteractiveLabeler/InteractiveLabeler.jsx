@@ -286,6 +286,11 @@ const CLASS_OPTIONS = [
 ];
 
 const MIN_PER_CLASS = 3;
+// First-paint retry budget. The initial hydrate races the first tile paint,
+// and losing it leaves restored labels uncoloured until the map moves.
+// ~6s total, which is generous for tiles that are already in flight.
+const INITIAL_PAINT_RETRY_MS = 300;
+const INITIAL_PAINT_MAX_ATTEMPTS = 20;
 // Predict batch size for the "Predict all buildings" full-coverage pass.
 // Large enough to amortize the OvRLogisticRegression.predict() per-call
 // overhead, small enough to keep the progress bar feeling responsive.
@@ -527,6 +532,9 @@ const InteractiveLabeler = () => {
   // overture_id now.
   const sidecarRef = useRef(null); // { matrix: Float32Array, n, d }
 
+  // Pending retry for the first paint (see paintRestoredLabels).
+  const initialPaintTimerRef = useRef(null);
+
   const boxRef = useRef(null); // box-select rectangle div
   const boxCleanupRef = useRef(null); // detaches document-level drag listeners
   const trainBusyRef = useRef(false);
@@ -656,6 +664,10 @@ const InteractiveLabeler = () => {
       // leak the document-level drag listeners.
       // eslint-disable-next-line react-hooks/exhaustive-deps
       if (boxCleanupRef.current) boxCleanupRef.current();
+      if (initialPaintTimerRef.current) {
+        clearTimeout(initialPaintTimerRef.current);
+        initialPaintTimerRef.current = null;
+      }
       if (mapRef.current) {
         mapRef.current.dispose();
         mapRef.current = null;
@@ -953,18 +965,34 @@ const InteractiveLabeler = () => {
       //  (b) restores any saved labels for buildings that just rendered;
       //  (c) runs viewport-scoped predict if the model has training data.
       const hydrate = () => hydrateViewport(map);
-      map.events.add("moveend", hydrate);
+      map.events.add("moveend", () => {
+        // A move supersedes any pending first-paint retry.
+        if (initialPaintTimerRef.current) {
+          clearTimeout(initialPaintTimerRef.current);
+          initialPaintTimerRef.current = null;
+        }
+        hydrate();
+      });
       map.events.add("sourcedata", (e) => {
         // Only react when the buildings source finishes loading a tile.
+        //
+        // Read the id defensively: Mapbox-GL puts it on `sourceId`, but the
+        // Atlas event wrapper is documented as carrying a `source` object.
+        // If it is the latter, matching on `sourceId` alone compares against
+        // undefined and this listener never fires at all -- which would
+        // leave moveend as the only hydration trigger, and is a candidate
+        // for restored labels not colouring until the map is moved.
+        const sourceId = e && (e.sourceId ?? e.source?.id);
         if (
           e &&
           e.isSourceLoaded &&
-          internalSourceIdsRef.current.includes(e.sourceId)
+          sourceId &&
+          internalSourceIdsRef.current.includes(sourceId)
         ) {
           hydrate();
         }
       });
-      hydrate();
+      paintRestoredLabels(map);
 
       // Info bar: keep lat/lon/zoom in sync as the camera moves.
       const syncInfo = () => {
@@ -1073,10 +1101,13 @@ const InteractiveLabeler = () => {
 
   // Read all currently-rendered features from the buildings layer, hydrate
   // featureKeys / saved labels / viewport predictions. Idempotent.
+  //
+  // Returns the number of rendered features it saw, so callers can tell
+  // "nothing to do" from "the renderer wasn't ready yet".
   function hydrateViewport(map) {
     const gl = glMapRef.current;
-    if (!gl) return;
-    if (!internalLayerIdsRef.current.length) return;
+    if (!gl) return 0;
+    if (!internalLayerIdsRef.current.length) return 0;
     let features = [];
     try {
       features = gl.queryRenderedFeatures(undefined, {
@@ -1084,9 +1115,9 @@ const InteractiveLabeler = () => {
       });
     } catch (err) {
       console.warn("queryRenderedFeatures (viewport) failed:", err);
-      return;
+      return 0;
     }
-    if (features.length === 0) return;
+    if (features.length === 0) return 0;
 
     // Restore any saved labels whose tiles are now in view.
     const saved = savedLabelsRef.current;
@@ -1170,6 +1201,40 @@ const InteractiveLabeler = () => {
     if (uncertaintyOnRef.current) {
       computeUncertaintyForViewport(features);
     }
+
+    return features.length;
+  }
+
+  // Colour the restored labels as soon as the renderer can tell us what is
+  // on screen.
+  //
+  // Restoring labels fills labeledMap before the map exists, but the map's
+  // *colour* comes from feature-state, which can only be applied against a
+  // rendered feature — that is the one place the row-index id and the
+  // renderer's own feature meet. The eager hydrate at map-ready usually
+  // loses a race with the first tile paint: queryRenderedFeatures returns
+  // nothing, hydrateViewport bails, and the labels sit uncoloured until
+  // something else triggers a hydrate. In practice that was the user
+  // panning, since moveend is the only other reliable trigger.
+  //
+  // So retry briefly until the renderer has something to give us. Bounded,
+  // and stops on the first success.
+  function paintRestoredLabels(map, attempt = 0) {
+    initialPaintTimerRef.current = null;
+    if (hydrateViewport(map) > 0) return;
+    if (attempt >= INITIAL_PAINT_MAX_ATTEMPTS) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[InteractiveLabeler] no rendered features after" +
+          ` ${INITIAL_PAINT_MAX_ATTEMPTS} attempts; labels will colour on the` +
+          " next map move"
+      );
+      return;
+    }
+    initialPaintTimerRef.current = setTimeout(
+      () => paintRestoredLabels(map, attempt + 1),
+      INITIAL_PAINT_RETRY_MS
+    );
   }
 
   // Train (or reuse the cached model) and paint per-building uncertainty as the
