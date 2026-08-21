@@ -525,7 +525,14 @@ def create_mask_for_labels(
             str(class_name_to_idx_map[class_names[i]]),
             "-where",
             f"class='{class_names[i]}'",
-            input_label_fn,
+            # The WARPED labels, matching the first class above. Burning from
+            # the original EPSG:4326 file relies on gdal_rasterize
+            # reprojecting on the fly; where it does not, every polygon lands
+            # outside a projected raster's extent and classes 2..N are
+            # silently dropped, leaving masks of just {0, 1}. Upstream
+            # measured exactly that. Reading from the file already in the
+            # target CRS removes the dependency either way.
+            output_warped_label_fn,
             output_mask_fn,
         ]
         _run(command, f"gdal_rasterize for class '{class_names[i]}'")
