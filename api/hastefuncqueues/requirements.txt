@@ -11,7 +11,7 @@ azure-storage-file-datalake==12.25.0
 azure-storage-queue==12.17.0
 azure-mgmt-containerregistry==10.3.0
 azure-mgmt-web
-azure-batch==14.2.0
+azure-batch==15.1.0
 azure-core==1.41.0
 azure-identity==1.25.3
 azure-planetarycomputer==1.0.0
