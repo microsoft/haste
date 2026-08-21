@@ -5,6 +5,8 @@ import re
 import unittest
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -39,8 +41,8 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
 
     def test_action_shas_match_their_repositories(self):
         expected = {
-            "actions/setup-node": ("49933ea5288caeca8642d1e84afbd3f7d6820020"),
-            "azure/login": "1384c340ab2dda50fed2bee3041d1d87018aa5e8",
+            "actions/setup-node": "49933ea5288caeca8642d1e84afbd3f7d6820020",  # pragma: allowlist secret
+            "azure/login": "1384c340ab2dda50fed2bee3041d1d87018aa5e8",  # pragma: allowlist secret
         }
         workflows = [
             ".github/workflows/hastegeo-build.yml",
@@ -112,9 +114,7 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         # HASTEGEO_PUBLISH_ENABLED stays as the kill switch.
         self.assertNotIn("environment:", stable_block)
         self.assertIn("HASTEGEO_PUBLISH_ENABLED", stable_block)
-        self.assertNotIn(
-            "HASTEGEO_RELEASE_APPROVAL_CONFIGURED", stable_block
-        )
+        self.assertNotIn("HASTEGEO_RELEASE_APPROVAL_CONFIGURED", stable_block)
         self.assertIn("contents: write", workflow)
         self.assertNotIn("--clobber", publisher)
 
@@ -189,6 +189,64 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             "RC deployments require matching wheel and image tags",
             workflow,
         )
+
+    def test_hastegeo_pin_hooks_are_service_scoped(self):
+        """The hastegeo pin/unpin hooks must be per service, never root-level.
+
+        azd fires root-level hooks around the matching *command*, so a root
+        `prepackage` runs for `azd package` but is skipped by `azd deploy`'s
+        internal packaging step. The package then ships the unresolvable
+        `-e ../../hastelib` line and the Oryx build fails with "not a valid
+        editable requirement". The two placements look identical in review and
+        only diverge at deploy time, so pin the invariant here.
+        """
+        config = yaml.safe_load(
+            (REPO_ROOT / "azure.yaml").read_text(encoding="utf-8")
+        )
+
+        root_hooks = config.get("hooks") or {}
+        for hook in ("prepackage", "postpackage"):
+            self.assertNotIn(
+                hook,
+                root_hooks,
+                f"'{hook}' must not be a root hook — azd deploy skips it, "
+                "shipping an unresolvable editable requirement.",
+            )
+
+        # titiler has no hastegeo dependency and deliberately has neither hook.
+        for service in ("api", "queues"):
+            hooks = config["services"][service].get("hooks") or {}
+            self.assertIn(
+                "prepackage", hooks, f"service '{service}' lost its pin hook"
+            )
+            self.assertIn(
+                "postpackage",
+                hooks,
+                f"service '{service}' lost its unpin hook",
+            )
+
+            pin = hooks["prepackage"]
+            unpin = hooks["postpackage"]
+            self.assertIn("pin-hastegeo-wheel.ps1", pin["run"])
+            self.assertIn("unpin-hastegeo-wheel.ps1", unpin["run"])
+
+            # Service hooks run with the service directory as cwd, so the paths
+            # must climb back to the repo root.
+            self.assertTrue(
+                pin["run"].startswith("../../"),
+                f"'{service}' pin hook path must be service-relative",
+            )
+            self.assertTrue(
+                unpin["run"].startswith("../../"),
+                f"'{service}' unpin hook path must be service-relative",
+            )
+
+            # A failed pin must fail the deploy: shipping an unpinned package
+            # "succeeds" and only breaks at runtime.
+            self.assertFalse(
+                pin.get("continueOnError", False),
+                f"'{service}' pin hook must not continueOnError",
+            )
 
 
 if __name__ == "__main__":
