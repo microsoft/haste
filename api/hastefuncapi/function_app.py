@@ -3821,6 +3821,10 @@ async def PutBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
                 "<overture-id>": {"id": "...", "label": "Damaged|NotDamaged|Unknown", "updatedAt": "..."}
             }
         }
+
+    ``sampleSize`` is not accepted here: the stored value is always kept.
+    Use PutBuildingValidationConfig to change it, which is where the
+    "cannot shrink while labels exist" rule is enforced.
     """
     logger.info(
         "PutBuildingValidation HTTP trigger function processed a request."
@@ -3836,16 +3840,35 @@ async def PutBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
 
         processor = BuildingValidationProcessor(validation.projectId)
 
-        # This route replaces the stored document wholesale, and the
-        # validation view sends only {projectId, imageLayerId, labels}. A
-        # missing sampleSize therefore means "leave it alone", not "reset to
-        # the default" — without this the model default would silently undo
-        # the user's configured count on every label save.
-        if "sampleSize" not in req_body:
-            stored = await asyncio.to_thread(
-                processor.load, validation.imageLayerId
+        # This route owns labels and nothing else. It replaces the stored
+        # document wholesale, so the count has to be carried across
+        # explicitly — otherwise the model default would silently undo the
+        # user's configured value on every label save.
+        #
+        # Any sampleSize in the body is deliberately ignored rather than
+        # honored. Writing it here would route around
+        # PutBuildingValidationConfig, whose whole job is to refuse a
+        # reduction while the layer holds labels: a single request carrying
+        # both the existing labels and a smaller sampleSize would otherwise
+        # shrink the set with no check at all.
+        stored = await asyncio.to_thread(
+            processor.load, validation.imageLayerId
+        )
+        stored_sample_size = resolve_sample_size(stored)
+        requested_sample_size = req_body.get("sampleSize")
+        if (
+            requested_sample_size is not None
+            and requested_sample_size != stored_sample_size
+        ):
+            logger.info(
+                "Ignoring sampleSize=%s on PutBuildingValidation for layer "
+                "%s; the count is owned by PutBuildingValidationConfig "
+                "(stored value %s kept).",
+                requested_sample_size,
+                validation.imageLayerId,
+                stored_sample_size,
             )
-            validation.sampleSize = resolve_sample_size(stored)
+        validation.sampleSize = stored_sample_size
 
         saved = await asyncio.to_thread(processor.save, validation)
 

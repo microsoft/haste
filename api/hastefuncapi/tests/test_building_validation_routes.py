@@ -120,8 +120,12 @@ class TestPutBuildingValidation(ValidationRouteTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.saved_document()["sampleSize"], 200)
 
-    async def test_explicit_sample_size_is_written(self) -> None:
-        """An explicit value wins, and the stored one is not consulted."""
+    async def test_an_explicit_sample_size_is_ignored(self) -> None:
+        """The count is not this route's to change.
+
+        Honoring it here would route around PutBuildingValidationConfig and
+        the "cannot shrink while labels exist" rule it enforces.
+        """
         self.stored(sampleSize=500)
 
         response = await function_app.PutBuildingValidation(
@@ -136,8 +140,34 @@ class TestPutBuildingValidation(ValidationRouteTestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.saved_document()["sampleSize"], 300)
-        self.processor.load.assert_not_called()
+        self.assertEqual(self.saved_document()["sampleSize"], 500)
+
+    async def test_cannot_shrink_a_labeled_layer_through_this_route(
+        self,
+    ) -> None:
+        """The bypass this route has to be immune to.
+
+        One request carrying the existing labels plus a smaller sampleSize
+        would otherwise shrink a labeled layer with no 409 check at all.
+        """
+        labels = {"a": make_label("a"), "b": make_label("b")}
+        self.stored(sampleSize=300, labels=labels)
+
+        response = await function_app.PutBuildingValidation(
+            make_request(
+                {
+                    "projectId": PROJECT_ID,
+                    "imageLayerId": LAYER_ID,
+                    "labels": labels,
+                    "sampleSize": 100,
+                }
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        saved = self.saved_document()
+        self.assertEqual(saved["sampleSize"], 300)
+        self.assertEqual(saved["labels"], labels)
 
     async def test_clearing_labels_keeps_the_sample_size(self) -> None:
         """Clear is a save with an empty label set."""
