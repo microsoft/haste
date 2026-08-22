@@ -164,7 +164,13 @@ const ValidationConfigModal = ({
   }
 
   return (
-    <Dialog open={true} modalType="modal">
+    <Dialog
+      open={true}
+      modalType="modal"
+      onOpenChange={(_event, data) => {
+        if (!data.open && !busy) onClose();
+      }}
+    >
       <DialogSurface style={{ width: "min(520px, 94vw)", maxWidth: "94vw" }}>
         <DialogBody>
           <DialogTitle>Building Validation settings</DialogTitle>
