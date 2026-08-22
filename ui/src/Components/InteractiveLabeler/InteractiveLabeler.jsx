@@ -58,7 +58,7 @@ import {
 } from "./interactiveModel.js";
 import { getGpu } from "./gpuLogreg.js";
 import InteractiveLabelerLoader from "./InteractiveLabelerLoader.jsx";
-import { waitForMapReady } from "./interactiveLabelerLoading.js";
+import { readResponseBuffer, waitForMapReady } from "./interactiveLabelerLoading.js";
 import KeyboardShortcutHelp from "../KeyboardShortcutHelp.jsx";
 import {
   INTERACTIVE_LABELER_SHORTCUTS,
@@ -114,34 +114,6 @@ class InMemoryPMTilesSource {
 // Download an entire artifact through the same-origin API proxy as raw
 // bytes. Used for the PMTiles archive so it can be read fully in memory
 // (see InMemoryPMTilesSource) rather than via unsupported range requests.
-async function readResponseBuffer(response, onProgress) {
-  const total = Number(response.headers.get("content-length")) || null;
-  if (!response.body) {
-    const buffer = await response.arrayBuffer();
-    onProgress?.(buffer.byteLength, total || buffer.byteLength);
-    return buffer;
-  }
-
-  const reader = response.body.getReader();
-  const chunks = [];
-  let loaded = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    loaded += value.byteLength;
-    onProgress?.(loaded, total);
-  }
-
-  const bytes = new Uint8Array(loaded);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes.buffer;
-}
-
 async function fetchArtifactBuffer(url, onProgress, signal) {
   const resp = await fetch(url, { signal });
   if (!resp.ok) {
@@ -620,6 +592,11 @@ const InteractiveLabeler = () => {
   const swipeBoxCleanupRef = useRef(null);
 
   const [isMapReady, setIsMapReady] = useState(false);
+  // Bumped by the error dialog's Retry action. The initialization effect keys
+  // off this, so a failed load can be started over without remounting the
+  // route (which is otherwise the only way back from a disposed map).
+  const [initAttempt, setInitAttempt] = useState(0);
+  const [loadError, setLoadError] = useState(null);
   const [initialLoad, setInitialLoad] = useState({
     step: 0,
     loaded: null,
@@ -694,8 +671,13 @@ const InteractiveLabeler = () => {
 
   useEffect(() => {
     const controller = new AbortController();
+    // A retry runs this effect again after the cleanup below flagged the old
+    // map as disposed. Clear the flag or hydrateViewport would bail forever
+    // and no label would ever paint on the new map.
+    mapDisposedRef.current = false;
     const init = async () => {
       try {
+        setLoadError(null);
         if (!window.atlas) {
           throw new Error("Azure Maps is unavailable.");
         }
@@ -707,29 +689,15 @@ const InteractiveLabeler = () => {
         console.error("Error initializing interactive labeler:", e);
         setInitialLoad(null);
         if (mapRef.current) {
+          mapDisposedRef.current = true;
           mapRef.current.dispose();
           mapRef.current = null;
         }
-        setDialog(
-          "Interactive Labeler could not load",
-          `Failed to load the interactive labeler: ${e?.message || e}`,
-          [
-            {
-              type: "primary",
-              key: "back",
-              text: "Go back",
-              onClick: () => {
-                setDialog();
-                navigate(-1);
-              },
-            },
-            {
-              type: "default",
-              key: "close",
-              text: "Close",
-              onClick: () => setDialog(),
-            },
-          ]
+        // Surfaced by InteractiveLabelerLoader as a persistent overlay with a
+        // Retry action. A modal dialog would be dismissable (Escape,
+        // backdrop) straight onto a blank labeler with no way back.
+        setLoadError(
+          `Failed to load the interactive labeler: ${e?.message || e}`
         );
       }
     };
@@ -756,7 +724,7 @@ const InteractiveLabeler = () => {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [initAttempt]);
 
   useEffect(() => {
     if (!isMapReady) return;
@@ -2505,7 +2473,12 @@ const InteractiveLabeler = () => {
 
   return (
     <div className={styles.root}>
-      <InteractiveLabelerLoader loadState={initialLoad} />
+      <InteractiveLabelerLoader
+        loadState={initialLoad}
+        error={loadError}
+        onRetry={() => setInitAttempt((attempt) => attempt + 1)}
+        onGoBack={() => navigate(-1)}
+      />
       <div
         className="labeling-tool-surface labeling-navigation-controls"
         style={{

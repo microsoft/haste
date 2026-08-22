@@ -3,6 +3,16 @@
 
 export const MAP_READY_TIMEOUT_MS = 30000;
 
+// Progress is rendered by a component large enough that a per-chunk setState
+// is visible in a profile, so notifications are coalesced into this window.
+export const PROGRESS_THROTTLE_MS = 100;
+
+// Ceiling for a single artifact download. A declared length above this is
+// refused up front, and a response that arrives without a Content-Length is
+// abandoned once it crosses the same line, so a runaway stream cannot grow
+// until the tab dies.
+export const MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024;
+
 export function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "";
   const units = ["B", "KB", "MB", "GB"];
@@ -21,6 +31,112 @@ export function getLoadProgress(step, stepCount) {
     return 0;
   }
   return Math.min(Math.max(step + 1, 0), stepCount) / stepCount;
+}
+
+// Only a positive, exact integer is worth preallocating against — anything
+// else (absent, "", NaN, 1e21) falls back to chunk accumulation.
+export function parseContentLength(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+// Coalesce download notifications so a multi-megabyte artifact cannot fire a
+// state update per response chunk. `flush` bypasses the window so the final
+// byte count is always reported, even when the last chunk lands mid-window.
+export function createProgressThrottle(onProgress, options = {}) {
+  const { throttleMs = PROGRESS_THROTTLE_MS, now = Date.now } = options;
+  let lastEmitAt = -Infinity;
+  let lastLoaded = null;
+
+  const emit = (loaded, total) => {
+    lastEmitAt = now();
+    lastLoaded = loaded;
+    onProgress(loaded, total);
+  };
+
+  return {
+    report(loaded, total) {
+      if (!onProgress || now() - lastEmitAt < throttleMs) return;
+      emit(loaded, total);
+    },
+    flush(loaded, total) {
+      if (!onProgress || lastLoaded === loaded) return;
+      emit(loaded, total);
+    },
+  };
+}
+
+// Read a response body fully into one ArrayBuffer. When the response declares
+// a usable Content-Length each chunk is written straight into its final
+// home, so peak memory stays at a single copy of the artifact rather than the
+// chunk list plus the consolidated buffer.
+export async function readResponseBuffer(response, onProgress, options = {}) {
+  const { maxBytes = MAX_ARTIFACT_BYTES } = options;
+  const total = parseContentLength(response.headers?.get?.("content-length"));
+  const progress = createProgressThrottle(onProgress, options);
+
+  if (total !== null && total > maxBytes) {
+    throw new Error(
+      `Artifact is ${formatBytes(total)}, above the ` +
+        `${formatBytes(maxBytes)} download limit.`
+    );
+  }
+
+  if (!response.body) {
+    const buffer = await response.arrayBuffer();
+    progress.flush(buffer.byteLength, total ?? buffer.byteLength);
+    return buffer;
+  }
+
+  const reader = response.body.getReader();
+  let bytes = total !== null ? new Uint8Array(total) : null;
+  const chunks = bytes ? null : [];
+  let loaded = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const next = loaded + value.byteLength;
+    if (next > maxBytes) {
+      throw new Error(
+        `Artifact exceeded the ${formatBytes(maxBytes)} download limit.`
+      );
+    }
+
+    if (bytes) {
+      // The body outran its declared length. Grow once instead of silently
+      // truncating the archive.
+      if (next > bytes.length) {
+        const grown = new Uint8Array(next);
+        grown.set(bytes.subarray(0, loaded));
+        bytes = grown;
+      }
+      bytes.set(value, loaded);
+    } else {
+      chunks.push(value);
+    }
+
+    loaded = next;
+    progress.report(loaded, total);
+  }
+
+  progress.flush(loaded, total);
+
+  if (bytes) {
+    // A body shorter than its declared length leaves a zero-filled tail.
+    return loaded === bytes.length
+      ? bytes.buffer
+      : bytes.buffer.slice(0, loaded);
+  }
+
+  const merged = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged.buffer;
 }
 
 function abortError() {

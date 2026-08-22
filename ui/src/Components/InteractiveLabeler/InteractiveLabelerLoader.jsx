@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 import PropTypes from "prop-types";
 import {
+  Button,
   ProgressBar,
   Spinner,
   makeStyles,
@@ -102,11 +103,52 @@ const useStyles = makeStyles({
     fontWeight: tokens.fontWeightRegular,
     whiteSpace: "nowrap",
   },
+  errorIcon: {
+    color: tokens.colorPaletteRedForeground1,
+  },
+  message: {
+    margin: `${tokens.spacingVerticalS} 0 0`,
+    color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase300,
+    lineHeight: tokens.lineHeightBase400,
+    overflowWrap: "anywhere",
+  },
+  actions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: tokens.spacingHorizontalS,
+    marginTop: tokens.spacingVerticalL,
+  },
 });
 
-const InteractiveLabelerLoader = ({ loadState }) => {
+const InteractiveLabelerLoader = ({ loadState, error, onRetry, onGoBack }) => {
   const styles = useStyles();
-  if (!loadState) return null;
+  if (!loadState && !error) return null;
+
+  // The failure overlay is deliberately part of the labeler rather than a
+  // transient dialog: dismissing the dialog (Escape, backdrop) would
+  // otherwise leave a disposed map behind with no way to start over.
+  if (error) {
+    return (
+      <div className={styles.overlay} role="alert" aria-live="assertive">
+        <div className={styles.dialog}>
+          <div className={`${styles.eyebrow} ${styles.errorIcon}`}>
+            Interactive labeler
+          </div>
+          <h2 className={styles.title}>Could not load the labeler</h2>
+          <p className={styles.message}>{error}</p>
+          <div className={styles.actions}>
+            {onGoBack && <Button onClick={onGoBack}>Go back</Button>}
+            {onRetry && (
+              <Button appearance="primary" onClick={onRetry}>
+                Retry
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const activeStep = Math.min(loadState.step, LOAD_STEPS.length - 1);
 
@@ -174,6 +216,9 @@ InteractiveLabelerLoader.propTypes = {
     loaded: PropTypes.number,
     total: PropTypes.number,
   }),
+  error: PropTypes.string,
+  onRetry: PropTypes.func,
+  onGoBack: PropTypes.func,
 };
 
 export default InteractiveLabelerLoader;
