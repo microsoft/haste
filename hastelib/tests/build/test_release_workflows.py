@@ -15,6 +15,7 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             ".github/workflows/hastegeo-publish.yml",
             ".github/workflows/deploy-apps.yml",
             ".github/workflows/docker-build-and-push.yml",
+            ".github/workflows/dependency-validation.yml",
             ".github/workflows/rc-cleanup.yml",
         ]
 
@@ -39,8 +40,10 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
 
     def test_action_shas_match_their_repositories(self):
         expected = {
-            "actions/setup-node": ("49933ea5288caeca8642d1e84afbd3f7d6820020"),
-            "azure/login": "1384c340ab2dda50fed2bee3041d1d87018aa5e8",
+            "actions/setup-node": (
+                "49933ea5288caeca8642d1e84afbd3f7d6820020"  # pragma: allowlist secret
+            ),
+            "azure/login": "1384c340ab2dda50fed2bee3041d1d87018aa5e8",  # pragma: allowlist secret
         }
         workflows = [
             ".github/workflows/hastegeo-build.yml",
@@ -112,9 +115,7 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         # HASTEGEO_PUBLISH_ENABLED stays as the kill switch.
         self.assertNotIn("environment:", stable_block)
         self.assertIn("HASTEGEO_PUBLISH_ENABLED", stable_block)
-        self.assertNotIn(
-            "HASTEGEO_RELEASE_APPROVAL_CONFIGURED", stable_block
-        )
+        self.assertNotIn("HASTEGEO_RELEASE_APPROVAL_CONFIGURED", stable_block)
         self.assertIn("contents: write", workflow)
         self.assertNotIn("--clobber", publisher)
 
