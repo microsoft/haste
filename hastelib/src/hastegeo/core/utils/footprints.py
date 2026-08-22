@@ -21,6 +21,7 @@ from typing import List, Optional, Tuple
 
 import fsspec
 import geopandas as gpd
+import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.dataset as ds
@@ -28,6 +29,7 @@ import pyarrow.fs as fs
 from geopandas import GeoDataFrame
 
 from .gdal_security import harden_gdal
+from .validation_config import clamp_validation_sample
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,57 @@ type_theme_map = {
 # (clip_and_normalize_user_footprints) so the two produce identical
 # schemas.
 _FOOTPRINT_OUTPUT_COLUMNS = ("id", "geometry", "subtype", "class")
+
+# Fixed so a layer's validation set is stable across reloads.
+FOOTPRINT_SAMPLE_SEED = 42
+
+
+def sample_indices(
+    n_rows: int,
+    sample_size: int,
+    seed: int = FOOTPRINT_SAMPLE_SEED,
+) -> np.ndarray:
+    """Pick which footprint rows make up a validation sample.
+
+    Returns positional indices into a footprints GeoDataFrame, taken as a
+    prefix of a seeded permutation. That prefix is the whole point: the draw
+    for 200 rows is the *start* of the draw for 300, so raising a layer's
+    sample size keeps every building the user has already labeled and adds
+    only the difference. Nothing has to be stored to make that true.
+
+    This reproduces exactly what ``gdf.sample(n, random_state=seed)`` picked
+    before it was hoisted here — pandas delegates to
+    ``RandomState(seed).choice(n_rows, n, replace=False)``, which NumPy
+    implements as ``permutation(n_rows)[:n]``. Existing validation sets
+    therefore keep the same buildings. That equivalence is an implementation
+    detail of NumPy rather than a documented contract, which is why the
+    prefix is computed here and pinned by a test instead of being left to
+    ``sample``.
+
+    The sample is only stable while the layer's footprints file is unchanged;
+    re-ingesting footprints changes the row count and order, and reshuffles
+    it.
+
+    Args:
+        n_rows: Number of rows in the footprints GeoDataFrame.
+        sample_size: Requested sample size, clamped to the supported range
+            by ``clamp_validation_sample``.
+        seed: Permutation seed. Callers should keep the default so a layer's
+            sample stays stable.
+
+    Returns:
+        Positional indices, at most ``n_rows`` of them. When the layer has no
+        more rows than the clamped sample size, every row is returned in its
+        original order.
+    """
+    if n_rows <= 0:
+        return np.empty(0, dtype=int)
+
+    clamped = clamp_validation_sample(sample_size)
+    if n_rows <= clamped:
+        return np.arange(n_rows)
+
+    return np.random.RandomState(seed).permutation(n_rows)[:clamped]
 
 
 def get_all_overture_types() -> List[str]:

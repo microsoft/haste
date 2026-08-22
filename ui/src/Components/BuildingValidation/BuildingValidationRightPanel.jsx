@@ -11,6 +11,7 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import KeyboardShortcutHelp from "../KeyboardShortcutHelp";
+import { FluentIcon } from "../../util/icons";
 import { BUILDING_VALIDATION_SHORTCUTS } from "../keyboardShortcuts";
 
 const LABEL_OPTIONS = [
@@ -132,6 +133,7 @@ const BuildingValidationRightPanel = ({
   onLabel,
   onSave,
   onDownload,
+  onClearLabels,
   isSaving,
   labeledCount,
   filter,
@@ -321,6 +323,16 @@ const BuildingValidationRightPanel = ({
         >
           Download GeoJSON
         </Button>
+        <Button
+          id="clearValidationLabelsPanel"
+          icon={<FluentIcon name="Delete" />}
+          onClick={onClearLabels}
+          disabled={isSaving || labeledCount === 0}
+          style={{ width: "100%" }}
+          title="Remove every validation label for this image layer."
+        >
+          Clear labels
+        </Button>
       </div>
     </div>
   );
@@ -333,6 +345,7 @@ BuildingValidationRightPanel.propTypes = {
   onLabel: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
   onDownload: PropTypes.func.isRequired,
+  onClearLabels: PropTypes.func.isRequired,
   isSaving: PropTypes.bool.isRequired,
   labeledCount: PropTypes.number.isRequired,
   filter: PropTypes.string.isRequired,

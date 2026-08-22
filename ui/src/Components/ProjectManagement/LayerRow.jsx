@@ -21,6 +21,7 @@ import { imageLayerThumbnail } from "../../util/satellitePlaceholders";
 import { AppContext } from "../../AppContext";
 import CreateEditModelTrainingModal from "../CreateEditModelTrainingModal";
 import CreateEditEmbeddingModal from "../CreateEditEmbeddingModal";
+import ValidationConfigModal from "../BuildingValidation/ValidationConfigModal";
 import { useNavigate } from "react-router-dom";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
 import { fileDownload } from "../../util/file";
@@ -407,6 +408,24 @@ const LayerRow = ({
             >
               Launch
             </Button>{" "}
+            <Tooltip content="Building Validation settings" relationship="label">
+              <Button
+                id={"singleProjectBuildingValidationConfig" + index}
+                appearance="subtle"
+                icon={<FluentIcon name="Settings" />}
+                disabled={!item.buildingFootprintsUrl}
+                onClick={() =>
+                  setModalComponent(
+                    <ValidationConfigModal
+                      projectId={projectId}
+                      imageLayerId={item.imageLayerId}
+                      onClose={() => setModalComponent(null)}
+                      onCleared={fetchProjectDetails}
+                    />
+                  )
+                }
+              />
+            </Tooltip>{" "}
             <Text className="pgrid-action-count" size={200}>
               ({item.validationLabelCount || 0})
             </Text>
