@@ -17,7 +17,7 @@
     "@azure/msal-browser": "^3.27.0",
     "@azure/msal-react": "^2.2.0",
     "@azure/static-web-apps-cli": "^2.0.10",
-    "@babel/code-frame": "^7.27.1",
+    "@babel/code-frame": "^8.0.0",
     "@eslint-community/eslint-utils": "^4.10.1",
     "@eslint-community/regexpp": "^4.12.2",
     "@fluentui/react-components": "^9.74.6",
