@@ -84,14 +84,18 @@ jobs:
           fi
 
       - name: Resolve dependencies
-        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
+          # Run from the requirements file's own directory: the Functions
+          # images pull hastegeo in with `-e ../../hastelib`, and pip
+          # resolves relative paths against the working directory rather
+          # than the file's location.
+          cd "$(dirname "${{ matrix.requirements }}")"
           # --dry-run resolves the full graph and reports conflicts without
           # installing, which is all we need and keeps the job quick. Both
           # failure modes from #153 surface here: an unsatisfiable pin pair
           # raises ResolutionImpossible, and a release that requires a newer
           # Python raises "No matching distribution found".
           pip install --dry-run --report /dev/null \
-            -r "${{ matrix.requirements }}"
+            -r "$(basename "${{ matrix.requirements }}")"
