@@ -84,21 +84,13 @@ const EmbeddingModelRow = ({
 
   const isProcessed = model.status === "Processed";
   const hasPredictions = !!model.gpkgUrl;
-  // A GeoPackage on its own is not enough to edit: "Clear labels" also writes
-  // one, with zero predicted buildings in it. predictedBuildingCount is what
-  // tells us there is actually something to review.
-  const canEditPredictions =
-    hasPredictions && (model.predictedBuildingCount ?? 0) > 0;
-  const editTooltip = canEditPredictions
-    ? "Review and edit this model's predictions, then save them as a new version"
-    : "Predict buildings in the Interactive Labeler before editing predictions";
+  // Viewing results opens the visualizer, which is also where predictions are
+  // reviewed and edited. `predictionsReady` is the server-derived readiness
+  // flag; models saved before it existed fall back to "a GeoPackage exists".
+  const canViewResults = model.predictionsReady ?? hasPredictions;
+  const viewResultsTooltip =
+    "Predict buildings in the Interactive Labeler before viewing results";
 
-  function handleEditPredictions() {
-    if (!canEditPredictions) return;
-    navigate(
-      `/edit-predictions/${projectId}/${imageLayerId}/${model.modelId}`
-    );
-  }
   const createdDate = model.creationDate
     ? `${model.creationDate.substring(0, 10)} ${model.creationDate.substring(
         11,
@@ -123,6 +115,20 @@ const EmbeddingModelRow = ({
 
   const resultsMenu = {
     items: [
+      {
+        // Same destination and ordering as the standard workflow's Results
+        // menu (ModelResultsButton): View first, downloads/reports after.
+        key: "viewResults",
+        text: "View",
+        icon: <FluentIcon name="Forward" />,
+        disabled: !canViewResults,
+        tooltip: viewResultsTooltip,
+        onClick: () => {
+          navigate(
+            `/visualizer/${projectId}/${imageLayerId}/${model.modelId}`
+          );
+        },
+      },
       {
         key: "downloadGeopackage",
         text: "Download Geopackage (.gpkg)",
@@ -175,6 +181,35 @@ const EmbeddingModelRow = ({
         : []),
     ],
   };
+
+  // Rendered identically by the mobile and desktop layouts below. Disabled
+  // Fluent menu items stay hoverable/focusable, so a tooltip can explain why
+  // an action isn't available yet.
+  const renderResultsMenuItems = () =>
+    resultsMenu.items.map((mi) => {
+      const menuItem = (
+        <MenuItem
+          key={mi.key}
+          icon={mi.icon}
+          disabled={mi.disabled}
+          onClick={mi.onClick}
+        >
+          {mi.text}
+        </MenuItem>
+      );
+      return mi.disabled && mi.tooltip ? (
+        <Tooltip
+          key={mi.key}
+          content={mi.tooltip}
+          relationship="description"
+          withArrow
+        >
+          {menuItem}
+        </Tooltip>
+      ) : (
+        menuItem
+      );
+    });
 
   const moreMenuOptions = {
     items: [
@@ -331,41 +366,15 @@ const EmbeddingModelRow = ({
                     appearance="primary"
                     id={"embeddingResults" + index}
                     className="dashboard-button ms-2"
-                    disabled={!hasPredictions}
+                    disabled={!(hasPredictions || canViewResults)}
                   >
                     Results
                   </Button>
                 </MenuTrigger>
                 <MenuPopover>
-                  <MenuList>
-                    {resultsMenu.items.map((mi) => (
-                      <MenuItem
-                        key={mi.key}
-                        icon={mi.icon}
-                        disabled={mi.disabled}
-                        onClick={mi.onClick}
-                      >
-                        {mi.text}
-                      </MenuItem>
-                    ))}
-                  </MenuList>
+                  <MenuList>{renderResultsMenuItems()}</MenuList>
                 </MenuPopover>
               </Menu>
-              <Tooltip
-                content={editTooltip}
-                relationship="description"
-                withArrow
-              >
-                <Button
-                  id={"editEmbeddingPredictions" + index}
-                  className="dashboard-button dashboard-button-light ms-2"
-                  disabled={!canEditPredictions}
-                  disabledFocusable={!canEditPredictions}
-                  onClick={handleEditPredictions}
-                >
-                  Edit
-                </Button>
-              </Tooltip>
             </div>
           </td>
         </tr>
@@ -463,37 +472,15 @@ const EmbeddingModelRow = ({
               appearance="primary"
               id={"embeddingResults" + index}
               className="dashboard-button"
-              disabled={!hasPredictions}
+              disabled={!(hasPredictions || canViewResults)}
             >
               Results
             </Button>
           </MenuTrigger>
           <MenuPopover>
-            <MenuList>
-              {resultsMenu.items.map((mi) => (
-                <MenuItem
-                  key={mi.key}
-                  icon={mi.icon}
-                  disabled={mi.disabled}
-                  onClick={mi.onClick}
-                >
-                  {mi.text}
-                </MenuItem>
-              ))}
-            </MenuList>
+            <MenuList>{renderResultsMenuItems()}</MenuList>
           </MenuPopover>
         </Menu>
-        <Tooltip content={editTooltip} relationship="description" withArrow>
-          <Button
-            id={"editEmbeddingPredictions" + index}
-            className="dashboard-button dashboard-button-light"
-            disabled={!canEditPredictions}
-            disabledFocusable={!canEditPredictions}
-            onClick={handleEditPredictions}
-          >
-            Edit
-          </Button>
-        </Tooltip>
         <Menu positioning="below-end">
           <MenuTrigger disableButtonEnhancement>
             <Button

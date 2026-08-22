@@ -1,5 +1,11 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+//
+// The small-screen version of the results page overlay: imagery details for
+// whichever side of the swipe is showing, plus the same layer toggles the
+// InfoPanel offers on the desktop layout. The layer rows come from the same
+// pure visualizerLayerOptions() list, so a model with no damage raster shows
+// no checkbox for one here either.
 import {
   Checkbox,
   Button,
@@ -20,7 +26,9 @@ const VisualizerInformationMobile = ({
   convertPreOrPostEventImagerySource,
   setSwipeStateMobile,
   swipeStateMobile,
-  togglePredictedDamageLayerVisibility,
+  layerOptions,
+  layerVisibility,
+  onLayerVisibilityChange,
   surfaceClassName,
 }) => {
   const [panelVisibility, setPanelVisibility] = useState("d-none");
@@ -78,7 +86,8 @@ const VisualizerInformationMobile = ({
               </Text>
               <Text size={200}>
                 {convertPreOrPostEventImagerySource(
-                  visualizerResults.preDisasterImagery.url, visualizerResults.sourceTypePreEvent
+                  visualizerResults.preDisasterImagery?.url,
+                  visualizerResults.sourceTypePreEvent
                 )}
               </Text>
             </>
@@ -94,34 +103,25 @@ const VisualizerInformationMobile = ({
               </Text>
               <Text size={200}>
                 {convertPreOrPostEventImagerySource(
-                  visualizerResults.postDisasterImagery.url, visualizerResults.sourceTypePostEvent
+                  visualizerResults.postDisasterImagery?.url,
+                  visualizerResults.sourceTypePostEvent
                 )}
               </Text>
             </>
           )}
           <hr />
 
-
-            <Checkbox
-              defaultChecked={true}
-              label="Predicted damage layer"
-              onChange={(e, data) =>
-                togglePredictedDamageLayerVisibility(
-                  "predictedDamageLayer",
-                  data.checked
-                )
-              }
-            />
-            <Checkbox
-              defaultChecked={false}
-              label="Predictions layer (raw)"
-              onChange={(e, data) =>
-                togglePredictedDamageLayerVisibility(
-                  "predictionsLayer",
-                  data.checked
-                )
-              }
-            />
+            {layerOptions.map((option) => (
+              <Checkbox
+                key={option.key}
+                checked={!!layerVisibility[option.key]}
+                disabled={option.disabled}
+                label={option.label}
+                onChange={(e, data) =>
+                  onLayerVisibilityChange(option.key, data.checked)
+                }
+              />
+            ))}
             <hr />
             <KeyboardShortcutHelp shortcuts={VISUALIZER_SHORTCUTS} />
         </div>
@@ -137,7 +137,15 @@ VisualizerInformationMobile.propTypes = {
   convertPreOrPostEventImagerySource: PropType.func.isRequired,
   setSwipeStateMobile: PropType.func.isRequired,
   swipeStateMobile: PropType.string.isRequired,
-  togglePredictedDamageLayerVisibility: PropType.func.isRequired,
+  layerOptions: PropType.arrayOf(
+    PropType.shape({
+      key: PropType.string.isRequired,
+      label: PropType.string.isRequired,
+      disabled: PropType.bool,
+    })
+  ).isRequired,
+  layerVisibility: PropType.object.isRequired,
+  onLayerVisibilityChange: PropType.func.isRequired,
   surfaceClassName: PropType.string.isRequired,
 };
 

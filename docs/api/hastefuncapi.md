@@ -52,9 +52,115 @@ All functions are defined in `function_app.py` as a single Azure Functions app. 
 | PUT | `PutRunInferenceQueueMessage` | Queue an inference run. |
 | PUT | `PutRunEmbeddingQueueMessage` | Queue a building-embedding job for the building labeling workflow. Creates a `modelType="embedding"` model; needs no labels, only the layer's imagery and cached footprints. |
 | DELETE | `DeleteModel` | Delete a model. Requires `projectId` and `modelId`. |
-| GET | `GetVisualizerResults` | Visualizer data with imagery layers and TiTiler tile URLs with colormaps. Requires `projectId`, `imageLayerId`, and `modelId`. |
+| GET | `GetVisualizerResults` | Results-viewer data for one model: imagery tile URLs, the vector prediction artifacts, readiness, and (inference models only) the raster prediction layers. Requires `projectId`, `imageLayerId`, and `modelId`. See [below](#get-getvisualizerresults). |
 | PUT | `PutArtifactsZipQueueMessage` | Queue a job to zip model artifacts for download. |
 | GET | `GetModelArtifact` | Stream a model artifact (or an image layer's footprint tiles) through the function app instead of a direct blob SAS URL, honoring HTTP `Range`. See [Model artifacts](#model-artifacts). |
+
+#### `predictionsReady` on model payloads
+
+Every endpoint that returns model objects — `GetProjectDetails`,
+`GetLayerDetailView` and `GetLayerModelsDetails` — adds a server-derived
+boolean **`predictionsReady`** to each model. It is the single answer to "does
+this model have results worth opening", so trained and embedding rows stop
+re-deriving it from different fields.
+
+The rule lives in `hastegeo.core.utils.model_readiness` and is the same one
+data publishing uses to decide whether a model is publishable:
+
+| `modelType` | Ready when |
+|-------------|-----------|
+| `embedding` | `status == "Processed"` **and** `gpkgUrl` is set **and** `predictedBuildingCount > 0` (a model predating that counter falls back to `gpkgUrl` alone; `0` means the analyst cleared their labels, so it is *not* ready) |
+| anything else (trained inference) | `inferenceStatus == "Processed"` **and** `gpkgUrl` or `predictedDamageLayerUrl` is set |
+
+`predictionsReady` is derived on every read and is never persisted — it does
+not exist in metadata storage and must not be sent in a `PutModel` body.
+
+#### `GET GetVisualizerResults`
+
+Everything the results viewer needs for one model, for **both** workflows.
+Vector-first: the building footprint tiles plus the model's prediction
+attribute sidecar are returned for every model, and the two TiTiler raster
+layers only when the model actually wrote COGs (trained inference).
+
+**Query params:** `projectId` (GUID), `imageLayerId` (GUID), `modelId`, and
+optional `version` (integer). Omit `version` for the newest analyst edit,
+falling back to the raw model output; pass `0` to force the raw model output.
+See [Prediction Editing](#prediction-editing).
+
+**Response (200):**
+
+```json
+{
+  "projectId": "…", "imageLayerId": "…", "modelId": "5557",
+  "projectName": "Hurricane X", "eventDate": "2025-10-04",
+  "studyArea": [ { "type": "Feature", "bbox": [ … ], … } ],
+  "predictedDamageImageryDownloadUrl": "",
+
+  "preDisasterImagery":  { "url": "https://titiler…/{z}/{x}/{y}?…", "bounds": [ … ], "tms": false, "attribution": "AI For Good Lab", "minZoom": 12, "maxNativeZoom": 20, "maxZoom": 21 },
+  "postDisasterImagery": { "url": "https://titiler…/{z}/{x}/{y}?…", "bounds": [ … ], … },
+  "predictedDamageLayer": { "url": "https://titiler…", "bounds": [ … ], … },
+  "predictionsLayer":     { "url": "https://titiler…&colormap=…", "bounds": [ … ], … },
+
+  "footprintTilesUrl": "GetModelArtifact?projectId=…&modelId=5557&kind=footprint_pmtiles&imageLayerId=…",
+  "predictionAttrsUrl": "GetModelArtifact?projectId=…&modelId=5557&kind=prediction_attrs",
+  "flavor": "inference",
+  "supportsThreshold": true,
+  "buildingCount": 125430,
+  "predictionVersion": null,
+  "predictionVersions": [ { "version": 1, "gpkgUrl": "…", "createdAt": "…", "createdBy": "…", "threshold": 0.5, "unknownThreshold": 0.0, "editedCount": 53, "sourceGpkgUrl": "…" } ],
+  "predictionsReady": true,
+  "predictionsReadiness": {
+    "ready": true, "reason": "ready", "detail": "",
+    "workflow": "inference", "status": "Processed",
+    "tilesReady": true, "attrsReady": true,
+    "predictionTilesStatus": "Processed", "predictionTilesStatusMessage": ""
+  },
+
+  "sourceTypePreEvent": "…", "sourceTypePostEvent": "…",
+  "imageryCaptureDatePreEvent": "…", "imageryCaptureDatePostEvent": "…"
+}
+```
+
+- **`predictedDamageLayer` / `predictionsLayer` are nullable.** They are
+  `null` for every embedding model (that workflow writes no rasters) and for an
+  inference model that has not produced them yet. `predictionsLayer` is derived
+  from `predictedDamageLayerUrl` by swapping `_visualizer.tif` for
+  `_predictions.tif`, and is `null` when that suffix is absent instead of a URL
+  that 404s every tile. Callers must null-check both before reading `.url`.
+  All other previously existing fields keep their old names, types and URL
+  formats.
+- **`footprintTilesUrl` / `predictionAttrsUrl` are API-relative
+  `GetModelArtifact` routes**, not blob URLs — pass them through the UI's
+  `buildUrl()`. Serving them through
+  [`GetModelArtifact`](#get-getmodelartifact) keeps auth, managed identity and
+  `Range` support. For an embedding model `footprint_pmtiles` resolves to the
+  model's own `pmtilesUrl` (same `resolve_tiles_url` seam the prediction editor
+  uses); otherwise it is the layer's shared `footprintPmtilesUrl`. Either field
+  is `null` when that artifact has not been built yet.
+- **`flavor` / `supportsThreshold` / `buildingCount`** come from reading the
+  selected prediction GeoPackage, exactly as in
+  [`GetPredictionEditSession`](#get-getpredictioneditsession). Re-thresholding
+  is meaningless for `"embedding"` (`supportsThreshold: false`), whose
+  `damage_pct_0m` is a degenerate 0/1 copy of `damaged`. All three are `null`
+  when the file could not be read; the rest of the payload is still returned.
+- **`predictionVersion`** is the edited version that was read (`null` = raw
+  model output); **`predictionVersions`** is `Model.editedPredictions`, newest
+  first, so the viewer can offer a version switch without a second round trip.
+- **`predictionsReady`** here is stricter than the model-payload flag above: it
+  additionally requires both browser artifacts to exist, because that is what
+  the viewer actually needs to draw. `predictionsReadiness.reason` is one of
+  `ready`, `not_processed`, `no_predictions`, `no_buildings` or `preparing`,
+  with a human-readable `detail`; `preparing` means the model has predictions
+  but the prediction-tiles job has not finished, so the UI should show a "still
+  preparing" state (and may request the work with
+  [`PutPreparePredictionTilesQueueMessage`](#put-putpreparepredictiontilesqueuemessage))
+  rather than an empty map.
+
+| Code | Condition |
+|------|-----------|
+| 400 | Missing or malformed `projectId`, `imageLayerId`, `modelId`, or `version` |
+| 404 | Model, project or image layer not found, or the requested `version` does not exist |
+| 500 | Metadata or storage failure |
 
 ### Building Labeling (Interactive Labeler)
 
@@ -105,6 +211,11 @@ versioned GeoPackage**. See `spec/features/prediction-editing/` and
 > `Model.gpkgUrl` always points at the RAW model output and is never rewritten
 > by these endpoints — it is the source every future edit derives from. Saves
 > append to `Model.editedPredictions` instead.
+>
+> Readers (`GetVisualizerResults`, `GetValidationReport`,
+> `GetAssessmentReport`) default to the **newest** saved version and accept a
+> `version` query param to pin one — see
+> [Reading edited predictions](#reading-edited-predictions-version).
 
 Typical call order: `GetPredictionEditSession` →
 `PutPreparePredictionTilesQueueMessage` when it reports `tilesReady: false` or
@@ -363,8 +474,32 @@ These endpoints use `FUNCTION`-level auth regardless of development mode (intend
 | GET | `GetBuildingFootprintsGeoJSON` | Random sample of building footprints as a GeoJSON FeatureCollection. `sample` param controls count (1–2000, default 200). |
 | GET | `GetBuildingValidation` | Existing building validation labels for a layer (Damaged / NotDamaged / Unknown). |
 | PUT | `PutBuildingValidation` | Save (replace) building validation labels for a layer. |
-| GET | `GetValidationReport` | Validation accuracy report: confusion matrix, accuracy, precision, recall, F1. Crosses inference results with user-supplied labels. |
-| GET | `GetAssessmentReport` | Full damage assessment: precision/recall/AP against labels, plus a finite-population estimate with 95% CI for damaged building count. Supports `threshold` and `minAreaM2` query params. |
+| GET | `GetValidationReport` | Validation accuracy report: confusion matrix, accuracy, precision, recall, F1. Crosses inference results with user-supplied labels. Supports the `version` query param. |
+| GET | `GetAssessmentReport` | Full damage assessment: precision/recall/AP against labels, plus a finite-population estimate with 95% CI for damaged building count. Supports `threshold`, `minAreaM2` and `version` query params. |
+
+#### Reading edited predictions (`version`)
+
+`GetValidationReport`, `GetAssessmentReport` and
+[`GetVisualizerResults`](#get-getvisualizerresults) all resolve which
+prediction GeoPackage to read through
+`hastegeo.core.utils.predictions.resolve_prediction_source`:
+
+| `version` | Source read |
+|-----------|-------------|
+| omitted (or empty) | the **newest** entry in `Model.editedPredictions`, falling back to `Model.gpkgUrl` when the model has never been edited |
+| `0` | `Model.gpkgUrl` — the raw model output, even when edits exist |
+| `N` | the `Model.editedPredictions` entry whose `version == N` |
+
+An unknown `N` returns **404** with `{"error": "..."}`; a non-numeric value
+returns **400**. There is deliberately no mutable "active version" pointer on
+the model — newest-wins plus an explicit override is the design in
+[ADR-0005](../../spec/architecture/decisions/0005-versioned-derived-prediction-artifacts.md).
+
+Note that an edited GeoPackage overrides `damaged` (and adds `edited_class`,
+`edit_threshold`, `overture_id`) but preserves the producer's original
+`damage_pct_0m`. `GetValidationReport` reads `damaged`, so analyst corrections
+change its metrics directly; `GetAssessmentReport` thresholds `damage_pct_0m`,
+so per-building overrides do not move its threshold-based counts.
 
 ### Data Publishing
 

@@ -27,17 +27,22 @@ Neither producer stores the Overture building id: predictions join to the
 image layer's footprints GeoPackage **by row order**, matching
 ``hastegeo.core.utils.assessment.build_assessment_inputs_from_gpkgs``.
 Pass ``footprints_path`` to resolve those ids.
+
+:func:`resolve_prediction_source` picks *which* GeoPackage a reader
+should open: the newest analyst-edited version when there is one, the
+raw model output otherwise.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 import fiona
 
 from .gdal_security import harden_gdal
+from .model_readiness import ModelLike, model_field
 
 # Harden GDAL/OGR drivers before any fiona read of a user-supplied vector
 # file (GDAL CVE compensating control — docs/known-vulnerabilities.md
@@ -58,6 +63,10 @@ EMBEDDING_LAYER_NAME = "predictions"
 # Overture ids live only in the footprints GeoPackage
 # (hastegeo.core.utils.footprints writes them to this column).
 FOOTPRINT_ID_FIELD = "id"
+
+#: ``version=0`` explicitly selects the raw model output, so a caller can
+#: ask for "what the model actually predicted" even after edits exist.
+RAW_PREDICTION_VERSION = 0
 
 
 @dataclass
@@ -235,3 +244,158 @@ def read_predictions(
         layer_name=layer_name,
         crs=crs,
     )
+
+
+class PredictionVersionNotFoundError(ValueError):
+    """Raised when a requested edited prediction version does not exist.
+
+    The HTTP layer maps this to a 404: the caller asked for a specific
+    revision of a model's predictions and there is no such revision.
+    """
+
+
+@dataclass
+class PredictionSource:
+    """The prediction GeoPackage a reader should open, plus provenance.
+
+    Attributes:
+        url: Blob URL of the GeoPackage. Empty when the model has no
+            predictions at all.
+        version: Edited-version number, or ``None`` for the raw model
+            output in ``Model.gpkgUrl``.
+        created_at: When the edited version was saved (``None`` for raw).
+        created_by: Who saved the edited version (``None`` for raw).
+        edited_count: Buildings the analyst overrode in this version.
+    """
+
+    url: str = ""
+    version: Optional[int] = None
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    edited_count: int = 0
+
+    @property
+    def is_edited(self) -> bool:
+        """``True`` when this is an analyst-edited version, not the raw."""
+        return self.version is not None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize for an HTTP payload."""
+        return {
+            "url": self.url,
+            "version": self.version,
+            "createdAt": self.created_at,
+            "createdBy": self.created_by,
+            "editedCount": self.edited_count,
+            "isEdited": self.is_edited,
+        }
+
+
+def _entry_to_dict(entry: Any) -> Dict[str, Any]:
+    """Normalise one ``editedPredictions`` entry to a plain dict.
+
+    Model documents come off the metadata store as dicts, but a
+    :class:`~hastegeo.core.models.projects.Model` instance carries
+    ``EditedPredictionVersion`` objects. Callers (and ``json.dumps``)
+    want the same shape either way.
+    """
+    if isinstance(entry, Mapping):
+        return dict(entry)
+    dump = getattr(entry, "model_dump", None)
+    if callable(dump):
+        return dump()
+    return dict(getattr(entry, "__dict__", {}) or {})
+
+
+def _entry_version(entry: Mapping[str, Any]) -> int:
+    """Version number of an entry, treating a missing one as 0."""
+    try:
+        return int(entry.get("version") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def edited_prediction_versions(model: ModelLike) -> List[Dict[str, Any]]:
+    """Return ``Model.editedPredictions`` as dicts, newest version first.
+
+    Ordering is by the numeric ``version`` field rather than list order:
+    the list is append-only today, but readers must not depend on that.
+    """
+    entries = model_field(model, "editedPredictions") or []
+    return sorted(
+        (_entry_to_dict(entry) for entry in entries),
+        key=_entry_version,
+        reverse=True,
+    )
+
+
+def describe_prediction_source(
+    model: ModelLike, version: Optional[int] = None
+) -> PredictionSource:
+    """Resolve which prediction GeoPackage to read, with its provenance.
+
+    Newest-wins by default: analyst edits are what a reader should see,
+    and ADR-0005 deliberately did not add a mutable "active version"
+    pointer to the model, so "newest edit, else raw" *is* the selection
+    rule. Pass ``version`` to pin a specific revision (``0`` selects the
+    raw model output explicitly).
+
+    Args:
+        model: A Model instance or its raw metadata dict.
+        version: Edited version number to pin, ``0`` for the raw model
+            output, or ``None`` for "newest edit, else raw".
+
+    Returns:
+        A :class:`PredictionSource`. Its ``url`` is empty only when the
+        model has no predictions at all — callers surface that as a 404.
+
+    Raises:
+        PredictionVersionNotFoundError: when ``version`` is given but no
+            such edited version exists.
+    """
+    raw_url = model_field(model, "gpkgUrl") or ""
+    entries = [
+        entry
+        for entry in edited_prediction_versions(model)
+        if entry.get("gpkgUrl")
+    ]
+
+    if version is None:
+        if not entries:
+            return PredictionSource(url=raw_url)
+        entry = entries[0]
+    else:
+        requested = int(version)
+        if requested == RAW_PREDICTION_VERSION:
+            return PredictionSource(url=raw_url)
+        entry = next(
+            (e for e in entries if _entry_version(e) == requested), None
+        )
+        if entry is None:
+            available = [_entry_version(e) for e in entries]
+            raise PredictionVersionNotFoundError(
+                f"Edited prediction version {requested} does not exist "
+                f"for model {model_field(model, 'modelId')}. Available "
+                f"versions: {available} (0 selects the raw model output)."
+            )
+
+    return PredictionSource(
+        url=str(entry.get("gpkgUrl") or ""),
+        version=_entry_version(entry),
+        created_at=entry.get("createdAt"),
+        created_by=entry.get("createdBy"),
+        edited_count=int(entry.get("editedCount") or 0),
+    )
+
+
+def resolve_prediction_source(
+    model: ModelLike, version: Optional[int] = None
+) -> str:
+    """Return the URL of the prediction GeoPackage a reader should open.
+
+    Thin wrapper over :func:`describe_prediction_source` for the common
+    case where the caller only needs the URL. Reports, publishing and
+    the results viewer all go through this so analyst edits reach every
+    reader instead of stopping at the editor.
+    """
+    return describe_prediction_source(model, version=version).url

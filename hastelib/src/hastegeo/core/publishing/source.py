@@ -13,6 +13,7 @@ from ..models.publishing import (
 )
 from ..processors.metadata import MetadataProcessor
 from ..utils.metadata import MetadataUtils
+from ..utils.model_readiness import model_is_complete
 from .open_data import validate_source_refs
 
 
@@ -146,14 +147,12 @@ class PublishingSourceResolver:
             raise PublishingSourceNotFoundError(
                 "Model does not belong to the requested project and image layer"
             )
-        completed = self.config.get_status_types().COMPLETED.value
         # Embedding models signal completion via `status`; trained/inference
-        # models via `inferenceStatus`. Gate on the field that actually applies.
-        if model.modelType == "embedding":
-            is_complete = model.status == completed
-        else:
-            is_complete = model.inferenceStatus == completed
-        if not is_complete:
+        # models via `inferenceStatus`. `model_is_complete` owns that rule
+        # for every consumer (it is also what the API's `predictionsReady`
+        # flag is built on), so publishing eligibility cannot drift from
+        # what the UI shows as "has results".
+        if not model_is_complete(model, config=self.config):
             raise PublishingSourceNotEligibleError(
                 "Model must be Processed before publishing"
             )

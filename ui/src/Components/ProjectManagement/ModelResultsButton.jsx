@@ -22,6 +22,14 @@ import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
 import PublishDatasetModal from "../PublishDatasetModal";
 
 
+// A model has usable inference outputs once at least one inference job has run
+// to completion. Shared by the Results button gate and the View action's
+// client-side fallback so the two can't drift apart.
+function hasCompletedInference(model) {
+  return model.inferenceJobs.length > 0 && model.inferenceStatus === "Processed";
+}
+
+
 function formatFileSize(bytes) {
   if (bytes == null) return "";
   if (bytes < 1024) return `${bytes} B`;
@@ -41,10 +49,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
 
   function evaluateViewResultsButtonState(model) {
     // Results button must be enabled if inference jobs exist and status is processed
-    if (
-      model.inferenceJobs.length > 0 &&
-      model.inferenceStatus === "Processed"
-    ) {
+    if (hasCompletedInference(model)) {
       return false;
     // If inference fails, then the button should be enabled because will allow the user to download the artifacts when they are ready.
     } else if (model.status === "Failed" && model.artifacts != null) {
@@ -79,27 +84,17 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
     ? `Download Inference Artifacts (${formatFileSize(model.artifacts.inferenceZipSize)})`
     : "Download Inference Artifacts";
 
-  // Editing works off the inference outputs (footprint tiles + per-building
-  // scores), so it only opens once inference has finished AND produced a
-  // GeoPackage. `disabledFocusable` keeps the button hoverable while disabled
-  // so the tooltip can explain why.
-  const canEditPredictions =
-    model.inferenceStatus === "Processed" && !!model.gpkgUrl;
-  const editTooltip = canEditPredictions
-    ? "Review and edit this model's predictions, then save them as a new version"
-    : "Inference must finish and produce predictions before they can be edited";
-
-  function handleEditPredictions() {
-    if (!canEditPredictions) return;
-    navigate(
-      `/edit-predictions/${projectId}/${imageLayerId}/${model.modelId}`
-    );
-  }
+  // Viewing results opens the visualizer, which is also where predictions are
+  // edited. `predictionsReady` is the server-derived readiness flag; models
+  // saved before it existed fall back to the client-side inference check.
+  const canViewResults = model.predictionsReady ?? hasCompletedInference(model);
 
   const resultsMenuOptions = (model) => ({
     items: [
       {
-        disabled: model.inferenceStatus !== "Processed",
+        disabled: !canViewResults,
+        tooltip:
+          "Inference must finish before results can be viewed or edited",
         key: "viewResults",
         text: "View",
         icon: <FluentIcon name="Forward" />,
@@ -183,37 +178,45 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
                 appearance="primary"
                 id={"singleModelResults" + index}
                 className="dashboard-button dashboard-button-light"
-                disabled={evaluateViewResultsButtonState(model)}
+                // Keep the menu reachable whenever any action inside it is
+                // available: the download/report entries use the existing
+                // inference/artifact check, View uses `predictionsReady`.
+                disabled={evaluateViewResultsButtonState(model) && !canViewResults}
               >
                 Results
               </Button>
             </MenuTrigger>
             <MenuPopover>
               <MenuList>
-                {resultsMenuOptions(model).items.map((mi) => (
-                  <MenuItem
-                    key={mi.key}
-                    icon={mi.icon}
-                    disabled={mi.disabled}
-                    onClick={mi.onClick}
-                  >
-                    {mi.text}
-                  </MenuItem>
-                ))}
+                {resultsMenuOptions(model).items.map((mi) => {
+                  const menuItem = (
+                    <MenuItem
+                      key={mi.key}
+                      icon={mi.icon}
+                      disabled={mi.disabled}
+                      onClick={mi.onClick}
+                    >
+                      {mi.text}
+                    </MenuItem>
+                  );
+                  // Disabled Fluent menu items stay hoverable/focusable, so a
+                  // tooltip can explain why the action isn't available yet.
+                  return mi.disabled && mi.tooltip ? (
+                    <Tooltip
+                      key={mi.key}
+                      content={mi.tooltip}
+                      relationship="description"
+                      withArrow
+                    >
+                      {menuItem}
+                    </Tooltip>
+                  ) : (
+                    menuItem
+                  );
+                })}
               </MenuList>
             </MenuPopover>
           </Menu>
-          <Tooltip content={editTooltip} relationship="description" withArrow>
-            <Button
-              id={"editPredictions" + index}
-              className="dashboard-button dashboard-button-light ms-2"
-              disabled={!canEditPredictions}
-              disabledFocusable={!canEditPredictions}
-              onClick={handleEditPredictions}
-            >
-              Edit
-            </Button>
-          </Tooltip>
           {model.artifacts && model.artifacts.zipStatusMessage && (
             <ModelResultsStatusIndicator
               statusMessage={model.artifacts.zipStatusMessage}

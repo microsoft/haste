@@ -12,7 +12,6 @@ import Home from "./Home";
 import LabelingTool from "./LabelingTool/LabelingTool";
 import BuildingValidation from "./BuildingValidation/BuildingValidation";
 import InteractiveLabeler from "./InteractiveLabeler/InteractiveLabeler";
-import PredictionEditor from "./PredictionEditor/PredictionEditor";
 import Visualizer from "./Visualizer/Visualizer";
 import ModelCatalog from "./ModelCatalog";
 import PublishedDatasets from "./PublishedDatasets";
@@ -70,10 +69,6 @@ const AppBody = ({ setModalComponent }) => {
               <Route
                 path="/interactive-label/:projectId/:imageLayerId/:modelId"
                 element={<InteractiveLabeler />}
-              />
-              <Route
-                path="/edit-predictions/:projectId/:imageLayerId/:modelId"
-                element={<PredictionEditor />}
               />
               <Route
                 path="/visualizer/:projectId/:imageLayerId/:modelId"

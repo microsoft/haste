@@ -1,14 +1,18 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 //
-// Right-hand control panel for the Prediction Editor: class counts, the
-// swipe imagery-comparison toggle, the filter + prev/next traversal over the
-// filtered set, the threshold sliders (only for models that support them),
-// the live "would change class" readout, the save action, and the
-// saved-version history.
+// Edit-mode control panel for the results page: class counts, the filter +
+// prev/next traversal over the filtered set, the threshold sliders (only for
+// models that support them), the live "would change class" readout, the save
+// action, and the saved-version history.
 //
-// Layout and interaction mirror BuildingValidationRightPanel so the two
-// review screens feel like the same tool. Every colour comes from Fluent
+// This is the overlay the pencil affordance opens over the results view. It
+// was the standalone Prediction Editor's right panel and is deliberately
+// unchanged in look: the same review controls, now on the map the analyst was
+// already looking at. The swipe toggle is gone because the results page
+// always has the swipe map up; the hint under the header names the divider
+// instead. Layout and interaction mirror BuildingValidationRightPanel so the
+// review screens feel like one tool, and every colour comes from Fluent
 // tokens, so the panel follows the light/dark theme.
 import PropTypes from "prop-types";
 import {
@@ -16,6 +20,7 @@ import {
   Divider,
   Dropdown,
   Field,
+  Badge,
   MessageBar,
   MessageBarBody,
   MessageBarTitle,
@@ -23,13 +28,13 @@ import {
   Radio,
   RadioGroup,
   Slider,
-  Switch,
   Text,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
+import { FluentIcon } from "../../util/icons";
 import KeyboardShortcutHelp from "../KeyboardShortcutHelp";
-import { PREDICTION_EDITOR_SHORTCUTS } from "../keyboardShortcuts";
+import { PREDICTION_EDIT_SHORTCUTS } from "../keyboardShortcuts";
 import {
   CLASS_DAMAGED,
   CLASS_LABELS,
@@ -41,16 +46,11 @@ import {
   sortVersionsDescending,
   toPercentLabel,
 } from "./predictionClassify";
-import {
-  SWIPE_MODE_NONE,
-  isSwipeAvailable,
-  swipeModeHint,
-  swipeToggleLabel,
-} from "./predictionSwipe";
+import { describeServedVersion } from "./predictionResults";
 
 const CLASS_ORDER = [CLASS_DAMAGED, CLASS_NOT_DAMAGED, CLASS_UNKNOWN];
 
-// Keyboard hints shown on the class buttons, matching PREDICTION_EDITOR_SHORTCUTS.
+// Keyboard hints shown on the class buttons, matching PREDICTION_EDIT_SHORTCUTS.
 const CLASS_HOTKEYS = {
   [CLASS_DAMAGED]: "1",
   [CLASS_NOT_DAMAGED]: "2",
@@ -215,6 +215,18 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase100,
     lineHeight: tokens.lineHeightBase200,
   },
+  // The version the map is drawing right now, so the history never leaves the
+  // analyst guessing which one they are editing on top of.
+  servedVersionRow: {
+    borderColor: tokens.colorBrandStroke1,
+    backgroundColor: tokens.colorNeutralBackground1Selected,
+  },
+  versionHeader: {
+    display: "flex",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: tokens.spacingHorizontalXS,
+  },
   versionTitle: {
     fontWeight: tokens.fontWeightSemibold,
   },
@@ -228,8 +240,9 @@ const useStyles = makeStyles({
   },
 });
 
-const PredictionEditorRightPanel = ({
-  session,
+const PredictionEditPanel = ({
+  flavor = "",
+  supportsThreshold = true,
   counts,
   total,
   editedCount,
@@ -251,14 +264,14 @@ const PredictionEditorRightPanel = ({
   setUnknownThreshold,
   baseline,
   changeCount,
-  swipeMode = SWIPE_MODE_NONE,
-  swipeOn = false,
-  onSwipeChange,
+  swipeHint = "",
+  onExit,
   onSave,
   isSaving,
   saveError,
   savedResult,
   versions,
+  activeVersion = null,
 }) => {
   const styles = useStyles();
 
@@ -281,7 +294,6 @@ const PredictionEditorRightPanel = ({
         : `${filteredIndices.length} buildings match — press Next to start`;
 
   const orderedVersions = sortVersionsDescending(versions);
-  const swipeAvailable = isSwipeAvailable(swipeMode);
   const thresholdChanged =
     toPercent(threshold) !== toPercent(baseline?.threshold) ||
     toPercent(unknownThreshold) !== toPercent(baseline?.unknownThreshold);
@@ -294,7 +306,10 @@ const PredictionEditorRightPanel = ({
         </Text>
         <div className={styles.subtle}>
           {total.toLocaleString()} buildings
-          {session?.flavor ? ` · ${session.flavor} model` : ""}
+          {flavor ? ` · ${flavor} model` : ""}
+        </div>
+        <div className={styles.subtle}>
+          {describeServedVersion(activeVersion)}
         </div>
       </div>
 
@@ -322,23 +337,14 @@ const PredictionEditorRightPanel = ({
 
         <Divider />
 
-        {/* Imagery comparison. The mode is decided by the layer's imagery, so
-            pre-vs-post is simply not on offer when there are no pre-event
-            tiles — the label always names the comparison being shown. */}
-        <div>
-          <Switch
-            checked={swipeOn}
-            disabled={!swipeAvailable}
-            label={swipeToggleLabel(swipeMode)}
-            onChange={(_event, data) => onSwipeChange?.(data.checked)}
-          />
-          <div className={styles.subtle}>{swipeModeHint(swipeMode)}</div>
-        </div>
+        {/* The results page always has the swipe map up, so there is nothing
+            to switch on here — only the divider's directions to explain. */}
+        {swipeHint ? <div className={styles.subtle}>{swipeHint}</div> : null}
 
-        <Divider />
+        {swipeHint ? <Divider /> : null}
 
-        {/* Thresholds — only models that expose a score support these. */}
-        {session?.supportsThreshold && (
+        {/* Thresholds — only models that expose a real score support these. */}
+        {supportsThreshold && (
           <div>
             <Field label={`Damage threshold: ${toPercentLabel(threshold)}`}>
               <Slider
@@ -384,7 +390,7 @@ const PredictionEditorRightPanel = ({
           </div>
         )}
 
-        {!session?.supportsThreshold && (
+        {!supportsThreshold && (
           <div className={styles.subtle}>
             This model does not expose a tunable score, so classes come from
             its own decisions plus your edits.
@@ -515,9 +521,23 @@ const PredictionEditorRightPanel = ({
           ) : (
             <div className={styles.versionList}>
               {orderedVersions.map((version) => (
-                <div className={styles.versionRow} key={version.version}>
-                  <div className={styles.versionTitle}>
-                    Version {version.version}
+                <div
+                  className={`${styles.versionRow} ${
+                    version.version === activeVersion
+                      ? styles.servedVersionRow
+                      : ""
+                  }`}
+                  key={version.version}
+                >
+                  <div className={styles.versionHeader}>
+                    <span className={styles.versionTitle}>
+                      Version {version.version}
+                    </span>
+                    {version.version === activeVersion && (
+                      <Badge appearance="tint" color="brand">
+                        On the map
+                      </Badge>
+                    )}
                   </div>
                   <div className={styles.subtle}>
                     {formatDate(version.createdAt)}
@@ -533,7 +553,7 @@ const PredictionEditorRightPanel = ({
           )}
         </div>
 
-        <KeyboardShortcutHelp shortcuts={PREDICTION_EDITOR_SHORTCUTS} />
+        <KeyboardShortcutHelp shortcuts={PREDICTION_EDIT_SHORTCUTS} />
       </div>
 
       <div className={styles.actions}>
@@ -556,17 +576,21 @@ const PredictionEditorRightPanel = ({
         <Button appearance="primary" onClick={onSave} disabled={isSaving}>
           {isSaving ? "Saving…" : "Save as new version"}
         </Button>
+        <Button
+          icon={<FluentIcon name="cancel" />}
+          onClick={onExit}
+          disabled={isSaving}
+        >
+          Done editing
+        </Button>
       </div>
     </div>
   );
 };
 
-PredictionEditorRightPanel.propTypes = {
-  session: PropTypes.shape({
-    flavor: PropTypes.string,
-    supportsThreshold: PropTypes.bool,
-    buildingCount: PropTypes.number,
-  }),
+PredictionEditPanel.propTypes = {
+  flavor: PropTypes.string,
+  supportsThreshold: PropTypes.bool,
   counts: PropTypes.object.isRequired,
   total: PropTypes.number.isRequired,
   editedCount: PropTypes.number.isRequired,
@@ -598,9 +622,8 @@ PredictionEditorRightPanel.propTypes = {
     unknownThreshold: PropTypes.number,
   }).isRequired,
   changeCount: PropTypes.number.isRequired,
-  swipeMode: PropTypes.string,
-  swipeOn: PropTypes.bool,
-  onSwipeChange: PropTypes.func,
+  swipeHint: PropTypes.string,
+  onExit: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
   isSaving: PropTypes.bool.isRequired,
   saveError: PropTypes.string,
@@ -610,6 +633,7 @@ PredictionEditorRightPanel.propTypes = {
     editedCount: PropTypes.number,
   }),
   versions: PropTypes.array.isRequired,
+  activeVersion: PropTypes.number,
 };
 
-export default PredictionEditorRightPanel;
+export default PredictionEditPanel;

@@ -11,7 +11,6 @@ import tempfile
 import traceback
 
 import azure.functions as func  # type: ignore
-import requests  # type: ignore
 from azure.core.exceptions import ResourceNotFoundError  # type: ignore
 from hastegeo.core.config import Config
 from hastegeo.core.models.admin import AdminConfig
@@ -43,7 +42,6 @@ from hastegeo.core.models.stats import (
 )
 from hastegeo.core.models.training import CatalogModel
 from hastegeo.core.models.users import User
-from hastegeo.core.models.visualizer import Imagery, Visualizer
 from hastegeo.core.processors.artifacts import ArtifactProcessor
 from hastegeo.core.processors.assessment import AssessmentReportProcessor
 from hastegeo.core.processors.embedding import EmbeddingPreprocessor
@@ -87,6 +85,7 @@ from hastegeo.core.utils.blob import (
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
+from hastegeo.core.utils.model_readiness import annotate_predictions_ready
 from hastegeo.core.utils.source_types import normalize_source_type
 from hastegeo.core.utils.url_allowlist import (
     validate_clip_bbox,
@@ -134,6 +133,9 @@ _EMAIL_RE = re.compile(
 # to leave room for the field to grow without ever admitting an unbounded
 # string into log lines or blob paths.
 _SHORT_INT_ID_RE = re.compile(r"^[0-9]{1,8}$")
+# Edited-prediction version numbers (Model.editedPredictions[].version).
+# Bounded like the other id patterns; 0 means "the raw model output".
+_VERSION_RE = re.compile(r"^[0-9]{1,6}$")
 _PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES = 512 * 1024**2
 
 
@@ -160,6 +162,23 @@ def _require_short_int_id_param(req: func.HttpRequest, name: str) -> str:
     if not _SHORT_INT_ID_RE.match(value):
         raise ValueError(f"Invalid format for parameter: {name}")
     return value
+
+
+def _optional_version_param(
+    req: func.HttpRequest, name: str = "version"
+) -> int | None:
+    """Return an optional edited-prediction version, or raise ValueError.
+
+    Absent or empty selects the default source (the newest analyst edit,
+    falling back to the raw model output). ``0`` explicitly selects the
+    raw model output even when edits exist.
+    """
+    value = (req.params.get(name) or "").strip()
+    if not value:
+        return None
+    if not _VERSION_RE.match(value):
+        raise ValueError(f"Invalid format for parameter: {name}")
+    return int(value)
 
 
 def _require_email_param(req: func.HttpRequest, name: str) -> str:
@@ -774,6 +793,9 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
                     key=lambda x: x["creationDate"], reverse=True
                 )
                 for model in match_models:
+                    # Server-derived "this model has results" flag, so
+                    # trained and embedding rows gate on one rule.
+                    annotate_predictions_ready(model)
                     try:
                         artifacts = await asyncio.to_thread(
                             MetadataProcessor(
@@ -1247,6 +1269,11 @@ async def GetLayerDetailView(req: func.HttpRequest) -> func.HttpResponse:
             for model in models
             if model["imageLayerId"] == image_layer_id
         ]
+        # Server-derived "this model has results" flag (see
+        # hastegeo.core.utils.model_readiness) — the same value
+        # GetLayerModelsDetails and GetProjectDetails return.
+        for model in match_models:
+            annotate_predictions_ready(model)
         image_layer["models"] = match_models
         image_layer["modelCount"] = len(match_models)
         return func.HttpResponse(json.dumps(image_layer), status_code=200)
@@ -1360,6 +1387,10 @@ async def GetLayerModelsDetails(req: func.HttpRequest) -> func.HttpResponse:
             for model in models
             if model["imageLayerId"] == image_layer_id
         ]
+        # Server-derived "this model has results" flag, so the model rows
+        # do not each re-derive it from a different set of fields.
+        for model in match_models:
+            annotate_predictions_ready(model)
 
         return func.HttpResponse(json.dumps(match_models), status_code=200)
 
@@ -2273,9 +2304,41 @@ async def GetUserById(req: func.HttpRequest) -> func.HttpResponse:
     methods=["GET"],
 )
 async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
+    """Return everything the results viewer needs for ONE model.
+
+    Workflow-agnostic and vector-first. Both workflows get the building
+    footprint tiles plus the model's prediction attribute sidecar (as
+    API-relative ``GetModelArtifact`` routes); only the trained-inference
+    workflow additionally gets the two raster layers, because only it
+    writes COGs. ``predictedDamageLayer``/``predictionsLayer`` are
+    therefore ``null`` for an embedding model rather than tile templates
+    over a URL that does not exist.
+
+    Query params:
+        projectId (GUID), imageLayerId (GUID), modelId (short int id),
+        version (int, optional): edited-prediction version to read.
+            Omit for the newest edit (falling back to the raw model
+            output); pass ``0`` to force the raw model output.
+
+    The payload assembly lives in
+    :func:`hastegeo.core.processors.visualizer.build_visualizer_results`.
+    """
     logger.info(
         "GetVisualizerResults HTTP trigger function processed a request."
     )
+    # Lazy imports: the prediction reader and the payload builder pull in
+    # fiona at module scope (same pattern as GetPredictionEditSession).
+    from hastegeo.core.processors.visualizer import (
+        PredictionInfo,
+        build_visualizer_results,
+    )
+    from hastegeo.core.utils.predictions import (
+        PredictionVersionNotFoundError,
+        describe_prediction_source,
+        read_predictions,
+    )
+
+    gpkg_path = None
     try:
         try:
             project_id = _require_guid_param(req, "projectId")
@@ -2284,6 +2347,7 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
             # (currently "0000"-"9999"), not a UUID — so the GUID validator
             # rejected every real value. See _require_short_int_id_param.
             model_id = _require_short_int_id_param(req, "modelId")
+            version = _optional_version_param(req)
         except ValueError as ve:
             return _bad_request(f"GetVisualizerResults: {ve}")
 
@@ -2329,111 +2393,61 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
             **match_label_projects[0] if match_label_projects else {}
         )
 
-        titiler_ep = config.titiler_endpoint
-        # URL needs to include SAS token for the image to be accessible
-        # Also needs to be urlencoded so that SAS is not mangled
-        pre_event_image_URL = (
-            requests.utils.quote(
-                image_layer.preEventProcessedImageryUrl, safe=""
+        # Analyst edits win over the raw model output unless the caller
+        # pins a version (ADR-0005: newest-wins plus explicit override,
+        # no mutable "active version" pointer on the model).
+        try:
+            source = describe_prediction_source(model_data, version=version)
+        except PredictionVersionNotFoundError as e:
+            logger.warning(f"GetVisualizerResults: {e}")
+            return func.HttpResponse(
+                "Requested prediction version not found.", status_code=404
             )
-            if image_layer.preEventImageryUrls
-            else ""
-        )
-        post_disaster_image_URL = requests.utils.quote(
-            image_layer.postEventProcessedImageryUrl, safe=""
-        )
-        predicted_damage_layer_URL = (
-            requests.utils.quote(model_data.predictedDamageLayerUrl, safe="")
-            if model_data.predictedDamageLayerUrl
-            else ""
-        )
-        # The inference workflow always produces a `_predictions.tif` next to
-        # `_visualizer.tif`, sharing the same container SAS. Derive its URL by
-        # swapping the suffix rather than persisting a separate model field.
-        predictions_url_raw = (
-            model_data.predictedDamageLayerUrl.replace(
-                "_visualizer.tif", "_predictions.tif"
-            )
-            if model_data.predictedDamageLayerUrl
-            else None
-        )
-        predictions_layer_URL = (
-            requests.utils.quote(predictions_url_raw, safe="")
-            if predictions_url_raw
-            else ""
-        )
-        # TiTiler colormap overrides the embedded TIFF palette (whose alpha=0 entry
-        # is silently dropped by TIFF). Maps pixel values 0/1 -> transparent,
-        # 2 -> green, 3 -> red, matching the inference.py palette.
-        predictions_colormap = requests.utils.quote(
-            json.dumps(
-                {
-                    "0": [0, 0, 0, 0],
-                    "1": [0, 0, 0, 0],
-                    "2": [0, 255, 0, 255],
-                    "3": [255, 0, 0, 255],
-                }
-            ),
-            safe="",
-        )
 
-        visualizer = Visualizer(
-            projectId=project_id,
-            imageLayerId=image_layer_id,
-            modelId=model_id,
-            projectName=project.name,
-            studyArea=label_project.features,
-            eventDate=project.eventDate,
-            # NOTE: predictedDamageImageryDownloadUrl will be a screenshot for pre-release, could be something else in the future
-            preDisasterImagery=Imagery(
-                # If no image is uploaded, then the base Azure Map will be displayed in the pre section
-                url=(
-                    f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={pre_event_image_URL}"
-                    if pre_event_image_URL
-                    else ""
-                ),
-                bounds=(
-                    label_project.features[0].bbox
-                    if label_project.features
-                    else None
-                ),
-            ),
-            postDisasterImagery=Imagery(
-                url=f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={post_disaster_image_URL}",
-                bounds=(
-                    label_project.features[0].bbox
-                    if label_project.features
-                    else None
-                ),
-            ),
-            predictedDamageLayer=Imagery(
-                url=f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={predicted_damage_layer_URL}",
-                bounds=(
-                    label_project.features[0].bbox
-                    if label_project.features
-                    else None
-                ),
-            ),
-            predictionsLayer=Imagery(
-                url=(
-                    f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={predictions_layer_URL}&colormap={predictions_colormap}"
-                    if predictions_layer_URL
-                    else ""
-                ),
-                bounds=(
-                    label_project.features[0].bbox
-                    if label_project.features
-                    else None
-                ),
-            ),
-            sourceTypePreEvent=image_layer.sourceTypePreEvent,
-            sourceTypePostEvent=image_layer.sourceTypePostEvent,
-            imageryCaptureDatePreEvent=image_layer.imageryCaptureDatePreEvent,
-            imageryCaptureDatePostEvent=image_layer.imageryCaptureDatePostEvent,
+        predictions_info = PredictionInfo(version=source.version)
+        if source.url:
+            # Read the selected GeoPackage for its flavor: the embedding
+            # producer's damage fraction is a degenerate 0/1 copy of
+            # `damaged`, so the UI must not offer re-thresholding there.
+            # Best effort — a viewer that cannot read the file still gets
+            # its imagery, its rasters and its readiness state.
+            try:
+                gpkg_path = await download_blob_to_tempfile(
+                    source.url, suffix=".gpkg"
+                )
+                predictions = await asyncio.to_thread(
+                    read_predictions, gpkg_path
+                )
+                predictions_info = PredictionInfo(
+                    version=source.version,
+                    flavor=predictions.flavor,
+                    supports_threshold=predictions.supports_threshold,
+                    building_count=len(predictions),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"GetVisualizerResults could not read predictions for "
+                    f"model {model_id}: {e}"
+                )
+
+        visualizer = build_visualizer_results(
+            project=project,
+            image_layer=image_layer,
+            model=model_data,
+            titiler_endpoint=config.titiler_endpoint,
+            study_area=label_project.features,
+            predictions=predictions_info,
         )
 
         return func.HttpResponse(
-            json.dumps(visualizer.dict()), status_code=200
+            json.dumps(visualizer.dict()),
+            status_code=200,
+            mimetype="application/json",
+        )
+    except FileNotFoundError as e:
+        logger.warning(f"GetVisualizerResults source not found: {e}")
+        return func.HttpResponse(
+            "Model, project or image layer not found.", status_code=404
         )
     except Exception as e:
         logger.error(
@@ -2443,6 +2457,12 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             "Error loading visualizer results.", status_code=500
         )
+    finally:
+        if gpkg_path and os.path.exists(gpkg_path):
+            try:
+                os.unlink(gpkg_path)
+            except OSError:
+                pass
 
 
 @app.route(
@@ -2901,11 +2921,10 @@ def _invalid_body(error: ValidationError) -> func.HttpResponse:
 
 def _edited_versions(model_data: dict) -> list:
     """Model.editedPredictions, newest version first."""
-    return sorted(
-        model_data.get("editedPredictions") or [],
-        key=lambda entry: entry.get("version") or 0,
-        reverse=True,
-    )
+    # Lazy import: hastegeo.core.utils.predictions pulls in fiona.
+    from hastegeo.core.utils.predictions import edited_prediction_versions
+
+    return edited_prediction_versions(model_data)
 
 
 @app.route(
@@ -4741,6 +4760,9 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         projectId (str): Parent project identifier.
         imageLayerId (str): Image layer identifier.
         modelId (str): Model identifier whose inference results to use.
+        version (int, optional): Edited-prediction version to report on.
+            Omit to use the newest analyst edit (falling back to the raw
+            model output); pass ``0`` to force the raw model output.
 
     Returns JSON:
         {
@@ -4762,6 +4784,13 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
     logger.info(
         "GetValidationReport HTTP trigger function processed a request."
     )
+    # Lazy import: hastegeo.core.utils.predictions pulls in fiona at
+    # module scope (same pattern as GetPredictionEditSession).
+    from hastegeo.core.utils.predictions import (
+        PredictionVersionNotFoundError,
+        resolve_prediction_source,
+    )
+
     try:
         project_id = req.params.get("projectId")
         image_layer_id = req.params.get("imageLayerId")
@@ -4772,6 +4801,10 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
                 "projectId, imageLayerId and modelId are required.",
                 status_code=400,
             )
+        try:
+            version = _optional_version_param(req)
+        except ValueError as ve:
+            return _bad_request(f"GetValidationReport: {ve}")
 
         # ── 1. Load model (modelType picks the label store; gpkgUrl needed) ────
         model_data = await asyncio.to_thread(
@@ -4782,7 +4815,18 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
             model_id,
         )
 
-        gpkg_url = model_data.get("gpkgUrl")
+        # Report on the analyst-edited predictions when there are any, so
+        # corrections made in the editor reach the metrics instead of
+        # stopping at the saved GeoPackage.
+        try:
+            gpkg_url = resolve_prediction_source(model_data, version=version)
+        except PredictionVersionNotFoundError as e:
+            logger.warning(f"GetValidationReport: {e}")
+            return func.HttpResponse(
+                json.dumps({"error": str(e)}),
+                status_code=404,
+                mimetype="application/json",
+            )
         if not gpkg_url:
             return func.HttpResponse(
                 json.dumps(
@@ -5048,6 +5092,9 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
             building is called damaged (default 0.1, same as the CLI).
         minAreaM2 (float, optional): Minimum footprint area in m² for
             the population extrapolation (default 50).
+        version (int, optional): Edited-prediction version to assess.
+            Omit to use the newest analyst edit (falling back to the raw
+            model output); pass ``0`` to force the raw model output.
     """
     logger.info(
         "GetAssessmentReport HTTP trigger function processed a request."
@@ -5056,6 +5103,10 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
         from hastegeo.core.utils.assessment import (
             build_assessment_inputs_from_gpkgs,
             compute_assessment_report,
+        )
+        from hastegeo.core.utils.predictions import (
+            PredictionVersionNotFoundError,
+            resolve_prediction_source,
         )
 
         project_id = req.params.get("projectId")
@@ -5091,6 +5142,10 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(
                 "minAreaM2 must be >= 0.", status_code=400
             )
+        try:
+            version = _optional_version_param(req)
+        except ValueError as ve:
+            return _bad_request(f"GetAssessmentReport: {ve}")
 
         # Load model + image layer to get the two blob URLs we need.
         model_data = await asyncio.to_thread(
@@ -5100,7 +5155,17 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
             ).load,
             model_id,
         )
-        gpkg_url = model_data.get("gpkgUrl")
+        # Assess the analyst-edited predictions when there are any, so
+        # the damage counts reflect the corrections that were saved.
+        try:
+            gpkg_url = resolve_prediction_source(model_data, version=version)
+        except PredictionVersionNotFoundError as e:
+            logger.warning(f"GetAssessmentReport: {e}")
+            return func.HttpResponse(
+                json.dumps({"error": str(e)}),
+                status_code=404,
+                mimetype="application/json",
+            )
         if not gpkg_url:
             return func.HttpResponse(
                 json.dumps(
