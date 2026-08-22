@@ -9,7 +9,7 @@ azure-cosmos==4.16.3
 azure-storage-blob==12.30.0
 azure-storage-file-datalake==12.25.0
 azure-storage-queue==12.17.0
-azure-mgmt-containerregistry==10.3.0
+azure-mgmt-containerregistry==15.0.0
 azure-mgmt-web
 azure-batch==14.2.0
 azure-core==1.41.0
