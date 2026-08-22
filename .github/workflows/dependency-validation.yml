@@ -36,6 +36,9 @@ on:
       - "ui/package.json"
       - "ui/package-lock.json"
       - ".github/workflows/dependency-validation.yml"
+      - ".github/scripts/check_image_python.py"
+      - ".github/scripts/check_protobuf_pin.py"
+      - ".github/scripts/check_react_pins.py"
   workflow_dispatch:
 
 permissions: {}
@@ -122,12 +125,16 @@ jobs:
         working-directory: ui
         run: |
           set -euo pipefail
-          # npm install fails with ERESOLVE when a peer range cannot be
-          # satisfied. react was bumped to 19 while react-dom stayed on 18
-          # and @azure/msal-react only supports <= 18, so the UI image could
-          # not install at all. Nothing built the UI on a dependency change,
-          # so it reached main.
-          npm install --dry-run
+          # `npm ci`, not `npm install`: install quietly reconciles a stale
+          # lockfile in memory and passes, which would hide exactly the
+          # drift we care about. ci fails when package.json and the lockfile
+          # disagree, and it is what deploy/deploy-web.ps1 runs, so this
+          # tests the path that actually ships.
+          #
+          # It also surfaces ERESOLVE peer conflicts: react was bumped to 19
+          # while react-dom stayed on 18, and @azure/msal-react supports at
+          # most 18, so the UI could not install at all.
+          npm ci --dry-run
 
       - name: Check react and react-dom majors agree
         run: python3 .github/scripts/check_react_pins.py ui/package.json
