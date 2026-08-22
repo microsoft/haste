@@ -24,7 +24,7 @@ GDAL @ https://github.com/microsoft/haste/releases/download/haste-binaries/GDAL-
 shapely==2.1.2
 pyyaml==6.0.3
 boto3==1.43.73
-tensorboard==2.21.0
+tensorboard==2.19.0
 tenacity==9.1.4
 typing-extensions==4.16.0
 docker==7.2.0
@@ -34,3 +34,8 @@ docker==7.2.0
 # line below when building deploy images.
 -e ../../hastelib
 # hastegeo @ https://github.com/microsoft/haste/releases/download/haste-binaries/hastegeo-1.0.26-py3-none-any.whl
+
+# Pin below 6.x: the Azure Functions Python worker bundles protobuf
+# 5.29.x and its generated pb2 modules fail to load under 7.x, which
+# makes the worker report "0 functions found" with no error.
+protobuf==5.29.6
