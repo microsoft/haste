@@ -33,6 +33,8 @@ on:
       - "api/hastefuncqueues/Dockerfile"
       - "docker/imageryprep/Dockerfile"
       - "hastelib/pyproject.toml"
+      - "ui/package.json"
+      - "ui/package-lock.json"
       - ".github/workflows/dependency-validation.yml"
   workflow_dispatch:
 
@@ -53,12 +55,15 @@ jobs:
           - name: hastefuncapi
             requirements: api/hastefuncapi/requirements.txt
             python: "3.11"
+            functions_worker: true
           - name: hastefuncqueues
             requirements: api/hastefuncqueues/requirements.txt
             python: "3.11"
+            functions_worker: true
           - name: imageryprep
             requirements: docker/imageryprep/requirements.txt
             python: "3.11"
+            functions_worker: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -97,5 +102,103 @@ jobs:
           # failure modes from #153 surface here: an unsatisfiable pin pair
           # raises ResolutionImpossible, and a release that requires a newer
           # Python raises "No matching distribution found".
-          pip install --dry-run --report /dev/null \
+          pip install --dry-run --report /tmp/report.json \
             -r "$(basename "${{ matrix.requirements }}")"
+
+      - name: Check protobuf stays compatible with the Functions worker
+        if: matrix.functions_worker
+        run: |
+          set -euo pipefail
+          # The Azure Functions Python worker ships its own protobuf (5.29.x
+          # at the time of writing) and its generated pb2 modules cannot load
+          # under protobuf 7. When site-packages wins, the worker reports
+          # "0 functions found" and every route and queue trigger silently
+          # disappears -- with no error anywhere. tensorboard 2.21 requires
+          # protobuf >= 6.31.1, which is how that got pulled in.
+          python - <<'PY'
+          import json
+          import sys
+
+          with open("/tmp/report.json", encoding="utf-8") as handle:
+              report = json.load(handle)
+
+          for item in report.get("install", []):
+              metadata = item.get("metadata", {})
+              if metadata.get("name", "").lower() != "protobuf":
+                  continue
+              version = metadata.get("version", "")
+              major = int(version.split(".")[0])
+              if major >= 6:
+                  sys.exit(
+                      f"protobuf {version} would be installed. The Functions "
+                      "worker bundles 5.x and breaks silently above it; pin "
+                      "protobuf<6 (and keep tensorboard below 2.21)."
+                  )
+              print(f"protobuf {version} OK")
+              break
+          else:
+              print("protobuf not in the resolved set")
+          PY
+
+  npm:
+    name: Resolve ui npm dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+
+      - name: Resolve dependencies
+        working-directory: ui
+        run: |
+          set -euo pipefail
+          # npm install fails with ERESOLVE when a peer range cannot be
+          # satisfied. react was bumped to 19 while react-dom stayed on 18
+          # and @azure/msal-react only supports <= 18, so the UI image could
+          # not install at all. Nothing built the UI on a dependency change,
+          # so it reached main.
+          npm install --dry-run
+
+      - name: Check react and react-dom majors agree
+        working-directory: ui
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import re
+          import sys
+
+          with open("package.json", encoding="utf-8") as handle:
+              pkg = json.load(handle)
+
+          def major(spec):
+              match = re.search(r"(\d+)", spec or "")
+              return match.group(1) if match else None
+
+          pairs = [
+              ("react", "react-dom", pkg.get("dependencies", {})),
+              ("@types/react", "@types/react-dom", pkg.get("devDependencies", {})),
+          ]
+
+          failures = []
+          for left, right, section in pairs:
+              if left not in section or right not in section:
+                  continue
+              if major(section[left]) != major(section[right]):
+                  failures.append(
+                      f"{left} {section[left]} and {right} {section[right]} "
+                      "are different majors"
+                  )
+
+          if failures:
+              sys.exit("; ".join(failures))
+          print("react/react-dom majors agree")
+          PY
