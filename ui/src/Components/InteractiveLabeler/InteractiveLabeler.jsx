@@ -534,6 +534,10 @@ const InteractiveLabeler = () => {
 
   // Pending retry for the first paint (see paintRestoredLabels).
   const initialPaintTimerRef = useRef(null);
+  // Whether GetInteractiveLabels actually returned. Saving merges the saved
+  // mirror into a full-document replace, so an unread mirror must not be
+  // treated as "there was nothing there".
+  const savedLabelsLoadedRef = useRef(false);
 
   const boxRef = useRef(null); // box-select rectangle div
   const boxCleanupRef = useRef(null); // detaches document-level drag listeners
@@ -771,8 +775,16 @@ const InteractiveLabeler = () => {
         `GetInteractiveLabels?projectId=${projectId}&modelId=${modelId}`
       );
       savedLabelsRef.current = saved?.labels || {};
-    } catch {
-      // No saved labels yet — start fresh.
+      // The save path merges this mirror into the payload, and
+      // PutInteractiveLabels replaces the stored document outright. That is
+      // only lossless if the mirror really is what the server holds -- if
+      // this GET failed we would be merging into an empty base and would
+      // wipe the saved set, which is the bug this whole change exists to
+      // fix. Record that it succeeded; saving is blocked otherwise.
+      savedLabelsLoadedRef.current = true;
+    } catch (e) {
+      savedLabelsLoadedRef.current = false;
+      console.error("Failed to load saved interactive labels:", e);
     }
     // Restore everything we can before the map exists. Labels saved with a
     // rowId resolve straight against the sidecar, so the counts are right on
@@ -1065,7 +1077,8 @@ const InteractiveLabeler = () => {
 
     const { candidates, legacy } = selectRestorableByRowId(
       saved,
-      labeledMapRef.current
+      labeledMapRef.current,
+      sidecarRef.current.n
     );
 
     let restored = 0;
@@ -1085,8 +1098,13 @@ const InteractiveLabeler = () => {
 
     if (restored > 0) {
       labelsDirtyRef.current = true;
-      refreshCounts();
     }
+    // Tally unconditionally. tallyLabels counts saved-but-unbridged labels
+    // too, so a document written before rowId existed -- where nothing is
+    // restorable and `restored` is 0 -- still reports its true total instead
+    // of sitting at zero until a labeled tile happens to render, which is
+    // the very symptom this is meant to fix.
+    refreshCounts();
     if (restored > 0 || legacy > 0) {
       // eslint-disable-next-line no-console
       console.log(
@@ -2032,6 +2050,32 @@ const InteractiveLabeler = () => {
     setIsSaving(true);
     setIsLoading(true, "Saving labels…");
     try {
+      // The merge below is only lossless if the saved mirror is what the
+      // server actually holds. If the initial GET failed we have an empty
+      // mirror, and merging into that would replace the stored document with
+      // this session's labels alone. Try once more, and refuse rather than
+      // guess.
+      if (!savedLabelsLoadedRef.current) {
+        try {
+          const saved = await apiGet(
+            `GetInteractiveLabels?projectId=${projectId}&modelId=${modelId}`
+          );
+          savedLabelsRef.current = saved?.labels || {};
+          savedLabelsLoadedRef.current = true;
+          refreshCounts();
+        } catch (e) {
+          console.error("Re-reading saved labels before save failed:", e);
+          setDialog(
+            "Cannot save safely",
+            "This model's already-saved labels could not be read, so saving" +
+              " now would replace them with only the labels from this" +
+              " session. Nothing has been changed. Check your connection and" +
+              " try again, or reload the page."
+          );
+          return;
+        }
+      }
+
       // PutInteractiveLabels REPLACES the stored document, so the payload
       // has to be the complete label set — not just what this session has
       // hydrated. Start from the saved set and layer this session's labels
@@ -2040,7 +2084,8 @@ const InteractiveLabeler = () => {
       const labels = mergeLabelsForSave(
         savedLabelsRef.current,
         labeledMapRef.current,
-        new Date().toISOString()
+        new Date().toISOString(),
+        sidecarRef.current?.n ?? null
       );
       await apiPut("PutInteractiveLabels", {
         projectId,
@@ -2588,7 +2633,7 @@ const InteractiveLabeler = () => {
             {isSaving ? "Saving…" : "Save labels"}
           </Button>
           <Button
-            disabled={!!fullPredict || totalLabeled === 0}
+            disabled={!!fullPredict || !canTrain}
             onClick={handlePredictAll}
             style={{ marginTop: 8, width: "100%" }}
             title="Run the trained model across every building in the layer (not just the viewport) and persist the predictions for the Validation / Assessment reports."
@@ -2617,7 +2662,7 @@ const InteractiveLabeler = () => {
           {advancedOpen && (
             <div style={{ marginTop: 4 }}>
               <Button
-                disabled={cvRunning || totalLabeled === 0}
+                disabled={cvRunning || !canTrain}
                 onClick={handleRunCV}
                 style={{ width: "100%" }}
                 title="Stratified 5-fold cross-validation of the in-browser model over your current labels. Reports per-class precision, recall, and one-vs-rest AUC as mean ± stdev across folds."

@@ -48,9 +48,12 @@ export const VALIDATION_TO_CLASS = {
  * @param {object} saved - savedLabelsRef contents, keyed by Overture id.
  * @param {object} labeled - labeledMapRef contents, keyed by row index.
  * @param {string} savedAt - ISO timestamp for entries written by this save.
+ * @param {number|null} sidecarSize - Building count of the sidecar these row
+ *   indices were resolved against, stamped alongside them so a later session
+ *   can tell whether they still apply.
  * @returns {object} The merged label document, keyed by Overture id.
  */
-export function mergeLabelsForSave(saved, labeled, savedAt) {
+export function mergeLabelsForSave(saved, labeled, savedAt, sidecarSize) {
   const labels = {};
 
   for (const [overtureId, entry] of Object.entries(saved || {})) {
@@ -69,6 +72,12 @@ export function mergeLabelsForSave(saved, labeled, savedAt) {
       // waiting for tiles. Overture id stays the key because it is what
       // survives a re-embed.
       rowId: Number(rowId),
+      // Fingerprint for the above. Row indices are only meaningful against
+      // the sidecar that produced them; if a model is re-embedded the
+      // numbering can shift, and a stale index would silently point at a
+      // different building. Recording the building count lets the next
+      // session tell whether the index still applies.
+      n: sidecarSize ?? null,
       label: CLASS_TO_VALIDATION[entry.label],
       updatedAt: savedAt,
     };
@@ -85,18 +94,35 @@ export function mergeLabelsForSave(saved, labeled, savedAt) {
  * still has to wait for its tile, since nothing else bridges Overture id to
  * row index on the client.
  *
+ * A row index is only trusted when it carries a fingerprint matching the
+ * sidecar now loaded. Without that check a re-embed could leave an index
+ * pointing at a different building, and the restored entry would be used for
+ * training and Predict All long before any tile rendered to correct it.
+ * Unverifiable entries fall back to the tile-driven path, which reads the
+ * Overture id off the tile itself and cannot be wrong.
+ *
  * @param {object} saved - savedLabelsRef contents, keyed by Overture id.
  * @param {object} labeled - already-restored entries, keyed by row index.
+ * @param {number|null} sidecarSize - Building count of the loaded sidecar.
  * @returns {{candidates: Array<{rowId: number, cls: number, overtureId: string}>, legacy: number}}
  *   `candidates` are ready to place; `legacy` counts entries that must wait.
  */
-export function selectRestorableByRowId(saved, labeled) {
+export function selectRestorableByRowId(saved, labeled, sidecarSize) {
   const candidates = [];
   let legacy = 0;
 
   for (const [overtureId, entry] of Object.entries(saved || {})) {
     const rowId = entry?.rowId;
     if (typeof rowId !== "number" || !Number.isInteger(rowId) || rowId < 0) {
+      legacy++;
+      continue;
+    }
+    // No fingerprint, or one from a different sidecar: cannot vouch for it.
+    if (
+      sidecarSize == null ||
+      typeof entry.n !== "number" ||
+      entry.n !== sidecarSize
+    ) {
       legacy++;
       continue;
     }

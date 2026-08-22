@@ -30,9 +30,14 @@ import {
 const AT = "2026-08-21T00:00:00.000Z";
 
 // A saved-store entry as GetInteractiveLabels returns it.
-function savedEntry(overtureId, label, rowId) {
+const SIDECAR_N = 1000;
+
+function savedEntry(overtureId, label, rowId, n = SIDECAR_N) {
   const entry = { id: overtureId, label, updatedAt: "2026-08-01T00:00:00Z" };
-  if (rowId !== undefined) entry.rowId = rowId;
+  if (rowId !== undefined) {
+    entry.rowId = rowId;
+    entry.n = n;
+  }
   return entry;
 }
 
@@ -60,7 +65,7 @@ test("merge preserves saved labels the session never hydrated", () => {
   };
   const labeled = { 10: sessionEntry(CLASS_DAMAGED, "a") };
 
-  const out = mergeLabelsForSave(saved, labeled, AT);
+  const out = mergeLabelsForSave(saved, labeled, AT, SIDECAR_N);
 
   assert.deepEqual(Object.keys(out).sort(), ["a", "b", "c"]);
   // Untouched entries keep their original timestamp.
@@ -74,7 +79,7 @@ test("merge does not shrink the stored set when nothing is hydrated", () => {
     saved[`o${i}`] = savedEntry(`o${i}`, i % 2 ? "Damaged" : "NotDamaged", i);
   }
 
-  const out = mergeLabelsForSave(saved, {}, AT);
+  const out = mergeLabelsForSave(saved, {}, AT, SIDECAR_N);
 
   assert.equal(Object.keys(out).length, 1311);
 });
@@ -83,7 +88,7 @@ test("session labels win over the saved copy", () => {
   const saved = { a: savedEntry("a", "NotDamaged", 10) };
   const labeled = { 10: sessionEntry(CLASS_DAMAGED, "a") };
 
-  const out = mergeLabelsForSave(saved, labeled, AT);
+  const out = mergeLabelsForSave(saved, labeled, AT, SIDECAR_N);
 
   assert.equal(Object.keys(out).length, 1);
   assert.equal(out.a.label, "Damaged");
@@ -93,7 +98,7 @@ test("session labels win over the saved copy", () => {
 test("merge stamps rowId so the next session can restore up front", () => {
   const labeled = { 42: sessionEntry(CLASS_DAMAGED, "abc") };
 
-  const out = mergeLabelsForSave({}, labeled, AT);
+  const out = mergeLabelsForSave({}, labeled, AT, SIDECAR_N);
 
   assert.equal(out.abc.rowId, 42);
   assert.equal(typeof out.abc.rowId, "number");
@@ -102,7 +107,7 @@ test("merge stamps rowId so the next session can restore up front", () => {
 test("merge falls back to the row index when there is no Overture id", () => {
   const labeled = { 7: { label: CLASS_INTACT, features: null } };
 
-  const out = mergeLabelsForSave({}, labeled, AT);
+  const out = mergeLabelsForSave({}, labeled, AT, SIDECAR_N);
 
   assert.equal(out["7"].id, "7");
   assert.equal(out["7"].rowId, 7);
@@ -114,7 +119,7 @@ test("merge drops saved entries with an unrecognized label", () => {
     bad: savedEntry("bad", "Sideways", 2),
   };
 
-  const out = mergeLabelsForSave(saved, {}, AT);
+  const out = mergeLabelsForSave(saved, {}, AT, SIDECAR_N);
 
   assert.deepEqual(Object.keys(out), ["good"]);
 });
@@ -124,14 +129,14 @@ test("a cleared label stays cleared", () => {
   const saved = { a: savedEntry("a", "Damaged", 10) };
   delete saved.a;
 
-  const out = mergeLabelsForSave(saved, {}, AT);
+  const out = mergeLabelsForSave(saved, {}, AT, SIDECAR_N);
 
   assert.deepEqual(Object.keys(out), []);
 });
 
 test("merge tolerates empty and missing inputs", () => {
-  assert.deepEqual(mergeLabelsForSave(undefined, undefined, AT), {});
-  assert.deepEqual(mergeLabelsForSave({}, {}, AT), {});
+  assert.deepEqual(mergeLabelsForSave(undefined, undefined, AT, SIDECAR_N), {});
+  assert.deepEqual(mergeLabelsForSave({}, {}, AT, SIDECAR_N), {});
 });
 
 // ── selectRestorableByRowId ─────────────────────────────────────────────────
@@ -142,7 +147,7 @@ test("labels with a rowId restore without waiting for tiles", () => {
     b: savedEntry("b", "NotDamaged", 11),
   };
 
-  const { candidates, legacy } = selectRestorableByRowId(saved, {});
+  const { candidates, legacy } = selectRestorableByRowId(saved, {}, SIDECAR_N);
 
   assert.equal(candidates.length, 2);
   assert.equal(legacy, 0);
@@ -160,7 +165,7 @@ test("labels saved before rowId existed are reported as legacy", () => {
     c: savedEntry("c", "Damaged", 12),
   };
 
-  const { candidates, legacy } = selectRestorableByRowId(saved, {});
+  const { candidates, legacy } = selectRestorableByRowId(saved, {}, SIDECAR_N);
 
   assert.equal(candidates.length, 1);
   assert.equal(legacy, 2);
@@ -170,7 +175,7 @@ test("already-restored rows are not re-restored", () => {
   const saved = { a: savedEntry("a", "Damaged", 10) };
   const labeled = { 10: sessionEntry(CLASS_DAMAGED, "a") };
 
-  const { candidates } = selectRestorableByRowId(saved, labeled);
+  const { candidates } = selectRestorableByRowId(saved, labeled, SIDECAR_N);
 
   assert.equal(candidates.length, 0);
 });
@@ -183,16 +188,70 @@ test("malformed rowIds are treated as legacy, not trusted", () => {
     nan: { id: "nan", label: "Damaged", rowId: Number.NaN },
   };
 
-  const { candidates, legacy } = selectRestorableByRowId(saved, {});
+  const { candidates, legacy } = selectRestorableByRowId(saved, {}, SIDECAR_N);
 
   assert.equal(candidates.length, 0);
   assert.equal(legacy, 4);
 });
 
+test("a rowId from a different sidecar is not trusted", () => {
+  // A re-embed can renumber rows. Without the fingerprint check this entry
+  // would be restored against whatever building now sits at row 10 and used
+  // for training long before a tile rendered to correct it.
+  const saved = { a: savedEntry("a", "Damaged", 10, 999) };
+
+  const { candidates, legacy } = selectRestorableByRowId(saved, {}, SIDECAR_N);
+
+  assert.equal(candidates.length, 0);
+  assert.equal(legacy, 1);
+});
+
+test("a rowId with no fingerprint is not trusted", () => {
+  const saved = { a: { id: "a", label: "Damaged", rowId: 10 } };
+
+  const { candidates, legacy } = selectRestorableByRowId(saved, {}, SIDECAR_N);
+
+  assert.equal(candidates.length, 0);
+  assert.equal(legacy, 1);
+});
+
+test("nothing is trusted when the sidecar size is unknown", () => {
+  const saved = { a: savedEntry("a", "Damaged", 10) };
+
+  const { candidates, legacy } = selectRestorableByRowId(saved, {}, null);
+
+  assert.equal(candidates.length, 0);
+  assert.equal(legacy, 1);
+});
+
+test("merge stamps the sidecar fingerprint next to the rowId", () => {
+  const labeled = { 42: sessionEntry(CLASS_DAMAGED, "abc") };
+
+  const out = mergeLabelsForSave({}, labeled, AT, SIDECAR_N);
+
+  assert.equal(out.abc.rowId, 42);
+  assert.equal(out.abc.n, SIDECAR_N);
+});
+
+test("legacy entries are carried through WITHOUT gaining a rowId", () => {
+  // The compatibility limit worth being explicit about: a save preserves an
+  // unhydrated legacy label, but cannot stamp a row index onto it, because
+  // nothing on the client maps its Overture id to one. Only labels whose
+  // tiles have rendered get upgraded.
+  const saved = { legacy: { id: "legacy", label: "Damaged" } };
+  const labeled = { 7: sessionEntry(CLASS_INTACT, "hydrated") };
+
+  const out = mergeLabelsForSave(saved, labeled, AT, SIDECAR_N);
+
+  assert.equal(Object.keys(out).length, 2);
+  assert.equal(out.legacy.rowId, undefined);
+  assert.equal(out.hydrated.rowId, 7);
+});
+
 test("rowId 0 is a valid row, not a missing one", () => {
   const saved = { a: savedEntry("a", "Damaged", 0) };
 
-  const { candidates, legacy } = selectRestorableByRowId(saved, {});
+  const { candidates, legacy } = selectRestorableByRowId(saved, {}, SIDECAR_N);
 
   assert.equal(candidates.length, 1);
   assert.equal(candidates[0].rowId, 0);
