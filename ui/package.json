@@ -11,6 +11,7 @@
     "build:testing": "vite build --mode testing",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "test:ongoing-jobs": "node --test src/Components/Home/ongoingJobs.test.js",
+    "test:label-store": "node --test src/Components/InteractiveLabeler/labelStore.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

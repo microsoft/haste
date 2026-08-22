@@ -58,6 +58,12 @@ import {
   INTERACTIVE_LABELER_SHORTCUTS,
   shouldIgnoreShortcut,
 } from "../keyboardShortcuts.js";
+import {
+  VALIDATION_TO_CLASS,
+  mergeLabelsForSave,
+  selectRestorableByRowId,
+  tallyLabels,
+} from "./labelStore.js";
 
 // Register the pmtiles protocol once at module load. After this, any
 // VectorTileSource configured with `url: "pmtiles://<url>"` will route
@@ -273,18 +279,6 @@ const useStyles = makeStyles({
   },
 });
 
-// In-browser class -> validation-report vocabulary (Damaged/NotDamaged/Unknown).
-const CLASS_TO_VALIDATION = {
-  [CLASS_INTACT]: "NotDamaged",
-  [CLASS_DAMAGED]: "Damaged",
-  [CLASS_CLOUDY]: "Unknown",
-};
-const VALIDATION_TO_CLASS = {
-  NotDamaged: CLASS_INTACT,
-  Damaged: CLASS_DAMAGED,
-  Unknown: CLASS_CLOUDY,
-};
-
 const CLASS_OPTIONS = [
   { key: String(CLASS_INTACT), text: "Intact" },
   { key: String(CLASS_DAMAGED), text: "Damaged" },
@@ -292,6 +286,11 @@ const CLASS_OPTIONS = [
 ];
 
 const MIN_PER_CLASS = 3;
+// First-paint retry budget. The initial hydrate races the first tile paint,
+// and losing it leaves restored labels uncoloured until the map moves.
+// ~6s total, which is generous for tiles that are already in flight.
+const INITIAL_PAINT_RETRY_MS = 300;
+const INITIAL_PAINT_MAX_ATTEMPTS = 20;
 // Predict batch size for the "Predict all buildings" full-coverage pass.
 // Large enough to amortize the OvRLogisticRegression.predict() per-call
 // overhead, small enough to keep the progress bar feeling responsive.
@@ -533,6 +532,18 @@ const InteractiveLabeler = () => {
   // overture_id now.
   const sidecarRef = useRef(null); // { matrix: Float32Array, n, d }
 
+  // Pending retry for the first paint (see paintRestoredLabels).
+  const initialPaintTimerRef = useRef(null);
+  // Set before map.dispose() so late-firing map events can't query a style
+  // that is being torn down. dispose() removes our layers and fires
+  // 'sourcedata' on the way out, which would otherwise re-enter
+  // hydrateViewport and ask the renderer for a layer that no longer exists.
+  const mapDisposedRef = useRef(false);
+  // Whether GetInteractiveLabels actually returned. Saving merges the saved
+  // mirror into a full-document replace, so an unread mirror must not be
+  // treated as "there was nothing there".
+  const savedLabelsLoadedRef = useRef(false);
+
   const boxRef = useRef(null); // box-select rectangle div
   const boxCleanupRef = useRef(null); // detaches document-level drag listeners
   const trainBusyRef = useRef(false);
@@ -574,6 +585,9 @@ const InteractiveLabeler = () => {
   const [viewMode, setViewMode] = useState("label"); // "label" | "predict"
   const [showFootprints, setShowFootprints] = useState(true);
   const [counts, setCounts] = useState({ 0: 0, 1: 0, 2: 0 });
+  // Subset of `counts` backed by a usable feature vector — what the
+  // in-browser model can actually train on. See refreshCounts.
+  const [trainableCounts, setTrainableCounts] = useState({ 0: 0, 1: 0, 2: 0 });
   const [viewportPredicted, setViewportPredicted] = useState(0);
   const [metrics, setMetrics] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -659,7 +673,14 @@ const InteractiveLabeler = () => {
       // leak the document-level drag listeners.
       // eslint-disable-next-line react-hooks/exhaustive-deps
       if (boxCleanupRef.current) boxCleanupRef.current();
+      if (initialPaintTimerRef.current) {
+        clearTimeout(initialPaintTimerRef.current);
+        initialPaintTimerRef.current = null;
+      }
       if (mapRef.current) {
+        // Order matters: dispose() tears the style down and fires map events
+        // while doing it, so the guard has to be up before it runs.
+        mapDisposedRef.current = true;
         mapRef.current.dispose();
         mapRef.current = null;
       }
@@ -762,9 +783,22 @@ const InteractiveLabeler = () => {
         `GetInteractiveLabels?projectId=${projectId}&modelId=${modelId}`
       );
       savedLabelsRef.current = saved?.labels || {};
-    } catch {
-      // No saved labels yet — start fresh.
+      // The save path merges this mirror into the payload, and
+      // PutInteractiveLabels replaces the stored document outright. That is
+      // only lossless if the mirror really is what the server holds -- if
+      // this GET failed we would be merging into an empty base and would
+      // wipe the saved set, which is the bug this whole change exists to
+      // fix. Record that it succeeded; saving is blocked otherwise.
+      savedLabelsLoadedRef.current = true;
+    } catch (e) {
+      savedLabelsLoadedRef.current = false;
+      console.error("Failed to load saved interactive labels:", e);
     }
+    // Restore everything we can before the map exists. Labels saved with a
+    // rowId resolve straight against the sidecar, so the counts are right on
+    // first paint instead of climbing as the user pans. Anything older falls
+    // back to the per-tile path in hydrateViewport.
+    restoreSavedLabelsByRowId();
 
     // Resolve an initial camera position from the PMTiles header. The Map
     // constructor accepts {center, zoom} reliably (the {bounds} variant is
@@ -951,18 +985,34 @@ const InteractiveLabeler = () => {
       //  (b) restores any saved labels for buildings that just rendered;
       //  (c) runs viewport-scoped predict if the model has training data.
       const hydrate = () => hydrateViewport(map);
-      map.events.add("moveend", hydrate);
+      map.events.add("moveend", () => {
+        // A move supersedes any pending first-paint retry.
+        if (initialPaintTimerRef.current) {
+          clearTimeout(initialPaintTimerRef.current);
+          initialPaintTimerRef.current = null;
+        }
+        hydrate();
+      });
       map.events.add("sourcedata", (e) => {
         // Only react when the buildings source finishes loading a tile.
+        //
+        // Read the id defensively: Mapbox-GL puts it on `sourceId`, but the
+        // Atlas event wrapper is documented as carrying a `source` object.
+        // If it is the latter, matching on `sourceId` alone compares against
+        // undefined and this listener never fires at all -- which would
+        // leave moveend as the only hydration trigger, and is a candidate
+        // for restored labels not colouring until the map is moved.
+        const sourceId = e && (e.sourceId ?? e.source?.id);
         if (
           e &&
           e.isSourceLoaded &&
-          internalSourceIdsRef.current.includes(e.sourceId)
+          sourceId &&
+          internalSourceIdsRef.current.includes(sourceId)
         ) {
           hydrate();
         }
       });
-      hydrate();
+      paintRestoredLabels(map);
 
       // Info bar: keep lat/lon/zoom in sync as the camera moves.
       const syncInfo = () => {
@@ -1016,30 +1066,139 @@ const InteractiveLabeler = () => {
     );
   }
 
+  // Restore every saved label that carries a rowId, without waiting for its
+  // building's tile to render.
+  //
+  // The saved store is keyed by Overture id, but feature vectors, feature-
+  // state and the counts are all keyed by the sidecar's row index. Those two
+  // id spaces only meet on a rendered vector-tile feature, which is why the
+  // labeler used to "discover" its own labels as the user panned. Persisting
+  // rowId at save time gives us the bridge up front: the sidecar is
+  // model-scoped, and so are these labels, so the row index is valid for
+  // exactly the model we just loaded.
+  //
+  // Row ids are treated as a hint, not gospel — hydrateViewport re-checks
+  // each one against the tile's overture_id and corrects any that disagree.
+  function restoreSavedLabelsByRowId() {
+    const saved = savedLabelsRef.current;
+    if (!saved || !sidecarRef.current) return 0;
+
+    const { candidates, legacy } = selectRestorableByRowId(
+      saved,
+      labeledMapRef.current,
+      sidecarRef.current.n
+    );
+
+    let restored = 0;
+    for (const { rowId, cls, overtureId } of candidates) {
+      // Out-of-range means the sidecar doesn't match what this label was
+      // saved against; leave it to the tile-driven path rather than pointing
+      // at the wrong building.
+      const vec = lookupFeatureVector(rowId);
+      if (!vec) continue;
+      labeledMapRef.current[rowId] = {
+        label: cls,
+        features: vec,
+        overtureId,
+      };
+      restored++;
+    }
+
+    if (restored > 0) {
+      labelsDirtyRef.current = true;
+    }
+    // Tally unconditionally. tallyLabels counts saved-but-unbridged labels
+    // too, so a document written before rowId existed -- where nothing is
+    // restorable and `restored` is 0 -- still reports its true total instead
+    // of sitting at zero until a labeled tile happens to render, which is
+    // the very symptom this is meant to fix.
+    refreshCounts();
+    if (restored > 0 || legacy > 0) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[InteractiveLabeler] restored ${restored} saved label(s) by rowId` +
+          (legacy > 0
+            ? `; ${legacy} older label(s) will restore as their tiles render`
+            : "")
+      );
+    }
+    return restored;
+  }
+
+  // The internal layer ids that the style still contains.
+  //
+  // internalLayerIdsRef is filled once at map-ready, but the style can lose
+  // those layers afterwards — most reliably during dispose(), which removes
+  // them and then fires 'sourcedata' on the way out. queryRenderedFeatures
+  // throws on an unknown layer rather than returning nothing, and Azure Maps
+  // logs that from inside its own wrapper, so a try/catch here would not
+  // keep it off the console. Don't ask for what isn't there.
+  function liveInternalLayerIds(gl) {
+    const ids = internalLayerIdsRef.current;
+    if (!ids.length) return ids;
+    if (typeof gl.getLayer !== "function") return ids;
+    return ids.filter((id) => {
+      try {
+        return !!gl.getLayer(id);
+      } catch {
+        // getLayer itself throws once the style is gone.
+        return false;
+      }
+    });
+  }
+
   // Read all currently-rendered features from the buildings layer, hydrate
   // featureKeys / saved labels / viewport predictions. Idempotent.
+  //
+  // Returns the number of rendered features it saw, so callers can tell
+  // "nothing to do" from "the renderer wasn't ready yet".
   function hydrateViewport(map) {
     const gl = glMapRef.current;
-    if (!gl) return;
-    if (!internalLayerIdsRef.current.length) return;
+    if (!gl) return 0;
+    if (mapDisposedRef.current) return 0;
+    // Query only layers the style still holds. The cached ids are read once
+    // at map-ready, so they outlive any teardown or style reload that drops
+    // them — and querying a missing layer is an error, not an empty result.
+    const layers = liveInternalLayerIds(gl);
+    if (!layers.length) return 0;
     let features = [];
     try {
       features = gl.queryRenderedFeatures(undefined, {
-        layers: internalLayerIdsRef.current,
+        layers,
       });
     } catch (err) {
       console.warn("queryRenderedFeatures (viewport) failed:", err);
-      return;
+      return 0;
     }
-    if (features.length === 0) return;
+    if (features.length === 0) return 0;
 
     // Restore any saved labels whose tiles are now in view.
     const saved = savedLabelsRef.current;
     if (saved && Object.keys(saved).length > 0) {
       let restored = 0;
+      let corrected = 0;
       for (const f of features) {
         const id = f.id;
-        if (id == null || labeledMapRef.current[id]) continue;
+        if (id == null) continue;
+        const existing = labeledMapRef.current[id];
+        if (existing) {
+          // The tile is authoritative for the row-index -> overture_id
+          // mapping. If a rowId-restored entry disagrees, it was saved
+          // against a different sidecar; drop it so the lookup below can
+          // re-place it from the tile's own overture_id.
+          const tileOvertureId = f.properties?.overture_id;
+          if (
+            tileOvertureId != null &&
+            existing.overtureId != null &&
+            String(existing.overtureId) !== String(tileOvertureId)
+          ) {
+            delete labeledMapRef.current[id];
+            clearFeatureStateLabel(f.source, id);
+            corrected++;
+          } else {
+            continue;
+          }
+        }
         const overtureId = f.properties?.overture_id ?? id;
         const entry = saved[overtureId];
         if (!entry) continue;
@@ -1055,10 +1214,17 @@ const InteractiveLabeler = () => {
         setFeatureStateLabel(f.source, id, cls);
         restored++;
       }
-      if (restored > 0) {
+      if (restored > 0 || corrected > 0) {
         labelsDirtyRef.current = true;
         labelsRevisionRef.current += 1;
         refreshCounts();
+      }
+      if (corrected > 0) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[InteractiveLabeler] re-placed ${corrected} label(s) whose saved` +
+            " rowId did not match the tile's overture_id (stale sidecar?)"
+        );
       }
     }
 
@@ -1088,6 +1254,40 @@ const InteractiveLabeler = () => {
     if (uncertaintyOnRef.current) {
       computeUncertaintyForViewport(features);
     }
+
+    return features.length;
+  }
+
+  // Colour the restored labels as soon as the renderer can tell us what is
+  // on screen.
+  //
+  // Restoring labels fills labeledMap before the map exists, but the map's
+  // *colour* comes from feature-state, which can only be applied against a
+  // rendered feature — that is the one place the row-index id and the
+  // renderer's own feature meet. The eager hydrate at map-ready usually
+  // loses a race with the first tile paint: queryRenderedFeatures returns
+  // nothing, hydrateViewport bails, and the labels sit uncoloured until
+  // something else triggers a hydrate. In practice that was the user
+  // panning, since moveend is the only other reliable trigger.
+  //
+  // So retry briefly until the renderer has something to give us. Bounded,
+  // and stops on the first success.
+  function paintRestoredLabels(map, attempt = 0) {
+    initialPaintTimerRef.current = null;
+    if (hydrateViewport(map) > 0) return;
+    if (attempt >= INITIAL_PAINT_MAX_ATTEMPTS) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[InteractiveLabeler] no rendered features after" +
+          ` ${INITIAL_PAINT_MAX_ATTEMPTS} attempts; labels will colour on the` +
+          " next map move"
+      );
+      return;
+    }
+    initialPaintTimerRef.current = setTimeout(
+      () => paintRestoredLabels(map, attempt + 1),
+      INITIAL_PAINT_RETRY_MS
+    );
   }
 
   // Train (or reuse the cached model) and paint per-building uncertainty as the
@@ -1341,6 +1541,9 @@ const InteractiveLabeler = () => {
     }
   }
   function clearLabel(id) {
+    // Drop it from the saved mirror too. The save path now merges that
+    // mirror into the payload, so leaving it behind would resurrect a label
+    // the user just cleared.
     const entry = labeledMapRef.current[id];
     if (entry) {
       delete savedLabelsRef.current[entry.overtureId ?? id];
@@ -1358,16 +1561,25 @@ const InteractiveLabeler = () => {
       hydrateViewport(mapRef.current);
     }
   }
+  // `counts` is what the user has labeled; `trainableCounts` is the subset
+  // the in-browser model can actually fit. They differ only for labels saved
+  // before rowId existed, which stay uncounted for training until their tile
+  // renders and supplies a feature vector — reporting the full tally keeps
+  // the panel honest without pretending those are trainable yet.
   function refreshCounts() {
-    const next = { 0: 0, 1: 0, 2: 0 };
-    Object.values(labeledMapRef.current).forEach((e) => {
-      next[e.label] = (next[e.label] || 0) + 1;
-    });
+    const { counts: next, trainable } = tallyLabels(
+      labeledMapRef.current,
+      savedLabelsRef.current,
+      isValidVector
+    );
+    // Gate training on the TRAINABLE subset, not the displayed tally: a
+    // saved label that hasn't been bridged to a row index yet has no feature
+    // vector, so it cannot contribute to a fit.
     const nextCanTrain =
       [
-        next[CLASS_INTACT],
-        next[CLASS_DAMAGED],
-        next[CLASS_CLOUDY],
+        trainable[CLASS_INTACT],
+        trainable[CLASS_DAMAGED],
+        trainable[CLASS_CLOUDY],
       ].filter((count) => count >= MIN_PER_CLASS).length >= 2;
     canTrainRef.current = nextCanTrain;
     if (!nextCanTrain) {
@@ -1376,6 +1588,7 @@ const InteractiveLabeler = () => {
       setViewMode("label");
     }
     setCounts(next);
+    setTrainableCounts(trainable);
   }
 
   // ── Ctrl+drag box-select (viewport-scoped) ────────────────────────────────
@@ -1872,21 +2085,51 @@ const InteractiveLabeler = () => {
     setIsSaving(true);
     setIsLoading(true, "Saving labels…");
     try {
-      const labels = {};
-      for (const [id, entry] of Object.entries(labeledMapRef.current)) {
-        const overtureId = entry.overtureId ?? id;
-        labels[overtureId] = {
-          id: overtureId,
-          label: CLASS_TO_VALIDATION[entry.label],
-          updatedAt: new Date().toISOString(),
-        };
+      // The merge below is only lossless if the saved mirror is what the
+      // server actually holds. If the initial GET failed we have an empty
+      // mirror, and merging into that would replace the stored document with
+      // this session's labels alone. Try once more, and refuse rather than
+      // guess.
+      if (!savedLabelsLoadedRef.current) {
+        try {
+          const saved = await apiGet(
+            `GetInteractiveLabels?projectId=${projectId}&modelId=${modelId}`
+          );
+          savedLabelsRef.current = saved?.labels || {};
+          savedLabelsLoadedRef.current = true;
+          refreshCounts();
+        } catch (e) {
+          console.error("Re-reading saved labels before save failed:", e);
+          setDialog(
+            "Cannot save safely",
+            "This model's already-saved labels could not be read, so saving" +
+              " now would replace them with only the labels from this" +
+              " session. Nothing has been changed. Check your connection and" +
+              " try again, or reload the page."
+          );
+          return;
+        }
       }
+
+      // PutInteractiveLabels REPLACES the stored document, so the payload
+      // has to be the complete label set — not just what this session has
+      // hydrated. Start from the saved set and layer this session's labels
+      // over it, otherwise saving before every labeled tile has rendered
+      // silently destroys the rest (github.com/microsoft/haste/issues/113).
+      const labels = mergeLabelsForSave(
+        savedLabelsRef.current,
+        labeledMapRef.current,
+        new Date().toISOString(),
+        sidecarRef.current?.n ?? null
+      );
       await apiPut("PutInteractiveLabels", {
         projectId,
         imageLayerId,
         modelId,
         labels,
       });
+      // Keep the in-memory mirror in step with what the server now holds, so
+      // a subsequent save in the same session doesn't resurrect deletions.
       savedLabelsRef.current = labels;
       setDialog("Saved", "Labels saved successfully.", [
         {
@@ -2136,11 +2379,17 @@ const InteractiveLabeler = () => {
   const totalLabeled = counts[0] + counts[1] + counts[2];
   // Predicted, Uncertainty, and Misclassified views need a trained model,
   // which needs at least MIN_PER_CLASS labels in 2+ classes.
+  //
+  // Gate on the TRAINABLE subset rather than the displayed tally: a saved
+  // label not yet bridged to a row index has no feature vector, so enabling
+  // the toggle would only produce "Need N+ labels in at least 2 classes"
+  // from the training path. refreshCounts keeps canTrainRef in step and
+  // resets the model-driven views when this drops back to false.
   const canTrain =
     [
-      counts[CLASS_INTACT],
-      counts[CLASS_DAMAGED],
-      counts[CLASS_CLOUDY],
+      trainableCounts[CLASS_INTACT],
+      trainableCounts[CLASS_DAMAGED],
+      trainableCounts[CLASS_CLOUDY],
     ].filter((count) => count >= MIN_PER_CLASS).length >= 2;
 
   return (
@@ -2419,7 +2668,7 @@ const InteractiveLabeler = () => {
             {isSaving ? "Saving…" : "Save labels"}
           </Button>
           <Button
-            disabled={!!fullPredict || totalLabeled === 0}
+            disabled={!!fullPredict || !canTrain}
             onClick={handlePredictAll}
             style={{ marginTop: 8, width: "100%" }}
             title="Run the trained model across every building in the layer (not just the viewport) and persist the predictions for the Validation / Assessment reports."
@@ -2448,7 +2697,7 @@ const InteractiveLabeler = () => {
           {advancedOpen && (
             <div style={{ marginTop: 4 }}>
               <Button
-                disabled={cvRunning || totalLabeled === 0}
+                disabled={cvRunning || !canTrain}
                 onClick={handleRunCV}
                 style={{ width: "100%" }}
                 title="Stratified 5-fold cross-validation of the in-browser model over your current labels. Reports per-class precision, recall, and one-vs-rest AUC as mean ± stdev across folds."
