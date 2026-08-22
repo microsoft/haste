@@ -17,11 +17,20 @@ resolution job in ``.github/workflows/dependency-validation.yml``; the checks
 here are the fast, offline half that needs no network.
 """
 
+import json
 import re
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+SCRIPTS_ROOT = REPO_ROOT / ".github" / "scripts"
+sys.path.insert(0, str(SCRIPTS_ROOT))
+
+import check_image_python  # noqa: E402
+import check_protobuf_pin  # noqa: E402
+import check_react_pins  # noqa: E402
 
 # Every requirements file that installs hastegeo from the local tree and so
 # must agree with the pin in pyproject.toml.
@@ -126,6 +135,167 @@ class GdalPinConsistencyTests(unittest.TestCase):
                 )
 
         self.assertEqual([], mismatches)
+
+
+def _write(directory, name, payload):
+    path = Path(directory) / name
+    if isinstance(payload, (dict, list)):
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    else:
+        path.write_text(payload, encoding="utf-8")
+    return path
+
+
+def _pip_report(*packages):
+    return {
+        "install": [
+            {"metadata": {"name": name, "version": version}}
+            for name, version in packages
+        ]
+    }
+
+
+class ProtobufPinScriptTests(unittest.TestCase):
+    """The pin that keeps the Functions worker able to index at all."""
+
+    def test_worker_compatible_protobuf_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = _write(
+                directory,
+                "report.json",
+                _pip_report(("protobuf", "5.29.6"), ("azure-core", "1.41.0")),
+            )
+            self.assertEqual(0, check_protobuf_pin.main([str(path)]))
+
+    def test_protobuf_six_and_above_fails(self):
+        # tensorboard 2.21 requires >=6.31.1, which is how 7 arrived.
+        for version in ("6.31.1", "7.36.0"):
+            with self.subTest(version=version):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = _write(
+                        directory,
+                        "report.json",
+                        _pip_report(("protobuf", version)),
+                    )
+                    self.assertEqual(1, check_protobuf_pin.main([str(path)]))
+
+    def test_absent_protobuf_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = _write(
+                directory, "report.json", _pip_report(("requests", "2.34.2"))
+            )
+            self.assertEqual(0, check_protobuf_pin.main([str(path)]))
+
+    def test_name_matching_ignores_case(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = _write(
+                directory, "report.json", _pip_report(("Protobuf", "7.36.0"))
+            )
+            self.assertEqual(1, check_protobuf_pin.main([str(path)]))
+
+    def test_missing_or_malformed_report_is_a_usage_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "nope.json"
+            self.assertEqual(2, check_protobuf_pin.main([str(missing)]))
+            bad = _write(directory, "bad.json", "{not json")
+            self.assertEqual(2, check_protobuf_pin.main([str(bad)]))
+
+
+class ReactPinScriptTests(unittest.TestCase):
+    def test_matching_majors_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = _write(
+                directory,
+                "package.json",
+                {
+                    "dependencies": {
+                        "react": "^18.3.1",
+                        "react-dom": "^18.3.1",
+                    },
+                    "devDependencies": {
+                        "@types/react": "^18.3.3",
+                        "@types/react-dom": "^18.3.0",
+                    },
+                },
+            )
+            self.assertEqual(0, check_react_pins.main([str(path)]))
+
+    def test_the_regression_is_caught(self):
+        """react 19 with react-dom 18 -- exactly what shipped."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = _write(
+                directory,
+                "package.json",
+                {
+                    "dependencies": {
+                        "react": "^19.2.8",
+                        "react-dom": "^18.3.1",
+                    }
+                },
+            )
+            self.assertEqual(1, check_react_pins.main([str(path)]))
+
+    def test_types_mismatch_is_caught(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = _write(
+                directory,
+                "package.json",
+                {
+                    "devDependencies": {
+                        "@types/react": "^19.2.18",
+                        "@types/react-dom": "^18.3.0",
+                    }
+                },
+            )
+            self.assertEqual(1, check_react_pins.main([str(path)]))
+
+    def test_absent_packages_are_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = _write(directory, "package.json", {"dependencies": {}})
+            self.assertEqual(0, check_react_pins.main([str(path)]))
+
+    def test_the_repository_itself_passes(self):
+        self.assertEqual(
+            0,
+            check_react_pins.main([str(REPO_ROOT / "ui" / "package.json")]),
+        )
+
+
+class ImagePythonScriptTests(unittest.TestCase):
+    def test_matching_version_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = _write(
+                directory,
+                "Dockerfile",
+                "FROM mcr.microsoft.com/azure-functions/"
+                "python:4-python3.11-slim\nRUN true\n",
+            )
+            self.assertEqual(0, check_image_python.main([str(path), "3.11"]))
+
+    def test_drifted_base_image_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = _write(
+                directory,
+                "Dockerfile",
+                "FROM mcr.microsoft.com/azure-functions/python:4-python3.12\n",
+            )
+            self.assertEqual(1, check_image_python.main([str(path), "3.11"]))
+
+    def test_base_without_a_python_tag_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = _write(directory, "Dockerfile", "FROM debian:bookworm\n")
+            self.assertEqual(1, check_image_python.main([str(path), "3.11"]))
+
+    def test_every_validated_image_matches_its_matrix_entry(self):
+        """The workflow matrix and the real Dockerfiles must agree."""
+        for dockerfile in DOCKERFILES:
+            with self.subTest(dockerfile=dockerfile):
+                self.assertEqual(
+                    0,
+                    check_image_python.main(
+                        [str(REPO_ROOT / dockerfile), "3.11"]
+                    ),
+                )
 
 
 if __name__ == "__main__":

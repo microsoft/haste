@@ -77,16 +77,9 @@ jobs:
 
       - name: Confirm the image Python version matches this job
         run: |
-          set -euo pipefail
-          dockerfile="$(dirname "${{ matrix.requirements }}")/Dockerfile"
-          # Guards against the matrix drifting away from the base image: a
-          # resolution proved against 3.11 says nothing about a 3.12 image.
-          if ! grep -qE "^FROM .*python${{ matrix.python }}" "$dockerfile"; then
-            echo "::error file=$dockerfile::Base image is not Python \
-          ${{ matrix.python }}; update the matrix in this workflow." >&2
-            grep -E "^FROM " "$dockerfile" >&2
-            exit 1
-          fi
+          python .github/scripts/check_image_python.py \
+            "$(dirname "${{ matrix.requirements }}")/Dockerfile" \
+            "${{ matrix.python }}"
 
       - name: Resolve dependencies
         run: |
@@ -107,38 +100,7 @@ jobs:
 
       - name: Check protobuf stays compatible with the Functions worker
         if: matrix.functions_worker
-        run: |
-          set -euo pipefail
-          # The Azure Functions Python worker ships its own protobuf (5.29.x
-          # at the time of writing) and its generated pb2 modules cannot load
-          # under protobuf 7. When site-packages wins, the worker reports
-          # "0 functions found" and every route and queue trigger silently
-          # disappears -- with no error anywhere. tensorboard 2.21 requires
-          # protobuf >= 6.31.1, which is how that got pulled in.
-          python - <<'PY'
-          import json
-          import sys
-
-          with open("/tmp/report.json", encoding="utf-8") as handle:
-              report = json.load(handle)
-
-          for item in report.get("install", []):
-              metadata = item.get("metadata", {})
-              if metadata.get("name", "").lower() != "protobuf":
-                  continue
-              version = metadata.get("version", "")
-              major = int(version.split(".")[0])
-              if major >= 6:
-                  sys.exit(
-                      f"protobuf {version} would be installed. The Functions "
-                      "worker bundles 5.x and breaks silently above it; pin "
-                      "protobuf<6 (and keep tensorboard below 2.21)."
-                  )
-              print(f"protobuf {version} OK")
-              break
-          else:
-              print("protobuf not in the resolved set")
-          PY
+        run: python .github/scripts/check_protobuf_pin.py /tmp/report.json
 
   npm:
     name: Resolve ui npm dependencies
@@ -168,37 +130,4 @@ jobs:
           npm install --dry-run
 
       - name: Check react and react-dom majors agree
-        working-directory: ui
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import re
-          import sys
-
-          with open("package.json", encoding="utf-8") as handle:
-              pkg = json.load(handle)
-
-          def major(spec):
-              match = re.search(r"(\d+)", spec or "")
-              return match.group(1) if match else None
-
-          pairs = [
-              ("react", "react-dom", pkg.get("dependencies", {})),
-              ("@types/react", "@types/react-dom", pkg.get("devDependencies", {})),
-          ]
-
-          failures = []
-          for left, right, section in pairs:
-              if left not in section or right not in section:
-                  continue
-              if major(section[left]) != major(section[right]):
-                  failures.append(
-                      f"{left} {section[left]} and {right} {section[right]} "
-                      "are different majors"
-                  )
-
-          if failures:
-              sys.exit("; ".join(failures))
-          print("react/react-dom majors agree")
-          PY
+        run: python3 .github/scripts/check_react_pins.py ui/package.json
