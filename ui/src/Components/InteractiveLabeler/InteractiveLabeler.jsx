@@ -534,6 +534,11 @@ const InteractiveLabeler = () => {
 
   // Pending retry for the first paint (see paintRestoredLabels).
   const initialPaintTimerRef = useRef(null);
+  // Set before map.dispose() so late-firing map events can't query a style
+  // that is being torn down. dispose() removes our layers and fires
+  // 'sourcedata' on the way out, which would otherwise re-enter
+  // hydrateViewport and ask the renderer for a layer that no longer exists.
+  const mapDisposedRef = useRef(false);
   // Whether GetInteractiveLabels actually returned. Saving merges the saved
   // mirror into a full-document replace, so an unread mirror must not be
   // treated as "there was nothing there".
@@ -673,6 +678,9 @@ const InteractiveLabeler = () => {
         initialPaintTimerRef.current = null;
       }
       if (mapRef.current) {
+        // Order matters: dispose() tears the style down and fires map events
+        // while doing it, so the guard has to be up before it runs.
+        mapDisposedRef.current = true;
         mapRef.current.dispose();
         mapRef.current = null;
       }
@@ -1117,6 +1125,28 @@ const InteractiveLabeler = () => {
     return restored;
   }
 
+  // The internal layer ids that the style still contains.
+  //
+  // internalLayerIdsRef is filled once at map-ready, but the style can lose
+  // those layers afterwards — most reliably during dispose(), which removes
+  // them and then fires 'sourcedata' on the way out. queryRenderedFeatures
+  // throws on an unknown layer rather than returning nothing, and Azure Maps
+  // logs that from inside its own wrapper, so a try/catch here would not
+  // keep it off the console. Don't ask for what isn't there.
+  function liveInternalLayerIds(gl) {
+    const ids = internalLayerIdsRef.current;
+    if (!ids.length) return ids;
+    if (typeof gl.getLayer !== "function") return ids;
+    return ids.filter((id) => {
+      try {
+        return !!gl.getLayer(id);
+      } catch {
+        // getLayer itself throws once the style is gone.
+        return false;
+      }
+    });
+  }
+
   // Read all currently-rendered features from the buildings layer, hydrate
   // featureKeys / saved labels / viewport predictions. Idempotent.
   //
@@ -1125,11 +1155,16 @@ const InteractiveLabeler = () => {
   function hydrateViewport(map) {
     const gl = glMapRef.current;
     if (!gl) return 0;
-    if (!internalLayerIdsRef.current.length) return 0;
+    if (mapDisposedRef.current) return 0;
+    // Query only layers the style still holds. The cached ids are read once
+    // at map-ready, so they outlive any teardown or style reload that drops
+    // them — and querying a missing layer is an error, not an empty result.
+    const layers = liveInternalLayerIds(gl);
+    if (!layers.length) return 0;
     let features = [];
     try {
       features = gl.queryRenderedFeatures(undefined, {
-        layers: internalLayerIdsRef.current,
+        layers,
       });
     } catch (err) {
       console.warn("queryRenderedFeatures (viewport) failed:", err);
