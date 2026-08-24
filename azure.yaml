@@ -17,12 +17,28 @@ infra:
   path: infra
   module: main
 
+# The hastegeo pin/unpin hooks are declared per service, not at the root. Root
+# hooks fire around the matching azd *command*, so a root-level `prepackage`
+# runs for `azd package` but is skipped by `azd deploy`'s internal packaging
+# step — which ships the unresolvable `-e ../../hastelib` line and fails the
+# Oryx build. Service-level hooks fire on the service's own package lifecycle
+# whichever command triggered it. titiler has no hastegeo dependency and needs
+# neither hook.
 services:
   api:
     project: api/hastefuncapi
     language: python
     host: function
     resourceName: ${FUNCTION_API_NAME}
+    hooks:
+      prepackage:
+        shell: pwsh
+        continueOnError: false
+        run: ../../deploy/pin-hastegeo-wheel.ps1
+      postpackage:
+        shell: pwsh
+        continueOnError: true
+        run: ../../deploy/unpin-hastegeo-wheel.ps1
   titiler:
     project: api/titilerfuncapi
     language: python
@@ -33,6 +49,15 @@ services:
     language: python
     host: function
     resourceName: ${FUNCTION_QUEUE_NAME}
+    hooks:
+      prepackage:
+        shell: pwsh
+        continueOnError: false
+        run: ../../deploy/pin-hastegeo-wheel.ps1
+      postpackage:
+        shell: pwsh
+        continueOnError: true
+        run: ../../deploy/unpin-hastegeo-wheel.ps1
 
 # Before provisioning: when reusing a shared Batch pool, resolve its (immutable)
 # container image tags into HASTE_TRAINING_IMAGE / HASTE_IMAGERYPREP_IMAGE so the
