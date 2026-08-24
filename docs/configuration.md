@@ -14,6 +14,7 @@ This guide documents each configuration mode. For the end-to-end workflow, see
 - [Core settings](#core-settings)
 - [Batch (create vs. bring-your-own)](#batch-create-vs-bring-your-own)
 - [Batch image tags and pool immutability](#batch-image-tags-and-pool-immutability)
+- [hastegeo wheel pinning](#hastegeo-wheel-pinning)
 - [Shared multi-tenant GPU pools](#shared-multi-tenant-gpu-pools)
 - [Email sender domain](#email-sender-domain)
 - [Front Door](#front-door)
@@ -98,6 +99,42 @@ reads the existing pool's `containerImageNames` and sets `HASTE_TRAINING_IMAGE` 
 `HASTE_IMAGERYPREP_IMAGE` for you when `HASTE_BATCH_POOL_MODE=Existing`. It runs
 only in that mode and never clobbers a tag you set explicitly — set either
 variable yourself to override the auto-resolved value.
+
+## hastegeo wheel pinning
+
+The Function Apps install `hastegeo` from a published wheel, but
+`api/*/requirements.txt` commit `-e ../../hastelib` as the default install source
+so `docker-compose` and local Function builds work straight from the checked-out
+tree with no wheel publish.
+
+That relative path does **not** resolve inside a deployment package — only
+`api/<app>` is uploaded — so the line must be rewritten to the published wheel
+before packaging. CI does this in
+[`deploy_apps.sh`](https://github.com/microsoft/haste/blob/main/.github/scripts/deploy_apps.sh);
+`azd` does it with a pair of hooks:
+
+| Hook | Script | Purpose |
+|---|---|---|
+| `prepackage` | [`deploy/pin-hastegeo-wheel.ps1`](https://github.com/microsoft/haste/blob/main/deploy/pin-hastegeo-wheel.ps1) | Resolve the wheel URL and pin it into the `api` and `queues` requirements. |
+| `postpackage` | [`deploy/unpin-hastegeo-wheel.ps1`](https://github.com/microsoft/haste/blob/main/deploy/unpin-hastegeo-wheel.ps1) | Restore the editable source from a verbatim backup. |
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HASTE_HASTEGEO_VERSION` | *(blank)* | Exact `X.Y.Z` or `X.Y.ZrcN` wheel to deploy. Blank resolves the latest stable release. |
+
+Four things worth knowing:
+
+- The hooks are declared **per service** in `azure.yaml`, not at the root.
+  Root-level hooks fire around the matching `azd` *command*, so a root
+  `prepackage` runs for `azd package` but is **skipped** by `azd deploy`'s
+  internal packaging step — which would ship the unresolvable editable path and
+  fail the Oryx build. `test_hastegeo_pin_hooks_are_service_scoped` guards the
+  placement.
+- `titiler` has no `hastegeo` dependency and needs neither hook.
+- The pin **fails the deploy** on error, deliberately. A mis-resolved wheel
+  produces an app that deploys "successfully" and only breaks when a task runs.
+- Resolution requires `python` and an authenticated `gh` CLI, because the
+  resolver lists release assets via `gh release view`.
 
 ## Shared multi-tenant GPU pools
 
