@@ -37,3 +37,5 @@ continuous, pixel-level damage raster.
 Both workflows start the same way — create a project and add an image layer — then diverge.
 Those shared building blocks have their own pages: {doc}`Projects <projects>`,
 {doc}`Image layers <image-layers>`, and the {doc}`Model catalog <model-catalog>`.
+See {doc}`Keyboard shortcuts <keyboard-shortcuts>` for the controls available
+across map and labeling views.

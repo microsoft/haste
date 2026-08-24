@@ -137,7 +137,7 @@ export const AppProvider = ({ children }) => {
           target: `#postEventImagery`,
           title: "Imagery toggle",
           content:
-            "Click on the toggle to switch between post event and pre event imagery. If you did not upload pre event imagery, the tool will default to Azure Basemap. You can also use the keyboard shortcut - Ctrl+Alt+c",
+            "Click the toggle to switch imagery. Press A for pre event (or Azure Basemap) and D for post event.",
         },
         {
           type: "teachingBubble",

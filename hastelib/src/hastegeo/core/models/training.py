@@ -37,12 +37,25 @@ class Labels(BaseModel):
     class_to_buffer_by: Optional[str] = None
     classes: Optional[List[str]] = None
     fn: Optional[str] = None
+    # Tile the labels onto a grid of this cell size (in the units of the
+    # imagery CRS) and emit one image/mask pair per populated cell. None keeps
+    # the single-pair behavior of cropping to the full label extent.
+    cluster_size_in_meters: Optional[float] = Field(default=None, gt=0)
+    # Clusters with fewer labeled pixels than this are discarded. Only used
+    # when cluster_size_in_meters is set; create_masks.py defaults to 1000.
+    min_pixels_per_cluster: Optional[int] = Field(default=None, ge=0)
 
 
 class Training(BaseModel):
     batch_size: Optional[int] = None
     checkpoint_subdir: Optional[str] = None
     gpu_id: Optional[int] = None
+    # Multi-GPU (DDP) training. Takes precedence over gpu_id when set.
+    gpu_ids: Optional[List[int]] = None
+    # Read every tile into RAM rather than decompressing each patch from
+    # disk. Much faster, but the tiles must fit; under DDP each process
+    # preloads independently. None leaves the container default (on).
+    preload: Optional[bool] = None
     learning_rate: Optional[float] = None
     log_dir: Optional[str] = None
     max_epochs: Optional[int] = None

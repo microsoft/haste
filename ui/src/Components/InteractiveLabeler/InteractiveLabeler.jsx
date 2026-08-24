@@ -53,6 +53,17 @@ import {
   isValidVector,
 } from "./interactiveModel.js";
 import { getGpu } from "./gpuLogreg.js";
+import KeyboardShortcutHelp from "../KeyboardShortcutHelp.jsx";
+import {
+  INTERACTIVE_LABELER_SHORTCUTS,
+  shouldIgnoreShortcut,
+} from "../keyboardShortcuts.js";
+import {
+  VALIDATION_TO_CLASS,
+  mergeLabelsForSave,
+  selectRestorableByRowId,
+  tallyLabels,
+} from "./labelStore.js";
 
 // Register the pmtiles protocol once at module load. After this, any
 // VectorTileSource configured with `url: "pmtiles://<url>"` will route
@@ -268,18 +279,6 @@ const useStyles = makeStyles({
   },
 });
 
-// In-browser class -> validation-report vocabulary (Damaged/NotDamaged/Unknown).
-const CLASS_TO_VALIDATION = {
-  [CLASS_INTACT]: "NotDamaged",
-  [CLASS_DAMAGED]: "Damaged",
-  [CLASS_CLOUDY]: "Unknown",
-};
-const VALIDATION_TO_CLASS = {
-  NotDamaged: CLASS_INTACT,
-  Damaged: CLASS_DAMAGED,
-  Unknown: CLASS_CLOUDY,
-};
-
 const CLASS_OPTIONS = [
   { key: String(CLASS_INTACT), text: "Intact" },
   { key: String(CLASS_DAMAGED), text: "Damaged" },
@@ -287,6 +286,11 @@ const CLASS_OPTIONS = [
 ];
 
 const MIN_PER_CLASS = 3;
+// First-paint retry budget. The initial hydrate races the first tile paint,
+// and losing it leaves restored labels uncoloured until the map moves.
+// ~6s total, which is generous for tiles that are already in flight.
+const INITIAL_PAINT_RETRY_MS = 300;
+const INITIAL_PAINT_MAX_ATTEMPTS = 20;
 // Predict batch size for the "Predict all buildings" full-coverage pass.
 // Large enough to amortize the OvRLogisticRegression.predict() per-call
 // overhead, small enough to keep the progress bar feeling responsive.
@@ -372,6 +376,44 @@ function fillOpacityExprUncertainty() {
     "case",
     ["==", ["coalesce", ["feature-state", "unc"], -1], -1], 0,
     UNCERTAINTY_FILL_OPACITY,
+  ];
+}
+
+// ── Misclassified view ──────────────────────────────────────────────────────
+// A building is misclassified only when it has BOTH a human label and a
+// current model prediction and those classes differ. The expression reads the
+// same "label" and "pred" feature-state used by the existing views, so correct
+// and unlabeled buildings remain transparent without a duplicate state map.
+const MISCLASSIFIED_COLOR = "#D83B01";
+// The swipe pre map declares its own copy of the PMTiles source under this
+// id, so feature-state writes aimed at that renderer must use it.
+const SWIPE_SOURCE_ID = "buildings";
+const MISCLASSIFIED_FILL_OPACITY = 0.75;
+
+function validClassStateExpr(stateKey) {
+  return [
+    "any",
+    ["==", ["feature-state", stateKey], CLASS_INTACT],
+    ["==", ["feature-state", stateKey], CLASS_DAMAGED],
+    ["==", ["feature-state", stateKey], CLASS_CLOUDY],
+  ];
+}
+
+function misclassifiedExpr() {
+  return [
+    "all",
+    validClassStateExpr("label"),
+    validClassStateExpr("pred"),
+    ["!=", ["feature-state", "label"], ["feature-state", "pred"]],
+  ];
+}
+
+function fillOpacityExprMisclassified() {
+  return [
+    "case",
+    misclassifiedExpr(),
+    MISCLASSIFIED_FILL_OPACITY,
+    0,
   ];
 }
 
@@ -490,6 +532,18 @@ const InteractiveLabeler = () => {
   // overture_id now.
   const sidecarRef = useRef(null); // { matrix: Float32Array, n, d }
 
+  // Pending retry for the first paint (see paintRestoredLabels).
+  const initialPaintTimerRef = useRef(null);
+  // Set before map.dispose() so late-firing map events can't query a style
+  // that is being torn down. dispose() removes our layers and fires
+  // 'sourcedata' on the way out, which would otherwise re-enter
+  // hydrateViewport and ask the renderer for a layer that no longer exists.
+  const mapDisposedRef = useRef(false);
+  // Whether GetInteractiveLabels actually returned. Saving merges the saved
+  // mirror into a full-document replace, so an unread mirror must not be
+  // treated as "there was nothing there".
+  const savedLabelsLoadedRef = useRef(false);
+
   const boxRef = useRef(null); // box-select rectangle div
   const boxCleanupRef = useRef(null); // detaches document-level drag listeners
   const trainBusyRef = useRef(false);
@@ -500,6 +554,9 @@ const InteractiveLabeler = () => {
   // free of the "Training…" status that used to fire on every settle.
   const trainedModelRef = useRef(null);
   const labelsDirtyRef = useRef(true);
+  // Guards asynchronous holdout/training work from publishing a model after
+  // labels changed or were cleared while that work was in flight.
+  const labelsRevisionRef = useRef(0);
   const fullPredictAbortRef = useRef({ cancelled: false });
 
   // Advanced → Swipe view. atlas.SwipeMap always reveals its SECONDARY map on
@@ -517,12 +574,20 @@ const InteractiveLabeler = () => {
   const swipeRef = useRef(null);
   const layerImageryRef = useRef(null);
   const swipePmtilesUrlRef = useRef(null);
+  // The pre map has its own renderer. Feature-state and paint expressions
+  // are per-renderer, so anything applied to the labeler map has to be
+  // mirrored here or the left pane stays unlabeled-colored.
+  const swipePreGlMapRef = useRef(null);
+  const swipeBoxCleanupRef = useRef(null);
 
   const [isMapReady, setIsMapReady] = useState(false);
   const [selectedClass, setSelectedClass] = useState(CLASS_DAMAGED);
   const [viewMode, setViewMode] = useState("label"); // "label" | "predict"
   const [showFootprints, setShowFootprints] = useState(true);
   const [counts, setCounts] = useState({ 0: 0, 1: 0, 2: 0 });
+  // Subset of `counts` backed by a usable feature vector — what the
+  // in-browser model can actually train on. See refreshCounts.
+  const [trainableCounts, setTrainableCounts] = useState({ 0: 0, 1: 0, 2: 0 });
   const [viewportPredicted, setViewportPredicted] = useState(0);
   const [metrics, setMetrics] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -535,10 +600,13 @@ const InteractiveLabeler = () => {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [cvResult, setCvResult] = useState(null);
   const [cvRunning, setCvRunning] = useState(false);
-  const [swipeOn, setSwipeOn] = useState(false);
+  const [swipeOn, setSwipeOn] = useState(true);
   // Advanced → Uncertainty view: recolor every scored footprint by the model's
   // predictive uncertainty (with a legend).
   const [uncertaintyOn, setUncertaintyOn] = useState(false);
+  // Advanced → Misclassified view: emphasize only human labels that disagree
+  // with the current in-browser model prediction.
+  const [misclassifiedOn, setMisclassifiedOn] = useState(false);
 
   // selectedClass / viewMode are read by long-lived map event handlers.
   const selectedClassRef = useRef(selectedClass);
@@ -555,6 +623,16 @@ const InteractiveLabeler = () => {
   useEffect(() => {
     uncertaintyOnRef.current = uncertaintyOn;
   }, [uncertaintyOn]);
+  const misclassifiedOnRef = useRef(misclassifiedOn);
+  useEffect(() => {
+    misclassifiedOnRef.current = misclassifiedOn;
+  }, [misclassifiedOn]);
+  // Read when the swipe pre map is built, so its footprint layers adopt the
+  // current visibility instead of always starting shown.
+  const showFootprintsRef = useRef(showFootprints);
+  useEffect(() => {
+    showFootprintsRef.current = showFootprints;
+  }, [showFootprints]);
   // Read by the P hotkey (long-lived listener) so it can't switch to the
   // Predicted view before there are enough labels to train.
   const canTrainRef = useRef(false);
@@ -590,8 +668,19 @@ const InteractiveLabeler = () => {
     init();
     return () => {
       setAppHeaderRightButtons([]);
+      // Read at teardown on purpose: setupBoxSelect registers this well after
+      // the effect runs, so copying the ref up front would capture null and
+      // leak the document-level drag listeners.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       if (boxCleanupRef.current) boxCleanupRef.current();
+      if (initialPaintTimerRef.current) {
+        clearTimeout(initialPaintTimerRef.current);
+        initialPaintTimerRef.current = null;
+      }
       if (mapRef.current) {
+        // Order matters: dispose() tears the style down and fires map events
+        // while doing it, so the guard has to be up before it runs.
+        mapDisposedRef.current = true;
         mapRef.current.dispose();
         mapRef.current = null;
       }
@@ -694,9 +783,22 @@ const InteractiveLabeler = () => {
         `GetInteractiveLabels?projectId=${projectId}&modelId=${modelId}`
       );
       savedLabelsRef.current = saved?.labels || {};
-    } catch {
-      // No saved labels yet — start fresh.
+      // The save path merges this mirror into the payload, and
+      // PutInteractiveLabels replaces the stored document outright. That is
+      // only lossless if the mirror really is what the server holds -- if
+      // this GET failed we would be merging into an empty base and would
+      // wipe the saved set, which is the bug this whole change exists to
+      // fix. Record that it succeeded; saving is blocked otherwise.
+      savedLabelsLoadedRef.current = true;
+    } catch (e) {
+      savedLabelsLoadedRef.current = false;
+      console.error("Failed to load saved interactive labels:", e);
     }
+    // Restore everything we can before the map exists. Labels saved with a
+    // rowId resolve straight against the sidecar, so the counts are right on
+    // first paint instead of climbing as the user pans. Anything older falls
+    // back to the per-tile path in hydrateViewport.
+    restoreSavedLabelsByRowId();
 
     // Resolve an initial camera position from the PMTiles header. The Map
     // constructor accepts {center, zoom} reliably (the {bounds} variant is
@@ -871,25 +973,46 @@ const InteractiveLabeler = () => {
         return false;
       });
       map.getCanvasContainer().style.cursor = "pointer";
-      setupBoxSelect(map);
+      setupBoxSelect(
+        map,
+        () => glMapRef.current,
+        () => internalLayerIdsRef.current,
+        boxCleanupRef
+      );
 
       // Hydrate viewport features each time the map settles. This:
       //  (a) detects feature keys on the first f_* props we see;
       //  (b) restores any saved labels for buildings that just rendered;
       //  (c) runs viewport-scoped predict if the model has training data.
       const hydrate = () => hydrateViewport(map);
-      map.events.add("moveend", hydrate);
+      map.events.add("moveend", () => {
+        // A move supersedes any pending first-paint retry.
+        if (initialPaintTimerRef.current) {
+          clearTimeout(initialPaintTimerRef.current);
+          initialPaintTimerRef.current = null;
+        }
+        hydrate();
+      });
       map.events.add("sourcedata", (e) => {
         // Only react when the buildings source finishes loading a tile.
+        //
+        // Read the id defensively: Mapbox-GL puts it on `sourceId`, but the
+        // Atlas event wrapper is documented as carrying a `source` object.
+        // If it is the latter, matching on `sourceId` alone compares against
+        // undefined and this listener never fires at all -- which would
+        // leave moveend as the only hydration trigger, and is a candidate
+        // for restored labels not colouring until the map is moved.
+        const sourceId = e && (e.sourceId ?? e.source?.id);
         if (
           e &&
           e.isSourceLoaded &&
-          internalSourceIdsRef.current.includes(e.sourceId)
+          sourceId &&
+          internalSourceIdsRef.current.includes(sourceId)
         ) {
           hydrate();
         }
       });
-      hydrate();
+      paintRestoredLabels(map);
 
       // Info bar: keep lat/lon/zoom in sync as the camera moves.
       const syncInfo = () => {
@@ -911,8 +1034,7 @@ const InteractiveLabeler = () => {
   // ── Internal-map helpers ──────────────────────────────────────────────────
   // Walk the rendered features at a click point and return the first one
   // from our buildings layer, with its id + props (which include f_*).
-  function clickedFeature(map, e) {
-    const gl = glMapRef.current;
+  function clickedFeatureOn(map, gl, layerIds, e) {
     if (!gl) return null;
     let px = e.pixel;
     if (!px && e.position) {
@@ -924,9 +1046,7 @@ const InteractiveLabeler = () => {
     try {
       rf = gl.queryRenderedFeatures(
         px,
-        internalLayerIdsRef.current.length
-          ? { layers: internalLayerIdsRef.current }
-          : undefined
+        layerIds && layerIds.length ? { layers: layerIds } : undefined
       );
     } catch (err) {
       console.warn("queryRenderedFeatures failed:", err);
@@ -937,37 +1057,155 @@ const InteractiveLabeler = () => {
     return { id: f.id, properties: f.properties, source: f.source };
   }
 
+  function clickedFeature(map, e) {
+    return clickedFeatureOn(
+      map,
+      glMapRef.current,
+      internalLayerIdsRef.current,
+      e
+    );
+  }
+
+  // Restore every saved label that carries a rowId, without waiting for its
+  // building's tile to render.
+  //
+  // The saved store is keyed by Overture id, but feature vectors, feature-
+  // state and the counts are all keyed by the sidecar's row index. Those two
+  // id spaces only meet on a rendered vector-tile feature, which is why the
+  // labeler used to "discover" its own labels as the user panned. Persisting
+  // rowId at save time gives us the bridge up front: the sidecar is
+  // model-scoped, and so are these labels, so the row index is valid for
+  // exactly the model we just loaded.
+  //
+  // Row ids are treated as a hint, not gospel — hydrateViewport re-checks
+  // each one against the tile's overture_id and corrects any that disagree.
+  function restoreSavedLabelsByRowId() {
+    const saved = savedLabelsRef.current;
+    if (!saved || !sidecarRef.current) return 0;
+
+    const { candidates, legacy } = selectRestorableByRowId(
+      saved,
+      labeledMapRef.current,
+      sidecarRef.current.n
+    );
+
+    let restored = 0;
+    for (const { rowId, cls, overtureId } of candidates) {
+      // Out-of-range means the sidecar doesn't match what this label was
+      // saved against; leave it to the tile-driven path rather than pointing
+      // at the wrong building.
+      const vec = lookupFeatureVector(rowId);
+      if (!vec) continue;
+      labeledMapRef.current[rowId] = {
+        label: cls,
+        features: vec,
+        overtureId,
+      };
+      restored++;
+    }
+
+    if (restored > 0) {
+      labelsDirtyRef.current = true;
+    }
+    // Tally unconditionally. tallyLabels counts saved-but-unbridged labels
+    // too, so a document written before rowId existed -- where nothing is
+    // restorable and `restored` is 0 -- still reports its true total instead
+    // of sitting at zero until a labeled tile happens to render, which is
+    // the very symptom this is meant to fix.
+    refreshCounts();
+    if (restored > 0 || legacy > 0) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[InteractiveLabeler] restored ${restored} saved label(s) by rowId` +
+          (legacy > 0
+            ? `; ${legacy} older label(s) will restore as their tiles render`
+            : "")
+      );
+    }
+    return restored;
+  }
+
+  // The internal layer ids that the style still contains.
+  //
+  // internalLayerIdsRef is filled once at map-ready, but the style can lose
+  // those layers afterwards — most reliably during dispose(), which removes
+  // them and then fires 'sourcedata' on the way out. queryRenderedFeatures
+  // throws on an unknown layer rather than returning nothing, and Azure Maps
+  // logs that from inside its own wrapper, so a try/catch here would not
+  // keep it off the console. Don't ask for what isn't there.
+  function liveInternalLayerIds(gl) {
+    const ids = internalLayerIdsRef.current;
+    if (!ids.length) return ids;
+    if (typeof gl.getLayer !== "function") return ids;
+    return ids.filter((id) => {
+      try {
+        return !!gl.getLayer(id);
+      } catch {
+        // getLayer itself throws once the style is gone.
+        return false;
+      }
+    });
+  }
+
   // Read all currently-rendered features from the buildings layer, hydrate
   // featureKeys / saved labels / viewport predictions. Idempotent.
+  //
+  // Returns the number of rendered features it saw, so callers can tell
+  // "nothing to do" from "the renderer wasn't ready yet".
   function hydrateViewport(map) {
     const gl = glMapRef.current;
-    if (!gl) return;
-    if (!internalLayerIdsRef.current.length) return;
+    if (!gl) return 0;
+    if (mapDisposedRef.current) return 0;
+    // Query only layers the style still holds. The cached ids are read once
+    // at map-ready, so they outlive any teardown or style reload that drops
+    // them — and querying a missing layer is an error, not an empty result.
+    const layers = liveInternalLayerIds(gl);
+    if (!layers.length) return 0;
     let features = [];
     try {
       features = gl.queryRenderedFeatures(undefined, {
-        layers: internalLayerIdsRef.current,
+        layers,
       });
     } catch (err) {
       console.warn("queryRenderedFeatures (viewport) failed:", err);
-      return;
+      return 0;
     }
-    if (features.length === 0) return;
+    if (features.length === 0) return 0;
 
     // Restore any saved labels whose tiles are now in view.
     const saved = savedLabelsRef.current;
     if (saved && Object.keys(saved).length > 0) {
       let restored = 0;
+      let corrected = 0;
       for (const f of features) {
         const id = f.id;
-        if (id == null || labeledMapRef.current[id]) continue;
+        if (id == null) continue;
+        const existing = labeledMapRef.current[id];
+        if (existing) {
+          // The tile is authoritative for the row-index -> overture_id
+          // mapping. If a rowId-restored entry disagrees, it was saved
+          // against a different sidecar; drop it so the lookup below can
+          // re-place it from the tile's own overture_id.
+          const tileOvertureId = f.properties?.overture_id;
+          if (
+            tileOvertureId != null &&
+            existing.overtureId != null &&
+            String(existing.overtureId) !== String(tileOvertureId)
+          ) {
+            delete labeledMapRef.current[id];
+            clearFeatureStateLabel(f.source, id);
+            corrected++;
+          } else {
+            continue;
+          }
+        }
         const overtureId = f.properties?.overture_id ?? id;
         const entry = saved[overtureId];
         if (!entry) continue;
         const cls = VALIDATION_TO_CLASS[entry.label];
         if (cls == null) continue;
         const vec = lookupFeatureVector(id);
-        if (!vec) continue;
+        if (!isValidVector(vec)) continue;
         labeledMapRef.current[id] = {
           label: cls,
           features: vec,
@@ -976,9 +1214,17 @@ const InteractiveLabeler = () => {
         setFeatureStateLabel(f.source, id, cls);
         restored++;
       }
-      if (restored > 0) {
+      if (restored > 0 || corrected > 0) {
         labelsDirtyRef.current = true;
+        labelsRevisionRef.current += 1;
         refreshCounts();
+      }
+      if (corrected > 0) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[InteractiveLabeler] re-placed ${corrected} label(s) whose saved` +
+            " rowId did not match the tile's overture_id (stale sidecar?)"
+        );
       }
     }
 
@@ -994,8 +1240,13 @@ const InteractiveLabeler = () => {
       if (pred != null) setFeatureStatePred(f.source, id, pred);
     }
 
-    // Viewport-scoped predict — only train + score what's on screen.
-    if (viewModeRef.current === "predict") {
+    // Predicted and Misclassified views both need current viewport
+    // predictions. maybeTrainAndPredict reuses the cached model unless labels
+    // changed.
+    if (
+      viewModeRef.current === "predict" ||
+      misclassifiedOnRef.current
+    ) {
       maybeTrainAndPredict(features);
     }
 
@@ -1003,6 +1254,40 @@ const InteractiveLabeler = () => {
     if (uncertaintyOnRef.current) {
       computeUncertaintyForViewport(features);
     }
+
+    return features.length;
+  }
+
+  // Colour the restored labels as soon as the renderer can tell us what is
+  // on screen.
+  //
+  // Restoring labels fills labeledMap before the map exists, but the map's
+  // *colour* comes from feature-state, which can only be applied against a
+  // rendered feature — that is the one place the row-index id and the
+  // renderer's own feature meet. The eager hydrate at map-ready usually
+  // loses a race with the first tile paint: queryRenderedFeatures returns
+  // nothing, hydrateViewport bails, and the labels sit uncoloured until
+  // something else triggers a hydrate. In practice that was the user
+  // panning, since moveend is the only other reliable trigger.
+  //
+  // So retry briefly until the renderer has something to give us. Bounded,
+  // and stops on the first success.
+  function paintRestoredLabels(map, attempt = 0) {
+    initialPaintTimerRef.current = null;
+    if (hydrateViewport(map) > 0) return;
+    if (attempt >= INITIAL_PAINT_MAX_ATTEMPTS) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[InteractiveLabeler] no rendered features after" +
+          ` ${INITIAL_PAINT_MAX_ATTEMPTS} attempts; labels will colour on the` +
+          " next map move"
+      );
+      return;
+    }
+    initialPaintTimerRef.current = setTimeout(
+      () => paintRestoredLabels(map, attempt + 1),
+      INITIAL_PAINT_RETRY_MS
+    );
   }
 
   // Train (or reuse the cached model) and paint per-building uncertainty as the
@@ -1010,9 +1295,7 @@ const InteractiveLabeler = () => {
   // trainedModelRef with the predict path; returns silently (with a status
   // hint) when there aren't enough labels to train.
   function computeUncertaintyForViewport(features) {
-    const entries = Object.values(labeledMapRef.current).filter((e) =>
-      isValidVector(e.features)
-    );
+    const entries = getValidLabeledEntries();
     const perClass = {};
     entries.forEach((e) => (perClass[e.label] = (perClass[e.label] || 0) + 1));
     const classesReady = Object.values(perClass).filter(
@@ -1060,63 +1343,92 @@ const InteractiveLabeler = () => {
   }
 
   // ── feature-state helpers (drive renderer paint) ──────────────────────────
-  function setFeatureStateLabel(sourceId, id, cls) {
-    const gl = glMapRef.current;
-    if (!gl) return;
-    try {
-      gl.setFeatureState(
-        { source: sourceId, sourceLayer: PMTILES_SOURCE_LAYER, id },
-        { label: cls }
-      );
-      mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
-    } catch (err) {
-      console.warn("setFeatureState (label) failed:", err);
+  // Feature-state is per-renderer. When the swipe view is up, every write
+  // has to reach the pre map's renderer too, otherwise the left pane keeps
+  // drawing the unlabeled color and misses the misclassified highlight.
+  function forEachStateTarget(sourceId, fn) {
+    const targets = [[glMapRef.current, sourceId]];
+    if (swipePreGlMapRef.current) {
+      targets.push([swipePreGlMapRef.current, SWIPE_SOURCE_ID]);
     }
+    for (const [gl, src] of targets) {
+      if (!gl) continue;
+      try {
+        fn(gl, src);
+      } catch (err) {
+        console.warn("feature-state write failed:", err);
+      }
+    }
+    mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
+    swipePreMapRef.current?.triggerRepaint &&
+      swipePreMapRef.current.triggerRepaint();
+  }
+
+  function setFeatureStateLabel(sourceId, id, cls) {
+    forEachStateTarget(sourceId, (gl, src) =>
+      gl.setFeatureState(
+        { source: src, sourceLayer: PMTILES_SOURCE_LAYER, id },
+        { label: cls }
+      )
+    );
   }
   function setFeatureStatePred(sourceId, id, cls) {
-    const gl = glMapRef.current;
-    if (!gl) return;
-    try {
+    forEachStateTarget(sourceId, (gl, src) =>
       gl.setFeatureState(
-        { source: sourceId, sourceLayer: PMTILES_SOURCE_LAYER, id },
+        { source: src, sourceLayer: PMTILES_SOURCE_LAYER, id },
         { pred: cls }
-      );
-      mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
-    } catch (err) {
-      console.warn("setFeatureState (pred) failed:", err);
-    }
+      )
+    );
   }
   function setFeatureStateUnc(sourceId, id, unc) {
-    const gl = glMapRef.current;
-    if (!gl) return;
-    try {
+    forEachStateTarget(sourceId, (gl, src) =>
       gl.setFeatureState(
-        { source: sourceId, sourceLayer: PMTILES_SOURCE_LAYER, id },
+        { source: src, sourceLayer: PMTILES_SOURCE_LAYER, id },
         { unc }
-      );
-      mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
-    } catch (err) {
-      console.warn("setFeatureState (unc) failed:", err);
-    }
+      )
+    );
   }
   function clearFeatureStateLabel(sourceId, id) {
-    const gl = glMapRef.current;
-    if (!gl) return;
-    try {
+    forEachStateTarget(sourceId, (gl, src) =>
       gl.removeFeatureState(
-        { source: sourceId, sourceLayer: PMTILES_SOURCE_LAYER, id },
+        { source: src, sourceLayer: PMTILES_SOURCE_LAYER, id },
         "label"
-      );
-      mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
-    } catch (err) {
-      console.warn("removeFeatureState failed:", err);
-    }
+      )
+    );
   }
   // The renderer may have given our source an internal name; pick the first
   // id from the discovered list (the click handler uses the feature's own
   // .source so this only matters for state writes not driven by a click).
   function primarySourceId() {
     return internalSourceIdsRef.current[0] || "buildings";
+  }
+
+  // Both panes draw the same footprints from the same archive, so they must
+  // share one source of truth for the paint expressions.
+  function fillPaintFor(misclassified, uncertainty, mode) {
+    if (misclassified) {
+      return {
+        fillColor: MISCLASSIFIED_COLOR,
+        fillOpacity: fillOpacityExprMisclassified(),
+      };
+    }
+    if (uncertainty) {
+      return {
+        fillColor: fillColorExprUncertainty(),
+        fillOpacity: fillOpacityExprUncertainty(),
+      };
+    }
+    const key = mode === "predict" ? "pred" : "label";
+    return {
+      fillColor: fillColorExpr(key),
+      fillOpacity: fillOpacityExpr(key),
+    };
+  }
+
+  function applySwipeFillPaint(paint) {
+    const layer =
+      swipePreMapRef.current?.layers?.getLayerById?.("swipeFill");
+    if (layer) layer.setOptions(paint);
   }
 
   // ── Repaint when the view-mode toggle flips ───────────────────────────────
@@ -1128,21 +1440,16 @@ const InteractiveLabeler = () => {
     if (!map) return;
     const fill = map.layers.getLayerById?.("embeddingFill");
     if (!fill) return;
-    if (uncertaintyOn) {
-      // Uncertainty view overrides the label/predict coloring entirely.
-      fill.setOptions({
-        fillColor: fillColorExprUncertainty(),
-        fillOpacity: fillOpacityExprUncertainty(),
-      });
+    const paint = fillPaintFor(misclassifiedOn, uncertaintyOn, viewMode);
+    fill.setOptions(paint);
+    applySwipeFillPaint(paint);
+    if (misclassifiedOn || uncertaintyOn || viewMode === "predict") {
       hydrateViewport(map);
-    } else {
-      fill.setOptions({
-        fillColor: fillColorExpr(viewMode === "predict" ? "pred" : "label"),
-        fillOpacity: fillOpacityExpr(viewMode === "predict" ? "pred" : "label"),
-      });
-      if (viewMode === "predict") hydrateViewport(map);
     }
-  }, [viewMode, uncertaintyOn, isMapReady]);
+    // hydrateViewport reads current refs and intentionally stays out of this
+    // dependency list to avoid re-running the effect on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, uncertaintyOn, misclassifiedOn, isMapReady]);
 
   // Show / hide the buildings layers without unmounting them. Driven by
   // the panel toggle + spacebar hotkey; the feature-state and the cached
@@ -1152,6 +1459,13 @@ const InteractiveLabeler = () => {
     if (!map) return;
     for (const layerId of ["embeddingFill", "embeddingOutline"]) {
       const layer = map.layers.getLayerById?.(layerId);
+      if (layer) layer.setOptions({ visible: showFootprints });
+    }
+    // The Space hotkey has to hide both panes, or footprints vanish on the
+    // right and stay on the left.
+    for (const layerId of ["swipeFill", "swipeOutline"]) {
+      const layer =
+        swipePreMapRef.current?.layers?.getLayerById?.(layerId);
       if (layer) layer.setOptions({ visible: showFootprints });
     }
   }, [showFootprints, isMapReady]);
@@ -1168,10 +1482,16 @@ const InteractiveLabeler = () => {
     return sc.matrix.subarray(id * sc.d, (id + 1) * sc.d);
   }
 
+  function getValidLabeledEntries() {
+    return Object.values(labeledMapRef.current).filter((entry) =>
+      isValidVector(entry.features)
+    );
+  }
+
   // ── Labeling ──────────────────────────────────────────────────────────────
   function recordLabel(id, props, cls) {
     const vec = lookupFeatureVector(id);
-    if (!vec) return false;
+    if (!isValidVector(vec)) return false;
     // Capture the Overture id (when present) up front so the save path
     // doesn't have to guess. The persisted store is keyed by Overture id
     // (so labels survive a re-embed that renumbers row-index ids); the
@@ -1186,13 +1506,18 @@ const InteractiveLabeler = () => {
     // Any label change invalidates the cached trained model; the next
     // viewport predict will retrain. Clearing also invalidates.
     labelsDirtyRef.current = true;
+    labelsRevisionRef.current += 1;
     return true;
   }
   function labelBuilding(id, props, cls) {
     if (!recordLabel(id, props, cls)) return;
     setFeatureStateLabel(primarySourceId(), id, cls);
     refreshCounts();
-    if (viewModeRef.current === "predict") {
+    if (
+      viewModeRef.current === "predict" ||
+      uncertaintyOnRef.current ||
+      misclassifiedOnRef.current
+    ) {
       hydrateViewport(mapRef.current);
     }
   }
@@ -1207,26 +1532,67 @@ const InteractiveLabeler = () => {
     if (n === 0) return;
     refreshCounts();
     setStatus(`Labeled ${n} buildings.`);
-    if (viewModeRef.current === "predict") {
+    if (
+      viewModeRef.current === "predict" ||
+      uncertaintyOnRef.current ||
+      misclassifiedOnRef.current
+    ) {
       hydrateViewport(mapRef.current);
     }
   }
   function clearLabel(id) {
+    // Drop it from the saved mirror too. The save path now merges that
+    // mirror into the payload, so leaving it behind would resurrect a label
+    // the user just cleared.
+    const entry = labeledMapRef.current[id];
+    if (entry) {
+      delete savedLabelsRef.current[entry.overtureId ?? id];
+    }
     delete labeledMapRef.current[id];
     labelsDirtyRef.current = true;
+    labelsRevisionRef.current += 1;
     clearFeatureStateLabel(primarySourceId(), id);
     refreshCounts();
+    if (
+      viewModeRef.current === "predict" ||
+      uncertaintyOnRef.current ||
+      misclassifiedOnRef.current
+    ) {
+      hydrateViewport(mapRef.current);
+    }
   }
+  // `counts` is what the user has labeled; `trainableCounts` is the subset
+  // the in-browser model can actually fit. They differ only for labels saved
+  // before rowId existed, which stay uncounted for training until their tile
+  // renders and supplies a feature vector — reporting the full tally keeps
+  // the panel honest without pretending those are trainable yet.
   function refreshCounts() {
-    const next = { 0: 0, 1: 0, 2: 0 };
-    Object.values(labeledMapRef.current).forEach((e) => {
-      next[e.label] = (next[e.label] || 0) + 1;
-    });
+    const { counts: next, trainable } = tallyLabels(
+      labeledMapRef.current,
+      savedLabelsRef.current,
+      isValidVector
+    );
+    // Gate training on the TRAINABLE subset, not the displayed tally: a
+    // saved label that hasn't been bridged to a row index yet has no feature
+    // vector, so it cannot contribute to a fit.
+    const nextCanTrain =
+      [
+        trainable[CLASS_INTACT],
+        trainable[CLASS_DAMAGED],
+        trainable[CLASS_CLOUDY],
+      ].filter((count) => count >= MIN_PER_CLASS).length >= 2;
+    canTrainRef.current = nextCanTrain;
+    if (!nextCanTrain) {
+      setUncertaintyOn(false);
+      setMisclassifiedOn(false);
+      setViewMode("label");
+    }
     setCounts(next);
+    setTrainableCounts(trainable);
   }
 
   // ── Ctrl+drag box-select (viewport-scoped) ────────────────────────────────
-  function setupBoxSelect(map) {
+  function setupBoxSelect(map, glGetter, layerIdsGetter, cleanupRef) {
     const canvas = map.getCanvasContainer();
     let origin = null;
 
@@ -1273,8 +1639,9 @@ const InteractiveLabeler = () => {
       map.setUserInteraction({ dragPanInteraction: true });
       if (x2 - x1 < 4 || y2 - y1 < 4) return;
 
-      const gl = glMapRef.current;
+      const gl = glGetter();
       if (!gl) return;
+      const layerIds = layerIdsGetter();
       let rf = [];
       try {
         rf = gl.queryRenderedFeatures(
@@ -1282,9 +1649,7 @@ const InteractiveLabeler = () => {
             [x1, y1],
             [x2, y2],
           ],
-          internalLayerIdsRef.current.length
-            ? { layers: internalLayerIdsRef.current }
-            : undefined
+          layerIds && layerIds.length ? { layers: layerIds } : undefined
         );
       } catch (err) {
         console.warn("box-select queryRenderedFeatures failed:", err);
@@ -1299,13 +1664,12 @@ const InteractiveLabeler = () => {
     canvas.addEventListener("mousedown", onDown);
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
-    boxCleanupRef.current = () => {
+    cleanupRef.current = () => {
       canvas.removeEventListener("mousedown", onDown);
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
     };
   }
-
   // ── Viewport-scoped train + predict ───────────────────────────────────────
   // Train ONCE per label-set change (labelsDirtyRef flips on every label/
   // clear/restore), then reuse the cached model on every viewport settle.
@@ -1316,9 +1680,7 @@ const InteractiveLabeler = () => {
       trainPendingRef.current = true;
       return;
     }
-    const entries = Object.values(labeledMapRef.current).filter((e) =>
-      isValidVector(e.features)
-    );
+    const entries = getValidLabeledEntries();
     const perClass = {};
     entries.forEach((e) => (perClass[e.label] = (perClass[e.label] || 0) + 1));
     const classesReady = Object.values(perClass).filter(
@@ -1336,13 +1698,13 @@ const InteractiveLabeler = () => {
       // Only retrain when the label set actually changed. The metrics panel
       // is paired with training, so it refreshes on the same cadence.
       if (labelsDirtyRef.current || !trainedModelRef.current) {
+        const trainingRevision = labelsRevisionRef.current;
         setStatus("Training…");
-        const metrics = await holdoutMetricsDamaged(
+        const nextMetrics = await holdoutMetricsDamaged(
           entries,
           0.2,
           CLASS_DAMAGED
         );
-        if (metrics) setMetrics({ ...metrics, mode: "holdout" });
         const ovr = new OvRLogisticRegression({
           learningRate: 0.1,
           numSteps: 500,
@@ -1352,6 +1714,12 @@ const InteractiveLabeler = () => {
           entries.map((e) => e.features),
           entries.map((e) => e.label)
         );
+        if (trainingRevision !== labelsRevisionRef.current) {
+          labelsDirtyRef.current = true;
+          trainPendingRef.current = true;
+          return;
+        }
+        if (nextMetrics) setMetrics({ ...nextMetrics, mode: "holdout" });
         trainedModelRef.current = ovr;
         labelsDirtyRef.current = false;
         // The backend label is purely cosmetic for the cached path —
@@ -1396,35 +1764,40 @@ const InteractiveLabeler = () => {
   // ── Keyboard: 1/2/3 set class, T cycles, P toggles view, Space hides ─────
   useEffect(() => {
     function onKeyDown(e) {
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
-      if (e.key === "1") setSelectedClass(CLASS_INTACT);
-      else if (e.key === "2") setSelectedClass(CLASS_DAMAGED);
-      else if (e.key === "3") setSelectedClass(CLASS_CLOUDY);
-      else if (e.key === "t" || e.key === "T")
+      if (shouldIgnoreShortcut(e)) return;
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "1") setSelectedClass(CLASS_INTACT);
+      else if (key === "2") setSelectedClass(CLASS_DAMAGED);
+      else if (key === "3") setSelectedClass(CLASS_CLOUDY);
+      else if (key === "t")
         setSelectedClass((c) => (c + 1) % 3);
-      else if (e.key === "p" || e.key === "P") {
+      else if (key === "p") {
         // Predicted view needs a trained model; ignore until we have enough
         // labels (matches the disabled View toggle).
         if (!canTrainRef.current) return;
         const next = viewModeRef.current === "label" ? "predict" : "label";
         setViewMode(next);
-        // Predicted view and Uncertainty view are mutually exclusive.
-        if (next === "predict") setUncertaintyOn(false);
-      } else if (e.key === " " || e.code === "Space") {
+        // Model-driven review views are mutually exclusive.
+        if (next === "predict") {
+          setUncertaintyOn(false);
+          setMisclassifiedOn(false);
+        }
+      } else if (key === " " || e.code === "Space") {
         // preventDefault to stop the browser from scrolling the page
         // when the map container doesn't have focus.
         e.preventDefault();
         setShowFootprints((v) => !v);
       } else if (
         swipeRef.current &&
-        (e.key === "a" || e.key === "s" || e.key === "d")
+        (key === "a" || key === "s" || key === "d")
       ) {
         // Snap the swipe divider: 'a' = full left, 's' = middle, 'd' = full
         // right. sliderPosition is in pixels from the left of the map; the
         // SwipeMap module clamps out-of-range values to [0, width].
         const el = swipeMapContainerRef.current || mapContainerRef.current;
         const w = el ? el.getBoundingClientRect().width : 0;
-        const pos = e.key === "a" ? 0 : e.key === "s" ? w / 2 : w;
+        const pos = key === "a" ? 0 : key === "s" ? w / 2 : w;
         try {
           swipeRef.current.setOptions({ sliderPosition: pos });
         } catch (err) {
@@ -1442,9 +1815,7 @@ const InteractiveLabeler = () => {
   // this keeps the main thread free enough that the map keeps rendering instead
   // of blanking out while the CV runs.
   async function handleRunCV() {
-    const entries = Object.values(labeledMapRef.current).filter((e) =>
-      isValidVector(e.features)
-    );
+    const entries = getValidLabeledEntries();
     if (entries.length === 0) {
       setCvResult({ ok: false, reason: "Label some buildings first." });
       return;
@@ -1554,26 +1925,82 @@ const InteractiveLabeler = () => {
       if (swipePmtilesUrlRef.current) {
         try {
           preMap.sources.add(
-            new window.atlas.source.VectorTileSource("buildings", {
+            new window.atlas.source.VectorTileSource(SWIPE_SOURCE_ID, {
               type: "vector",
               url: `pmtiles://${swipePmtilesUrlRef.current}`,
             })
           );
-          preMap.layers.add(
-            new window.atlas.layer.PolygonLayer("buildings", "swipeFill", {
+          const swipeFillLayer = new window.atlas.layer.PolygonLayer(
+            SWIPE_SOURCE_ID,
+            "swipeFill",
+            {
               sourceLayer: PMTILES_SOURCE_LAYER,
               fillColor: UNLABELED_COLOR,
               fillOpacity: 0.15,
-            })
+              visible: showFootprintsRef.current,
+            }
           );
+          preMap.layers.add(swipeFillLayer);
           preMap.layers.add(
-            new window.atlas.layer.LineLayer("buildings", "swipeOutline", {
+            new window.atlas.layer.LineLayer(SWIPE_SOURCE_ID, "swipeOutline", {
               sourceLayer: PMTILES_SOURCE_LAYER,
               strokeColor: "#1a5276",
               minZoom: 15,
               strokeWidth: ["step", ["zoom"], 1, 16, 2],
+              visible: showFootprintsRef.current,
             })
           );
+
+          // SwipeMap clips the labeler map to the right of the divider, so
+          // without these the whole left pane is inert. Route its clicks
+          // through the same labelBuilding / clearLabel path.
+          swipePreGlMapRef.current = findGlMap(preMap);
+          const swipeLayerIds = () => ["swipeFill"];
+          preMap.events.add("click", swipeFillLayer, (e) => {
+            if (
+              e.originalEvent &&
+              (e.originalEvent.ctrlKey || e.originalEvent.metaKey)
+            ) {
+              return;
+            }
+            const f = clickedFeatureOn(
+              preMap,
+              swipePreGlMapRef.current,
+              swipeLayerIds(),
+              e
+            );
+            if (!f) return;
+            labelBuilding(f.id, f.properties, selectedClassRef.current);
+          });
+          preMap.events.add("contextmenu", swipeFillLayer, (e) => {
+            const f = clickedFeatureOn(
+              preMap,
+              swipePreGlMapRef.current,
+              swipeLayerIds(),
+              e
+            );
+            if (!f) return;
+            clearLabel(f.id);
+            return false;
+          });
+          preMap.getCanvasContainer().style.cursor = "pointer";
+          setupBoxSelect(
+            preMap,
+            () => swipePreGlMapRef.current,
+            swipeLayerIds,
+            swipeBoxCleanupRef
+          );
+
+          // Adopt whatever view is active, then replay the existing labels
+          // and predictions onto this renderer's feature-state.
+          applySwipeFillPaint(
+            fillPaintFor(
+              misclassifiedOnRef.current,
+              uncertaintyOnRef.current,
+              viewModeRef.current
+            )
+          );
+          hydrateViewport(mapRef.current);
         } catch (e) {
           console.warn("Swipe pre-map footprints failed:", e);
         }
@@ -1592,6 +2019,14 @@ const InteractiveLabeler = () => {
     });
 
     return () => {
+      // Detach the pre map's document-level drag listeners before its map is
+      // torn down, otherwise box-select keeps firing against a disposed
+      // renderer.
+      if (swipeBoxCleanupRef.current) {
+        swipeBoxCleanupRef.current();
+        swipeBoxCleanupRef.current = null;
+      }
+      swipePreGlMapRef.current = null;
       // Tear down the swipe control first — its dispose() removes the divider
       // handle it appended to the PRIMARY (pre map) container and detaches the
       // 'move'/'resize' sync handlers from BOTH maps — then dispose the new pre
@@ -1635,6 +2070,10 @@ const InteractiveLabeler = () => {
       container.style.clip = "";
       container.innerHTML = "";
     };
+    // The labeling helpers are stable for the life of the component and are
+    // intentionally kept out of the deps; re-running would rebuild the pre
+    // map on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMapReady, swipeOn]);
 
   // ── Save labels ───────────────────────────────────────────────────────────
@@ -1646,21 +2085,52 @@ const InteractiveLabeler = () => {
     setIsSaving(true);
     setIsLoading(true, "Saving labels…");
     try {
-      const labels = {};
-      for (const [id, entry] of Object.entries(labeledMapRef.current)) {
-        const overtureId = entry.overtureId ?? id;
-        labels[overtureId] = {
-          id: overtureId,
-          label: CLASS_TO_VALIDATION[entry.label],
-          updatedAt: new Date().toISOString(),
-        };
+      // The merge below is only lossless if the saved mirror is what the
+      // server actually holds. If the initial GET failed we have an empty
+      // mirror, and merging into that would replace the stored document with
+      // this session's labels alone. Try once more, and refuse rather than
+      // guess.
+      if (!savedLabelsLoadedRef.current) {
+        try {
+          const saved = await apiGet(
+            `GetInteractiveLabels?projectId=${projectId}&modelId=${modelId}`
+          );
+          savedLabelsRef.current = saved?.labels || {};
+          savedLabelsLoadedRef.current = true;
+          refreshCounts();
+        } catch (e) {
+          console.error("Re-reading saved labels before save failed:", e);
+          setDialog(
+            "Cannot save safely",
+            "This model's already-saved labels could not be read, so saving" +
+              " now would replace them with only the labels from this" +
+              " session. Nothing has been changed. Check your connection and" +
+              " try again, or reload the page."
+          );
+          return;
+        }
       }
+
+      // PutInteractiveLabels REPLACES the stored document, so the payload
+      // has to be the complete label set — not just what this session has
+      // hydrated. Start from the saved set and layer this session's labels
+      // over it, otherwise saving before every labeled tile has rendered
+      // silently destroys the rest (github.com/microsoft/haste/issues/113).
+      const labels = mergeLabelsForSave(
+        savedLabelsRef.current,
+        labeledMapRef.current,
+        new Date().toISOString(),
+        sidecarRef.current?.n ?? null
+      );
       await apiPut("PutInteractiveLabels", {
         projectId,
         imageLayerId,
         modelId,
         labels,
       });
+      // Keep the in-memory mirror in step with what the server now holds, so
+      // a subsequent save in the same session doesn't resurrect deletions.
+      savedLabelsRef.current = labels;
       setDialog("Saved", "Labels saved successfully.", [
         {
           type: "primary",
@@ -1714,12 +2184,25 @@ const InteractiveLabeler = () => {
               }
               mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
             }
+            // The swipe pre map keeps its own feature-state, so clear it too
+            // or the left pane stays colored after a reset.
+            const preGl = swipePreGlMapRef.current;
+            if (preGl) {
+              try {
+                preGl.removeFeatureState(
+                  { source: SWIPE_SOURCE_ID, sourceLayer: PMTILES_SOURCE_LAYER }
+                );
+              } catch { /* ignore */ }
+              swipePreMapRef.current?.triggerRepaint &&
+                swipePreMapRef.current.triggerRepaint();
+            }
             // In-memory reset (labels + predictions).
             labeledMapRef.current = {};
             savedLabelsRef.current = {};
             predictionsMapRef.current = {};
             trainedModelRef.current = null;
             labelsDirtyRef.current = true;
+            labelsRevisionRef.current += 1;
             refreshCounts();
             setMetrics(null);
             setViewportPredicted(0);
@@ -1762,9 +2245,7 @@ const InteractiveLabeler = () => {
   // modal, then PUTs predictions so the Validation/Assessment reports have
   // full coverage. Cancellable via fullPredictAbortRef.
   async function handlePredictAll() {
-    const entries = Object.values(labeledMapRef.current).filter((e) =>
-      isValidVector(e.features)
-    );
+    const entries = getValidLabeledEntries();
     const perClass = {};
     entries.forEach((e) => (perClass[e.label] = (perClass[e.label] || 0) + 1));
     const classesReady = Object.values(perClass).filter(
@@ -1896,25 +2377,20 @@ const InteractiveLabeler = () => {
   }
 
   const totalLabeled = counts[0] + counts[1] + counts[2];
-  // The Predicted and Uncertainty views both need a trained model, which needs
-  // at least MIN_PER_CLASS labels in 2+ classes. Gate both toggles on this.
+  // Predicted, Uncertainty, and Misclassified views need a trained model,
+  // which needs at least MIN_PER_CLASS labels in 2+ classes.
+  //
+  // Gate on the TRAINABLE subset rather than the displayed tally: a saved
+  // label not yet bridged to a row index has no feature vector, so enabling
+  // the toggle would only produce "Need N+ labels in at least 2 classes"
+  // from the training path. refreshCounts keeps canTrainRef in step and
+  // resets the model-driven views when this drops back to false.
   const canTrain =
     [
-      counts[CLASS_INTACT],
-      counts[CLASS_DAMAGED],
-      counts[CLASS_CLOUDY],
-    ].filter((n) => n >= MIN_PER_CLASS).length >= 2;
-
-  // If labels drop back below the trainable threshold (e.g. after clearing),
-  // fall back to the Labeled view so we don't sit in a now-disabled Predicted
-  // or Uncertainty view with no model behind it.
-  useEffect(() => {
-    canTrainRef.current = canTrain;
-    if (!canTrain) {
-      setUncertaintyOn(false);
-      setViewMode("label");
-    }
-  }, [canTrain]);
+      trainableCounts[CLASS_INTACT],
+      trainableCounts[CLASS_DAMAGED],
+      trainableCounts[CLASS_CLOUDY],
+    ].filter((count) => count >= MIN_PER_CLASS).length >= 2;
 
   return (
     <div className={styles.root}>
@@ -1993,12 +2469,37 @@ const InteractiveLabeler = () => {
           </>
         )}
 
-        {/* Legend, bottom-right of the map. Shows the class colors normally
-            (Intact / Damaged / Cloudy), or the uncertainty ramp when the
-            uncertainty view is on. Hidden when footprints are hidden. */}
+        {/* Legend, bottom-right of the map. Shows class colors normally, the
+            uncertainty ramp, or the misclassified explanation. */}
         {isMapReady && showFootprints && (
           <div className={styles.legend}>
-            {uncertaintyOn ? (
+            {misclassifiedOn ? (
+              <>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  Misclassified
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span
+                    style={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: 2,
+                      background: MISCLASSIFIED_COLOR,
+                    }}
+                  />
+                  <span>Label disagrees with prediction</span>
+                </div>
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: tokens.colorNeutralForeground3,
+                    marginTop: 2,
+                  }}
+                >
+                  Correct and unlabeled buildings stay clear.
+                </div>
+              </>
+            ) : uncertaintyOn ? (
               <>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>
                   Model uncertainty
@@ -2101,8 +2602,11 @@ const InteractiveLabeler = () => {
             disabled={!canTrain}
             onChange={(_e, data) => {
               setViewMode(data.checked ? "predict" : "label");
-              // Predicted view and Uncertainty view are mutually exclusive.
-              if (data.checked) setUncertaintyOn(false);
+              // Model-driven review views are mutually exclusive.
+              if (data.checked) {
+                setUncertaintyOn(false);
+                setMisclassifiedOn(false);
+              }
             }}
             style={{ marginTop: 12 }}
           />
@@ -2164,7 +2668,7 @@ const InteractiveLabeler = () => {
             {isSaving ? "Saving…" : "Save labels"}
           </Button>
           <Button
-            disabled={!!fullPredict || totalLabeled === 0}
+            disabled={!!fullPredict || !canTrain}
             onClick={handlePredictAll}
             style={{ marginTop: 8, width: "100%" }}
             title="Run the trained model across every building in the layer (not just the viewport) and persist the predictions for the Validation / Assessment reports."
@@ -2193,7 +2697,7 @@ const InteractiveLabeler = () => {
           {advancedOpen && (
             <div style={{ marginTop: 4 }}>
               <Button
-                disabled={cvRunning || totalLabeled === 0}
+                disabled={cvRunning || !canTrain}
                 onClick={handleRunCV}
                 style={{ width: "100%" }}
                 title="Stratified 5-fold cross-validation of the in-browser model over your current labels. Reports per-class precision, recall, and one-vs-rest AUC as mean ± stdev across folds."
@@ -2318,9 +2822,11 @@ const InteractiveLabeler = () => {
                 disabled={!canTrain}
                 onChange={(_e, data) => {
                   setUncertaintyOn(!!data.checked);
-                  // Uncertainty view and Predicted view are mutually exclusive;
-                  // switching this on drops the map back to the Labeled view.
-                  if (data.checked) setViewMode("label");
+                  // Model-driven review views are mutually exclusive.
+                  if (data.checked) {
+                    setViewMode("label");
+                    setMisclassifiedOn(false);
+                  }
                 }}
               />
               <div className={styles.secondaryText} style={{ fontSize: 11, marginTop: -4 }}>
@@ -2328,16 +2834,43 @@ const InteractiveLabeler = () => {
                 uncertainty. Needs {MIN_PER_CLASS}+ labels in at least 2 classes.
                 A legend appears on the map.
               </div>
+
+              <Divider style={{ marginTop: 12 }} />
+
+              <Switch
+                label="Show misclassified buildings"
+                checked={misclassifiedOn}
+                disabled={!canTrain}
+                onChange={(_e, data) => {
+                  setMisclassifiedOn(!!data.checked);
+                  if (data.checked) {
+                    // Training is on demand: hydration trains/reuses the model
+                    // and refreshes predictions for the visible buildings.
+                    setViewMode("label");
+                    setUncertaintyOn(false);
+                    setStatus("Training model to find label disagreements…");
+                  }
+                }}
+              />
+              <div
+                className={styles.secondaryText}
+                style={{ fontSize: 11, marginTop: -4 }}
+              >
+                Trains or reuses the current model when enabled, then highlights
+                only human-labeled buildings whose predicted class differs.
+                Correct and unlabeled buildings stay unhighlighted.
+              </div>
             </div>
           )}
           </div>
 
           <div className={styles.footerHelp}>
-            Click a building to label it · right-click to clear ·{" "}
-            <kbd>Ctrl</kbd>+drag to box-label · <kbd>1</kbd>/<kbd>2</kbd>/
-            <kbd>3</kbd> set class · <kbd>P</kbd> toggle view ·{" "}
-            <kbd>Space</kbd> show/hide footprints · with swipe on,{" "}
-            <kbd>A</kbd>/<kbd>S</kbd>/<kbd>D</kbd> snap divider left/center/right
+            <div style={{ marginBottom: 8 }}>
+              Click a building to label it · right-click to clear it
+            </div>
+            <KeyboardShortcutHelp
+              shortcuts={INTERACTIVE_LABELER_SHORTCUTS}
+            />
           </div>
         </div>
       )}

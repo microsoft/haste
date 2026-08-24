@@ -4,6 +4,7 @@ parts:
   - caption: User Guide
     chapters:
       - file: usage/overview
+      - file: usage/keyboard-shortcuts
       - file: usage/rapid-building-assessment
       - file: usage/damage-mapping
       - file: usage/building-blocks

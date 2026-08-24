@@ -43,6 +43,11 @@ def add_inference_parser(
     )
     parser.add_argument("--inference.batch_size", type=int, help="Batch size")
     parser.add_argument(
+        "--imagery.raw_fn",
+        type=str,
+        help="Path to the input raster (.tif or .vrt)",
+    )
+    parser.add_argument(
         "--inference.padding",
         type=int,
         help="Number of pixels to throw away from each side of the patch after inference",
@@ -68,6 +73,7 @@ def main() -> None:
     )
     print(input_model_checkpoint)
     input_image_fn = args["imagery"]["raw_fn"]
+    print("Running on image:", input_image_fn)
     patch_size = args["inference"]["patch_size"]
     padding = args["inference"]["padding"]
     output_dir = os.path.join(
@@ -134,8 +140,13 @@ def main() -> None:
     print(f"Padding used: {padding}")
     stride = patch_size - padding * 2
 
+    # Clip to the channel count the checkpoint was trained on -- rasters often
+    # carry an extra alpha band that would otherwise mismatch `in_channels`.
     dataset = TileDataset(
-        [[input_image_fn]], mask_fns=None, transforms=preprocess
+        [[input_image_fn]],
+        mask_fns=None,
+        transforms=preprocess,
+        num_channels=args["imagery"].get("num_channels"),
     )
     sampler = GridGeoSampler(
         [[input_image_fn]], [0], patch_size=patch_size, stride=stride
@@ -147,6 +158,15 @@ def main() -> None:
         num_workers=12,
         collate_fn=stack_samples,
     )
+
+    # A constraint-loss model has one fewer output channel ("No Damage" gets
+    # none) and leaves channel 0 unsupervised, so its argmax needs handling.
+    use_constraint_loss = args["training"]["use_constraint_loss"]
+    if use_constraint_loss:
+        print(
+            "Checkpoint was trained with the constraint loss: excluding the"
+            " unsupervised channel 0 from predictions."
+        )
 
     # Run inference
     tic = time.time()
@@ -163,9 +183,16 @@ def main() -> None:
         batch_size = images.shape[0]
         with torch.inference_mode():
             predictions = task(images)
-            predictions = (
-                predictions.argmax(axis=1).cpu().numpy().astype(np.uint8)
-            )
+            if use_constraint_loss:
+                # Channel 0 ("Unlabeled") is emitted but never supervised
+                # under the constraint loss, so its logits are meaningless
+                # and it must not be allowed to win. Drop it and shift the
+                # indices back onto the 1-based mask values. "No Damage" has
+                # no channel at all, so it can't be predicted either.
+                predictions = predictions[:, 1:].argmax(axis=1) + 1
+            else:
+                predictions = predictions.argmax(axis=1)
+            predictions = predictions.cpu().numpy().astype(np.uint8)
 
         for i in range(batch_size):
             height, width = predictions[i].shape
@@ -204,6 +231,9 @@ def main() -> None:
                 ),  # this alpha doesn't work because of a limitation in TIFFs
                 2: (0, 255, 0, 255),
                 3: (255, 0, 0, 255),
+                # Neutral grey for a 4th class (e.g. "No Damage" / "Cloud")
+                # when the project defines one; unused otherwise.
+                4: (128, 128, 128, 255),
             },
         )
         f.colorinterp = [ColorInterp.palette]

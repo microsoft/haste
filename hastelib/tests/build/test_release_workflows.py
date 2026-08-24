@@ -15,6 +15,7 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             ".github/workflows/hastegeo-publish.yml",
             ".github/workflows/deploy-apps.yml",
             ".github/workflows/docker-build-and-push.yml",
+            ".github/workflows/dependency-validation.yml",
             ".github/workflows/rc-cleanup.yml",
         ]
 

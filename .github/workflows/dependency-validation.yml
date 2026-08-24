@@ -1,0 +1,140 @@
+---
+# Validates that the pinned Python dependencies can actually be installed.
+#
+# This exists because of PR #153, which bumped `gdal` in
+# `hastelib/pyproject.toml` to a version no container ships a wheel for, and
+# `rasterio` to a release that requires Python >= 3.12 while every image runs
+# 3.11. Both landed on main and broke every local and deploy image build.
+#
+# Nothing caught it. `docker-build-and-push.yml` deliberately skips the image
+# build when a pull request also touches `hastelib/**` (so images are not built
+# twice alongside `hastegeo-publish.yml`) -- and #153 touched both. Meanwhile
+# `hastegeo-build.yml` only builds the wheel and never installs it into an
+# image. That combination left dependency changes completely unvalidated.
+#
+# This workflow deliberately has NO such skip: it resolves dependencies for
+# every Python image on any pull request that touches a dependency file. It
+# only resolves, never builds an image, so it stays fast.
+#
+# The cheap, offline half of this guard lives in
+# `hastelib/tests/build/test_dependency_pins.py`, which asserts the GDAL wheel
+# each image installs matches the `gdal` pin hastegeo declares.
+name: Validate dependency pins
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "api/hastefuncapi/requirements.txt"
+      - "api/hastefuncqueues/requirements.txt"
+      - "docker/imageryprep/requirements.txt"
+      - "api/hastefuncapi/Dockerfile"
+      - "api/hastefuncqueues/Dockerfile"
+      - "docker/imageryprep/Dockerfile"
+      - "hastelib/pyproject.toml"
+      - "ui/package.json"
+      - "ui/package-lock.json"
+      - ".github/workflows/dependency-validation.yml"
+      - ".github/scripts/check_image_python.py"
+      - ".github/scripts/check_protobuf_pin.py"
+      - ".github/scripts/check_react_pins.py"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  resolve:
+    name: Resolve ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      # Report every broken image in one run rather than stopping at the
+      # first, so a single fix round can address all of them.
+      fail-fast: false
+      matrix:
+        include:
+          - name: hastefuncapi
+            requirements: api/hastefuncapi/requirements.txt
+            python: "3.11"
+            functions_worker: true
+          - name: hastefuncqueues
+            requirements: api/hastefuncqueues/requirements.txt
+            python: "3.11"
+            functions_worker: true
+          - name: imageryprep
+            requirements: docker/imageryprep/requirements.txt
+            python: "3.11"
+            functions_worker: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Confirm the image Python version matches this job
+        run: |
+          python .github/scripts/check_image_python.py \
+            "$(dirname "${{ matrix.requirements }}")/Dockerfile" \
+            "${{ matrix.python }}"
+
+      - name: Resolve dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          # Run from the requirements file's own directory: the Functions
+          # images pull hastegeo in with `-e ../../hastelib`, and pip
+          # resolves relative paths against the working directory rather
+          # than the file's location.
+          cd "$(dirname "${{ matrix.requirements }}")"
+          # --dry-run resolves the full graph and reports conflicts without
+          # installing, which is all we need and keeps the job quick. Both
+          # failure modes from #153 surface here: an unsatisfiable pin pair
+          # raises ResolutionImpossible, and a release that requires a newer
+          # Python raises "No matching distribution found".
+          pip install --dry-run --report /tmp/report.json \
+            -r "$(basename "${{ matrix.requirements }}")"
+
+      - name: Check protobuf stays compatible with the Functions worker
+        if: matrix.functions_worker
+        run: python .github/scripts/check_protobuf_pin.py /tmp/report.json
+
+  npm:
+    name: Resolve ui npm dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+
+      - name: Resolve dependencies
+        working-directory: ui
+        run: |
+          set -euo pipefail
+          # `npm ci`, not `npm install`: install quietly reconciles a stale
+          # lockfile in memory and passes, which would hide exactly the
+          # drift we care about. ci fails when package.json and the lockfile
+          # disagree, and it is what deploy/deploy-web.ps1 runs, so this
+          # tests the path that actually ships.
+          #
+          # It also surfaces ERESOLVE peer conflicts: react was bumped to 19
+          # while react-dom stayed on 18, and @azure/msal-react supports at
+          # most 18, so the UI could not install at all.
+          npm ci --dry-run
+
+      - name: Check react and react-dom majors agree
+        run: python3 .github/scripts/check_react_pins.py ui/package.json

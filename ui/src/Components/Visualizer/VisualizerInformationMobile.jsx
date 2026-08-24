@@ -11,6 +11,8 @@ import { FluentIcon } from "../../util/icons";
 
 import { useState } from "react";
 import PropType from "prop-types";
+import KeyboardShortcutHelp from "../KeyboardShortcutHelp";
+import { VISUALIZER_SHORTCUTS } from "../keyboardShortcuts";
 
 const VisualizerInformationMobile = ({
   visualizerResults,
@@ -120,6 +122,8 @@ const VisualizerInformationMobile = ({
                 )
               }
             />
+            <hr />
+            <KeyboardShortcutHelp shortcuts={VISUALIZER_SHORTCUTS} />
         </div>
 
       </div>

@@ -29,9 +29,16 @@ class SegmentationDataModule(LightningDataModule):
         val_batches_per_epoch=32,
         means=[0, 0, 0, 0],
         stds=[500, 500, 500, 500],
+        preload=True,
     ):
         """Initialize the SegmentationDataModule class."""
         super().__init__()
+
+        # Read the tiles into memory once rather than decompressing blocks on
+        # every patch read. Turn off for datasets that don't fit in RAM; note
+        # that under DDP each process preloads independently, so the footprint
+        # scales with the GPU count.
+        self.preload = preload
 
         self.batch_size = batch_size
         self.patch_size = patch_size
@@ -65,6 +72,7 @@ class SegmentationDataModule(LightningDataModule):
             self.mask_fns,
             transforms=self.preprocess,
             sanity_check=True,
+            preload=self.preload,
         )
 
     def train_dataloader(self):
@@ -81,6 +89,8 @@ class SegmentationDataModule(LightningDataModule):
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             collate_fn=stack_samples,
+            pin_memory=True,
+            persistent_workers=self.num_workers > 0,
         )
 
     def val_dataloader(self):
@@ -97,6 +107,8 @@ class SegmentationDataModule(LightningDataModule):
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             collate_fn=stack_samples,
+            pin_memory=True,
+            persistent_workers=self.num_workers > 0,
         )
 
     def plot(self, sample):

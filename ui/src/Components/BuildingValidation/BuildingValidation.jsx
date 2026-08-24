@@ -9,6 +9,7 @@ import { getAzureMapsAuthOptions, isAzureMapsPlaceholder } from "../../util/azur
 import { AppContext } from "../../AppContext.jsx";
 import BuildingValidationRightPanel from "./BuildingValidationRightPanel.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
+import { shouldIgnoreShortcut } from "../keyboardShortcuts.js";
 import "../../assets/css/labels.css";
 import "../../assets/css/drawingToolbar.css";
 
@@ -89,6 +90,24 @@ const BuildingValidation = () => {
   // satellite basemap underneath.
   const [showFill, setShowFill] = useState(true);
   const [showPostImagery, setShowPostImagery] = useState(true);
+  // The imagery layers are created inside the map's async "ready"
+  // handler, which fires after createMap() resolves and flips
+  // isMapReady. Mirroring their availability in state (rather than
+  // reading the refs during render) is what re-renders the right panel
+  // once the layers actually exist.
+  const [hasPreImagery, setHasPreImagery] = useState(false);
+  const [hasPostImagery, setHasPostImagery] = useState(false);
+  // The polygon datasource is also created in the "ready" handler, so the
+  // styling effect below would otherwise run once (before it exists),
+  // bail out, and never re-run — leaving the initial footprints drawn
+  // from the raw GeoJSON with no _label/_selected/_passesFilter set.
+  const [isDatasourceReady, setIsDatasourceReady] = useState(false);
+
+  // Post-event is only genuinely showable once that layer exists. Without
+  // this, the toggle defaults to "post" on a layer that has no post-event
+  // imagery, which hides the pre-event layer and leaves just the basemap
+  // while the panel still claims post-event is on screen.
+  const showPostEvent = showPostImagery && hasPostImagery;
 
   // Indices into `features` that pass the current filter. Prev / Next /
   // Skip-to-next-unlabeled all walk this subset, NOT the raw features
@@ -218,6 +237,7 @@ const BuildingValidation = () => {
           false
         );
         preTileUrlRef.current = layerData.imagery.preEventTileUrl;
+        setHasPreImagery(true);
       }
       if (layerData?.imagery?.postEventTileUrl) {
         loadImagery(
@@ -228,12 +248,14 @@ const BuildingValidation = () => {
           true
         );
         postTileUrlRef.current = layerData.imagery.postEventTileUrl;
+        setHasPostImagery(true);
       }
 
       // Create datasource for building polygons
       const datasource = new window.atlas.source.DataSource();
       map.sources.add(datasource);
       datasourceRef.current = datasource;
+      setIsDatasourceReady(true);
 
       if (featuresArr.length > 0) {
         datasource.add(footprintsGeoJSON);
@@ -311,13 +333,15 @@ const BuildingValidation = () => {
     }
   }, [showFill, isMapReady]);
 
-  // Toggle post-event imagery layer so the user can compare the
-  // post-event view against the basemap satellite underneath.
+  // A single-map comparison: post-event on, or pre-event/basemap when off.
   useEffect(() => {
-    if (postImageryRef.current) {
-      postImageryRef.current.setOptions({ visible: showPostImagery });
+    if (preImageryRef.current) {
+      preImageryRef.current.setOptions({ visible: !showPostEvent });
     }
-  }, [showPostImagery, isMapReady]);
+    if (postImageryRef.current) {
+      postImageryRef.current.setOptions({ visible: showPostEvent });
+    }
+  }, [showPostEvent, isMapReady, hasPreImagery, hasPostImagery]);
 
   // Update polygon properties when labels, selectedIndex, or filter change
   useEffect(() => {
@@ -345,7 +369,7 @@ const BuildingValidation = () => {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [labels, selectedIndex, features, filter]);
+  }, [labels, selectedIndex, features, filter, isDatasourceReady]);
 
   // When the filter changes such that the current selection no longer
   // matches, jump to the first building that does — so the user isn't
@@ -487,12 +511,14 @@ const BuildingValidation = () => {
   // Keyboard shortcuts:
   //   1 / 2 / 3       — assign Damaged / NotDamaged / Unknown
   //   ArrowLeft / ArrowRight — move through the filtered list
+  //   A / D          — show pre (or basemap) / post imagery
   // The right-panel toggles and dropdown remain focusable; the
-  // INPUT/TEXTAREA/SELECT guard keeps shortcuts from hijacking typing.
+  // editable-target guard keeps shortcuts from hijacking typing.
   useEffect(() => {
     const keyMap = { "1": "Damaged", "2": "NotDamaged", "3": "Unknown" };
     function onKeyDown(e) {
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+      if (shouldIgnoreShortcut(e)) return;
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
       const labelValue = keyMap[e.key];
       if (labelValue) {
         handleLabel(labelValue);
@@ -504,12 +530,16 @@ const BuildingValidation = () => {
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
         navigateInFilter(1);
+      } else {
+        const key = e.key.toLowerCase();
+        if (key === "a") setShowPostImagery(false);
+        else if (key === "d" && hasPostImagery) setShowPostImagery(true);
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [features, selectedIndex, filteredIndices]);
+  }, [features, selectedIndex, filteredIndices, hasPostImagery]);
 
   async function handleSave() {
     setIsSaving(true);
@@ -594,9 +624,10 @@ const BuildingValidation = () => {
           onSkipToNextUnlabeled={skipToNextUnlabeled}
           showFill={showFill}
           setShowFill={setShowFill}
-          showPostImagery={showPostImagery}
+          showPostImagery={showPostEvent}
           setShowPostImagery={setShowPostImagery}
-          hasPostImagery={!!postImageryRef.current}
+          hasPreImagery={hasPreImagery}
+          hasPostImagery={hasPostImagery}
         />
       )}
 

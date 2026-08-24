@@ -71,7 +71,7 @@ const HelpDocsLabeling = ({ anchor }) => {
               <li><b>Reset Controls:</b> Resets all sliders to their default values.</li>
             </ul>
             <p className='mt-4 mt-lg-0'>
-              <b>Imagery toggle:</b> Click on the toggle to switch between post event and pre event imagery. If you did not upload pre event imagery, the tool will default to Azure Basemap. You can also use the keyboard shortcut - Ctrl+Alt+c
+              <b>Imagery toggle:</b> Click the toggle to switch between post-event and pre-event imagery. If you did not upload pre-event imagery, the tool uses Azure Basemap. Press <kbd>A</kbd> for pre-event/basemap or <kbd>D</kbd> for post-event imagery.
               <br /><br />
               Use these controls to optimize the map view for your labeling tasks or analysis needs.
             </p>
