@@ -12,6 +12,7 @@ from osgeo import gdal
 
 from ..utils.logs import Logger
 from .gdal_security import harden_gdal
+from .source_types import normalize_source_type
 
 # Restrict GDAL to an allowlist of drivers (and enable exceptions) before
 # any imagery is parsed — compensating control for the deferred GDAL CVE
@@ -349,9 +350,7 @@ class ImageryUtils:
                 elif num_bands == 1:
                     return [1]
 
-            # "maxar" is the pre-rebrand key kept for image layers
-            # created before the Vantor rename.
-            elif source_type in ("vantor", "maxar"):
+            elif normalize_source_type(source_type) == "vantor":
                 if num_bands == 3:
                     mapping = map_bands(["red", "green", "blue"])
                     return [mapping["red"], mapping["green"], mapping["blue"]]

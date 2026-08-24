@@ -19,6 +19,7 @@ from tenacity import (
 
 from .gdal_security import max_download_bytes
 from .logs import Logger
+from .source_types import normalize_source_type
 from .url_allowlist import validate_imagery_url
 
 
@@ -36,9 +37,7 @@ class ImageryDownloader:
         )
 
     def download_imagery(self, **kwargs):
-        # "maxar" is the pre-rebrand source-type key; image layers created
-        # before the Vantor rename still carry it, so accept both.
-        if self.sourceType in ("vantor", "maxar"):
+        if normalize_source_type(self.sourceType) == "vantor":
             return self.download_vantor_imagery_post_pre(**kwargs)
         elif self.sourceType == "planet":
             return self.download_planet_imagery_post_pre(**kwargs)

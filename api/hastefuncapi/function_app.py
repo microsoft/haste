@@ -78,6 +78,7 @@ from hastegeo.core.utils.blob import (
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
+from hastegeo.core.utils.source_types import normalize_source_type
 from hastegeo.core.utils.url_allowlist import (
     validate_clip_bbox,
     validate_image_layer_imagery_urls,
@@ -3189,12 +3190,15 @@ async def GetModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         if imagery_source and imagery_source.strip():
+            # Normalize both sides so a legacy "maxar" layer and a
+            # "vantor" layer resolve to the same model pool.
+            wanted_source = normalize_source_type(imagery_source)
             model_catalog = [
                 model
                 for model in model_catalog
                 if model.get("imagerySource", "")
-                and model.get("imagerySource", "").lower()
-                == imagery_source.lower()
+                and normalize_source_type(model.get("imagerySource", ""))
+                == wanted_source
             ]
             logger.info(
                 f"Filtered by imagery source '{imagery_source}': {len(model_catalog)} models"
