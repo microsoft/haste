@@ -5,8 +5,6 @@ import re
 import unittest
 from pathlib import Path
 
-import yaml
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -190,6 +188,32 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             workflow,
         )
 
+    @staticmethod
+    def _top_level_block(content, key):
+        """Text under a top-level azure.yaml key, up to the next top-level key."""
+        marker = "\n{}:".format(key)
+        if marker not in content:
+            return ""
+        lines = []
+        for line in content.split(marker, 1)[1].splitlines():
+            if line and not line[0].isspace() and not line.startswith("#"):
+                break
+            lines.append(line)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _service_block(services_block, name):
+        """Text under one service entry (2-space indent), up to the next one."""
+        marker = "\n  {}:".format(name)
+        if marker not in services_block:
+            return ""
+        lines = []
+        for line in services_block.split(marker, 1)[1].splitlines():
+            if line.strip() and not line.startswith("    "):
+                break
+            lines.append(line)
+        return "\n".join(lines)
+
     def test_hastegeo_pin_hooks_are_service_scoped(self):
         """The hastegeo pin/unpin hooks must be per service, never root-level.
 
@@ -199,54 +223,39 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         `-e ../../hastelib` line and the Oryx build fails with "not a valid
         editable requirement". The two placements look identical in review and
         only diverge at deploy time, so pin the invariant here.
-        """
-        config = yaml.safe_load(
-            (REPO_ROOT / "azure.yaml").read_text(encoding="utf-8")
-        )
 
-        root_hooks = config.get("hooks") or {}
+        Parsed with stdlib only: this suite runs in CI via `unittest discover`
+        on a runner that installs nothing but the build frontend.
+        """
+        content = (REPO_ROOT / "azure.yaml").read_text(encoding="utf-8")
+
+        root_hooks = self._top_level_block(content, "hooks")
+        self.assertIn("preprovision", root_hooks, "root hooks block not found")
         for hook in ("prepackage", "postpackage"):
             self.assertNotIn(
                 hook,
                 root_hooks,
-                f"'{hook}' must not be a root hook — azd deploy skips it, "
-                "shipping an unresolvable editable requirement.",
+                "'{}' must not be a root hook -- azd deploy skips it, "
+                "shipping an unresolvable editable requirement.".format(hook),
             )
 
         # titiler has no hastegeo dependency and deliberately has neither hook.
+        services = self._top_level_block(content, "services")
         for service in ("api", "queues"):
-            hooks = config["services"][service].get("hooks") or {}
+            block = self._service_block(services, service)
+            self.assertTrue(block, "service '{}' not found".format(service))
+            self.assertIn("prepackage", block, service + " lost its pin hook")
             self.assertIn(
-                "prepackage", hooks, f"service '{service}' lost its pin hook"
+                "postpackage", block, service + " lost its unpin hook"
             )
-            self.assertIn(
-                "postpackage",
-                hooks,
-                f"service '{service}' lost its unpin hook",
-            )
-
-            pin = hooks["prepackage"]
-            unpin = hooks["postpackage"]
-            self.assertIn("pin-hastegeo-wheel.ps1", pin["run"])
-            self.assertIn("unpin-hastegeo-wheel.ps1", unpin["run"])
-
             # Service hooks run with the service directory as cwd, so the paths
             # must climb back to the repo root.
-            self.assertTrue(
-                pin["run"].startswith("../../"),
-                f"'{service}' pin hook path must be service-relative",
-            )
-            self.assertTrue(
-                unpin["run"].startswith("../../"),
-                f"'{service}' unpin hook path must be service-relative",
-            )
-
-            # A failed pin must fail the deploy: shipping an unpinned package
-            # "succeeds" and only breaks at runtime.
-            self.assertFalse(
-                pin.get("continueOnError", False),
-                f"'{service}' pin hook must not continueOnError",
-            )
+            self.assertIn("../../deploy/pin-hastegeo-wheel.ps1", block)
+            self.assertIn("../../deploy/unpin-hastegeo-wheel.ps1", block)
+            # A failed pin must fail the deploy: an unpinned package "succeeds"
+            # and only breaks at task runtime.
+            pin = block.split("prepackage:", 1)[1].split("postpackage:", 1)[0]
+            self.assertIn("continueOnError: false", pin)
 
 
 if __name__ == "__main__":
