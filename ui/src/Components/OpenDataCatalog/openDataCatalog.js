@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 //
 // Open Data Catalog — discover + fetch + normalize open disaster-response
-// imagery from the Vantor/Maxar Open Data Program (S3 STAC) and the Planet
+// imagery from the Vantor Open Data Program (S3 STAC) and the Planet
 // Open Data Program (Source Cooperative STAC). Adapted from the standalone
 // prototype (Open Disaster Response Data Visualizer):
 // https://visualizers.aiforgood.ai/damage-assessment/venezuela_earthqake_data_explorer.html
@@ -24,7 +24,7 @@ export const SOURCE_COLORS = { Vantor: "#0078d4", Planet: "#00b294" };
 // Maps a normalized scene to the HASTE source-type dropdown key
 // (see sourceTypeOptions in CreateEditImageLayerHelper.js).
 const SOURCE_TYPE_KEYS = {
-  vantor: "maxar", // Vantor is the rebranded Maxar Open Data Program
+  vantor: "vantor",
   planetSkysat: "planet_skysat",
   planet: "planet_scope",
 };

@@ -10,7 +10,7 @@
 ## Summary
 
 A side panel on the **Create Image Layer** page that lets disaster analysts
-browse open disaster-response imagery from the **Vantor/Maxar** and **Planet**
+browse open disaster-response imagery from the **Vantor** and **Planet**
 Open Data Programs, preview a scene's imagery on a map, and add scenes directly
 into an image layer's pre-/post-event inputs — including drawing a clip Area of
 Interest (AOI) that the imagery-prep workflow applies to the mosaics. This
@@ -22,7 +22,7 @@ removes the manual, error-prone step of hunting down Cloud-Optimized GeoTIFF
 - Analysts currently must locate a disaster's open imagery on external S3/STAC
   catalogs, copy exact COG URLs, and paste them into the layer form — slow and
   easy to get wrong (wrong host, wrong phase, no AOI).
-- Open data (Vantor/Maxar, Planet) is the primary imagery source for many
+- Open data (Vantor, Planet) is the primary imagery source for many
   responses; making it first-class in the app shortens time-to-assessment.
 - Reference prototype (self-contained, OpenLayers): the **Open Disaster
   Response Data Visualizer** —

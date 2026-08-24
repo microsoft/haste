@@ -3,7 +3,7 @@
 ## Overview
 
 A Fluent UI side panel on the Create Image Layer page browses open imagery
-(Vantor/Maxar S3 STAC + Planet Source-Cooperative STAC), previews scenes on an
+(Vantor S3 STAC + Planet Source-Cooperative STAC), previews scenes on an
 Azure Maps map via TiTiler, and adds scene COG URLs into the layer's pre/post
 imagery. A drawn clip AOI is stored on the layer and applied server-side by the
 imagery-prep workflow. The reference prototype is the standalone Open Disaster

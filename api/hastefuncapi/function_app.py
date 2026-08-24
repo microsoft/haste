@@ -23,7 +23,6 @@ from hastegeo.core.models.projects import (
     Project,
 )
 from hastegeo.core.models.publishing import (
-    ArtifactKind,
     PublishRequest,
     PublishStatus,
     PublishTarget,
@@ -38,10 +37,7 @@ from hastegeo.core.models.training import CatalogModel
 from hastegeo.core.models.users import User
 from hastegeo.core.models.visualizer import Imagery, Visualizer
 from hastegeo.core.processors.artifacts import ArtifactProcessor
-from hastegeo.core.processors.assessment import (
-    AssessmentReportProcessor,
-    AssessmentSizeLimitError,
-)
+from hastegeo.core.processors.assessment import AssessmentReportProcessor
 from hastegeo.core.processors.embedding import EmbeddingPreprocessor
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
@@ -236,7 +232,11 @@ async def _get_active_publishing_caller(
             or principal.get("userDetails")
             or "development@local"
         )
-        return {"id": str(caller_id).lower(), "roles": roles, "name": principal.get("userDetails")}, None
+        return {
+            "id": str(caller_id).lower(),
+            "roles": roles,
+            "name": principal.get("userDetails"),
+        }, None
 
     if principal is None:
         return None, _publishing_error_response(
@@ -289,7 +289,11 @@ async def _get_active_publishing_caller(
     caller_id = principal_id or user_details
     # Persist the email/login as the publisher identifier, never the display
     # name (privacy: display names are resolved from Entra at read time).
-    return {"id": str(caller_id).lower(), "roles": roles, "name": (active_user.email or user_details)}, None
+    return {
+        "id": str(caller_id).lower(),
+        "roles": roles,
+        "name": (active_user.email or user_details),
+    }, None
 
 
 def _publishing_json_response(
@@ -353,19 +357,17 @@ def _publishing_exception_response(error: Exception) -> func.HttpResponse:
             "PUBLISHING_UNAVAILABLE", str(error), 503
         )
     if isinstance(error, ValueError):
-        return _publishing_error_response(
-            "VALIDATION_ERROR", str(error), 400
-        )
-    logger.error(
-        "Publishing request failed with %s", type(error).__name__
-    )
+        return _publishing_error_response("VALIDATION_ERROR", str(error), 400)
+    logger.error("Publishing request failed with %s", type(error).__name__)
     return _publishing_error_response(
         "INTERNAL_ERROR", "Publishing request failed.", 500
     )
 
 
 def _publishing_mutation_authorized(caller: dict) -> bool:
-    return bool(caller["roles"].intersection({"contributors", "administrators"}))
+    return bool(
+        caller["roles"].intersection({"contributors", "administrators"})
+    )
 
 
 def _publishing_processor() -> PublishingProcessor:
@@ -3090,7 +3092,7 @@ async def GetModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
             - eventTypes (str, optional): Filter by event type(s). Can be a single value or
               comma-separated list (e.g., "Hurricane,Tornado,Fires"). Models with any matching
               event type in their eventTypes array will be returned.
-            - imagerySource (str, optional): Filter by imagery source (Planet, Maxar, etc.)
+            - imagerySource (str, optional): Filter by imagery source (Planet, Vantor, etc.)
 
     Returns:
         func.HttpResponse: JSON response containing:
@@ -3099,7 +3101,7 @@ async def GetModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
                 - modelId (str): Original model ID this was checkpointed from
                 - projectId (str): Project ID where the model was created
                 - imageLayerId (str): Image layer ID associated with the model
-                - imagerySource (str): Source of imagery (Planet, Maxar, etc.)
+                - imagerySource (str): Source of imagery (Planet, Vantor, etc.)
                 - eventTypes (list[str]): Types of disaster events (Hurricane, Tornado, Fires, etc.)
                 - cataloguedDate (str): ISO timestamp when model was added to catalog
                 - cataloguedByUser (str): User ID who added the model to catalog
@@ -3238,7 +3240,7 @@ async def PutModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
             - modelId (str, optional): ID of the original model (required only for HASTE models)
             - projectId (str, optional): Project ID (required only for HASTE models)
             - imageLayerId (str, optional): Image layer ID (required only for HASTE models)
-            - imagerySource (str, optional): Source of imagery (Planet, Maxar, etc.)
+            - imagerySource (str, optional): Source of imagery (Planet, Vantor, etc.)
             - eventTypes (list[str], optional): Types of disaster events (Hurricane, Tornado, etc.)
             - cataloguedByUser (str, required): User ID who is adding the model to catalog
             - description (str, optional): Description of the model
@@ -4432,6 +4434,8 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             "Error generating assessment report.", status_code=500
         )
+
+
 @app.route(
     route="GetPublishingProviders",
     auth_level=AUTH_LEVEL,

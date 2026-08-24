@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { sourceTypeOptions } from "./sourceTypeOptions.js";
+import {
+  sourceTypeOptions,
+  normalizeSourceTypeKey,
+} from "./sourceTypeOptions.js";
 
 test("lists only the supported visible imagery source types", () => {
   const visibleSourceKeys = sourceTypeOptions
@@ -11,7 +14,7 @@ test("lists only the supported visible imagery source types", () => {
   assert.deepEqual(visibleSourceKeys, [
     "n/a",
     "rgb/no_processing",
-    "maxar",
+    "vantor",
     "planet_scope",
     "planet_skysat",
   ]);
@@ -26,8 +29,26 @@ test("keeps RGB no-processing available as a generic source", () => {
   assert.equal(option?.visualizerText, "RGB/NoProcessing");
 });
 
+test("maps the pre-rebrand maxar key onto the vantor source type", () => {
+  assert.equal(normalizeSourceTypeKey("maxar"), "vantor");
+
+  // An image layer saved before the rename must still resolve to a real
+  // option, otherwise the dropdown and visualizer fall back to "Unknown".
+  const legacy = sourceTypeOptions.find(
+    ({ key }) => key === normalizeSourceTypeKey("maxar")
+  );
+  assert.equal(legacy?.text, "Vantor");
+});
+
+test("leaves non-legacy source type keys untouched", () => {
+  assert.equal(normalizeSourceTypeKey("planet_scope"), "planet_scope");
+  assert.equal(normalizeSourceTypeKey("vantor"), "vantor");
+  assert.equal(normalizeSourceTypeKey(undefined), undefined);
+  assert.equal(normalizeSourceTypeKey(null), null);
+});
+
 test("uses Vantor display metadata for the existing provider key", () => {
-  const option = sourceTypeOptions.find(({ key }) => key === "maxar");
+  const option = sourceTypeOptions.find(({ key }) => key === "vantor");
 
   assert.equal(option?.text, "Vantor");
   assert.equal(option?.visualizerText, "Vantor Open Data Program");

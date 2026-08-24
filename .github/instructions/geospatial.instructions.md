@@ -10,7 +10,7 @@ applyTo: "**/hastegeo/**,**/processors/imagery*,**/data_layer/**,**/workflows/**
 - Validate coordinate reference systems on all imagery inputs.
 - Use internal tiling (256x256 or 512x512) and overview levels for COG performance.
 - Use LZW or DEFLATE compression for COGs.
-- Handle provider-specific formats: Planet (PlanetScope, SkySat), Maxar (WorldView), Airbus (Pleiades, SPOT).
+- Handle provider-specific formats: Planet (PlanetScope, SkySat), Vantor (WorldView), Airbus (Pleiades, SPOT).
 - Use shapely for geometric operations, not manual coordinate math.
 - Always validate bounding box geometry before spatial queries.
 - Test geospatial functions with known-good reference data and expected CRS/bounds.

@@ -36,8 +36,10 @@ class ImageryDownloader:
         )
 
     def download_imagery(self, **kwargs):
-        if self.sourceType == "maxar":
-            return self.download_maxar_imagery_post_pre(**kwargs)
+        # "maxar" is the pre-rebrand source-type key; image layers created
+        # before the Vantor rename still carry it, so accept both.
+        if self.sourceType in ("vantor", "maxar"):
+            return self.download_vantor_imagery_post_pre(**kwargs)
         elif self.sourceType == "planet":
             return self.download_planet_imagery_post_pre(**kwargs)
         else:
@@ -366,7 +368,7 @@ class ImageryDownloader:
             self.logger.error(f"Network error occurred: {err}")
             raise err
 
-    def download_maxar_imagery_post_pre(self, event_name, save_directory):
+    def download_vantor_imagery_post_pre(self, event_name, save_directory):
         pass
 
     def download_planet_imagery_post_pre(

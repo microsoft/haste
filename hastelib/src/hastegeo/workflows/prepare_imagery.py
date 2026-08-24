@@ -88,8 +88,8 @@ class ImageryWorkflow:
         Args:
             pre_event_urls (list): List of URLs for pre-event imagery.
             post_event_urls (list): List of URLs for post-event imagery.
-            source_type_pre_event (str): Source of pre-event imagery (e.g., "maxar", "planet")
-            source_type_post_event (str): Source of post-event imagery (e.g., "maxar", "planet")
+            source_type_pre_event (str): Source of pre-event imagery (e.g., "vantor", "planet")
+            source_type_post_event (str): Source of post-event imagery (e.g., "vantor", "planet")
             project_id (str): Project ID.
             image_layer_id (str): Image layer ID.
             fine_tune (bool): Flag to indicate if fine-tuning is needed.

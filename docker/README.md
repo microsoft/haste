@@ -581,7 +581,7 @@ http://<HOST_IP>:4280
 
 1. Click **"New Project"** on the dashboard.
 2. Enter a project name and description.
-3. Select the **Source Type** (e.g. "Azure Blob", "Maxar", etc.).
+3. Select the **Source Type** (e.g. "Azure Blob", "Vantor", etc.).
 4. The project is created and a blob folder structure is provisioned in Azurite.
 
 ### Uploading Imagery
