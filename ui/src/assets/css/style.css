@@ -693,6 +693,7 @@ body {
 }
 
 .tour-card {
+  box-sizing: border-box;
   pointer-events: auto;
   background: #ffffff;
   border: 1px solid #e1dfdd;
@@ -700,6 +701,7 @@ body {
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
   padding: 16px;
   z-index: 100001;
+  overflow-y: auto;
 }
 
 .tour-card-fixed {

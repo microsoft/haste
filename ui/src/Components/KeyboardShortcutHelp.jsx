@@ -83,9 +83,10 @@ const useStyles = makeStyles({
 const KeyboardShortcutHelp = ({
   shortcuts,
   title = "Keyboard shortcuts",
+  defaultExpanded = true,
 }) => {
   const styles = useStyles();
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
 
   return (
     <section className={styles.root} aria-label={title}>
@@ -141,6 +142,7 @@ KeyboardShortcutHelp.propTypes = {
     })
   ).isRequired,
   title: PropTypes.string,
+  defaultExpanded: PropTypes.bool,
 };
 
 export default KeyboardShortcutHelp;
