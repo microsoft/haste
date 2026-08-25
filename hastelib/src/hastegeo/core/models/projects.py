@@ -789,12 +789,16 @@ class BuildingValidation(BaseModel):
         imageLayerId: Reference to the imagery layer being validated
         projectId: Reference to the parent project
         labels: Mapping of Overture building ID to ValidationLabel
+        sampleSize: How many building footprints the validation set draws
+            from the layer's footprints file. Defaults to 200, which is what
+            the workflow used when the value was hardcoded.
         dependsOn: Dependency tuple specifying parent resource type and ID
     """
 
     imageLayerId: Optional[str] = Field(default=None)
     projectId: Optional[str] = Field(default=None)
     labels: Optional[dict] = Field(default_factory=dict)
+    sampleSize: Optional[int] = Field(default=200)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("ImageLayer", "imageLayerId")
     )

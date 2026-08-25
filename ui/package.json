@@ -13,6 +13,7 @@
     "test:interactive-labeler": "node --test src/Components/InteractiveLabeler/interactiveLabelerLoading.test.js src/Components/guidedTourLayout.test.js",
     "test:ongoing-jobs": "node --test src/Components/Home/ongoingJobs.test.js",
     "test:label-store": "node --test src/Components/InteractiveLabeler/labelStore.test.js",
+    "test:validation-config": "node --test src/Components/BuildingValidation/validationConfig.test.js",
     "preview": "vite preview"
   },
   "dependencies": {
