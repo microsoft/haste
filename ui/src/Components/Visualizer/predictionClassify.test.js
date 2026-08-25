@@ -19,15 +19,16 @@ import {
   CLASS_DAMAGED,
   CLASS_NOT_DAMAGED,
   CLASS_UNKNOWN,
+  DEFAULT_EDIT_CLASS,
   FILTER_ALL,
   FILTER_EDITED,
+  PREDICTION_CLASSES,
   baseClassAt,
   buildSavePayload,
   classifyAll,
   clearOverride,
   countClassChanges,
   countOverrides,
-  cycleClass,
   deriveClass,
   filterIndices,
   getOverride,
@@ -38,6 +39,7 @@ import {
   mergedOverrideList,
   nextIndexInList,
   normalizeAttrs,
+  normalizeEditClass,
   resolveClassAt,
   savedClassAt,
   setOverride,
@@ -370,11 +372,21 @@ test("countClassChanges ignores buildings the user pinned", () => {
   assert.equal(countClassChanges(attrs, base, candidate, overrides), 1);
 });
 
-test("cycleClass walks Damaged -> NotDamaged -> Unknown -> Damaged", () => {
-  assert.equal(cycleClass(CLASS_DAMAGED), CLASS_NOT_DAMAGED);
-  assert.equal(cycleClass(CLASS_NOT_DAMAGED), CLASS_UNKNOWN);
-  assert.equal(cycleClass(CLASS_UNKNOWN), CLASS_DAMAGED);
-  assert.equal(cycleClass(undefined), CLASS_DAMAGED);
+test("normalizeEditClass accepts only the three real classes", () => {
+  assert.equal(normalizeEditClass(CLASS_DAMAGED), CLASS_DAMAGED);
+  assert.equal(normalizeEditClass(CLASS_NOT_DAMAGED), CLASS_NOT_DAMAGED);
+  assert.equal(normalizeEditClass(CLASS_UNKNOWN), CLASS_UNKNOWN);
+  // "cycle" was the old click-action sentinel; it must never reach an
+  // override now that the picker is the only source of a class.
+  assert.equal(normalizeEditClass("cycle"), "");
+  assert.equal(normalizeEditClass(""), "");
+  assert.equal(normalizeEditClass(undefined), "");
+  assert.equal(normalizeEditClass(null), "");
+});
+
+test("the editor starts on a class that is safe to paint with", () => {
+  assert.equal(normalizeEditClass(DEFAULT_EDIT_CLASS), DEFAULT_EDIT_CLASS);
+  assert.ok(PREDICTION_CLASSES.includes(DEFAULT_EDIT_CLASS));
 });
 
 test("nextIndexInList wraps in both directions", () => {

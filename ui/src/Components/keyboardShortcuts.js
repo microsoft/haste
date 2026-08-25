@@ -69,7 +69,11 @@ export const PREDICTION_EDIT_SHORTCUTS = [
   {
     keys: ["1", "2", "3"],
     description:
-      "Set the selected building to Damaged / Not Damaged / Unknown",
+      "Choose the class to apply — Damaged / Not Damaged / Unknown",
+  },
+  {
+    keys: ["Enter"],
+    description: "Apply the chosen class to the selected building",
   },
   {
     keys: ["←", "→"],
@@ -77,12 +81,12 @@ export const PREDICTION_EDIT_SHORTCUTS = [
   },
   {
     keys: ["Click"],
-    description: "Apply the current click action to a footprint",
+    description: "Set a footprint to the chosen class",
   },
   {
     keys: ["Ctrl", "drag"],
     separator: " + ",
-    description: "Box-select footprints and edit them together",
+    description: "Box-select footprints and set them all to the chosen class",
   },
   {
     keys: ["Right-click"],

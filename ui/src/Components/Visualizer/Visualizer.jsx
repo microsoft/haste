@@ -92,7 +92,7 @@ import {
   swipeModeHint,
 } from "./visualizerSwipe";
 
-// 1 / 2 / 3 set the selected building's class in edit mode, matching
+// 1 / 2 / 3 choose the class every edit gesture applies, matching
 // PREDICTION_EDIT_SHORTCUTS.
 const CLASS_BY_KEY = {
   1: CLASS_DAMAGED,
@@ -840,8 +840,15 @@ const Visualizer = ({ setModalComponent }) => {
       if (isEditMode) {
         const cls = CLASS_BY_KEY[event.key];
         if (cls) {
-          footprints.setClickAction(cls);
-          footprints.setClassForSelected(cls);
+          // Picking a class never edits a building on its own — a silent
+          // relabel of whatever happened to be selected is exactly the
+          // surprise this mode is meant to avoid. Enter is the explicit apply.
+          footprints.setActiveClass(cls);
+          return;
+        }
+        if (event.key === "Enter") {
+          event.preventDefault();
+          footprints.applyActiveClassToSelected();
           return;
         }
         if (event.key === "ArrowLeft") {
@@ -1187,9 +1194,9 @@ const Visualizer = ({ setModalComponent }) => {
       {isEditMode && classification && (
         <>
           <div className={styles.editHint}>
-            Click a footprint to set its class &middot; Ctrl+drag to box-select
-            &middot; right-click to undo an edit &middot; A / S / D move the
-            swipe divider
+            Pick a class, then click a footprint to apply it &middot; Ctrl+drag
+            to box-select &middot; right-click to undo an edit &middot; A / S /
+            D move the swipe divider
           </div>
           <PredictionEditPanel
             flavor={resolveModelFlavor({
@@ -1205,12 +1212,9 @@ const Visualizer = ({ setModalComponent }) => {
             filteredIndices={footprints.filteredIndices}
             selectedIndex={footprints.selectedIndex}
             currentBuilding={footprints.currentBuilding}
-            clickAction={footprints.clickAction}
-            setClickAction={footprints.setClickAction}
-            onSetClass={(cls) => {
-              footprints.setClickAction(cls);
-              footprints.setClassForSelected(cls);
-            }}
+            activeClass={footprints.activeClass}
+            setActiveClass={footprints.setActiveClass}
+            onApplyToSelected={footprints.applyActiveClassToSelected}
             onClearOverride={footprints.clearSelectedOverride}
             onClearAllEdits={footprints.clearAllOverrides}
             onPrev={() => footprints.navigateInFilter(-1)}

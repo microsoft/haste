@@ -40,16 +40,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { tokens } from "@fluentui/react-components";
 import { apiPut } from "../../util/api";
 import {
+  DEFAULT_EDIT_CLASS,
   FILTER_ALL,
   buildSavePayload,
   classifyAll,
   clearOverride,
   countClassChanges,
-  cycleClass,
   filterIndices,
   matchesFilter,
   nextIndexInList,
-  setOverrideEntries,
+  normalizeEditClass,
   setOverrides,
 } from "./predictionClassify.js";
 import {
@@ -135,7 +135,7 @@ const usePredictionFootprints = ({
   const classesRef = useRef([]);
   const editedRef = useRef([]);
   const filterRef = useRef(FILTER_ALL);
-  const clickActionRef = useRef("cycle");
+  const activeClassRef = useRef(DEFAULT_EDIT_CLASS);
   const editModeRef = useRef(false);
   const colorsRef = useRef(FALLBACK_COLORS);
   const selectedIdRef = useRef(null);
@@ -169,7 +169,7 @@ const usePredictionFootprints = ({
   const [overrides, setOverridesState] = useState({});
   const [filter, setFilter] = useState(FILTER_ALL);
   const [selectedIndex, setSelectedIndex] = useState(-1);
-  const [clickAction, setClickAction] = useState("cycle");
+  const [activeClass, setActiveClass] = useState(DEFAULT_EDIT_CLASS);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [savedResult, setSavedResult] = useState(null);
@@ -186,11 +186,35 @@ const usePredictionFootprints = ({
     filterRef.current = filter;
   }, [filter]);
   useEffect(() => {
-    clickActionRef.current = clickAction;
-  }, [clickAction]);
+    activeClassRef.current = activeClass;
+  }, [activeClass]);
   useEffect(() => {
     editModeRef.current = isEditMode;
   }, [isEditMode]);
+
+  // Double-click zoom fights click-to-classify: labelling two neighbouring
+  // buildings in quick succession registers as a double-click and the map
+  // zooms instead. Azure Maps owns that gesture, so it is switched off for as
+  // long as edit mode is on and restored on the way out (and on unmount) —
+  // panning and scroll zoom are untouched, so the map still navigates.
+  useEffect(() => {
+    if (!mapsReady) return undefined;
+    const maps = (mapRefs || [])
+      .map((ref) => ref?.current)
+      .filter((map) => map && typeof map.setUserInteraction === "function");
+    if (maps.length === 0) return undefined;
+    const setDoubleClickZoom = (enabled) => {
+      for (const map of maps) {
+        try {
+          map.setUserInteraction({ dblClickZoomInteraction: enabled });
+        } catch (error) {
+          console.warn("Could not toggle double-click zoom:", error);
+        }
+      }
+    };
+    setDoubleClickZoom(!isEditMode);
+    return () => setDoubleClickZoom(true);
+  }, [mapRefs, mapsReady, isEditMode]);
 
   // The model's own operating point, so the first paint matches what the rest
   // of the app already shows for this model.
@@ -324,14 +348,16 @@ const usePredictionFootprints = ({
   }, [hydrateViewport]);
 
   // ── Editing ──────────────────────────────────────────────────────────────
+  // One rule for every edit gesture: whatever class the picker is on is the
+  // class the building gets. Clicking also selects, so the panel describes
+  // what was just changed.
   const handleFeatureClick = useCallback(
     (id) => {
       const index = indexByIdRef.current.get(id);
       if (index === undefined) return;
       setSelectedIndex(index);
-      const action = clickActionRef.current;
-      const cls =
-        action === "cycle" ? cycleClass(classesRef.current[index]) : action;
+      const cls = normalizeEditClass(activeClassRef.current);
+      if (!cls) return;
       setOverridesState((previous) => setOverrides(previous, [id], cls));
     },
     [indexByIdRef]
@@ -347,37 +373,29 @@ const usePredictionFootprints = ({
     [indexByIdRef]
   );
 
-  const applyClickActionToIds = useCallback(
-    (ids) => {
-      if (ids.length === 0) return;
-      const action = clickActionRef.current;
-      if (action !== "cycle") {
-        setOverridesState((previous) => setOverrides(previous, ids, action));
-        return;
-      }
-      // Cycle mode over a box: advance each building from its own class.
-      const classes = classesRef.current;
-      const byId = indexByIdRef.current;
-      const entries = ids
-        .map((id) => {
-          const index = byId.get(id);
-          if (index === undefined) return null;
-          return { id, class: cycleClass(classes[index]) };
-        })
-        .filter(Boolean);
-      setOverridesState((previous) => setOverrideEntries(previous, entries));
-    },
-    [indexByIdRef]
-  );
+  const applyActiveClassToIds = useCallback((ids) => {
+    if (ids.length === 0) return;
+    const cls = normalizeEditClass(activeClassRef.current);
+    if (!cls) return;
+    setOverridesState((previous) => setOverrides(previous, ids, cls));
+  }, []);
 
   const setClassForSelected = useCallback(
     (cls) => {
       if (!attrs || selectedIndex < 0 || selectedIndex >= attrs.n) return;
+      const resolved = normalizeEditClass(cls);
+      if (!resolved) return;
       const id = attrs.ids[selectedIndex];
-      setOverridesState((previous) => setOverrides(previous, [id], cls));
+      setOverridesState((previous) => setOverrides(previous, [id], resolved));
     },
     [attrs, selectedIndex]
   );
+
+  // Keyboard equivalent of clicking the selected building: the review flow
+  // (arrow to a building, label it) never has to reach for the mouse.
+  const applyActiveClassToSelected = useCallback(() => {
+    setClassForSelected(activeClassRef.current);
+  }, [setClassForSelected]);
 
   const clearSelectedOverride = useCallback(() => {
     if (!attrs || selectedIndex < 0 || selectedIndex >= attrs.n) return;
@@ -476,7 +494,7 @@ const usePredictionFootprints = ({
           features.filter((feature) => feature.id != null).map((f) => f.id)
         ),
       ];
-      applyClickActionToIds(ids);
+      applyActiveClassToIds(ids);
     };
 
     canvas.addEventListener("mousedown", onDown);
@@ -978,8 +996,9 @@ const usePredictionFootprints = ({
     filteredIndices,
     selectedIndex,
     currentBuilding,
-    clickAction,
-    setClickAction,
+    activeClass,
+    setActiveClass,
+    applyActiveClassToSelected,
     setClassForSelected,
     clearSelectedOverride,
     clearAllOverrides,

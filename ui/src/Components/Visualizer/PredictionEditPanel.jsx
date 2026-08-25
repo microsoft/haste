@@ -31,8 +31,6 @@ import {
   MessageBarBody,
   MessageBarTitle,
   Option,
-  Radio,
-  RadioGroup,
   Slider,
   Text,
   Tooltip,
@@ -268,9 +266,9 @@ const PredictionEditPanel = ({
   filteredIndices,
   selectedIndex,
   currentBuilding,
-  clickAction,
-  setClickAction,
-  onSetClass,
+  activeClass,
+  setActiveClass,
+  onApplyToSelected,
   onClearOverride,
   onClearAllEdits,
   onPrev,
@@ -485,19 +483,30 @@ const PredictionEditPanel = ({
           </Button>
         </div>
 
-        {/* Editing */}
+        {/* Editing — one picker decides what every gesture applies. */}
+        <Field label="Class to apply">
+          <div className={styles.buttonColumn}>
+            {CLASS_ORDER.map((cls) => (
+              <Button
+                key={cls}
+                appearance={activeClass === cls ? "primary" : "secondary"}
+                onClick={() => setActiveClass(cls)}
+              >
+                {`${CLASS_LABELS[cls]} (${CLASS_HOTKEYS[cls]})`}
+              </Button>
+            ))}
+          </div>
+        </Field>
+        <div className={styles.subtle}>
+          Click a footprint — or Ctrl+drag to box-select several — to set it to{" "}
+          {CLASS_LABELS[activeClass] || activeClass}. Right-click undoes an
+          edit.
+        </div>
+
         <div className={styles.buttonColumn}>
-          <div className={styles.subtle}>Set the selected building to:</div>
-          {CLASS_ORDER.map((cls) => (
-            <Button
-              key={cls}
-              appearance={currentBuilding?.cls === cls ? "primary" : "secondary"}
-              disabled={!currentBuilding}
-              onClick={() => onSetClass(cls)}
-            >
-              {`${CLASS_LABELS[cls]} (${CLASS_HOTKEYS[cls]})`}
-            </Button>
-          ))}
+          <Button disabled={!currentBuilding} onClick={onApplyToSelected}>
+            Apply to selected (Enter)
+          </Button>
           <Button
             disabled={!currentBuilding?.edited}
             onClick={onClearOverride}
@@ -505,22 +514,6 @@ const PredictionEditPanel = ({
             Undo this edit
           </Button>
         </div>
-
-        <Field label="Clicking a footprint">
-          <RadioGroup
-            value={clickAction}
-            onChange={(_event, data) => setClickAction(data.value)}
-          >
-            <Radio value="cycle" label="Cycles its class" />
-            {CLASS_ORDER.map((cls) => (
-              <Radio
-                key={cls}
-                value={cls}
-                label={`Sets ${CLASS_LABELS[cls]}`}
-              />
-            ))}
-          </RadioGroup>
-        </Field>
 
         <Button disabled={editedCount === 0} onClick={onClearAllEdits}>
           {editedCount === 0
@@ -653,9 +646,9 @@ PredictionEditPanel.propTypes = {
     cls: PropTypes.string,
     edited: PropTypes.bool,
   }),
-  clickAction: PropTypes.string.isRequired,
-  setClickAction: PropTypes.func.isRequired,
-  onSetClass: PropTypes.func.isRequired,
+  activeClass: PropTypes.string.isRequired,
+  setActiveClass: PropTypes.func.isRequired,
+  onApplyToSelected: PropTypes.func.isRequired,
   onClearOverride: PropTypes.func.isRequired,
   onClearAllEdits: PropTypes.func.isRequired,
   onPrev: PropTypes.func.isRequired,

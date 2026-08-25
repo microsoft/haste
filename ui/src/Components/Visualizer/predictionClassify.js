@@ -19,12 +19,16 @@ export const CLASS_DAMAGED = "Damaged";
 export const CLASS_NOT_DAMAGED = "NotDamaged";
 export const CLASS_UNKNOWN = "Unknown";
 
-// Cycle order used when the user clicks a footprint in "cycle" mode.
+// Every class an analyst can assign, in the order the class picker shows them.
 export const PREDICTION_CLASSES = [
   CLASS_DAMAGED,
   CLASS_NOT_DAMAGED,
   CLASS_UNKNOWN,
 ];
+
+// The class the editor starts painting with. Damaged is the overwhelmingly
+// common correction, so it is the one that costs no clicks to select.
+export const DEFAULT_EDIT_CLASS = CLASS_DAMAGED;
 
 export const FILTER_ALL = "all";
 export const FILTER_EDITED = "edited";
@@ -395,11 +399,16 @@ export function countClassChanges(attrs, baseline, candidate, overrides = null) 
   return changed;
 }
 
-/** The next class in the cycle order (used by plain left-click). */
-export function cycleClass(cls) {
-  const pos = PREDICTION_CLASSES.indexOf(cls);
-  if (pos === -1) return PREDICTION_CLASSES[0];
-  return PREDICTION_CLASSES[(pos + 1) % PREDICTION_CLASSES.length];
+/**
+ * The class an edit should assign, or "" when `cls` is not one we know.
+ *
+ * Guards the one-way door in the editor: every path that writes an override
+ * (click, box-select, keyboard) funnels through the active class, so a typo or
+ * a stale value must not reach the overrides map and, from there, a saved
+ * GeoPackage.
+ */
+export function normalizeEditClass(cls) {
+  return PREDICTION_CLASSES.indexOf(cls) === -1 ? "" : cls;
 }
 
 // ── Traversal ───────────────────────────────────────────────────────────────
