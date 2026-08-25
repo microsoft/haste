@@ -79,6 +79,7 @@ from hastegeo.core.utils.blob import (
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
+from hastegeo.core.utils.source_types import normalize_source_type
 from hastegeo.core.utils.url_allowlist import (
     validate_clip_bbox,
     validate_image_layer_imagery_urls,
@@ -3100,7 +3101,7 @@ async def GetModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
             - eventTypes (str, optional): Filter by event type(s). Can be a single value or
               comma-separated list (e.g., "Hurricane,Tornado,Fires"). Models with any matching
               event type in their eventTypes array will be returned.
-            - imagerySource (str, optional): Filter by imagery source (Planet, Maxar, etc.)
+            - imagerySource (str, optional): Filter by imagery source (Planet, Vantor, etc.)
 
     Returns:
         func.HttpResponse: JSON response containing:
@@ -3109,7 +3110,7 @@ async def GetModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
                 - modelId (str): Original model ID this was checkpointed from
                 - projectId (str): Project ID where the model was created
                 - imageLayerId (str): Image layer ID associated with the model
-                - imagerySource (str): Source of imagery (Planet, Maxar, etc.)
+                - imagerySource (str): Source of imagery (Planet, Vantor, etc.)
                 - eventTypes (list[str]): Types of disaster events (Hurricane, Tornado, Fires, etc.)
                 - cataloguedDate (str): ISO timestamp when model was added to catalog
                 - cataloguedByUser (str): User ID who added the model to catalog
@@ -3197,12 +3198,15 @@ async def GetModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         if imagery_source and imagery_source.strip():
+            # Normalize both sides so a legacy "maxar" layer and a
+            # "vantor" layer resolve to the same model pool.
+            wanted_source = normalize_source_type(imagery_source)
             model_catalog = [
                 model
                 for model in model_catalog
                 if model.get("imagerySource", "")
-                and model.get("imagerySource", "").lower()
-                == imagery_source.lower()
+                and normalize_source_type(model.get("imagerySource", ""))
+                == wanted_source
             ]
             logger.info(
                 f"Filtered by imagery source '{imagery_source}': {len(model_catalog)} models"
@@ -3248,7 +3252,7 @@ async def PutModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
             - modelId (str, optional): ID of the original model (required only for HASTE models)
             - projectId (str, optional): Project ID (required only for HASTE models)
             - imageLayerId (str, optional): Image layer ID (required only for HASTE models)
-            - imagerySource (str, optional): Source of imagery (Planet, Maxar, etc.)
+            - imagerySource (str, optional): Source of imagery (Planet, Vantor, etc.)
             - eventTypes (list[str], optional): Types of disaster events (Hurricane, Tornado, etc.)
             - cataloguedByUser (str, required): User ID who is adding the model to catalog
             - description (str, optional): Description of the model

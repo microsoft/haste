@@ -12,6 +12,7 @@ from osgeo import gdal
 
 from ..utils.logs import Logger
 from .gdal_security import harden_gdal
+from .source_types import normalize_source_type
 
 # Restrict GDAL to an allowlist of drivers (and enable exceptions) before
 # any imagery is parsed — compensating control for the deferred GDAL CVE
@@ -267,7 +268,8 @@ class ImageryUtils:
         """
         Args:
                 tif_file (str): Path to the TIFF file.
-                source_type (str, optional): Type of the imagery source. Supported values are "planet_scope", "planet_skysat", and "maxar". Defaults to None.
+                source_type (str, optional): Type of the imagery source. Supported values are "planet_scope", "planet_skysat", and "vantor"
+                        ("maxar" is accepted as the pre-rebrand alias). Defaults to None.
 
         Returns:
             list: A list of integers representing the band indexes for Red, Green, and Blue channels.
@@ -278,7 +280,7 @@ class ImageryUtils:
         Determines the order of bands to use for RGB conversion based on the imagery product.
         Planet Specs:
         https://assets.planet.com/docs/Planet_Combined_Imagery_Product_Specs_letter_screen.pdf
-        Maxar Specs:
+        Vantor Specs:
         https://ard.maxar.com/docs/ard-order-delivery/metadata/tile-metadata/#eobands
         Sentinel2 Specs:
         https://docs.sentinel-hub.com/api/latest/data/sentinel-2-l2a/
@@ -293,7 +295,7 @@ class ImageryUtils:
               - Multispectral (4 bands): Blue, Green, Red, NIR (returning RGB as Red, Green, Blue).
               - Panchromatic: single band.
 
-          Maxar:
+          Vantor:
               - Visual RGB: Red, Green, Blue.
               - Multispectral 4-band: Blue, Green, Red, NIR1 (RGB extracted as Red, Green, Blue).
               - Multispectral 8-band: Blue, Coastal Blue, Green, Red, NIR1, Yellow, Red Edge, NIR2 (RGB extracted as Red, Green, Blue).
@@ -348,7 +350,7 @@ class ImageryUtils:
                 elif num_bands == 1:
                     return [1]
 
-            elif source_type == "maxar":
+            elif normalize_source_type(source_type) == "vantor":
                 if num_bands == 3:
                     mapping = map_bands(["red", "green", "blue"])
                     return [mapping["red"], mapping["green"], mapping["blue"]]

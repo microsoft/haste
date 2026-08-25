@@ -20,7 +20,7 @@
   "projectId": "uuid",
   "preEventImageryUrls": ["https url", "..."],
   "postEventImageryUrls": ["https url", "..."],
-  "sourceTypePreEvent": "maxar | planet_scope | planet_skysat | n/a | ...",
+  "sourceTypePreEvent": "vantor | planet_scope | planet_skysat | n/a | ...",
   "sourceTypePostEvent": "…",
   "clipBbox": [-66.859534, 10.4039, -66.816345, 10.424412]  // NEW, or null
 }
@@ -61,7 +61,7 @@ panel/map/list.
   title, place, sensor, constellation,
   gsd, cloud, offNadir, sunElev, cogSize,
   sourceUrl,                 // browse/attribution link
-  sourceTypeKey,             // HASTE dropdown key: maxar | planet_scope | planet_skysat
+  sourceTypeKey,             // HASTE dropdown key: vantor | planet_scope | planet_skysat
 }
 ```
 

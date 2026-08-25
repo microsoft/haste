@@ -39,7 +39,7 @@ const HelpDocsImageLayers = ({ anchor }) => {
       <p>There are multiple providers of satellite imagery for damage assessment, including but not limited to the following: </p>
       <ul>
         <li>Planet Disaster Data <a href="https://source.coop/planet/disasterdata" target='_blank'>https://source.coop/planet/disasterdata</a></li>
-        <li>Maxar Open Data Program <a href="https://www.maxar.com/" target='_blank'>https://www.maxar.com/</a></li>
+        <li>Vantor Open Data Program <a href="https://vantor.com/" target='_blank'>https://vantor.com/</a></li>
       </ul>
 
 

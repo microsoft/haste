@@ -24,6 +24,7 @@ import {
   onFormChange,
   getUrlList,
   addSceneToEventImagery,
+  normalizeSourceTypeKey,
 } from "./CreateEditImageLayerHelper";
 
 import { apiPut } from "../util/api";
@@ -404,7 +405,7 @@ const CreateEditImageLayerModal = () => {
                       Browse Open Data Catalog
                     </Button>
                     <Text size={200} className="d-block mt-1" style={{ color: "#616161" }}>
-                      Explore Vantor/Maxar and Planet open imagery for a disaster
+                      Explore Vantor and Planet open imagery for a disaster
                       and add scenes straight into the sections below.
                     </Text>
                   </div>
@@ -472,10 +473,14 @@ const CreateEditImageLayerModal = () => {
                 <Dropdown
                   id="createEditImageLayerPostEventSourceType"
                   placeholder="Select a Source Type"
-                  selectedOptions={[String(componentState.sourceTypePostEvent ?? "")]}
+                  selectedOptions={[
+                    String(normalizeSourceTypeKey(componentState.sourceTypePostEvent) ?? ""),
+                  ]}
                   value={
                     componentState.sourceTypeList.find(
-                      (o) => o.key === componentState.sourceTypePostEvent
+                      (o) =>
+                        o.key ===
+                        normalizeSourceTypeKey(componentState.sourceTypePostEvent)
                     )?.text || ""
                   }
                   onOptionSelect={(e, data) =>
@@ -573,10 +578,14 @@ const CreateEditImageLayerModal = () => {
                 <Dropdown
                   id="createEditImageLayerPreEventSourceType"
                   placeholder="Select a Source Type"
-                  selectedOptions={[String(componentState.sourceTypePreEvent ?? "")]}
+                  selectedOptions={[
+                    String(normalizeSourceTypeKey(componentState.sourceTypePreEvent) ?? ""),
+                  ]}
                   value={
                     componentState.sourceTypeList.find(
-                      (o) => o.key === componentState.sourceTypePreEvent
+                      (o) =>
+                        o.key ===
+                        normalizeSourceTypeKey(componentState.sourceTypePreEvent)
                     )?.text || ""
                   }
                   onOptionSelect={(e, data) =>

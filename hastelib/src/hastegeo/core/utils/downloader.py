@@ -19,6 +19,7 @@ from tenacity import (
 
 from .gdal_security import max_download_bytes
 from .logs import Logger
+from .source_types import normalize_source_type
 from .url_allowlist import validate_imagery_url
 
 
@@ -36,8 +37,8 @@ class ImageryDownloader:
         )
 
     def download_imagery(self, **kwargs):
-        if self.sourceType == "maxar":
-            return self.download_maxar_imagery_post_pre(**kwargs)
+        if normalize_source_type(self.sourceType) == "vantor":
+            return self.download_vantor_imagery_post_pre(**kwargs)
         elif self.sourceType == "planet":
             return self.download_planet_imagery_post_pre(**kwargs)
         else:
@@ -366,7 +367,7 @@ class ImageryDownloader:
             self.logger.error(f"Network error occurred: {err}")
             raise err
 
-    def download_maxar_imagery_post_pre(self, event_name, save_directory):
+    def download_vantor_imagery_post_pre(self, event_name, save_directory):
         pass
 
     def download_planet_imagery_post_pre(

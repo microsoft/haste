@@ -66,7 +66,7 @@ Always run lint before committing changes.
 
 - **Project**: A disaster assessment campaign (e.g., "Maui Wildfires 2023")
 - **Image Layer**: A set of pre/post-event satellite imagery for a project
-- **Source Type**: Satellite imagery provider (Planet, Maxar, Airbus, etc.)
+- **Source Type**: Satellite imagery provider (Planet, Vantor, Airbus, etc.)
 - **Label Project**: Human labeling of damage on imagery tiles
 - **Model**: ML model trained on labeled data for damage classification
 - **Inference**: Running a trained model on new imagery

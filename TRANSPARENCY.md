@@ -46,7 +46,7 @@ Users should be aware of and adhere to applicable laws or regulations that are r
 
 At a high level, the HASTE workflow proceeds through six steps, each of which depends on a human operator's input or judgment:
 
-1.  **Imagery selection.** A trained operator selects post-disaster satellite or aerial imagery covering the affected area. HASTE supports a bring-your-own-imagery posture and has been used with Planet, Airbus Foundation, Maxar / Vantor, Sentinel-1/2, Copernicus, and NOAA imagery, among others. Imagery quality, spatial resolution, off-nadir angle, cloud cover, haze, and time-of-day all materially affect the model's behavior.
+1.  **Imagery selection.** A trained operator selects post-disaster satellite or aerial imagery covering the affected area. HASTE supports a bring-your-own-imagery posture and has been used with Planet, Airbus Foundation, Vantor, Sentinel-1/2, Copernicus, and NOAA imagery, among others. Imagery quality, spatial resolution, off-nadir angle, cloud cover, haze, and time-of-day all materially affect the model's behavior.
 2.  **Manual sample labeling.** The operator manually labels a small set of imagery samples (typically into categories such as `damaged`, `non-damaged`, and `background`). The number and quality of these labels — not a pre-trained global model — are what teach HASTE what damage looks like for a particular event in a particular place.
 3.  **Local, event-specific model training.** HASTE trains a computer-vision model locally against the human-labeled samples for that specific event. The model is **intentionally optimized for rapid event-specific performance, not generalizable accuracy**: it is fit to one disaster, in one region, with one operator's labels, and is not expected to perform outside those conditions.
 4.  **Per-pixel damage prediction.** The locally trained model is run against the broader imagery footprint to produce per-pixel predictions of likely damage indicators.
@@ -67,7 +67,7 @@ HASTE does **not** independently confirm damage and does **not** incorporate con
 
 - **Planet**
 - **Airbus Foundation**
-- **Maxar / Vantor**
+- **Vantor**
 - **Sentinel-1 and Sentinel-2** (open ESA Copernicus data);
 - **Copernicus Emergency Management Service** products (open EU data);
 - **NOAA** (open US-government imagery);
