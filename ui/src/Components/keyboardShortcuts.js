@@ -22,6 +22,11 @@ export const INTERACTIVE_LABELER_SHORTCUTS = [
     description: "Box-label buildings",
   },
   {
+    keys: ["Ctrl", "right-drag"],
+    separator: " + ",
+    description: "Box-clear labels",
+  },
+  {
     keys: ["A", "S", "D"],
     description: "With Swipe on: move the divider left / split / right",
   },

@@ -1619,6 +1619,37 @@ const InteractiveLabeler = () => {
       hydrateViewport(mapRef.current);
     }
   }
+
+  // Bulk counterpart to clearLabel, mirroring labelBuildings: clear each
+  // building, then refresh once. Calling clearLabel in a loop would re-tally
+  // and re-hydrate the whole viewport per building, which is unusable at the
+  // scale this exists for (issue #118 describes clearing ~2,400).
+  function clearBuildings(items) {
+    let n = 0;
+    for (const it of items) {
+      const entry = it && it.id != null && labeledMapRef.current[it.id];
+      if (!entry) continue;
+      // Drop it from the saved mirror too, or the merge on save resurrects
+      // a label the user just cleared.
+      delete savedLabelsRef.current[entry.overtureId ?? it.id];
+      delete labeledMapRef.current[it.id];
+      clearFeatureStateLabel(it.source || primarySourceId(), it.id);
+      n++;
+    }
+    if (n === 0) return;
+    labelsDirtyRef.current = true;
+    labelsRevisionRef.current += 1;
+    refreshCounts();
+    setStatus(`Cleared ${n} buildings.`);
+    if (
+      viewModeRef.current === "predict" ||
+      uncertaintyOnRef.current ||
+      misclassifiedOnRef.current
+    ) {
+      hydrateViewport(mapRef.current);
+    }
+  }
+
   function clearLabel(id) {
     // Drop it from the saved mirror too. The save path now merges that
     // mirror into the payload, so leaving it behind would resurrect a label
@@ -1674,9 +1705,13 @@ const InteractiveLabeler = () => {
   function setupBoxSelect(map, glGetter, layerIdsGetter, cleanupRef) {
     const canvas = map.getCanvasContainer();
     let origin = null;
+    // Which button opened the box. Right-drag clears, mirroring right-click
+    // clearing a single label (github.com/microsoft/haste/issues/118).
+    let clearing = false;
 
     const onDown = (e) => {
       if (!e.ctrlKey && !e.metaKey) return;
+      clearing = e.button === 2;
       e.preventDefault();
       e.stopPropagation();
       map.setUserInteraction({ dragPanInteraction: false });
@@ -1737,7 +1772,8 @@ const InteractiveLabeler = () => {
       const items = rf
         .filter((f) => f.id != null)
         .map((f) => ({ id: f.id, properties: f.properties, source: f.source }));
-      labelBuildings(items, selectedClassRef.current);
+      if (clearing) clearBuildings(items);
+      else labelBuildings(items, selectedClassRef.current);
     };
 
     canvas.addEventListener("mousedown", onDown);
