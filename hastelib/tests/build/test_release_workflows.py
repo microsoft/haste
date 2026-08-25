@@ -74,6 +74,22 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("contents: write", workflow)
         self.assertNotIn("id-token: write", workflow)
 
+    def test_build_job_checkout_ref_is_not_resolver_output(self):
+        workflow = (
+            REPO_ROOT / ".github/workflows/hastegeo-build.yml"
+        ).read_text(encoding="utf-8")
+        build_job = workflow.split("  build-wheel:", 1)[1]
+
+        self.assertIn(
+            "github.event_name == 'pull_request' && "
+            "github.event.pull_request.head.sha || github.sha",
+            build_job,
+        )
+        self.assertNotIn(
+            "ref: ${{ needs.resolve-version.outputs.source_sha }}",
+            build_job,
+        )
+
     def test_privileged_publisher_is_default_branch_workflow_run(self):
         workflow = (
             REPO_ROOT / ".github/workflows/hastegeo-publish.yml"
