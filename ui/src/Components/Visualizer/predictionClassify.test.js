@@ -7,9 +7,10 @@
 // layer: class derivation and overrides (predictionClassify.js), the
 // preparation-job state machine (predictionPrep.js), the swipe divider
 // (visualizerSwipe.js), the layer/status decisions the page renders from
-// (predictionResults.js) and the renderer helpers that paint the footprints
-// (predictionFootprintMap.js). None of them may import React, Azure Maps or
-// FluentUI — this file is run by plain `node --test`.
+// (predictionResults.js), the version selector's options, URLs and
+// disclosures (predictionVersions.js) and the renderer helpers that paint the
+// footprints (predictionFootprintMap.js). None of them may import React,
+// Azure Maps or FluentUI — this file is run by plain `node --test`.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -20,6 +21,7 @@ import {
   CLASS_UNKNOWN,
   FILTER_ALL,
   FILTER_EDITED,
+  baseClassAt,
   buildSavePayload,
   classifyAll,
   clearOverride,
@@ -29,12 +31,15 @@ import {
   deriveClass,
   filterIndices,
   getOverride,
+  hasSavedClasses,
   indexById,
   latestVersion,
   matchesFilter,
+  mergedOverrideList,
   nextIndexInList,
   normalizeAttrs,
   resolveClassAt,
+  savedClassAt,
   setOverride,
   setOverrideEntries,
   setOverrides,
@@ -56,6 +61,7 @@ import {
   applyPrepResponse,
   buildPrepRequest,
   describeOutstandingArtifacts,
+  describePendingVersions,
   evaluatePrepState,
   isPrepReady,
   isTerminalPrepStatus,
@@ -94,6 +100,7 @@ import {
   hasAnyRasterLayer,
   hasRasterLayer,
   hasUnsavedEdits,
+  normalizeVersionParam,
   rasterLayerAvailability,
   resolveActiveVersion,
   resolveFootprintStatus,
@@ -104,12 +111,38 @@ import {
   resolvePredictionsReady,
   resolveReadinessDetail,
   resolveReadinessReason,
+  resolveVersionIsLatest,
   shouldRequestPreparation,
   statusForReadinessReason,
   resolveSupportsThreshold,
   sameOverrides,
+  versionSidecarPending,
   visualizerLayerOptions,
 } from "./predictionResults.js";
+import {
+  MAX_VERSION_POLL_ATTEMPTS,
+  RAW_VERSION,
+  RAW_VERSION_LABEL,
+  VERSION_POLL_INTERVAL_MS,
+  VERSION_PREPARING_REASON,
+  buildVersionGpkgUrl,
+  buildVisualizerResultsUrl,
+  describeReportDivergence,
+  describeSavedClassNote,
+  describeVersionDownload,
+  describeVersionInline,
+  describeVersionSidecarPending,
+  describeVersionSwitchDiscard,
+  describeVersionSwitchFailure,
+  findVersionOption,
+  isVersionReady,
+  normalizeVersionSelection,
+  selectedVersionText,
+  shouldPollVersionSidecar,
+  versionKey,
+  versionLabel,
+  versionSelectorOptions,
+} from "./predictionVersions.js";
 import {
   CLASS_CODES,
   FALLBACK_COLORS,
@@ -886,6 +919,8 @@ test("artifact URLs prefer the server's own and fall back to the standard route"
     {
       footprintTilesUrl: "GetModelArtifact?x=1&kind=footprint_pmtiles",
       predictionAttrsUrl: "GetModelArtifact?x=1&kind=prediction_attrs",
+      // Nothing was pinned, so this payload is the model's raw output.
+      version: null,
     }
   );
   // ...and today's payload, which has neither field, still resolves.
@@ -894,6 +929,7 @@ test("artifact URLs prefer the server's own and fall back to the standard route"
       "GetModelArtifact?projectId=p1&imageLayerId=l1&modelId=m1&kind=footprint_pmtiles",
     predictionAttrsUrl:
       "GetModelArtifact?projectId=p1&imageLayerId=l1&modelId=m1&kind=prediction_attrs",
+    version: null,
   });
 });
 
@@ -1519,4 +1555,542 @@ test("centroids and drag rectangles survive the shapes the map hands over", () =
   );
   assert.equal(normalizeSelectionBox(null, { x: 1, y: 1 }), null);
   assert.equal(normalizeSelectionBox({ x: 1, y: 1 }, null), null);
+});
+
+// ── Version sidecars ────────────────────────────────────────────────────────
+// A saved version's sidecar is the raw shape plus `classes`: the class each
+// building was saved with. The model's `damage` / `unknown` fractions are
+// left untouched beside them, so anything that re-derives a class from those
+// fractions would silently undo the analyst's edit.
+
+// The same five buildings as sampleAttrs(), saved as a version in which two
+// were corrected by hand: #11 (0.5, would derive NotDamaged) was marked
+// Damaged, and #13 (0.9, would derive Damaged) was marked NotDamaged.
+function versionAttrs() {
+  return normalizeAttrs({
+    n: 5,
+    ids: [10, 11, 12, 13, 14],
+    overtureIds: ["a", "b", "c", "d", "e"],
+    damage: [0.05, 0.5, 0.51, 0.9, 0.8],
+    unknown: [0, 0, 0, 0, 0.4],
+    damaged: [0, 1, 1, 0, 0],
+    classes: [
+      CLASS_NOT_DAMAGED,
+      CLASS_DAMAGED,
+      CLASS_DAMAGED,
+      CLASS_NOT_DAMAGED,
+      CLASS_UNKNOWN,
+    ],
+  });
+}
+
+test("normalizeAttrs keeps a version's saved classes and drops malformed ones", () => {
+  const attrs = versionAttrs();
+  assert.equal(attrs.classes.length, 5);
+  assert.equal(attrs.classes[1], CLASS_DAMAGED);
+
+  // The raw model's sidecar has no classes at all — not an absent array the
+  // rest of the code has to guard against.
+  assert.deepEqual(sampleAttrs().classes, []);
+  assert.deepEqual(normalizeAttrs({ ids: [1], classes: "Damaged" }).classes, []);
+
+  // A row the server could not classify must fall back to the derived class
+  // rather than poisoning it with a value nothing understands.
+  const messy = normalizeAttrs({
+    n: 3,
+    ids: [1, 2, 3],
+    damage: [0.9, 0.9, 0.9],
+    classes: ["Damaged", "Rubble", null],
+  });
+  assert.deepEqual(messy.classes, [CLASS_DAMAGED, null, null]);
+});
+
+test("savedClassAt and hasSavedClasses tell a version's sidecar from the raw one", () => {
+  const attrs = versionAttrs();
+  assert.equal(savedClassAt(attrs, 1), CLASS_DAMAGED);
+  assert.equal(savedClassAt(attrs, 99), null);
+  assert.equal(savedClassAt(null, 0), null);
+  assert.equal(hasSavedClasses(attrs), true);
+
+  assert.equal(hasSavedClasses(sampleAttrs()), false);
+  assert.equal(hasSavedClasses(null), false);
+  // Present but useless: nothing to preserve, so the thresholds still apply.
+  assert.equal(
+    hasSavedClasses(normalizeAttrs({ n: 2, ids: [1, 2], classes: [null, "x"] })),
+    false
+  );
+});
+
+test("baseClassAt prefers a saved class over the thresholds", () => {
+  const attrs = versionAttrs();
+  // Saved NotDamaged at 0.9 damage: the threshold says otherwise and loses.
+  assert.equal(baseClassAt(attrs, 3, 0.5), CLASS_NOT_DAMAGED);
+  // Saved Damaged at exactly the threshold, where derivation says NotDamaged.
+  assert.equal(baseClassAt(attrs, 1, 0.5), CLASS_DAMAGED);
+  // Moving the slider cannot shift a saved class either.
+  assert.equal(baseClassAt(attrs, 3, 0.99), CLASS_NOT_DAMAGED);
+  // The raw sidecar has nothing saved, so the threshold decides.
+  assert.equal(baseClassAt(sampleAttrs(), 3, 0.5), CLASS_DAMAGED);
+});
+
+test("classifyAll colours an edited version from its saved classes", () => {
+  const attrs = versionAttrs();
+  const result = classifyAll(attrs, { threshold: 0.5, unknownThreshold: 0.3 });
+  assert.deepEqual(result.classes, [
+    CLASS_NOT_DAMAGED,
+    CLASS_DAMAGED,
+    CLASS_DAMAGED,
+    CLASS_NOT_DAMAGED,
+    CLASS_UNKNOWN,
+  ]);
+  // Saved classes are not "edited" in this session: nothing is pending.
+  assert.equal(result.editedCount, 0);
+  assert.deepEqual(result.edited, [false, false, false, false, false]);
+  assert.equal(result.counts[CLASS_DAMAGED], 2);
+
+  // A fresh edit in this session still wins over the saved class.
+  const edited = classifyAll(attrs, {
+    threshold: 0.5,
+    overrides: { 13: CLASS_DAMAGED },
+  });
+  assert.equal(edited.classes[3], CLASS_DAMAGED);
+  assert.equal(edited.editedCount, 1);
+  assert.equal(resolveClassAt(attrs, 3, { threshold: 0.5 }), CLASS_NOT_DAMAGED);
+});
+
+test("countClassChanges ignores buildings a version already decided", () => {
+  const attrs = versionAttrs();
+  // Every row has a saved class, so no slider move can flip anything.
+  assert.equal(
+    countClassChanges(attrs, { threshold: 0.5 }, { threshold: 0.95 }),
+    0
+  );
+  // The same move on the raw sidecar does flip buildings, which is what makes
+  // the readout worth showing there.
+  assert.ok(
+    countClassChanges(sampleAttrs(), { threshold: 0.5 }, { threshold: 0.95 }) > 0
+  );
+});
+
+test("mergedOverrideList carries the classes the thresholds cannot reproduce", () => {
+  const attrs = versionAttrs();
+  // At 0.5 the raw scores would derive NotDamaged, Damaged, Damaged for rows
+  // 1/3/4 differently from what was saved, so exactly those travel.
+  assert.deepEqual(mergedOverrideList(attrs, {}, 0.5, 0.3), [
+    { id: 11, class: CLASS_DAMAGED },
+    { id: 13, class: CLASS_NOT_DAMAGED },
+  ]);
+  // Row 14's saved Unknown IS reproducible at unknownThreshold 0.3, so it is
+  // not sent; drop the unknown threshold and it has to be.
+  assert.deepEqual(mergedOverrideList(attrs, {}, 0.5, 0.9), [
+    { id: 11, class: CLASS_DAMAGED },
+    { id: 13, class: CLASS_NOT_DAMAGED },
+    { id: 14, class: CLASS_UNKNOWN },
+  ]);
+  // A fresh edit replaces the carried-over class rather than duplicating it.
+  assert.deepEqual(mergedOverrideList(attrs, { 13: CLASS_UNKNOWN }, 0.5, 0.3), [
+    { id: 11, class: CLASS_DAMAGED },
+    { id: 13, class: CLASS_UNKNOWN },
+  ]);
+  // The raw sidecar has nothing to carry: only the user's own edits go.
+  assert.deepEqual(
+    mergedOverrideList(sampleAttrs(), { 10: CLASS_DAMAGED }, 0.5, 0),
+    [{ id: 10, class: CLASS_DAMAGED }]
+  );
+  assert.deepEqual(mergedOverrideList(null, null, 0.5, 0), []);
+});
+
+test("buildSavePayload carries a version's classes into the next version", () => {
+  const attrs = versionAttrs();
+  // The server derives every new version from the RAW GeoPackage, so saving
+  // an edit on top of version N must re-state what N established.
+  const payload = buildSavePayload({
+    projectId: "p",
+    imageLayerId: "l",
+    modelId: "m",
+    threshold: 0.5,
+    unknownThreshold: 0.3,
+    overrides: { 10: CLASS_UNKNOWN },
+    attrs,
+  });
+  assert.deepEqual(payload.overrides, [
+    { id: 10, class: CLASS_UNKNOWN },
+    { id: 11, class: CLASS_DAMAGED },
+    { id: 13, class: CLASS_NOT_DAMAGED },
+  ]);
+  assert.equal(payload.threshold, 0.5);
+
+  // Editing the raw output is unchanged: no attrs, no carried-over classes.
+  assert.deepEqual(
+    buildSavePayload({
+      projectId: "p",
+      imageLayerId: "l",
+      modelId: "m",
+      threshold: 0.5,
+      unknownThreshold: 0,
+      overrides: { 12: CLASS_UNKNOWN },
+    }).overrides,
+    [{ id: 12, class: CLASS_UNKNOWN }]
+  );
+});
+
+// ── Version-pinned artifacts ────────────────────────────────────────────────
+
+test("normalizeVersionParam keeps the raw output's explicit zero", () => {
+  assert.equal(normalizeVersionParam(0), 0);
+  assert.equal(normalizeVersionParam("0"), 0);
+  assert.equal(normalizeVersionParam(3), 3);
+  assert.equal(normalizeVersionParam("3"), 3);
+  assert.equal(normalizeVersionParam(3.7), 3);
+  // "Say nothing and let the route apply its own default."
+  assert.equal(normalizeVersionParam(null), null);
+  assert.equal(normalizeVersionParam(undefined), null);
+  assert.equal(normalizeVersionParam(""), null);
+  // The route 400s on these, so they never leave the browser.
+  assert.equal(normalizeVersionParam(-1), null);
+  assert.equal(normalizeVersionParam("latest"), null);
+  assert.equal(normalizeVersionParam(NaN), null);
+});
+
+test("buildArtifactUrl pins a version only when there is one to pin", () => {
+  assert.equal(
+    buildArtifactUrl({ projectId: "p", modelId: "m", kind: "gpkg" }),
+    "GetModelArtifact?projectId=p&modelId=m&kind=gpkg"
+  );
+  assert.equal(
+    buildArtifactUrl({ projectId: "p", modelId: "m", kind: "gpkg", version: 2 }),
+    "GetModelArtifact?projectId=p&modelId=m&kind=gpkg&version=2"
+  );
+  // Zero is a real request — "the raw output, explicitly" — not an absence.
+  assert.equal(
+    buildArtifactUrl({ projectId: "p", modelId: "m", kind: "gpkg", version: 0 }),
+    "GetModelArtifact?projectId=p&modelId=m&kind=gpkg&version=0"
+  );
+  assert.equal(
+    buildArtifactUrl({
+      projectId: "p",
+      modelId: "m",
+      kind: "gpkg",
+      version: null,
+    }),
+    "GetModelArtifact?projectId=p&modelId=m&kind=gpkg"
+  );
+});
+
+test("resolvePredictionArtifacts never substitutes the raw sidecar for a version", () => {
+  const ids = { projectId: "p", imageLayerId: "l", modelId: "m" };
+
+  // The server named the artifacts: use exactly what it said.
+  const served = resolvePredictionArtifacts(
+    {
+      predictionVersion: 2,
+      footprintTilesUrl: "tiles",
+      predictionAttrsUrl: "attrs?version=2",
+    },
+    ids
+  );
+  assert.equal(served.predictionAttrsUrl, "attrs?version=2");
+  assert.equal(served.version, 2);
+
+  // It did not, and the payload was served for version 2 — so the
+  // reconstructed endpoint is pinned to 2 rather than falling back to the raw
+  // sidecar, which describes the model's classes and not the analyst's.
+  const reconstructed = resolvePredictionArtifacts(
+    { predictionVersion: 2 },
+    ids
+  );
+  assert.ok(reconstructed.predictionAttrsUrl.includes("kind=prediction_attrs"));
+  assert.ok(reconstructed.predictionAttrsUrl.endsWith("&version=2"));
+  // The geometry is shared by every version, so the tiles are never pinned.
+  assert.ok(!reconstructed.footprintTilesUrl.includes("version"));
+
+  // Raw output: no version segment at all.
+  const raw = resolvePredictionArtifacts({}, ids);
+  assert.ok(!raw.predictionAttrsUrl.includes("version"));
+  assert.equal(raw.version, null);
+});
+
+test("resolveVersionIsLatest trusts the server's flag", () => {
+  // Absent means "assume newest", which is what omitting `version` has always
+  // meant — an older backend must not read as a divergence.
+  assert.equal(resolveVersionIsLatest({}), true);
+  assert.equal(resolveVersionIsLatest(null), true);
+  assert.equal(resolveVersionIsLatest({ predictionVersionIsLatest: true }), true);
+  assert.equal(
+    resolveVersionIsLatest({ predictionVersionIsLatest: false }),
+    false
+  );
+});
+
+test("versionSidecarPending only fires for a version the server says is not ready", () => {
+  // Version selected, no sidecar, server says it is being prepared.
+  assert.equal(
+    versionSidecarPending({
+      predictionVersion: 2,
+      predictionsReadiness: { attrsReady: false, reason: "preparing" },
+    }),
+    true
+  );
+  assert.equal(
+    versionSidecarPending({ predictionVersion: 2, predictionsReady: false }),
+    true
+  );
+  // The sidecar is there: nothing pending, whatever else the payload says.
+  assert.equal(
+    versionSidecarPending({
+      predictionVersion: 2,
+      predictionAttrsUrl: "attrs?version=2",
+      predictionsReady: false,
+    }),
+    false
+  );
+  // The raw output is never "a version waiting to be backfilled".
+  assert.equal(versionSidecarPending({ predictionsReady: false }), false);
+  assert.equal(versionSidecarPending({ predictionVersion: 2 }), false);
+  assert.equal(versionSidecarPending(null), false);
+});
+
+test("prep responses carry the version backfill queue onto the session", () => {
+  const session = applyPrepResponse(
+    { tilesReady: false, attrsReady: false },
+    { predictionTilesStatus: "InProgress", versionsPending: 3 }
+  );
+  assert.equal(session.versionsPending, 3);
+  assert.equal(describePendingVersions(session), "Rebuilding 3 saved versions.");
+  assert.equal(
+    describePendingVersions({ versionsPending: 1 }),
+    "Rebuilding 1 saved version."
+  );
+  // Nothing outstanding, or a backend that never said: say nothing.
+  assert.equal(describePendingVersions({ versionsPending: 0 }), "");
+  assert.equal(describePendingVersions({}), "");
+  assert.equal(describePendingVersions(null), "");
+  assert.equal(
+    applyPrepResponse({ tilesReady: false }, { versionsPending: "nope" })
+      .versionsPending,
+    undefined
+  );
+});
+
+// ── Version selection ───────────────────────────────────────────────────────
+
+test("version selections normalise to an integer, raw output included", () => {
+  assert.equal(normalizeVersionSelection(2), 2);
+  assert.equal(normalizeVersionSelection("2"), 2);
+  assert.equal(normalizeVersionSelection(0), RAW_VERSION);
+  assert.equal(normalizeVersionSelection(null), RAW_VERSION);
+  assert.equal(normalizeVersionSelection(-4), RAW_VERSION);
+  assert.equal(versionKey(2), "2");
+  assert.equal(versionKey(null), "0");
+  assert.equal(versionLabel(3), "Version 3");
+  assert.equal(versionLabel(null), RAW_VERSION_LABEL);
+  assert.equal(describeVersionInline(3), "edited version 3");
+  assert.equal(describeVersionInline(0), "the model's own predictions");
+});
+
+test("isVersionReady is about the sidecar, not the version's existence", () => {
+  assert.equal(isVersionReady({ version: 2, predictionAttrsUrl: "a" }), true);
+  // Saved, but nothing to draw yet: offering it would produce an empty map.
+  assert.equal(isVersionReady({ version: 2, predictionAttrsUrl: null }), false);
+  assert.equal(isVersionReady({ version: 2, predictionAttrsUrl: "  " }), false);
+  assert.equal(isVersionReady({ version: 2 }), false);
+  assert.equal(isVersionReady(null), false);
+});
+
+test("buildVisualizerResultsUrl asks for one version at a time", () => {
+  const ids = { projectId: "p", imageLayerId: "l", modelId: "m" };
+  // No version: the API applies its own default, the newest saved state.
+  assert.equal(
+    buildVisualizerResultsUrl(ids),
+    "GetVisualizerResults?projectId=p&imageLayerId=l&modelId=m"
+  );
+  assert.equal(
+    buildVisualizerResultsUrl({ ...ids, version: 2 }),
+    "GetVisualizerResults?projectId=p&imageLayerId=l&modelId=m&version=2"
+  );
+  // Dropping to the raw output is an explicit request, not an omission.
+  assert.equal(
+    buildVisualizerResultsUrl({ ...ids, version: RAW_VERSION }),
+    "GetVisualizerResults?projectId=p&imageLayerId=l&modelId=m&version=0"
+  );
+});
+
+test("version downloads go through the artifact route, never a SAS URL", () => {
+  const ids = { projectId: "p", imageLayerId: "l", modelId: "m" };
+  assert.equal(
+    buildVersionGpkgUrl({ ...ids, version: 2 }),
+    "GetModelArtifact?projectId=p&imageLayerId=l&modelId=m&kind=gpkg&version=2"
+  );
+  // The raw output is pinned explicitly so the file the analyst gets always
+  // matches the option they picked.
+  assert.equal(
+    buildVersionGpkgUrl(ids),
+    "GetModelArtifact?projectId=p&imageLayerId=l&modelId=m&kind=gpkg&version=0"
+  );
+  assert.match(describeVersionDownload(2), /version 2/);
+  assert.match(describeVersionDownload(0), /model's own predictions/);
+  assert.match(describeVersionDownload(2), /\.gpkg/);
+});
+
+test("the selector lists saved versions newest first with the raw output last", () => {
+  const versions = [
+    { version: 1, predictionAttrsUrl: "a1" },
+    { version: 3, predictionAttrsUrl: null },
+    { version: 2, predictionAttrsUrl: "a2" },
+  ];
+  const options = versionSelectorOptions({ versions, servedVersion: 2 });
+  assert.deepEqual(
+    options.map((option) => option.version),
+    [3, 2, 1, RAW_VERSION]
+  );
+
+  // Version 3 is the newest but has no sidecar: offered, disabled, with the
+  // reason attached rather than left to produce an empty map.
+  assert.equal(options[0].disabled, true);
+  assert.equal(options[0].isNewest, true);
+  assert.equal(options[0].disabledReason, VERSION_PREPARING_REASON);
+  assert.match(options[0].text, /preparing/);
+
+  // Version 2 is what the map is drawing, and says so.
+  assert.equal(options[1].disabled, false);
+  assert.equal(options[1].isServed, true);
+  assert.match(options[1].text, /on the map/);
+  assert.equal(options[2].isServed, false);
+  assert.equal(options[2].text, "Version 1");
+
+  // The raw output is always selectable — it is the fallback when a version
+  // cannot be drawn.
+  assert.equal(options[3].isRaw, true);
+  assert.equal(options[3].disabled, false);
+  assert.equal(options[3].isNewest, false);
+  assert.equal(options[3].text, RAW_VERSION_LABEL);
+});
+
+test("with nothing saved the selector offers only the raw output", () => {
+  const options = versionSelectorOptions({ versions: [], servedVersion: null });
+  assert.equal(options.length, 1);
+  assert.equal(options[0].isRaw, true);
+  assert.equal(options[0].isNewest, true);
+  assert.equal(options[0].isServed, true);
+  assert.match(options[0].text, /on the map/);
+  // Junk in the version list is not offered as something to switch to.
+  assert.deepEqual(
+    versionSelectorOptions({
+      versions: [{ version: 0 }, { version: null }, {}],
+    }).map((option) => option.version),
+    [RAW_VERSION]
+  );
+  assert.equal(versionSelectorOptions().length, 1);
+});
+
+test("the closed selector shows what is actually on the map", () => {
+  const options = versionSelectorOptions({
+    versions: [{ version: 1, predictionAttrsUrl: "a1" }],
+    servedVersion: 1,
+  });
+  assert.equal(findVersionOption(options, 1).version, 1);
+  assert.equal(findVersionOption(options, 9), null);
+  assert.equal(findVersionOption(null, 1), null);
+  assert.match(selectedVersionText(options, 1), /Version 1/);
+  assert.match(selectedVersionText(options, 1), /on the map/);
+  // A selection with no option (a version that vanished) still reads sanely.
+  assert.equal(selectedVersionText(options, 9), "Version 9");
+});
+
+test("a version that is not the newest discloses the report divergence", () => {
+  const versions = [{ version: 2 }, { version: 3 }];
+  // The server says this is the newest: nothing to disclose.
+  assert.equal(
+    describeReportDivergence({ isLatest: true, servedVersion: 3, versions }),
+    null
+  );
+  assert.equal(describeReportDivergence(), null);
+
+  const note = describeReportDivergence({
+    isLatest: false,
+    servedVersion: 2,
+    versions,
+  });
+  assert.match(note.title, /newest/i);
+  assert.match(note.body, /edited version 2/);
+  assert.match(note.body, /version 3/);
+  assert.match(note.body, /Assessment and Validation/);
+
+  // Sitting on the raw output while edits exist is the same disclosure.
+  const rawNote = describeReportDivergence({
+    isLatest: false,
+    servedVersion: RAW_VERSION,
+    versions,
+  });
+  assert.match(rawNote.body, /model's own predictions/);
+});
+
+test("a version with no sidecar explains itself and offers a way out", () => {
+  const note = describeVersionSidecarPending({ version: 2, versionsPending: 2 });
+  assert.match(note.title, /Version 2/);
+  assert.match(note.body, /nothing to draw/);
+  assert.match(note.body, /2 saved versions are waiting/);
+  assert.match(note.body, /raw model output/);
+  assert.match(
+    describeVersionSidecarPending({ version: 2, versionsPending: 1 }).body,
+    /1 saved version is waiting/
+  );
+  // The backend said nothing about a queue: do not invent one.
+  assert.ok(
+    !/waiting to be rebuilt/.test(
+      describeVersionSidecarPending({ version: 2 }).body
+    )
+  );
+});
+
+test("a failed switch names what is still on the map", () => {
+  const failure = describeVersionSwitchFailure({
+    version: 2,
+    shownVersion: 3,
+    message: "The version could not be read from the server.",
+  });
+  assert.match(failure.title, /Version 2/);
+  assert.match(failure.body, /could not be read/);
+  // The point of the message: the previous version is still there, not a
+  // blank map the analyst has to guess about.
+  assert.match(failure.body, /still shows edited version 3/);
+  assert.match(
+    describeVersionSwitchFailure({ version: 1, shownVersion: RAW_VERSION }).body,
+    /still shows the model's own predictions/
+  );
+});
+
+test("switching away from unsaved edits says what will be lost", () => {
+  const copy = describeVersionSwitchDiscard(2);
+  assert.match(copy, /version 2/);
+  assert.match(copy, /discards the edits you have not saved/);
+  assert.match(copy, /Save them as a new version first/);
+
+  // And an edited version's thresholds are inert, which is worth saying
+  // rather than leaving a control silently missing.
+  assert.match(describeSavedClassNote(2), /Version 2/);
+  assert.match(describeSavedClassNote(2), /thresholds no longer apply/);
+  assert.equal(describeSavedClassNote(RAW_VERSION), "");
+});
+
+test("the pending-version poll is bounded", () => {
+  assert.equal(shouldPollVersionSidecar({ pending: true, attempt: 0 }), true);
+  assert.equal(
+    shouldPollVersionSidecar({
+      pending: true,
+      attempt: MAX_VERSION_POLL_ATTEMPTS - 1,
+    }),
+    true
+  );
+  // A forgotten tab stops asking instead of polling forever.
+  assert.equal(
+    shouldPollVersionSidecar({
+      pending: true,
+      attempt: MAX_VERSION_POLL_ATTEMPTS,
+    }),
+    false
+  );
+  assert.equal(shouldPollVersionSidecar({ pending: false, attempt: 0 }), false);
+  assert.equal(shouldPollVersionSidecar(), false);
+  assert.ok(VERSION_POLL_INTERVAL_MS >= 1000);
 });

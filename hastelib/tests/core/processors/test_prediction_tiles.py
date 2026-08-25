@@ -141,6 +141,7 @@ class TestPreprocessor(unittest.TestCase):
                 "sourceGpkgUrl",
                 "sourceFootprintsUrl",
                 "force",
+                "backfillVersions",
             },
         )
         self.assertEqual(payload["imageLayerId"], "layer-1")

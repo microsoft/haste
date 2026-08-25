@@ -26,16 +26,24 @@
 // The pencil next to Back turns this same view into an editor — same maps,
 // same footprints, now clickable — instead of sending the analyst to a
 // separate screen. See handleToggleEditMode.
+//
+// VERSIONS. A model's predictions are append-only: the raw model output plus
+// every version an analyst saved. GetVisualizerResults serves ONE of them at
+// a time, so the version selector (PredictionVersionControls) is a refetch —
+// switching means a new payload with a version-pinned sidecar, which the
+// artifact hook reloads and the footprint hook rebuilds on BOTH swipe panes.
+// See handleSelectVersion.
 
 // Dependencies
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { apiGet } from "../../util/api";
+import { apiGet, buildUrl } from "../../util/api";
 import { useParams } from "react-router-dom";
 import Labels from "./Labels";
 import { AppContext } from "../../AppContext";
 import PropType from "prop-types";
 import { makeStyles, tokens } from "@fluentui/react-components";
 import { convertDateToString } from "../../util/conversion";
+import { fileDownload } from "../../util/file";
 import VisualizerImageryControls from "./VisualizerImageryControls"
 import "../../assets/css/visualizer.css";
 import { getAzureMapsAuthOptions } from "../../util/azureMapsAuth";
@@ -43,12 +51,14 @@ import { shouldIgnoreShortcut } from "../keyboardShortcuts";
 import { useTheme } from "../../util/ThemeContext.jsx";
 import PredictionEditPanel from "./PredictionEditPanel";
 import PredictionStatusNote from "./PredictionStatusNote";
+import PredictionVersionControls from "./PredictionVersionControls";
 import usePredictionArtifacts from "./usePredictionArtifacts";
 import usePredictionFootprints from "./usePredictionFootprints";
 import {
   CLASS_DAMAGED,
   CLASS_NOT_DAMAGED,
   CLASS_UNKNOWN,
+  hasSavedClasses,
 } from "./predictionClassify";
 import {
   FOOTPRINTS_READY,
@@ -60,6 +70,22 @@ import {
   resolveSupportsThreshold,
   visualizerLayerOptions,
 } from "./predictionResults";
+import {
+  MAX_VERSION_POLL_ATTEMPTS,
+  RAW_VERSION,
+  VERSION_POLL_INTERVAL_MS,
+  buildVersionGpkgUrl,
+  buildVisualizerResultsUrl,
+  describeReportDivergence,
+  describeSavedClassNote,
+  describeVersionSidecarPending,
+  describeVersionSwitchDiscard,
+  describeVersionSwitchFailure,
+  normalizeVersionSelection,
+  shouldPollVersionSidecar,
+  versionLabel,
+  versionSelectorOptions,
+} from "./predictionVersions";
 import {
   dividerPositionForKey,
   resolveSwipeMode,
@@ -79,6 +105,31 @@ const useStyles = makeStyles({
   // would run into the pre-event imagery block just below them.
   navigationControls: {
     flexDirection: "row",
+  },
+  // The results page's top-centre overlay column: the version selector above
+  // the layer's status note.
+  //
+  // They share one stack rather than each pinning itself to the map, because
+  // both are variable height (a divergence warning, a failed switch, a
+  // progress bar) and two independently positioned overlays at fixed offsets
+  // would sooner or later cover each other. It starts below the navigation
+  // controls' row so a narrow desktop cannot overlap them either.
+  //
+  // The column itself is transparent to the pointer; only the cards inside it
+  // take clicks, so the map still pans through the gaps.
+  topStack: {
+    position: "absolute",
+    top: "66px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    zIndex: 950,
+    boxSizing: "border-box",
+    width: "min(560px, calc(100% - 32px))",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: tokens.spacingVerticalS,
+    pointerEvents: "none",
   },
   // Ctrl+drag box-select rectangle. Absolutely positioned inside the
   // visualizer container, which shares its top-left corner with both map
@@ -139,6 +190,28 @@ const Visualizer = ({ setModalComponent }) => {
   const [mapsReady, setMapsReady] = useState(false);
   const [swipeStateMobile, setSwipeStateMobile] = useState("post");
   const [isEditMode, setIsEditMode] = useState(false);
+  // Which prediction version is on the map is NOT held in state: it is
+  // whatever the payload currently on screen says it was served from
+  // (`servedVersion` below). One source of truth means the selector can never
+  // claim a version the map is not actually drawing — including while a
+  // switch is in flight, or after one failed.
+  const [isSwitchingVersion, setIsSwitchingVersion] = useState(false);
+  // A switch that failed. Kept as its own state so the previous version stays
+  // on the map with an explanation instead of the page half-applying a
+  // version it could not load.
+  const [versionSwitchFailure, setVersionSwitchFailure] = useState(null);
+  // How many times we have re-asked for a version whose sidecar is still
+  // being backfilled. Reset by every deliberate switch.
+  const [versionPollAttempt, setVersionPollAttempt] = useState(0);
+  // Only the newest version request may write results: an analyst clicking
+  // through three versions must not be left on whichever response happens to
+  // arrive last.
+  const versionRunRef = useRef(0);
+  // The run id of the switch the spinner belongs to. A background poll shares
+  // the counter above (its response must lose to a newer request too), so
+  // without this a poll landing mid-switch would leave the selector spinning
+  // for a switch that had already finished.
+  const switchRunRef = useRef(0);
   // The status the analyst last dismissed a note for. Stored rather than a
   // plain boolean so a NEW status (preparing -> failed, say) shows up again
   // without an effect that resets state behind their back.
@@ -193,6 +266,10 @@ const Visualizer = ({ setModalComponent }) => {
     palette,
     defaultThreshold: artifacts.session?.defaultThreshold,
     onSaved: artifacts.refreshVersions,
+    // Identity of the prediction data being drawn. A version switch changes
+    // it, which is what makes the hook rebuild the source, the layers and the
+    // feature-state on BOTH swipe panes rather than repaint stale ones.
+    renderKey: artifacts.renderKey,
   });
 
   const footprintStatus = artifacts.status;
@@ -210,17 +287,51 @@ const Visualizer = ({ setModalComponent }) => {
     [globalVisualizerResults]
   );
 
-  // Visualizer data fetching function
+  // ── Version selection ────────────────────────────────────────────────────
+  // Everything about which version is on the map, and about the divergence
+  // between the map and the reports, is decided in predictionVersions.js.
+  const servedVersion = artifacts.activeVersion ?? RAW_VERSION;
+  const versionOptions = useMemo(
+    () =>
+      versionSelectorOptions({
+        versions: artifacts.versions,
+        servedVersion,
+      }),
+    [artifacts.versions, servedVersion]
+  );
+  // Version selection moves the MAP only — the reports always read the newest
+  // saved version — so this is disclosed wherever the analyst can act on it.
+  // `predictionVersionIsLatest` is the server's answer; it knows about
+  // versions this page may not have listed.
+  const reportDivergence = useMemo(
+    () =>
+      describeReportDivergence({
+        isLatest: artifacts.versionIsLatest,
+        servedVersion,
+        versions: artifacts.versions,
+      }),
+    [artifacts.versionIsLatest, servedVersion, artifacts.versions]
+  );
+
+  // Visualizer data fetching function. `version` is left out for the very
+  // first load so the API applies its own default (the newest saved state);
+  // every switch pins one explicitly, 0 being the raw model output.
+  const fetchVisualizerResults = useCallback(
+    (version) =>
+      apiGet(
+        buildVisualizerResultsUrl({
+          projectId,
+          imageLayerId,
+          modelId,
+          version,
+        })
+      ),
+    [projectId, imageLayerId, modelId]
+  );
+
   async function getVisualizerResults() {
     setIsLoading(true);
-    return await apiGet(
-      "GetVisualizerResults?projectId=" +
-      projectId +
-      "&imageLayerId=" +
-      imageLayerId +
-      "&modelId=" +
-      modelId
-    )
+    return await fetchVisualizerResults()
       .then((response) => {
         setIsLoading(false);
         return response;
@@ -231,6 +342,166 @@ const Visualizer = ({ setModalComponent }) => {
         throw error;
       });
   }
+
+  /**
+   * Point the map at another saved version.
+   *
+   * The whole switch is one refetch: the new payload carries a version-pinned
+   * sidecar URL, which reloads the scores (the footprint geometry is shared
+   * by every version) and rebuilds both swipe panes. A failure changes
+   * nothing — the previous version stays on screen with the reason — because
+   * results are only replaced once the new payload is in hand.
+   */
+  const loadVersion = useCallback(
+    async (version, { poll = false } = {}) => {
+      const runId = versionRunRef.current + 1;
+      versionRunRef.current = runId;
+      if (!poll) {
+        switchRunRef.current = runId;
+        setIsSwitchingVersion(true);
+        setVersionSwitchFailure(null);
+        setIsLoading(true, `Loading ${versionLabel(version).toLowerCase()}`);
+      }
+      try {
+        const results = await fetchVisualizerResults(version);
+        if (runId !== versionRunRef.current) return;
+        setGlobalVisualizerResults(results);
+        if (!poll) setVersionPollAttempt(0);
+      } catch (error) {
+        if (runId !== versionRunRef.current) return;
+        console.error("Could not load the selected prediction version:", error);
+        if (!poll) {
+          setVersionSwitchFailure(
+            describeVersionSwitchFailure({
+              version,
+              shownVersion: servedVersion,
+              message: "The version could not be read from the server.",
+            })
+          );
+        }
+      } finally {
+        // Released by the switch that owns it, even when a background poll
+        // has since taken over the run counter — an unreleased spinner would
+        // lock the selector on a page that is otherwise perfectly usable.
+        if (!poll && switchRunRef.current === runId) {
+          setIsSwitchingVersion(false);
+          setIsLoading(false);
+        }
+      }
+    },
+    [fetchVisualizerResults, servedVersion, setIsLoading]
+  );
+
+  const handleSelectVersion = useCallback(
+    (version) => {
+      const next = normalizeVersionSelection(version);
+      if (next === servedVersion && !versionSwitchFailure) return;
+      // Nothing is written until "Save as new version", and the switch
+      // reloads the predictions from the server, so pending edits would go
+      // with them. Same confirmation as leaving edit mode.
+      if (isEditMode && footprints.isDirty) {
+        setDialog(
+          "Discard unsaved edits?",
+          `${describeUnsavedEdits(
+            footprints.overrides,
+            footprints.baseline
+          )} ${describeVersionSwitchDiscard(next)}`,
+          [
+            {
+              type: "primary",
+              key: "discard",
+              text: "Discard and switch",
+              onClick: () => {
+                setDialog();
+                footprints.discardEdits();
+                loadVersion(next);
+              },
+            },
+            {
+              type: "default",
+              key: "keep",
+              text: "Keep editing",
+              onClick: () => setDialog(),
+            },
+          ]
+        );
+        return;
+      }
+      loadVersion(next);
+    },
+    [
+      servedVersion,
+      versionSwitchFailure,
+      isEditMode,
+      footprints,
+      loadVersion,
+      setDialog,
+    ]
+  );
+
+  // A version saved before its sidecar existed has nothing to draw. The
+  // artifact hook has already asked for the backfill; re-ask the API for the
+  // same version on a bounded schedule so the map fills in on its own instead
+  // of making the analyst reload. One timer at a time, cleared on every
+  // change.
+  useEffect(() => {
+    if (
+      !shouldPollVersionSidecar({
+        pending: artifacts.versionPending,
+        attempt: versionPollAttempt,
+        maxAttempts: MAX_VERSION_POLL_ATTEMPTS,
+      })
+    ) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setVersionPollAttempt((attempt) => attempt + 1);
+      loadVersion(servedVersion, { poll: true });
+    }, VERSION_POLL_INTERVAL_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    artifacts.versionPending,
+    versionPollAttempt,
+    servedVersion,
+    loadVersion,
+  ]);
+
+  // Switching versions re-fetches everything, including the lazily loaded
+  // edit session that carries the model's flavour and threshold support. An
+  // analyst who was already editing should not have to leave and re-enter
+  // edit mode to get those back, so it is re-fetched once per version — and
+  // only while editing, so a read-only view still never pays for it.
+  const sessionRenderKeyRef = useRef("");
+  useEffect(() => {
+    if (!isEditMode || !artifacts.renderKey) return;
+    if (sessionRenderKeyRef.current === artifacts.renderKey) return;
+    sessionRenderKeyRef.current = artifacts.renderKey;
+    artifacts.ensureSession().catch((error) => {
+      // Editing still works without it: the thresholds start from their
+      // defaults and the history comes from the results payload.
+      console.warn("Could not reload the prediction edit session:", error);
+    });
+  }, [isEditMode, artifacts]);
+
+  // The GeoPackage for one version, through GetModelArtifact — auth, managed
+  // identity and Range are handled there, which is why this page never
+  // rewrites blob SAS URLs the way the model rows do.
+  const handleDownloadVersion = useCallback(
+    (version) => {
+      fileDownload(
+        buildUrl(
+          buildVersionGpkgUrl({
+            projectId,
+            imageLayerId,
+            modelId,
+            version,
+          })
+        ),
+        setDialog
+      );
+    },
+    [projectId, imageLayerId, modelId, setDialog]
+  );
 
   // The width the swipe divider is measured against. The container is the
   // element both map canvases fill, so it beats window.innerWidth whenever the
@@ -463,6 +734,9 @@ const Visualizer = ({ setModalComponent }) => {
     setIsLoading(true, "Preparing prediction editing");
     try {
       await artifacts.ensureSession();
+      // Claim the session for the version on screen so the effect that
+      // re-fetches it after a version switch does not immediately ask again.
+      sessionRenderKeyRef.current = artifacts.renderKey;
     } catch (error) {
       // Editing still works without it: the thresholds simply start from
       // their defaults and the version list stays empty until the first save.
@@ -828,6 +1102,28 @@ const Visualizer = ({ setModalComponent }) => {
     resultsReady &&
     footprintStatus !== FOOTPRINTS_READY &&
     dismissedNoteStatus !== footprintStatus;
+  // A version saved before its sidecar existed has nothing to draw, which is
+  // a fact about the VERSION rather than about the layer — so it is said on
+  // the version card, next to the selector that can get the analyst out of
+  // it, and the layer's own status note is left to describe the layer.
+  const versionPendingNote = artifacts.versionPending
+    ? describeVersionSidecarPending({
+        version: servedVersion,
+        versionsPending: artifacts.versionsPending,
+      })
+    : null;
+  // The version history is only worth a control once something has been
+  // saved: with no edited versions there is nothing to choose between, and
+  // the raw output is already what the page shows.
+  const showVersionControls = resultsReady && versionOptions.length > 1;
+  // A version's own classes were decided by an analyst, so the thresholds
+  // cannot move them; offering sliders that do nothing would be a lie.
+  const versionHasSavedClasses = hasSavedClasses(artifacts.attrs);
+  const supportsThreshold =
+    resolveSupportsThreshold({
+      results: globalVisualizerResults,
+      session: artifacts.session,
+    }) && !versionHasSavedClasses;
 
   return (
     <div className="visualizer-container" ref={containerRef}>
@@ -858,16 +1154,34 @@ const Visualizer = ({ setModalComponent }) => {
         visualizerResults={globalVisualizerResults}
       />
 
-      {showStatusNote && (
-        <PredictionStatusNote
-          status={footprintStatus}
-          prepState={artifacts.prepState}
-          session={artifacts.session}
-          error={artifacts.error}
-          detail={artifacts.readinessDetail}
-          onRetry={artifacts.requestPreparation}
-          onDismiss={() => setDismissedNoteStatus(footprintStatus)}
-        />
+      {(showVersionControls || showStatusNote) && (
+        <div className={styles.topStack}>
+          {showVersionControls && (
+            <PredictionVersionControls
+              options={versionOptions}
+              selectedVersion={servedVersion}
+              onSelectVersion={handleSelectVersion}
+              onDownload={handleDownloadVersion}
+              isSwitching={isSwitchingVersion}
+              pending={versionPendingNote}
+              divergence={reportDivergence}
+              failure={versionSwitchFailure}
+              onDismissFailure={() => setVersionSwitchFailure(null)}
+            />
+          )}
+
+          {showStatusNote && (
+            <PredictionStatusNote
+              status={footprintStatus}
+              prepState={artifacts.prepState}
+              session={artifacts.session}
+              error={artifacts.error}
+              detail={artifacts.readinessDetail}
+              onRetry={artifacts.requestPreparation}
+              onDismiss={() => setDismissedNoteStatus(footprintStatus)}
+            />
+          )}
+        </div>
       )}
 
       {isEditMode && classification && (
@@ -882,10 +1196,7 @@ const Visualizer = ({ setModalComponent }) => {
               results: globalVisualizerResults,
               session: artifacts.session,
             })}
-            supportsThreshold={resolveSupportsThreshold({
-              results: globalVisualizerResults,
-              session: artifacts.session,
-            })}
+            supportsThreshold={supportsThreshold}
             counts={classification.counts}
             total={classification.total}
             editedCount={classification.editedCount}
@@ -918,6 +1229,15 @@ const Visualizer = ({ setModalComponent }) => {
             savedResult={footprints.savedResult}
             versions={artifacts.versions}
             activeVersion={artifacts.activeVersion}
+            // Downloads and the report disclosure are the same in both modes;
+            // the panel is simply where the version history already lives.
+            onDownloadVersion={handleDownloadVersion}
+            reportDivergence={reportDivergence}
+            thresholdNote={
+              versionHasSavedClasses
+                ? describeSavedClassNote(servedVersion)
+                : ""
+            }
           />
         </>
       )}

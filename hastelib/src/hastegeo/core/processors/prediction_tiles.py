@@ -57,8 +57,23 @@ Config JSON handed to the workflow (``model_id``/``files.predictions``/
         "attrs": "prediction_attrs_<modelId>.json"
       },
       "tiles": {"build_pmtiles": true},
+      "versions": [
+        {
+          "version": 1,
+          "predictions": "inputs/<edited v1>.gpkg",
+          "attrs": "prediction_attrs_<modelId>_v1.json"
+        }
+      ],
       "store_artifacts": true
     }
+
+``versions`` is the **backfill** list: one entry per saved edited
+version (``Model.editedPredictions``) that has no sidecar yet. Each gets
+its own ``ArtifactTypes.PREDICTION_ATTRS_VERSION`` payload built from
+that version's own GeoPackage, which is what lets the viewer switch
+versions by swapping a URL. The list is derived from the model document
+at submit time, so versions that already have a sidecar are skipped and
+re-running the job is a no-op for them.
 
 Queue message (``prediction-edit-prep-queue``)::
 
@@ -68,11 +83,13 @@ Queue message (``prediction-edit-prep-queue``)::
       "modelId": "...",
       "sourceGpkgUrl": "...",
       "sourceFootprintsUrl": "...",
-      "force": false
+      "force": false,
+      "backfillVersions": true
     }
 
 An empty ``modelId`` (and, with it, an empty ``sourceGpkgUrl``) selects
-the layer-only mode.
+the layer-only mode, in which ``backfillVersions`` is meaningless (there
+is no model to read versions from).
 
 The trigger treats the message as a *request* and reads the authoritative
 state from metadata, so the postprocessor's own poll re-queues (which
@@ -128,6 +145,47 @@ def attrs_artifact_name(model_id: str) -> str:
     )
 
 
+def version_attrs_artifact_name(model_id: str, version: int) -> str:
+    """Artifact name for ONE edited version's attribute sidecar.
+
+    Same template as
+    ``hastegeo.core.utils.prediction_attrs.version_attrs_artifact_name``
+    — which the Functions app uses at save time — but derived here from
+    ``ArtifactTypes`` directly, because this module is imported by the
+    queue app, which must not pull in fiona.
+    """
+    return (
+        ArtifactTypes.PREDICTION_ATTRS_VERSION.value.substitute(
+            modelId=model_id, version=int(version)
+        )
+        + ".json"
+    )
+
+
+def versions_needing_attrs(model: Model) -> List[Dict[str, Any]]:
+    """Return this model's saved versions that still have no sidecar.
+
+    Oldest first. A version whose GeoPackage exists without a matching
+    sidecar cannot be drawn by the map at all, so these are exactly the
+    revisions a backfill run has to rebuild. Versions that already have
+    one never appear here, which is what makes the backfill idempotent.
+    """
+    entries: List[Dict[str, Any]] = []
+    for entry in model.editedPredictions or []:
+        gpkg_url = getattr(entry, "gpkgUrl", None)
+        attrs_url = getattr(entry, "predictionAttrsUrl", None)
+        version = getattr(entry, "version", None)
+        if version is None or not gpkg_url or attrs_url:
+            continue
+        entries.append(
+            {
+                "version": int(version),
+                "gpkgUrl": str(gpkg_url),
+            }
+        )
+    return sorted(entries, key=lambda entry: entry["version"])
+
+
 def build_prep_message(
     project_id: str,
     image_layer_id: str,
@@ -135,6 +193,7 @@ def build_prep_message(
     source_gpkg_url: Optional[str] = None,
     source_footprints_url: Optional[str] = None,
     force: bool = False,
+    backfill_versions: bool = True,
 ) -> Dict[str, Any]:
     """Build a ``prediction-edit-prep-queue`` message payload.
 
@@ -153,6 +212,9 @@ def build_prep_message(
             (and empty) in layer-only mode.
         source_footprints_url: The layer's cached footprints GeoPackage.
         force: Rebuild even when the artifacts already exist.
+        backfill_versions: Also (re)build the attribute sidecar of every
+            saved edited version that has none. Ignored in layer-only
+            mode, where there is no model to read versions from.
     """
     return {
         "projectId": project_id,
@@ -161,6 +223,7 @@ def build_prep_message(
         "sourceGpkgUrl": source_gpkg_url or "",
         "sourceFootprintsUrl": source_footprints_url or "",
         "force": bool(force),
+        "backfillVersions": bool(backfill_versions),
     }
 
 
@@ -172,6 +235,7 @@ def enqueue_prediction_tiles(
     source_footprints_url: Optional[str] = None,
     force: bool = False,
     config: Optional[Config] = None,
+    backfill_versions: bool = True,
 ) -> Dict[str, Any]:
     """Put a preparation request on the prediction-edit prep queue.
 
@@ -189,6 +253,7 @@ def enqueue_prediction_tiles(
         source_gpkg_url=source_gpkg_url,
         source_footprints_url=source_footprints_url,
         force=force,
+        backfill_versions=backfill_versions,
     )
     queue_client = AzureQueueHandler(
         config.queue_config["queue_connection_string"],
@@ -253,6 +318,7 @@ def request_preparation(
     image_layer: ImageLayer,
     force: bool = False,
     config: Optional[Config] = None,
+    backfill_versions: bool = True,
 ) -> Dict[str, Any]:
     """Decide whether to enqueue preparation, and do it if so.
 
@@ -275,12 +341,19 @@ def request_preparation(
             job is already in flight. Used after predictions are
             regenerated, which leaves stale artifacts behind.
         config: Optional config override (tests inject a fake).
+        backfill_versions: Also rebuild the attribute sidecar of every
+            saved edited version that has none — a job is queued for
+            that alone when the model's own artifacts are already there.
+            This is how versions saved before per-version sidecars
+            existed become renderable.
 
     Returns:
-        ``{"modelId", "queued", "tilesReady", "attrsReady", "status",
-        "statusMessage"}``. ``tilesReady``/``attrsReady`` describe the
-        state *now*, so a caller that polls sees them flip to ``True``
-        once the queued job finishes.
+        ``{"modelId", "queued", "tilesReady", "attrsReady",
+        "versionsPending", "status", "statusMessage"}``.
+        ``tilesReady``/``attrsReady`` describe the state *now*, so a
+        caller that polls sees them flip to ``True`` once the queued job
+        finishes; ``versionsPending`` counts the saved versions that
+        still have no sidecar and drops to 0 the same way.
 
     Raises:
         PredictionTilesUnavailableError: when the model has no raw
@@ -305,6 +378,9 @@ def request_preparation(
         )
 
     needs_pmtiles, needs_attrs = needs_preparation(model, image_layer)
+    pending_versions = (
+        versions_needing_attrs(model) if backfill_versions else []
+    )
     in_flight = model.predictionTilesStatus in (
         statuses.PENDING.value,
         statuses.IN_PROGRESS.value,
@@ -316,12 +392,16 @@ def request_preparation(
             "queued": queued,
             "tilesReady": not needs_pmtiles,
             "attrsReady": not needs_attrs,
+            "versionsPending": len(pending_versions),
             "status": model.predictionTilesStatus,
             "statusMessage": model.predictionTilesStatusMessage or "",
         }
 
-    if not force and not needs_pmtiles and not needs_attrs:
-        # Both artifacts exist: record that and skip the queue rather
+    nothing_outstanding = (
+        not needs_pmtiles and not needs_attrs and not pending_versions
+    )
+    if not force and nothing_outstanding:
+        # Every artifact exists: record that and skip the queue rather
         # than pay for a redundant Batch task. Only the transition is
         # recorded — an editor that re-opens a prepared model must not
         # grow the status message a line at a time.
@@ -358,13 +438,15 @@ def request_preparation(
         source_footprints_url=image_layer.buildingFootprintsUrl,
         force=force,
         config=config,
+        backfill_versions=backfill_versions,
     )
     logger.info(
         "Queued prediction tiles for model %s (pmtiles=%s, attrs=%s, "
-        "force=%s)",
+        "versions=%s, force=%s)",
         model.modelId,
         needs_pmtiles or force,
         needs_attrs or force,
+        [entry["version"] for entry in pending_versions],
         force,
     )
     return _state(True)
@@ -428,7 +510,15 @@ class PredictionTilesPreprocessor:
         needs_pmtiles, needs_attrs = needs_preparation(
             self.model_data, self.image_layer
         )
-        if not force and not needs_pmtiles and not needs_attrs:
+        # A saved version without a sidecar cannot be drawn, so it is
+        # outstanding work exactly like a missing model-level sidecar.
+        pending_versions = versions_needing_attrs(self.model_data)
+        if (
+            not force
+            and not needs_pmtiles
+            and not needs_attrs
+            and not pending_versions
+        ):
             self.model_data.predictionTilesStatus = (
                 self.config.get_status_types().COMPLETED.value
             )
@@ -464,10 +554,12 @@ class PredictionTilesPreprocessor:
             visibility_timeout=0,
         )
         self.logger.info(
-            "Queued prediction tiles for model %s (pmtiles=%s, attrs=%s)",
+            "Queued prediction tiles for model %s (pmtiles=%s, attrs=%s, "
+            "versions=%s)",
             self.model_data.modelId,
             needs_pmtiles or force,
             needs_attrs or force,
+            [entry["version"] for entry in pending_versions],
         )
         return self.model_data
 
@@ -484,6 +576,12 @@ class PredictionTilesPostprocessor:
       footprint PMTiles, which is what imagery prep asks for at
       layer-creation time. Job state lives on the ``ImageLayer`` and no
       model document is read or written.
+
+    A model-scoped run also backfills the attribute sidecar of every
+    saved edited version that lacks one (``backfill_versions``). The
+    input list comes from the model document at submit time, so a
+    version that already has a sidecar is never rebuilt and re-running
+    the job is a no-op for it.
     """
 
     def __init__(
@@ -491,6 +589,7 @@ class PredictionTilesPostprocessor:
         model: Optional[Model],
         image_layer: ImageLayer,
         config: Optional[Config] = None,
+        backfill_versions: bool = True,
     ) -> None:
         if config is None:
             config = Config()
@@ -504,6 +603,7 @@ class PredictionTilesPostprocessor:
         self.image_layer = image_layer
         # No model -> layer-only mode: footprint tiles alone, no sidecar.
         self.layer_only = model is None
+        self.backfill_versions = bool(backfill_versions)
         self.project_id = (
             image_layer.projectId if self.layer_only else model.projectId
         )
@@ -594,6 +694,7 @@ class PredictionTilesPostprocessor:
                     None if self.layer_only else self.model_data.gpkgUrl
                 ),
                 source_footprints_url=footprints_url,
+                backfill_versions=self.backfill_versions,
             )
         )
 
@@ -733,6 +834,9 @@ class PredictionTilesPostprocessor:
 
         In layer-only mode neither the prediction GeoPackage nor the
         sidecar is referenced: the task tiles the footprints and stops.
+        In model-scoped mode the config additionally lists every saved
+        edited version that still lacks a sidecar, so the task rebuilds
+        those from the versions' own GeoPackages.
         """
         filename_pattern = (
             rf"{MetadataUtils.hash_string(self.project_id)}/(.*)\?+"
@@ -764,6 +868,7 @@ class PredictionTilesPostprocessor:
 
         predictions_url = None
         predictions_fn = ""
+        version_inputs: List[Dict[str, Any]] = []
         if self.layer_only:
             # Nothing to reuse and nothing to join: the whole point of
             # this job is to produce the layer's archive.
@@ -784,6 +889,39 @@ class PredictionTilesPostprocessor:
             workflow_config["model_id"] = self.model_data.modelId
             workflow_config["tiles"] = {"build_pmtiles": needs_pmtiles}
             config_identifier = self.model_data.modelId
+
+            # Backfill inputs: one edited GeoPackage per version that
+            # has no sidecar yet. Reading the model document here (and
+            # not the queue message) is what keeps this idempotent.
+            pending = (
+                versions_needing_attrs(self.model_data)
+                if self.backfill_versions
+                else []
+            )
+            for entry in pending:
+                version = int(entry["version"])
+                version_url = entry["gpkgUrl"]
+                version_fn = (
+                    "inputs/"
+                    f"{extract_from_url(version_url, filename_pattern)}"
+                )
+                version_inputs.append(
+                    {
+                        "version": version,
+                        "url": version_url,
+                        "file_path": version_fn,
+                    }
+                )
+            workflow_config["versions"] = [
+                {
+                    "version": entry["version"],
+                    "predictions": entry["file_path"],
+                    "attrs": version_attrs_artifact_name(
+                        self.model_data.modelId, entry["version"]
+                    ),
+                }
+                for entry in version_inputs
+            ]
 
         self.storage.save(
             identifier=config_identifier,
@@ -822,6 +960,11 @@ class PredictionTilesPostprocessor:
                     predictions_url, plain_url_pattern
                 ),
                 "file_path": predictions_fn,
+            }
+        for entry in version_inputs:
+            input_files[f"predictions_v{entry['version']}"] = {
+                "http_url": extract_from_url(entry["url"], plain_url_pattern),
+                "file_path": entry["file_path"],
             }
         return input_files
 
@@ -884,6 +1027,57 @@ class PredictionTilesPostprocessor:
             "Prepared prediction attributes for "
             f"{self.model_data.predictedBuildingCount} buildings"
         )
+        self._record_version_attrs(manifest)
+
+    def _record_version_attrs(self, manifest: Dict[str, Any]) -> None:
+        """Attach each backfilled sidecar URL to its version entry.
+
+        A version whose sidecar could not be built keeps an empty
+        ``predictionAttrsUrl``, so the next preparation request picks it
+        up again instead of the model silently claiming a renderable
+        version it does not have.
+        """
+        records = manifest.get("version_attrs") or []
+        if not records:
+            return
+        by_version = {
+            int(entry.version): entry
+            for entry in (self.model_data.editedPredictions or [])
+            if getattr(entry, "version", None) is not None
+        }
+        backfilled: List[int] = []
+        for record in records:
+            try:
+                version = int(record.get("version"))
+            except (TypeError, ValueError):
+                continue
+            entry = by_version.get(version)
+            if entry is None:
+                self.logger.warning(
+                    "Prediction tiles manifest reports a sidecar for "
+                    "version %s, which model %s no longer has",
+                    version,
+                    self.model_data.modelId,
+                )
+                continue
+            url = record.get("url") or self._artifact_url(
+                record.get("filename", "")
+            )
+            if not url:
+                self.logger.warning(
+                    "No sidecar URL for version %s of model %s: %s",
+                    version,
+                    self.model_data.modelId,
+                    record.get("error") or "not built",
+                )
+                continue
+            entry.predictionAttrsUrl = url
+            backfilled.append(version)
+        if backfilled:
+            self._update_progress(
+                "Prepared prediction attributes for edited version(s) "
+                + ", ".join(str(version) for version in sorted(backfilled))
+            )
 
     def _artifact_url(self, filename: str) -> str:
         """Resolve a task output filename to a downloadable URL."""

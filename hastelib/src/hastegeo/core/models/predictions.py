@@ -103,9 +103,17 @@ class PreparePredictionTilesRequest(BaseModel):
     attribute sidecar of ``modelId`` to be built. ``force`` rebuilds them
     even when both already exist — used after predictions are
     regenerated, which leaves stale artifacts behind.
+
+    ``backfillVersions`` (default ``True``) additionally rebuilds the
+    sidecar of every saved edited version that has none, which is how a
+    version saved before per-version sidecars existed becomes
+    renderable. It skips versions that already have one, so requesting it
+    repeatedly is harmless; pass ``False`` to prepare only the model's
+    own artifacts.
     """
 
     projectId: str = Field(pattern=GUID_PATTERN)
     imageLayerId: str = Field(pattern=GUID_PATTERN)
     modelId: str = Field(pattern=SHORT_INT_ID_PATTERN)
     force: bool = Field(default=False)
+    backfillVersions: bool = Field(default=True)

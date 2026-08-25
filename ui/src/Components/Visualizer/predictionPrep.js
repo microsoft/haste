@@ -114,6 +114,21 @@ export function describeOutstandingArtifacts(session) {
   return `Still generating ${missing.join(" and ")}.`;
 }
 
+/**
+ * How many saved versions the prep job still has to backfill sidecars for, or
+ * "" when none (or when the backend never said).
+ *
+ * The prep call the editor already makes asks for the backfill, so this is
+ * the only thing that explains why a saved version is not selectable yet.
+ */
+export function describePendingVersions(session) {
+  const pending = Number(session?.versionsPending);
+  if (!Number.isFinite(pending) || pending <= 0) return "";
+  return `Rebuilding ${pending.toLocaleString()} saved ${
+    pending === 1 ? "version" : "versions"
+  }.`;
+}
+
 /** Label for the status chip; unknown/missing reads as "Starting". */
 export function prepStatusLabel(value) {
   switch (normalizePrepStatus(value)) {
@@ -258,6 +273,15 @@ export function applyPrepResponse(session, response) {
   }
   if (typeof response.attrsReady === "boolean") {
     next.attrsReady = response.attrsReady;
+  }
+  // How many saved versions the same job is backfilling sidecars for. Kept on
+  // the session so the waiting card can explain why a version the analyst can
+  // see in the history is not selectable yet.
+  if (response.versionsPending !== null && response.versionsPending !== undefined) {
+    const versionsPending = Number(response.versionsPending);
+    if (Number.isFinite(versionsPending) && versionsPending >= 0) {
+      next.versionsPending = versionsPending;
+    }
   }
   const status = normalizePrepStatus(
     response.predictionTilesStatus ?? response.status

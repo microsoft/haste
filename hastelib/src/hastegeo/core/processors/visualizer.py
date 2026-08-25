@@ -90,12 +90,20 @@ class PredictionInfo:
         supports_threshold: Whether re-thresholding the damage fraction
             is meaningful for this flavor.
         building_count: Rows in the prediction file.
+        attrs_url: Blob URL of the attribute sidecar that describes the
+            selected version. Empty when that version has no sidecar
+            yet — the payload then reports "still preparing" rather than
+            pointing the map at the raw model's classes.
+        is_latest: Whether the selected version is the newest saved
+            state of the model's predictions.
     """
 
     version: Optional[int] = None
     flavor: Optional[str] = None
     supports_threshold: Optional[bool] = None
     building_count: Optional[int] = None
+    attrs_url: str = ""
+    is_latest: bool = True
 
 
 def model_artifact_url(
@@ -103,12 +111,17 @@ def model_artifact_url(
     model_id: str,
     kind: str,
     image_layer_id: Optional[str] = None,
+    version: Optional[int] = None,
 ) -> str:
     """Build the API-relative ``GetModelArtifact`` route for one artifact.
 
     Relative on purpose: the function app does not know the client's API
     base URL (or its APIM subscription key), and the UI already funnels
     every call through its own ``buildUrl()``.
+
+    ``version`` pins an edited-prediction revision; it is only meaningful
+    for the per-version kinds (``prediction_attrs`` and ``gpkg``), so it
+    is omitted for everything else.
     """
     params = [
         ("projectId", project_id or ""),
@@ -117,6 +130,8 @@ def model_artifact_url(
     ]
     if image_layer_id:
         params.append(("imageLayerId", image_layer_id))
+    if version is not None:
+        params.append(("version", str(int(version))))
     return f"{MODEL_ARTIFACT_ROUTE}?{urlencode(params)}"
 
 
@@ -171,6 +186,7 @@ def visualizer_readiness(
     model: Model,
     image_layer: ImageLayer,
     config: Optional[Config] = None,
+    attrs_ready: Optional[bool] = None,
 ) -> PredictionsReadiness:
     """Report whether the viewer can draw this model's predictions.
 
@@ -180,10 +196,21 @@ def visualizer_readiness(
     browser artifacts must have been built by the prediction-tiles job.
     The second is transient — the UI shows a "still preparing" state and
     polls — while the first usually is not.
+
+    Args:
+        model: The model being viewed.
+        image_layer: Its image layer, which owns the footprint tiles.
+        config: Optional config override.
+        attrs_ready: Whether the sidecar for the *selected* prediction
+            version exists. ``None`` falls back to the model-level
+            sidecar, which describes the raw output. Passing the
+            version's own answer is what stops the viewer from drawing
+            raw classes while claiming to show an edit.
     """
     base = prediction_readiness(model, config=config)
     tiles_ready = bool(resolve_tiles_url(model, image_layer))
-    attrs_ready = bool(model.predictionAttrsUrl)
+    if attrs_ready is None:
+        attrs_ready = bool(model.predictionAttrsUrl)
 
     reason = base.reason
     detail = base.detail
@@ -245,7 +272,16 @@ def build_visualizer_results(
     info = predictions or PredictionInfo()
     bounds = _study_area_bounds(study_area)
     rasters = raster_layer_urls(model)
-    readiness = visualizer_readiness(model, image_layer, config=config)
+    # An edited version renders from ITS OWN sidecar, so readiness has to
+    # be judged against that file and not the model-level one (which
+    # always describes the raw output).
+    selected_attrs_ready = bool(info.attrs_url) if info.version else None
+    readiness = visualizer_readiness(
+        model,
+        image_layer,
+        config=config,
+        attrs_ready=selected_attrs_ready,
+    )
 
     pre_event_url = (
         image_layer.preEventProcessedImageryUrl
@@ -269,8 +305,15 @@ def build_visualizer_results(
         if readiness.tilesReady
         else None
     )
+    # Pin the route to the selected version so switching versions is
+    # just a different URL for the same renderer.
     prediction_attrs_url = (
-        model_artifact_url(project_id, model_id, PREDICTION_ATTRS_KIND)
+        model_artifact_url(
+            project_id,
+            model_id,
+            PREDICTION_ATTRS_KIND,
+            version=info.version if info.version else None,
+        )
         if readiness.attrsReady
         else None
     )
@@ -326,6 +369,7 @@ def build_visualizer_results(
         supportsThreshold=info.supports_threshold,
         buildingCount=info.building_count,
         predictionVersion=info.version,
+        predictionVersionIsLatest=info.is_latest,
         predictionVersions=edited_prediction_versions(model),
         predictionsReady=readiness.ready,
         predictionsReadiness=readiness,

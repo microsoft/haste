@@ -355,6 +355,14 @@ class EditedPredictionVersion(BaseModel):
     Args:
         version: Monotonically increasing revision number, starting at 1
         gpkgUrl: URL to the edited GeoPackage for this version
+        predictionAttrsUrl: URL to this version's columnar attribute
+            sidecar (``ArtifactTypes.PREDICTION_ATTRS_VERSION``). The map
+            renders from the sidecar, not the GeoPackage, so a version
+            without one cannot be drawn — it is written in the same call
+            path as the GeoPackage
+            (``prediction_edits.save_edited_version``) and backfilled by
+            the prediction-tiles job for versions saved before per-version
+            sidecars existed.
         createdAt: ISO formatted timestamp when the version was saved
         createdBy: Identifier of the user who saved the version
         threshold: Damage fraction (0.0-1.0) above which a building was
@@ -380,6 +388,7 @@ class EditedPredictionVersion(BaseModel):
     version: int
     gpkgUrl: str
     createdAt: str
+    predictionAttrsUrl: Optional[str] = None
     createdBy: Optional[str] = None
     threshold: Optional[float] = None
     unknownThreshold: Optional[float] = None

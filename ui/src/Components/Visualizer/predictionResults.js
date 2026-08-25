@@ -64,17 +64,37 @@ function cleanString(value) {
 }
 
 /**
+ * A version query value, or null when there is nothing to pin.
+ *
+ * `0` is a real answer — GetModelArtifact reads it as "the raw model output,
+ * explicitly" — so it survives, while null/undefined/"" mean "say nothing and
+ * let the route apply its own default".
+ */
+export function normalizeVersionParam(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const version = Number(value);
+  if (!Number.isFinite(version) || version < 0) return null;
+  return Math.floor(version);
+}
+
+/**
  * The API-relative GetModelArtifact endpoint for one artifact `kind`.
  *
  * `imageLayerId` is optional in the contract (the route falls back to the
  * model's own layer) but is always sent when known: footprint tiles are
  * layer-scoped, and being explicit costs nothing.
+ *
+ * `version` is optional and only meaningful for the per-version kinds
+ * (`prediction_attrs`, `gpkg`): omitted serves the model-level artifact (the
+ * raw output), `0` forces the raw output explicitly, and `N` serves that
+ * edited version's own artifact.
  */
 export function buildArtifactUrl({
   projectId,
   imageLayerId,
   modelId,
   kind,
+  version,
 } = {}) {
   const params = new URLSearchParams();
   params.set("projectId", String(projectId ?? ""));
@@ -83,6 +103,8 @@ export function buildArtifactUrl({
   }
   params.set("modelId", String(modelId ?? ""));
   params.set("kind", String(kind ?? ""));
+  const pinned = normalizeVersionParam(version);
+  if (pinned !== null) params.set("version", String(pinned));
   return `GetModelArtifact?${params.toString()}`;
 }
 
@@ -92,15 +114,24 @@ export function buildArtifactUrl({
  * Prefers whatever the server handed back so the API stays free to move the
  * artifacts, and reconstructs the standard endpoints when those fields are
  * missing (the pre-vector-first payload).
+ *
+ * The sidecar is PER VERSION and the geometry is not: every version of a
+ * model describes the same buildings, so the PMTiles archive is shared while
+ * the scores and classes come from the selected version's own file. When the
+ * payload was served for version N and did not name a sidecar, the
+ * reconstructed endpoint is pinned to N — the raw model's sidecar is never
+ * substituted, because it describes the model's classes and not the
+ * analyst's.
  */
 export function resolvePredictionArtifacts(results, ids = {}) {
+  const version = resolveActiveVersion(results);
   const footprintTilesUrl =
     cleanString(results?.footprintTilesUrl) ||
     buildArtifactUrl({ ...ids, kind: "footprint_pmtiles" });
   const predictionAttrsUrl =
     cleanString(results?.predictionAttrsUrl) ||
-    buildArtifactUrl({ ...ids, kind: "prediction_attrs" });
-  return { footprintTilesUrl, predictionAttrsUrl };
+    buildArtifactUrl({ ...ids, kind: "prediction_attrs", version });
+  return { footprintTilesUrl, predictionAttrsUrl, version };
 }
 
 // ── Model shape ─────────────────────────────────────────────────────────────
@@ -247,6 +278,37 @@ export function describeServedVersion(activeVersion) {
   return activeVersion
     ? `Showing edited version ${activeVersion}.`
     : "Showing the model's own predictions.";
+}
+
+/**
+ * Whether the version the payload was served from is the newest saved state
+ * of this model's predictions.
+ *
+ * SERVER-DECIDED, never recomputed here: the API knows about versions this
+ * page may not have listed yet, and it is the same flag the report routes
+ * resolve their default from. Absent (an older payload) means "assume
+ * newest", which is what omitting `version` has always meant.
+ */
+export function resolveVersionIsLatest(results) {
+  return results?.predictionVersionIsLatest !== false;
+}
+
+/**
+ * True when the payload was served for an edited version whose sidecar has
+ * not been built yet.
+ *
+ * That version genuinely has nothing to draw — the raw sidecar is never
+ * substituted — so the page shows the "still preparing" state instead of an
+ * empty map. Requires the server to actually say so (`attrsReady: false` or
+ * `predictionsReady: false`): a payload that simply omits the URL falls
+ * through to the reconstructed version-pinned endpoint, which 404s on its own
+ * if the file really is missing.
+ */
+export function versionSidecarPending(results) {
+  if (resolveActiveVersion(results) === null) return false;
+  if (cleanString(results?.predictionAttrsUrl)) return false;
+  if (results?.predictionsReadiness?.attrsReady === false) return true;
+  return results?.predictionsReady === false;
 }
 
 // ── Footprint layer status ──────────────────────────────────────────────────

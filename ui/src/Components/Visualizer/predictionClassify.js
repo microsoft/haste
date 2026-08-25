@@ -86,6 +86,13 @@ export function deriveClass(damage, unknown, threshold, unknownThreshold = 0) {
  * Coerce the raw prediction_attrs sidecar into the shape the editor uses.
  * Missing arrays become empty ones and `n` is clamped to the shortest array
  * actually present, so a truncated sidecar can't index past its data.
+ *
+ * A VERSION's sidecar has the same shape plus `classes`: the analyst's final
+ * class per row. `damage` / `unknown` stay the model's own fractions there
+ * (an edit changes the class, not the model's confidence), so re-deriving a
+ * class from them would quietly undo the edit — `classes` is kept and wins.
+ * Entries that are not one of the three classes are dropped to null so a
+ * malformed row falls back to the derived class instead of poisoning it.
  */
 export function normalizeAttrs(raw) {
   const ids = Array.isArray(raw?.ids) ? raw.ids : [];
@@ -93,9 +100,47 @@ export function normalizeAttrs(raw) {
   const damage = Array.isArray(raw?.damage) ? raw.damage : [];
   const unknown = Array.isArray(raw?.unknown) ? raw.unknown : [];
   const damaged = Array.isArray(raw?.damaged) ? raw.damaged : [];
+  const classes = Array.isArray(raw?.classes)
+    ? raw.classes.map((value) => (isPredictionClass(value) ? value : null))
+    : [];
   const declared = num(raw?.n, ids.length);
   const n = Math.max(0, Math.min(declared, ids.length));
-  return { n, ids, overtureIds, damage, unknown, damaged };
+  return { n, ids, overtureIds, damage, unknown, damaged, classes };
+}
+
+/** The class this sidecar already stores for row `index`, or null. */
+export function savedClassAt(attrs, index) {
+  const value = attrs?.classes?.[index];
+  return isPredictionClass(value) ? value : null;
+}
+
+/**
+ * True when the sidecar carries saved classes for buildings — i.e. it is a
+ * version's sidecar rather than the raw model's. The thresholds cannot move
+ * those buildings, so the page stops offering to.
+ */
+export function hasSavedClasses(attrs) {
+  const n = attrs?.n || 0;
+  for (let i = 0; i < n; i++) {
+    if (savedClassAt(attrs, i)) return true;
+  }
+  return false;
+}
+
+/**
+ * The class of row `index` before any edit in this session: the version's
+ * saved class when there is one, else the model's own scores thresholded.
+ */
+export function baseClassAt(attrs, index, threshold, unknownThreshold = 0) {
+  return (
+    savedClassAt(attrs, index) ||
+    deriveClass(
+      attrs?.damage?.[index],
+      attrs?.unknown?.[index],
+      threshold,
+      unknownThreshold
+    )
+  );
 }
 
 /** Map of building id -> row index, for turning a clicked feature id into attrs. */
@@ -200,6 +245,44 @@ export function toOverrideList(overrides) {
     .sort((a, b) => a.id - b.id);
 }
 
+/**
+ * Every override the server needs to reproduce what is on screen.
+ *
+ * PutEditedPredictions always derives a new version from the RAW model
+ * GeoPackage: it applies the thresholds and then the overrides. So when the
+ * page is editing on top of a saved version — whose sidecar carries the
+ * analyst's final `classes` — the classes that version established have to
+ * travel with the save, or the new version would silently drop them.
+ *
+ * Only the rows the thresholds cannot reproduce are sent, computed against
+ * the very thresholds in the payload, so the list stays as small as it can
+ * be and can never go stale: the user's own edits, plus each carried-over
+ * class that the raw scores would not derive on their own.
+ */
+export function mergedOverrideList(
+  attrs,
+  overrides,
+  threshold = 0.5,
+  unknownThreshold = 0
+) {
+  const merged = { ...(overrides || {}) };
+  const n = attrs?.n || 0;
+  for (let i = 0; i < n; i++) {
+    const id = attrs.ids[i];
+    if (getOverride(merged, id)) continue;
+    const saved = savedClassAt(attrs, i);
+    if (!saved) continue;
+    const derived = deriveClass(
+      attrs.damage[i],
+      attrs.unknown[i],
+      threshold,
+      unknownThreshold
+    );
+    if (saved !== derived) merged[id] = saved;
+  }
+  return toOverrideList(merged);
+}
+
 /** The exact PUT body for PutEditedPredictions. */
 export function buildSavePayload({
   projectId,
@@ -208,6 +291,7 @@ export function buildSavePayload({
   threshold,
   unknownThreshold,
   overrides,
+  attrs = null,
 }) {
   return {
     projectId,
@@ -215,7 +299,12 @@ export function buildSavePayload({
     modelId,
     threshold: num(threshold),
     unknownThreshold: num(unknownThreshold),
-    overrides: toOverrideList(overrides),
+    overrides: mergedOverrideList(
+      attrs,
+      overrides,
+      num(threshold),
+      num(unknownThreshold)
+    ),
   };
 }
 
@@ -227,12 +316,7 @@ export function resolveClassAt(attrs, index, options) {
     options || {};
   const override = getOverride(overrides, attrs?.ids?.[index]);
   if (override) return override;
-  return deriveClass(
-    attrs?.damage?.[index],
-    attrs?.unknown?.[index],
-    threshold,
-    unknownThreshold
-  );
+  return baseClassAt(attrs, index, threshold, unknownThreshold);
 }
 
 /**
@@ -254,14 +338,7 @@ export function classifyAll(attrs, options) {
   let editedCount = 0;
   for (let i = 0; i < n; i++) {
     const override = getOverride(overrides, attrs.ids[i]);
-    const cls =
-      override ||
-      deriveClass(
-        attrs.damage[i],
-        attrs.unknown[i],
-        threshold,
-        unknownThreshold
-      );
+    const cls = override || baseClassAt(attrs, i, threshold, unknownThreshold);
     classes[i] = cls;
     edited[i] = override != null;
     if (override != null) editedCount++;
@@ -295,8 +372,10 @@ export function filterIndices(classification, filter) {
  * How many buildings would change class when moving from one threshold
  * setting to another. Buildings the user has explicitly edited are excluded:
  * their class is pinned by the override, so a slider move can never flip
- * them. This is what drives the live "N buildings would change class"
- * readout — no server round-trip involved.
+ * them. Buildings whose class was SAVED into this version's sidecar are
+ * excluded for the same reason — the analyst already decided them.
+ * This is what drives the live "N buildings would change class" readout —
+ * no server round-trip involved.
  */
 export function countClassChanges(attrs, baseline, candidate, overrides = null) {
   const n = attrs?.n || 0;
@@ -308,6 +387,7 @@ export function countClassChanges(attrs, baseline, candidate, overrides = null) 
   let changed = 0;
   for (let i = 0; i < n; i++) {
     if (getOverride(overrides, attrs.ids[i])) continue;
+    if (savedClassAt(attrs, i)) continue;
     const before = deriveClass(attrs.damage[i], attrs.unknown[i], fromT, fromU);
     const after = deriveClass(attrs.damage[i], attrs.unknown[i], toT, toU);
     if (before !== after) changed++;

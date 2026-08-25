@@ -27,6 +27,19 @@ Two modes, selected by the presence of ``model_id`` in the config:
   a layer's footprints are cached, so the tiles exist before any model
   is trained — there are no predictions to join yet.
 
+Model-scoped runs additionally **backfill edited versions**: every entry
+in the config's ``versions`` list gets its own sidecar
+(``ArtifactTypes.PREDICTION_ATTRS_VERSION``) built from that version's
+own GeoPackage, so switching versions in the viewer is the same code
+path as rendering the raw output with a different URL. The processor
+lists only versions that still lack a sidecar, which makes the backfill
+idempotent.
+
+The sidecar builder itself lives in
+``hastegeo.core.utils.prediction_attrs`` (and is re-exported here): the
+Functions app has to write one every time an analyst saves an edited
+version, and it can neither run nor import this tippecanoe-bound module.
+
 CRITICAL — row-order invariant:
     Predictions join to the layer's ``buildingFootprintsUrl`` GeoPackage
     **by row index** (``hastegeo.core.utils.assessment``). Both artifacts
@@ -56,12 +69,28 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-import fiona
 import geopandas as gpd
 from hastegeo.core.config import ArtifactTypes, Config, StorageType
 from hastegeo.core.utils.gdal_security import harden_gdal
 from hastegeo.core.utils.logs import Logger as HasteLogger
-from hastegeo.core.utils.predictions import PredictionSet, read_predictions
+
+# The sidecar builder lives in hastegeo.core.utils.prediction_attrs so the
+# Functions app can write a sidecar when an analyst saves an edited
+# version, without importing this training-image-only module (tippecanoe).
+# Re-exported here because this module IS the sidecar's public workflow
+# entry point.
+from hastegeo.core.utils.prediction_attrs import (  # noqa: F401
+    VALUE_PRECISION,
+    FootprintPredictionMismatchError,
+    build_edited_prediction_attrs,
+    build_prediction_attrs,
+    count_features,
+    prediction_layer,
+    version_attrs_artifact_name,
+    write_edited_prediction_attrs,
+    write_prediction_attrs,
+)
+from hastegeo.core.utils.predictions import read_predictions
 
 WORKDIR = os.getenv("WORKDIR", ".")
 LOG_DIR = os.path.join(WORKDIR, "logs")
@@ -91,9 +120,6 @@ DEFAULT_MAX_ZOOM = 15
 TILE_ID_FIELD = "id"
 TILE_OVERTURE_ID_FIELD = "overture_id"
 TILING_CRS = "EPSG:4326"
-# Damage/unknown values are fractions in [0, 1]; six decimals is well
-# below any threshold a user can set and keeps the payload compact.
-VALUE_PRECISION = 6
 
 MANIFEST_FILENAME = "prediction_tiles_manifest.json"
 DEFAULT_OUTPUT_DIR = "outputs"
@@ -105,10 +131,6 @@ class TippecanoeNotFoundError(RuntimeError):
 
 class TippecanoeError(RuntimeError):
     """Raised when tippecanoe runs but exits non-zero."""
-
-
-class FootprintPredictionMismatchError(ValueError):
-    """Raised when predictions and footprints do not line up row for row."""
 
 
 def log_progress(message: str) -> None:
@@ -294,143 +316,6 @@ def build_footprint_pmtiles(
 
 
 # ---------------------------------------------------------------------------
-# Prediction attribute sidecar
-# ---------------------------------------------------------------------------
-def count_features(path: str, layer: Optional[str] = None) -> int:
-    """Count features in a vector file without loading its geometry."""
-    if layer is None:
-        layers = fiona.listlayers(path)
-        if not layers:
-            raise ValueError(f"Vector file has no layers: {path}")
-        layer = layers[0]
-    with fiona.open(path, layer=layer) as src:
-        return len(src)
-
-
-def _prediction_layer(predictions_path: str) -> str:
-    """Return the layer a prediction GeoPackage stores its rows in."""
-    layers = fiona.listlayers(predictions_path)
-    if not layers:
-        raise ValueError(
-            f"Prediction GeoPackage has no layers: {predictions_path}"
-        )
-    # The embedding flavor writes a named "predictions" layer; the
-    # trained-inference flavor uses the default (first) layer.
-    return "predictions" if "predictions" in layers else layers[0]
-
-
-def _assert_row_counts_match(
-    predictions_path: str, footprints_path: str
-) -> int:
-    """Fail loudly when predictions and footprints do not line up.
-
-    The prediction -> footprint join is positional, so a count mismatch
-    would silently attach every damage value to the wrong building.
-
-    Returns:
-        The (shared) row count.
-
-    Raises:
-        FootprintPredictionMismatchError: on any mismatch.
-    """
-    footprint_count = count_features(footprints_path)
-    prediction_count = count_features(
-        predictions_path, layer=_prediction_layer(predictions_path)
-    )
-    if footprint_count != prediction_count:
-        raise FootprintPredictionMismatchError(
-            "Prediction/footprint row count mismatch: "
-            f"{prediction_count} predictions in {predictions_path} vs "
-            f"{footprint_count} footprints in {footprints_path}. The "
-            "prediction-to-footprint join is positional, so both files "
-            "must have the same number of rows in the same order."
-        )
-    return footprint_count
-
-
-def build_prediction_attrs(
-    predictions_path: str, footprints_path: str
-) -> Dict[str, Any]:
-    """Build the columnar attribute payload for one model.
-
-    Args:
-        predictions_path: Prediction GeoPackage (either flavor — the
-            trained-inference merge output or the embedding labeler's
-            ``predictions`` layer).
-        footprints_path: The image layer's building-footprints
-            GeoPackage, used to resolve Overture ids positionally.
-
-    Returns:
-        ``{"n", "ids", "overtureIds", "damage", "unknown", "damaged"}``
-        with every array the same length and ordered by row index.
-
-    Raises:
-        FootprintPredictionMismatchError: when the two files disagree on
-            row count.
-        ValueError: when the prediction row indices are not the
-            contiguous range ``0..n-1``.
-    """
-    expected_count = _assert_row_counts_match(
-        predictions_path, footprints_path
-    )
-    predictions: PredictionSet = read_predictions(
-        predictions_path, footprints_path=footprints_path
-    )
-    rows = sorted(predictions.rows, key=lambda row: row.row_index)
-
-    ids: List[int] = [int(row.row_index) for row in rows]
-    if ids != list(range(expected_count)):
-        raise ValueError(
-            f"Prediction GeoPackage {predictions_path} does not carry a "
-            f"contiguous 0..{expected_count - 1} row index; the editor "
-            "indexes the sidecar arrays by tile feature id, so gaps or "
-            "duplicates would mislabel buildings."
-        )
-
-    payload: Dict[str, Any] = {
-        "n": expected_count,
-        "ids": ids,
-        "overtureIds": [
-            "" if row.overture_id is None else str(row.overture_id)
-            for row in rows
-        ],
-        "damage": [
-            round(float(row.damage_fraction), VALUE_PRECISION) for row in rows
-        ],
-        "unknown": [
-            round(float(row.unknown_fraction), VALUE_PRECISION) for row in rows
-        ],
-        "damaged": [int(row.damaged) for row in rows],
-    }
-
-    lengths = {
-        key: len(value)
-        for key, value in payload.items()
-        if isinstance(value, list)
-    }
-    if set(lengths.values()) != {expected_count}:
-        raise ValueError(
-            "Prediction attribute arrays have inconsistent lengths "
-            f"{lengths}; expected {expected_count} for every column."
-        )
-    return payload
-
-
-def write_prediction_attrs(
-    predictions_path: str, footprints_path: str, attrs_path: str
-) -> Dict[str, Any]:
-    """Build and write the attribute sidecar; return the payload."""
-    payload = build_prediction_attrs(predictions_path, footprints_path)
-    with open(attrs_path, "w") as handle:
-        json.dump(payload, handle, separators=(",", ":"))
-    log_progress(
-        f"Wrote prediction attributes for {payload['n']} buildings -> "
-        f"{os.path.basename(attrs_path)}"
-    )
-    return payload
-
-
-# ---------------------------------------------------------------------------
 # Artifact storage
 # ---------------------------------------------------------------------------
 def artifact_storage_available(config: Config) -> bool:
@@ -519,6 +404,96 @@ def default_attrs_name(model_id: str) -> str:
     )
 
 
+def default_version_attrs_name(model_id: str, version: int) -> str:
+    """Artifact filename of ONE edited version's attribute sidecar."""
+    return version_attrs_artifact_name(model_id, version)
+
+
+def build_version_attrs(
+    versions: List[Dict[str, Any]],
+    footprints_path: str,
+    output_dir: str,
+    model_id: str,
+) -> List[Dict[str, Any]]:
+    """Build the attribute sidecar of each requested edited version.
+
+    The backfill half of the job: an edited GeoPackage saved before
+    per-version sidecars existed (or one whose sidecar write failed) has
+    no class data for the viewer to render, so the processor lists those
+    versions in the config and they are rebuilt here from the very same
+    GeoPackage they describe.
+
+    Failures are per version and non-fatal: one unreadable revision must
+    not throw away the model's own sidecar or the layer's tiles, and the
+    next preparation request retries whatever is still missing (the
+    whole flow is idempotent and skips versions that already have one).
+
+    Args:
+        versions: ``[{"version": 1, "predictions": <local gpkg path>,
+            "attrs": <output filename>}, ...]``.
+        footprints_path: The layer's footprints GeoPackage.
+        output_dir: Directory the sidecars are written to.
+        model_id: Owning model, used for the default artifact name.
+
+    Returns:
+        One manifest entry per version:
+        ``{"version", "filename", "url", "n", "error"}``. ``filename``
+        is empty when the sidecar could not be built.
+    """
+    results: List[Dict[str, Any]] = []
+    for entry in versions:
+        try:
+            version = int(entry.get("version"))
+        except (TypeError, ValueError):
+            logger.warning(
+                "Skipping edited-version entry without a numeric "
+                "version: %s",
+                entry,
+            )
+            continue
+        record: Dict[str, Any] = {
+            "version": version,
+            "filename": "",
+            "url": None,
+            "n": 0,
+            "error": "",
+        }
+        results.append(record)
+        predictions_path = entry.get("predictions") or ""
+        attrs_name = os.path.basename(
+            entry.get("attrs") or default_version_attrs_name(model_id, version)
+        )
+        try:
+            if not predictions_path or not os.path.exists(predictions_path):
+                raise FileNotFoundError(
+                    "Edited prediction GeoPackage not found for version "
+                    f"{version}: {predictions_path}"
+                )
+            attrs_path = os.path.join(output_dir, attrs_name)
+            payload = write_edited_prediction_attrs(
+                predictions_path, footprints_path, attrs_path
+            )
+            record["filename"] = attrs_name
+            record["n"] = int(payload["n"])
+            log_progress(
+                f"Built prediction attributes for edited version {version} "
+                f"({payload['n']} buildings)"
+            )
+        except Exception as error:  # noqa: BLE001 - reported per version
+            logger.error(
+                "Failed to build attributes for edited version %s: %s",
+                version,
+                error,
+                exc_info=True,
+            )
+            record["error"] = str(error)
+            log_progress(
+                f"Could not build prediction attributes for edited "
+                f"version {version}: {error}"
+            )
+    return results
+
+
 def run(config: Dict[str, Any], output_dir: str) -> Dict[str, Any]:
     """Run the workflow described by ``config`` and return its manifest.
 
@@ -526,7 +501,9 @@ def run(config: Dict[str, Any], output_dir: str) -> Dict[str, Any]:
         config: Parsed workflow config (see the module docstring of
             ``hastegeo.core.processors.prediction_tiles`` for the shape
             the processor writes). Omitting ``model_id`` selects
-            layer-only mode: footprint PMTiles, no sidecar.
+            layer-only mode: footprint PMTiles, no sidecar. A
+            ``versions`` list additionally backfills the attribute
+            sidecar of each analyst-edited version listed there.
         output_dir: Directory the artifacts are written to. The runner
             uploads everything in here after the task completes.
 
@@ -592,6 +569,8 @@ def run(config: Dict[str, Any], output_dir: str) -> Dict[str, Any]:
         "building_count": 0,
         "prediction_flavor": "",
         "supports_threshold": False,
+        # One entry per edited version whose sidecar was (re)built.
+        "version_attrs": [],
     }
 
     to_store: Dict[str, str] = {}
@@ -630,6 +609,27 @@ def run(config: Dict[str, Any], output_dir: str) -> Dict[str, Any]:
         manifest["prediction_flavor"] = predictions.flavor
         manifest["supports_threshold"] = bool(predictions.supports_threshold)
         to_store[attrs_name] = attrs_path
+        log_progress(
+            f"Wrote prediction attributes for {payload['n']} buildings -> "
+            f"{attrs_name}"
+        )
+
+        # Backfill: every edited version listed in the config gets its
+        # own sidecar, keyed to the very GeoPackage it describes. The
+        # processor only lists versions that still lack one, so re-running
+        # this job is a no-op for versions already backfilled.
+        version_records = build_version_attrs(
+            config.get("versions") or [],
+            footprints_path,
+            output_dir,
+            model_id,
+        )
+        manifest["version_attrs"] = version_records
+        for record in version_records:
+            if record["filename"]:
+                to_store[record["filename"]] = os.path.join(
+                    output_dir, record["filename"]
+                )
     else:
         log_progress("No model requested; skipping prediction attributes")
 
@@ -642,6 +642,9 @@ def run(config: Dict[str, Any], output_dir: str) -> Dict[str, Any]:
             manifest["attrs_url"] = (
                 urls.get(attrs_name) if attrs_name else None
             )
+            for record in manifest["version_attrs"]:
+                if record["filename"]:
+                    record["url"] = urls.get(record["filename"])
         else:
             # Not an error: on Azure Batch the runner uploads outputs/
             # and the postprocessor resolves the URLs from the task's

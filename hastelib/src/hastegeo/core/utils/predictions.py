@@ -261,11 +261,19 @@ class PredictionSource:
     Attributes:
         url: Blob URL of the GeoPackage. Empty when the model has no
             predictions at all.
+        attrs_url: Blob URL of the matching columnar attribute sidecar —
+            the model-level one for the raw output, the version's own
+            for an edited version. Empty when it has not been built yet
+            (the prediction-tiles job backfills those).
         version: Edited-version number, or ``None`` for the raw model
             output in ``Model.gpkgUrl``.
         created_at: When the edited version was saved (``None`` for raw).
         created_by: Who saved the edited version (``None`` for raw).
         edited_count: Buildings the analyst overrode in this version.
+        is_latest: Whether this is the newest saved state of the model's
+            predictions. The reports always read the newest version, so
+            a viewer pinned to an older one (or to the raw output while
+            edits exist) has to be able to say the two diverge.
     """
 
     url: str = ""
@@ -273,6 +281,8 @@ class PredictionSource:
     created_at: Optional[str] = None
     created_by: Optional[str] = None
     edited_count: int = 0
+    attrs_url: str = ""
+    is_latest: bool = True
 
     @property
     def is_edited(self) -> bool:
@@ -283,11 +293,13 @@ class PredictionSource:
         """Serialize for an HTTP payload."""
         return {
             "url": self.url,
+            "attrsUrl": self.attrs_url,
             "version": self.version,
             "createdAt": self.created_at,
             "createdBy": self.created_by,
             "editedCount": self.edited_count,
             "isEdited": self.is_edited,
+            "isLatest": self.is_latest,
         }
 
 
@@ -354,20 +366,28 @@ def describe_prediction_source(
             such edited version exists.
     """
     raw_url = model_field(model, "gpkgUrl") or ""
+    raw_attrs_url = model_field(model, "predictionAttrsUrl") or ""
     entries = [
         entry
         for entry in edited_prediction_versions(model)
         if entry.get("gpkgUrl")
     ]
+    # The newest saved state of this model's predictions: the highest
+    # edited version, or the raw output when there is none.
+    latest_version = _entry_version(entries[0]) if entries else 0
 
     if version is None:
         if not entries:
-            return PredictionSource(url=raw_url)
+            return PredictionSource(url=raw_url, attrs_url=raw_attrs_url)
         entry = entries[0]
     else:
         requested = int(version)
         if requested == RAW_PREDICTION_VERSION:
-            return PredictionSource(url=raw_url)
+            return PredictionSource(
+                url=raw_url,
+                attrs_url=raw_attrs_url,
+                is_latest=latest_version == RAW_PREDICTION_VERSION,
+            )
         entry = next(
             (e for e in entries if _entry_version(e) == requested), None
         )
@@ -381,10 +401,12 @@ def describe_prediction_source(
 
     return PredictionSource(
         url=str(entry.get("gpkgUrl") or ""),
+        attrs_url=str(entry.get("predictionAttrsUrl") or ""),
         version=_entry_version(entry),
         created_at=entry.get("createdAt"),
         created_by=entry.get("createdBy"),
         edited_count=int(entry.get("editedCount") or 0),
+        is_latest=_entry_version(entry) == latest_version,
     )
 
 

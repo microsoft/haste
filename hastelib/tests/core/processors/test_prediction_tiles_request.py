@@ -94,6 +94,7 @@ class TestRequestPreparation(unittest.TestCase):
                 "sourceGpkgUrl",
                 "sourceFootprintsUrl",
                 "force",
+                "backfillVersions",
             },
         )
         self.assertEqual(payload["projectId"], "proj-1")

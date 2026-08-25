@@ -22,6 +22,15 @@
 // history), fetched lazily: reading it costs the API a GeoPackage read, so a
 // plain results view that finds its artifacts on the first try never asks for
 // one. Entering edit mode does.
+//
+// VERSIONS. The sidecar is per version and the geometry is not: every saved
+// version of a model describes the same buildings, so switching versions
+// re-downloads the scores and reuses the PMTiles archive. The load is keyed
+// on the resolved artifact URLs rather than on the route, which is what makes
+// a version switch (a new results payload with a version-pinned
+// `predictionAttrsUrl`) reload exactly as much as it has to — and a version
+// whose sidecar has not been backfilled yet is reported as "preparing"
+// instead of being drawn from the raw model's scores.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PMTiles } from "pmtiles";
 import { apiGet, apiPut, buildUrl } from "../../util/api";
@@ -41,7 +50,9 @@ import {
   resolvePredictionsReady,
   resolveReadinessDetail,
   resolveReadinessReason,
+  resolveVersionIsLatest,
   shouldRequestPreparation,
+  versionSidecarPending,
 } from "./predictionResults.js";
 import {
   MAX_PREP_POLL_ATTEMPTS,
@@ -78,6 +89,13 @@ const usePredictionArtifacts = ({
   // that produced `session`.
   const sessionRef = useRef(null);
   const sessionPromiseRef = useRef(null);
+  // The PMTiles archive already downloaded and registered with the protocol.
+  // Footprint geometry is shared by every version of a model, so a version
+  // switch must not re-download it.
+  const loadedArchiveRef = useRef("");
+  // True once a backfill has been asked for on this run, so a version whose
+  // sidecar is missing requests the job once rather than on every render.
+  const backfillRequestedRef = useRef("");
 
   const [attrs, setAttrs] = useState(null);
   const [archiveKey, setArchiveKey] = useState("");
@@ -98,6 +116,17 @@ const usePredictionArtifacts = ({
       }),
     [results, projectId, imageLayerId, modelId]
   );
+
+  // The identity of what is being drawn: the sidecar decides every class on
+  // the map, so this string changes exactly when a version switch (or a route
+  // change) means the renderer has to be rebuilt. Held as a plain string so
+  // effects can depend on it without re-running for an unrelated payload
+  // refresh that happens to produce a new object.
+  const attrsKey = artifactUrls.predictionAttrsUrl;
+  const tilesKey = artifactUrls.footprintTilesUrl;
+  // A version that was saved before its sidecar existed: nothing to fetch,
+  // and the raw sidecar must never stand in for it.
+  const versionPending = versionSidecarPending(results);
 
   const sessionEndpoint = useMemo(
     () =>
@@ -177,11 +206,19 @@ const usePredictionArtifacts = ({
   // ── Artifact download ─────────────────────────────────────────────────────
   const loadArtifacts = useCallback(
     async (runId) => {
+      if (!attrsKey || !tilesKey) {
+        const failure = new Error(
+          "This version's per-building predictions are not available yet."
+        );
+        failure.missing = true;
+        throw failure;
+      }
       setIsLoading(true);
       setError("");
       // Streamed through the same-origin API proxy (managed identity server
-      // side) so analysts behind the storage firewall can read them.
-      const attrsUrl = buildUrl(artifactUrls.predictionAttrsUrl);
+      // side) so analysts behind the storage firewall can read them. The URL
+      // is version-pinned, so this is also the whole of a version switch.
+      const attrsUrl = buildUrl(attrsKey);
       const response = await fetch(attrsUrl);
       if (!response.ok) {
         const notFound = response.status === 404;
@@ -200,15 +237,20 @@ const usePredictionArtifacts = ({
 
       // Download the whole archive once and serve pmtiles.js from memory: the
       // SWA /api proxy in front of the function app does not honour range
-      // requests.
-      const archiveUrl = buildUrl(artifactUrls.footprintTilesUrl);
+      // requests. Every version of a model describes the SAME buildings, so
+      // an archive already registered for this URL is reused rather than
+      // re-downloaded on a version switch.
+      const archiveUrl = buildUrl(tilesKey);
       const protocol = getPmtilesProtocol();
-      const buffer = await fetchArtifactBuffer(archiveUrl);
-      if (isStale(runId)) return false;
-      const archive = new PMTiles(
-        new InMemoryPMTilesSource(archiveUrl, buffer)
-      );
-      if (protocol) protocol.add(archive);
+      if (loadedArchiveRef.current !== archiveUrl) {
+        const buffer = await fetchArtifactBuffer(archiveUrl);
+        if (isStale(runId)) return false;
+        const archive = new PMTiles(
+          new InMemoryPMTilesSource(archiveUrl, buffer)
+        );
+        if (protocol) protocol.add(archive);
+        loadedArchiveRef.current = archiveUrl;
+      }
 
       indexByIdRef.current = indexById(loadedAttrs);
       setBuildingCount(loadedAttrs.n);
@@ -218,7 +260,7 @@ const usePredictionArtifacts = ({
       setIsLoading(false);
       return true;
     },
-    [artifactUrls, isStale]
+    [attrsKey, tilesKey, isStale]
   );
 
   // ── Preparation ───────────────────────────────────────────────────────────
@@ -310,15 +352,19 @@ const usePredictionArtifacts = ({
   );
 
   // ── Load ──────────────────────────────────────────────────────────────────
+  // Keyed on the resolved artifact URLs, not just the route: switching to
+  // another saved version keeps the same model but points at that version's
+  // own sidecar, and that is precisely when everything below has to be
+  // thrown away and fetched again.
   useEffect(() => {
     if (!resultsReady) return undefined;
     const runId = runRef.current + 1;
     runRef.current = runId;
 
-    // Route params can change without remounting; start from a clean slate —
-    // but keep whatever the results payload already told us, so a
-    // vector-first API answers "how many buildings?" and "which versions
-    // exist?" without a single extra request.
+    // Route params (and the selected version) can change without remounting;
+    // start from a clean slate — but keep whatever the results payload
+    // already told us, so a vector-first API answers "how many buildings?"
+    // and "which versions exist?" without a single extra request.
     setAttrs(null);
     indexByIdRef.current = new Map();
     sessionRef.current = null;
@@ -337,6 +383,19 @@ const usePredictionArtifacts = ({
       // ask for artifacts that cannot exist.
       if (initialBuildingCount === 0) return;
       const reason = resolveReadinessReason(results);
+      // This version was saved before its sidecar was: there is genuinely
+      // nothing to draw, and the raw model's scores must NOT stand in for it.
+      // Ask for the backfill once (the prep job rebuilds missing versions)
+      // and let the page sit on its "preparing" note until the poll upstairs
+      // sees the sidecar appear.
+      if (versionPending) {
+        setIsLoading(false);
+        if (backfillRequestedRef.current !== attrsKey) {
+          backfillRequestedRef.current = attrsKey;
+          await requestPreparation(false);
+        }
+        return;
+      }
       // A payload that already says "not ready" saves us a doomed download.
       if (resolvePredictionsReady({ results }) === false) {
         await beginPreparation(runId, reason);
@@ -369,10 +428,20 @@ const usePredictionArtifacts = ({
       // results through isStale().
       runRef.current += 1;
     };
-    // `results` is only read for its readiness flag and artifact URLs, both of
-    // which are folded into artifactUrls / resultsReady.
+    // `results` is only read for its readiness flags and artifact URLs, all of
+    // which are folded into attrsKey / tilesKey / versionPending /
+    // resultsReady. Listing `results` itself would reload the layer whenever
+    // an unrelated field of the payload changed identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, imageLayerId, modelId, resultsReady]);
+  }, [
+    projectId,
+    imageLayerId,
+    modelId,
+    resultsReady,
+    attrsKey,
+    tilesKey,
+    versionPending,
+  ]);
 
   // ── Preparation polling ───────────────────────────────────────────────────
   // Each pass schedules exactly ONE timeout and then re-runs off the state it
@@ -432,13 +501,31 @@ const usePredictionArtifacts = ({
         loaded: isLoaded,
         loading: isLoading,
         error,
-        ready: prepState ? false : resolvePredictionsReady({ results, session }),
+        // A version with no sidecar is never "ready", whatever the
+        // model-level flags say: those describe the raw artifacts, which this
+        // version may not use.
+        ready:
+          prepState || versionPending
+            ? false
+            : resolvePredictionsReady({ results, session }),
         buildingCount,
         // Only trusted while a job is not already running: once one is, the
-        // poll knows more than the reason the page loaded with.
-        reason: prepState ? "" : resolveReadinessReason(results),
+        // poll knows more than the reason the page loaded with. A pending
+        // version keeps its own reason, because the job that fixes it is the
+        // backfill rather than anything the poll watches.
+        reason:
+          prepState && !versionPending ? "" : resolveReadinessReason(results),
       }),
-    [isLoaded, isLoading, error, prepState, results, session, buildingCount]
+    [
+      isLoaded,
+      isLoading,
+      error,
+      prepState,
+      versionPending,
+      results,
+      session,
+      buildingCount,
+    ]
   );
 
   return {
@@ -447,6 +534,14 @@ const usePredictionArtifacts = ({
     error,
     readinessDetail: resolveReadinessDetail(results),
     activeVersion: resolveActiveVersion(results),
+    // Whether the served version is the newest saved state (server-decided),
+    // and whether it is one whose sidecar is still being backfilled.
+    versionIsLatest: resolveVersionIsLatest(results),
+    versionPending,
+    versionsPending: session?.versionsPending ?? null,
+    // Changes exactly when the thing being drawn changes, so the renderer can
+    // rebuild both swipe panes from scratch on a version switch.
+    renderKey: attrsKey,
     attrs,
     indexByIdRef,
     archiveKey,

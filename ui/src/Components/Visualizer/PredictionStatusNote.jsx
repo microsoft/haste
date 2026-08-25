@@ -12,6 +12,10 @@
 //
 // All copy comes from predictionResults.js / predictionPrep.js so the wording
 // is decided in pure, unit-tested code rather than in JSX.
+//
+// It renders inside the page's top-centre overlay column, above which the
+// version selector sits — one stack, so a tall note and a tall selector can
+// never end up on top of each other.
 import PropTypes from "prop-types";
 import {
   Button,
@@ -37,16 +41,12 @@ import {
 } from "./predictionPrep.js";
 
 const useStyles = makeStyles({
-  // Centred under the app header, clear of the pre/post imagery blocks in the
-  // corners and below the edit panel's stacking level.
+  // A card in the results page's top-centre overlay column (see Visualizer's
+  // `topStack`): the column owns where this sits, so all this has to do is
+  // fill it and take back the pointer events the column gives up.
   root: {
-    position: "absolute",
-    top: "66px",
-    left: "50%",
-    transform: "translateX(-50%)",
-    zIndex: 900,
     boxSizing: "border-box",
-    width: "min(560px, calc(100% - 32px))",
+    width: "100%",
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalXS,
@@ -56,6 +56,7 @@ const useStyles = makeStyles({
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium,
     boxShadow: tokens.shadow16,
+    pointerEvents: "auto",
   },
   detail: {
     color: tokens.colorNeutralForeground3,

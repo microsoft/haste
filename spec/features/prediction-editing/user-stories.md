@@ -6,9 +6,9 @@
 
 | Persona | Description | Key Goals |
 |---|---|---|
-| Disaster Analyst | Domain expert who reviews building-level damage predictions during response | Correct model outputs quickly and preserve provenance |
-| ML Engineer | Builds and evaluates trained and embedding-based prediction workflows | Keep raw model outputs immutable while comparing edited versions |
-| External Partner | Collaborator who receives HASTE-generated files | Download a clear edited deliverable without needing editor access |
+| Disaster Analyst | Domain expert who reviews building-level damage predictions during response | Correct model outputs quickly, compare versions, and preserve provenance |
+| ML Engineer | Builds and evaluates trained and embedding-based prediction workflows | Keep raw model outputs immutable while making versioned artifacts testable |
+| External Partner | Collaborator who receives HASTE-generated files | Download a clear raw or edited deliverable without editor access |
 
 ---
 
@@ -22,111 +22,59 @@
 
 **Priority:** P0
 **Estimate:** M
-**Component(s):** `ui/src/Components/ProjectManagement/ModelResultsButton.jsx`, `ui/src/Components/ProjectManagement/EmbeddingModelRow.jsx`, `ui/src/Components/AppBody.jsx`, `ui/src/Components/Visualizer/Labels.jsx`, `ui/src/Components/Visualizer/Visualizer.jsx`
+**Component(s):** `ui/src/Components/ProjectManagement/`, `ui/src/Components/Visualizer/`
 
 **Acceptance Criteria:**
 
 ```gherkin
-Given a trained-inference model with server-derived predictionsReady true
+Given a model with server-derived predictionsReady true
 When I open the Results menu
-Then the View item is enabled and navigates to /visualizer/:projectId/:imageLayerId/:modelId
-And there is no standalone Edit button on the model row
-```
-
-```gherkin
-Given an embedding model with server-derived predictionsReady true
-When I open the embedding Results menu
-Then View is the first menu item and navigates to /visualizer/:projectId/:imageLayerId/:modelId
-And there is no standalone Edit button on the embedding row
+Then View navigates to /visualizer/:projectId/:imageLayerId/:modelId
+And there is no standalone /edit-predictions route
 ```
 
 ```gherkin
 Given the View Results page has loaded predicted footprints and attributes
 When I click the pencil next to Back or press E
 Then the same /visualizer page enters prediction edit mode
-And the edit panel replaces the read-only overlay controls
 ```
 
-```gherkin
-Given I am in edit mode with unsaved edits
-When I click Done or press E
-Then HASTE asks me to discard unsaved edits before leaving edit mode
-```
-
-```gherkin
-Given the model is not ready, has no predictions, has no predicted buildings, or is still preparing vector artifacts
-When I view the Results menu or the visualizer edit affordance
-Then the disabled state explains why editing cannot open yet
-```
-
-**UI Wireframe:** The Results menu opens the existing View Results route. A
-pencil/Done button sits beside Back on the visualizer; edit mode overlays a
-right-side edit panel on the same swipe map.
-
-**Notes:** `AppBody.jsx` registers `/visualizer/...` and no
-`/edit-predictions/...` route (`ui/src/Components/AppBody.jsx:73-75`). The
-trained row and embedding row both navigate to `/visualizer/...` from View
-(`ui/src/Components/ProjectManagement/ModelResultsButton.jsx:87-110`,
-`ui/src/Components/ProjectManagement/EmbeddingModelRow.jsx:116-130`). The
-pencil affordance and `E` shortcut are wired in `Labels.jsx` and `Visualizer.jsx`
-(`ui/src/Components/Visualizer/Labels.jsx:117-128`,
-`ui/src/Components/Visualizer/Visualizer.jsx:496-605`).
+**Notes:** The existing route and edit affordance live in `AppBody.jsx` and
+`Labels.jsx` (`ui/src/Components/AppBody.jsx:73-75`,
+`ui/src/Components/Visualizer/Labels.jsx:117-128`).
 
 ---
 
 ### US-002: Prepare a Complete Footprint Results/Edit Session
 
 **As a** Disaster Analyst,
-**I want to** load all predicted building footprints, not a sample,
+**I want to** load all predicted building footprints and raw prediction attributes,
 **So that** both viewing and editing cover the complete model output.
 
 **Priority:** P0
 **Estimate:** L
-**Component(s):** `api/hastefuncapi`, `api/hastefuncqueues`, `hastelib`, `docker/training`, `ui/src/Components/Visualizer/`
+**Component(s):** `api/hastefuncapi`, `api/hastefuncqueues`, `hastelib`, `ui/src/Components/Visualizer/`
 
 **Acceptance Criteria:**
 
 ```gherkin
 Given GetVisualizerResults returns footprintTilesUrl and predictionAttrsUrl
 When the UI loads the results page
-Then it fetches the PMTiles archive and prediction attribute sidecar through GetModelArtifact routes
+Then it fetches PMTiles and prediction attributes through GetModelArtifact
 And it renders predicted buildings as vectors for either workflow
 ```
 
 ```gherkin
-Given the model has predictions but PMTiles or attributes are missing
-When GetVisualizerResults reports predictionsReadiness.reason "preparing" or the artifact request returns 404
-Then the UI calls GetPredictionEditSession and PutPreparePredictionTilesQueueMessage
-And it polls GetPredictionEditSession until tilesReady and attrsReady are true
+Given PMTiles or raw attributes are missing
+When preparation is requested
+Then the queued prediction-tiles job generates missing artifacts
+And GET handlers do not run tippecanoe inline
 ```
 
-```gherkin
-Given GetPredictionEditSession is called for a raw prediction GeoPackage
-When the raw GeoPackage can be read
-Then the response includes tilesReady, attrsReady, buildingCount, flavor, supportsThreshold, defaultThreshold, predictionTilesStatus, predictionTilesStatusMessage, and versions
-And the GET does not enqueue work or run tippecanoe inline
-```
-
-```gherkin
-Given source footprints and predictions have different row counts
-When the prep worker validates the session inputs
-Then it fails the prep job and records a user-visible readiness error
-```
-
-**UI Wireframe:** Results page status note with spinner/retry while predicted
-buildings are prepared; once ready, the same vector footprint layer is visible
-in read-only and edit modes.
-
-**Notes:** `GetModelArtifact` streams `footprint_pmtiles` and `prediction_attrs`
-through the API (`api/hastefuncapi/function_app.py:1400-1424`,
-`api/hastefuncapi/function_app.py:1453-1458`). The visualizer artifact hook owns
-loading, queueing, and polling (`ui/src/Components/Visualizer/usePredictionArtifacts.js:4-24`,
-`ui/src/Components/Visualizer/usePredictionArtifacts.js:224-299`,
-`ui/src/Components/Visualizer/usePredictionArtifacts.js:377-459`). The prep job
-runs in the queue/training-image path because `tippecanoe` is not an HTTP-handler
-concern (`hastelib/src/hastegeo/core/processors/prediction_tiles.py:13-19`,
-`api/hastefuncqueues/function_app.py:861-914`,
-`hastelib/src/hastegeo/workflows/prepare_prediction_tiles.py:40-45`).
+**Notes:** `GetModelArtifact` streams artifacts server-side
+(`api/hastefuncapi/function_app.py:1430-1570`). The sidecar builder now lives in shared core utilities and the workflow imports
+it (`hastelib/src/hastegeo/core/utils/prediction_attrs.py:128-202`,
+`hastelib/src/hastegeo/workflows/prepare_prediction_tiles.py:77-92`).
 
 ---
 
@@ -138,46 +86,32 @@ concern (`hastelib/src/hastegeo/core/processors/prediction_tiles.py:13-19`,
 
 **Priority:** P0
 **Estimate:** L
-**Component(s):** `ui/src/Components/Visualizer/PredictionEditPanel.jsx`, `ui/src/Components/Visualizer/usePredictionFootprints.js`, `ui/src/Components/Visualizer/predictionClassify.js`, `ui/src/Components/Visualizer/predictionFootprintMap.js`
+**Component(s):** `ui/src/Components/Visualizer/PredictionEditPanel.jsx`, `ui/src/Components/Visualizer/usePredictionFootprints.js`
 
 **Acceptance Criteria:**
 
 ```gherkin
 Given edit mode loaded a trained-inference model
 When I move the damage or unknown threshold slider
-Then footprint colors update live from the sidecar and the panel shows how many buildings would change class
+Then footprint colors update live from the sidecar
 ```
 
 ```gherkin
 Given edit mode loaded an embedding model
 When I view the edit panel
-Then no threshold slider is shown
-And I can still set explicit Damaged, NotDamaged, or Unknown overrides
-```
-
-```gherkin
-Given visible predicted footprints on the map
-When I click a building or ctrl+drag a selection box
-Then selected buildings can be assigned Damaged, NotDamaged, or Unknown
-And the edited count updates
+Then threshold sliders are hidden
+And I can still set Damaged, NotDamaged, or Unknown overrides
 ```
 
 ```gherkin
 Given the swipe map is visible
-When I edit footprints on either side of the divider
-Then feature-state coloring and selection stay mirrored between the two panes
+When I edit footprints or switch versions
+Then both swipe panes show the same classes and selection state
 ```
 
-**UI Wireframe:** Azure Maps swipe canvas underneath a right panel with class
-counts, filters, prev/next traversal, threshold controls when supported, saved
-version history, Save as new version, and Done editing.
-
-**Notes:** The edit panel lives in the Visualizer directory and is rendered only
-when `isEditMode` is true (`ui/src/Components/Visualizer/PredictionEditPanel.jsx:4-16`,
-`ui/src/Components/Visualizer/Visualizer.jsx:873-921`). Map classification is
-browser-side feature-state over PMTiles, so threshold moves do not need a server
-round trip (`ui/src/Components/Visualizer/usePredictionFootprints.js:4-29`,
-`ui/src/Components/Visualizer/predictionFootprintMap.js:4-18`).
+**Notes:** Feature-state writes must be mirrored to both panes; otherwise one
+pane can remain on stale colors (`ui/src/Components/Visualizer/usePredictionFootprints.js:19-25`,
+`ui/src/Components/Visualizer/usePredictionFootprints.js:212-228`).
 
 ---
 
@@ -189,132 +123,183 @@ round trip (`ui/src/Components/Visualizer/usePredictionFootprints.js:4-29`,
 
 **Priority:** P0
 **Estimate:** L
-**Component(s):** `api/hastefuncapi`, `hastelib/src/hastegeo/core/models/`, `hastelib/src/hastegeo/core/processors/`, Blob Storage, `ui/src/Components/Visualizer/usePredictionFootprints.js`
+**Component(s):** `api/hastefuncapi`, `hastelib/src/hastegeo/core/models/`, `hastelib/src/hastegeo/core/processors/`, Blob Storage, `ui/src/Components/Visualizer/`
 
 **Acceptance Criteria:**
 
 ```gherkin
 Given a loaded prediction edit mode session and a set of overrides
-When I save with threshold 0.1 and unknownThreshold 0.0
-Then PutEditedPredictions returns version, gpkgUrl, and editedCount
-And the Model document appends one EditedPredictionVersion entry
+When I save a new version
+Then PutEditedPredictions writes a new GeoPackage and a matching prediction_attrs sidecar
+And the Model document appends one EditedPredictionVersion entry with gpkgUrl and predictionAttrsUrl
 And Model.gpkgUrl remains the raw prediction pointer
 ```
 
 ```gherkin
-Given a source prediction GeoPackage with N rows
-When an edited GeoPackage is written
-Then the edited file has N rows in the exact same order, preserves the source geometry, writes overture_id, edited_class, and edit_threshold, and sets damaged to 1 only for final_class Damaged
+Given sidecar generation fails after the GeoPackage is written
+When the save response is returned
+Then the version is not advertised as selectable
+And the failure is visible to the analyst
 ```
 
-```gherkin
-Given a save has succeeded
-When the edit panel refreshes versions
-Then the saved version appears in the history and the saved baseline becomes the new unsaved-edits baseline
-```
-
-**UI Wireframe:** Save button displays success/failure in the edit panel. The
-saved version appears in the right-panel history; the rows are informational in
-this branch.
-
-**Notes:** The save path builds the sparse `PutEditedPredictions` payload in the
-visualizer hook (`ui/src/Components/Visualizer/usePredictionFootprints.js:838-887`).
-The API appends metadata without touching `gpkgUrl` (`api/hastefuncapi/function_app.py:3181-3345`).
-The current implementation does not implement optimistic concurrency or a 409
-conflict response; concurrent saves can collide and need a follow-up fix.
+**Notes:** The current API route appends metadata after storing a versioned GPKG
+(`api/hastefuncapi/function_app.py:3302-3325`). It must adopt the shared helper
+that writes the sidecar in the same call path before metadata append
+(`hastelib/src/hastegeo/core/processors/prediction_edits.py:520-608`). The current implementation still
+has no optimistic concurrency or 409 response.
 
 ---
 
-### US-005: Show Edited Version History Without Switching Versions in the UI
+### US-005: Select Which Prediction Version the Map Shows
 
-**As an** External Partner,
-**I want to** identify saved edited prediction versions,
-**So that** I can request or download the correct analyst-reviewed file while HASTE keeps raw outputs separate.
-
-**Priority:** P1
-**Estimate:** M
-**Component(s):** `api/hastefuncapi`, `ui/src/Components/Visualizer/PredictionEditPanel.jsx`, `hastelib/src/hastegeo/core/models/`
-
-**Acceptance Criteria:**
-
-```gherkin
-Given a model with editedPredictions entries
-When GetVisualizerResults or GetPredictionEditSession returns
-Then the payload includes predictionVersions or versions sorted newest first
-And the edit panel displays version, timestamp, threshold, editor, and edited count
-```
-
-```gherkin
-Given I view the Saved versions list in edit mode
-When I click or focus a version row
-Then the row does not refetch the map or switch the served version in the current branch
-And the active version badge only reports the version already on the map
-```
-
-```gherkin
-Given I need a specific edited GeoPackage
-When I call GetEditedPredictionVersions or inspect the visualizer payload
-Then the gpkgUrl for each edited version is available while raw Model.gpkgUrl is unchanged
-```
-
-**UI Wireframe:** Version history list in the edit panel. The active version gets
-an "On the map" badge; rows are read-only until a follow-up wires selection to a
-`GetVisualizerResults?version=N` refetch.
-
-**Notes:** `PredictionEditPanel` renders history without an `onClick`/selection
-handler (`ui/src/Components/Visualizer/PredictionEditPanel.jsx:513-550`). The
-visualizer fetch currently omits `version`, so UI version switching is not wired
-(`ui/src/Components/Visualizer/Visualizer.jsx:213-223`).
-
----
-
-### US-006: Read Edited Versions in Results and Reports
-
-**As an** ML Engineer,
-**I want to** use the same raw-or-edited prediction source selection in every reader,
-**So that** visual results and validation/report metrics reflect saved analyst edits consistently where their data model allows it.
+**As a** Disaster Analyst,
+**I want to** choose raw, newest, or a saved edited version on View Results,
+**So that** I can compare map output across review passes.
 
 **Priority:** P0
 **Estimate:** M
-**Component(s):** `api/hastefuncapi`, `hastelib/src/hastegeo/core/utils/predictions.py`, `hastelib/src/hastegeo/core/processors/visualizer.py`, `docs/api/hastefuncapi.md`
+**Component(s):** `api/hastefuncapi`, `hastelib/src/hastegeo/core/processors/visualizer.py`, `ui/src/Components/Visualizer/`
 
 **Acceptance Criteria:**
 
 ```gherkin
-Given a model has editedPredictions versions 1 and 2
-When GetVisualizerResults, GetValidationReport, or GetAssessmentReport is called without version
-Then the reader uses version 2
+Given a model has raw predictions and edited versions 1, 2, and 3
+When I select version 2 on View Results
+Then the UI calls GetVisualizerResults?version=2
+And the map renders the sidecar for version 2
+And the response says isNewestPredictionVersion is false
 ```
 
 ```gherkin
-Given a model has editedPredictions versions 1 and 2
-When a reader is called with version=0
-Then the reader uses raw Model.gpkgUrl
+Given the map is showing raw or an older version while a newer edit exists
+When report actions are visible
+Then the UI states that Assessment and Validation reports still use the newest version
 ```
 
 ```gherkin
-Given a model has editedPredictions versions 1 and 2
-When a reader is called with version=1
-Then the reader uses version 1
-And an unknown numeric version returns 404 while a malformed version returns 400
+Given a version has no predictionAttrsUrl because backfill has not completed
+When I open the selector
+Then that version is disabled and explains that its sidecar is still being prepared
+```
+
+**Notes:** The current visualizer fetch omits `version` and must be extended
+(`ui/src/Components/Visualizer/Visualizer.jsx:213-223`). This story changes the
+map only; it does not add an active-version pointer.
+
+---
+
+### US-006: Keep Reports on the Newest Version Unless Explicitly Requested
+
+**As an** ML Engineer,
+**I want to** keep Assessment and Validation report defaults stable while map selection changes,
+**So that** report URLs remain predictable and newest-edited analysis stays the default.
+
+**Priority:** P0
+**Estimate:** M
+**Component(s):** `api/hastefuncapi`, `hastelib/src/hastegeo/core/utils/predictions.py`, `ui/src/Components/Visualizer/`
+
+**Acceptance Criteria:**
+
+```gherkin
+Given the View Results map is showing version 2 and version 3 also exists
+When I request Validation or Assessment from the standard UI buttons
+Then the request omits version
+And the backend resolves version 3
+```
+
+```gherkin
+Given an API caller explicitly passes version=0 or version=N to a report endpoint
+When the version exists
+Then the endpoint keeps honoring that explicit contract
+And an unknown numeric version returns 404
 ```
 
 ```gherkin
 Given an edited GeoPackage changes damaged but preserves damage_pct_0m
-When GetValidationReport computes metrics
-Then the explicit edits affect validation because it reads damaged
-But GetAssessmentReport threshold-based counts continue to derive from damage_pct_0m until a follow-up resolves that product decision
+When reports run
+Then Validation metrics can move with damaged
+But Assessment threshold counts remain tied to damage_pct_0m until a follow-up changes that product decision
 ```
 
-**UI Wireframe:** The results map displays the served version in the edit panel;
-UI controls for switching versions remain a follow-up.
+**Notes:** The report routes already parse optional versions and resolve the
+selected source (`api/hastefuncapi/function_app.py:4607-4688`,
+`api/hastefuncapi/function_app.py:4929-5027`). The UI selector must not mutate
+those report defaults.
 
-**Notes:** `resolve_prediction_source` implements newest-wins, explicit version,
-and `version=0` raw selection (`hastelib/src/hastegeo/core/utils/predictions.py:332-401`).
-The three readers call it (`api/hastefuncapi/function_app.py:2386-2435`,
-`api/hastefuncapi/function_app.py:4677-4688`,
-`api/hastefuncapi/function_app.py:5017-5027`). The API docs capture the full
-reader contract and the validation/assessment asymmetry (`docs/api/hastefuncapi.md:480-502`).
+---
+
+### US-007: Download Raw or Edited Prediction Versions
+
+**As an** External Partner,
+**I want to** download the selected map version or a specific saved row,
+**So that** I receive the exact GeoPackage I need without direct blob access.
+
+**Priority:** P0
+**Estimate:** M
+**Component(s):** `api/hastefuncapi/function_app.py`, `ui/src/Components/Visualizer/PredictionEditPanel.jsx`, `ui/src/Components/ProjectManagement/ModelResultsButton.jsx`
+
+**Acceptance Criteria:**
+
+```gherkin
+Given View Results is showing raw or edited version N
+When I click Download beside the version selector
+Then the browser downloads GetModelArtifact?kind=gpkg&version=<selected>
+And the request goes through the Function App auth path
+```
+
+```gherkin
+Given the edit panel shows saved versions
+When I click a row's download action
+Then HASTE downloads that row's GeoPackage through GetModelArtifact with the row version
+```
+
+```gherkin
+Given an unknown version is requested for download
+When GetModelArtifact resolves it
+Then it returns 404 rather than a direct blob URL fallback
+```
+
+**Notes:** Current model-row download code rewrites direct blob/SAS URLs
+(`ui/src/Components/ProjectManagement/ModelResultsButton.jsx:61-69`,
+`ui/src/Components/ProjectManagement/ModelResultsButton.jsx:113-119`). New
+version downloads use `GetModelArtifact`, which already handles Range and
+content disposition (`api/hastefuncapi/function_app.py:1430-1570`).
+
+---
+
+### US-008: Backfill Sidecars for Existing Edited Versions
+
+**As an** ML Engineer,
+**I want to** generate missing sidecars for versions saved before this change,
+**So that** historical edits can become selectable without adding generation to the read path.
+
+**Priority:** P0
+**Estimate:** M
+**Component(s):** `hastelib/src/hastegeo/core/processors/prediction_tiles.py`, `api/hastefuncqueues/function_app.py`, Blob Storage, Cosmos DB
+
+**Acceptance Criteria:**
+
+```gherkin
+Given an edited version has gpkgUrl but no predictionAttrsUrl
+When the prediction-tiles job runs in backfill mode
+Then it builds prediction_attrs_${modelId}_v${version}
+And updates that EditedPredictionVersion with predictionAttrsUrl
+```
+
+```gherkin
+Given a version already has predictionAttrsUrl and force is false
+When backfill runs
+Then the job skips that version without rewriting it
+```
+
+```gherkin
+Given dev models 0448 and 5553 each have version 1 without sidecars
+When the backfill is run
+Then both versions receive sidecars or a visible failure status
+```
+
+**Notes:** Backfill is not lazy on first selection. The selector must disable
+versions until the sidecar URL is present.
 
 ---
 
@@ -336,12 +321,14 @@ Every user story must be assigned to one or more HASTE agents. The **implementin
 
 | Story | Implementing Agent(s) | Validating Agent(s) | Notes |
 |---|---|---|---|
-| US-001 | `ui`, `backend-dev` | `ui-validation`, `backend-validation` | UI entry point uses server-derived `predictionsReady`; no standalone route. |
-| US-002 | `backend-dev`, `gis`, `ui` | `backend-validation`, `ui-validation` | Queue/API ownership is backend; PMTiles, GeoPackage, CRS, and row-order checks require GIS review; visualizer owns artifact loading. |
-| US-003 | `ui` | `ui-validation` | UI edit-mode behavior; GIS should be consulted for class semantics but does not own UI code. |
-| US-004 | `backend-dev`, `gis`, `ui` | `backend-validation`, `ui-validation` | Version metadata plus GeoPackage read/write and row-order invariant; UI save wiring. |
-| US-005 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` | API version list and read-only UI history; version switching remains a follow-up. |
-| US-006 | `backend-dev`, `gis` | `backend-validation` | Raw-vs-edited source resolution across visualizer, validation, and assessment; assessment semantics need GIS/product follow-up. |
+| US-001 | `ui`, `backend-dev` | `ui-validation`, `backend-validation` | UI entry point uses server-derived readiness. |
+| US-002 | `backend-dev`, `gis`, `ui` | `backend-validation`, `ui-validation` | Prep/API ownership is backend; row-order and GeoPackage logic require GIS review. |
+| US-003 | `ui` | `ui-validation` | UI edit-mode behavior and dual-pane feature state. |
+| US-004 | `backend-dev`, `gis`, `ui` | `backend-validation`, `ui-validation` | Save writes GPKG + sidecar; UI resets baseline. |
+| US-005 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` | Map-only version selection and warning copy. |
+| US-006 | `backend-dev`, `gis`, `ui` | `backend-validation`, `ui-validation` | Reports keep newest; UI must not pass selector version. |
+| US-007 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` | Downloads route through `GetModelArtifact`. |
+| US-008 | `backend-dev`, `gis` | `backend-validation` | Idempotent backfill for historical versions. |
 
 ### Agent Workflow Per Phase
 
@@ -356,21 +343,21 @@ Every user story must be assigned to one or more HASTE agents. The **implementin
 
 | Priority | Story | Phase | Implementing Agent | Component |
 |---|---|---|---|---|
-| P0 | US-001 | Phase 2/3 — Readiness & UI Entry | `backend-dev`, `ui` | model payloads, `ui/src/Components/ProjectManagement/`, `ui/src/Components/Visualizer/` |
-| P0 | US-002 | Phase 2/3 — Prep Workflow & Vector Viewer | `backend-dev`, `gis`, `ui` | `hastelib`, `hastefuncapi`, `hastefuncqueues`, `ui/src/Components/Visualizer/` |
-| P0 | US-003 | Phase 3 — Results Viewer Edit Mode | `ui` | `ui/src/Components/Visualizer/` |
-| P0 | US-004 | Phase 1/2/3 — Data Model, API & UI Save | `backend-dev`, `gis`, `ui` | `hastelib`, Blob Storage, `hastefuncapi`, Visualizer hooks |
-| P1 | US-005 | Phase 3/4 — Version History | `backend-dev`, `ui` | `hastefuncapi`, `ui/src/Components/Visualizer/` |
-| P0 | US-006 | Phase 2/4 — Reader Integration | `backend-dev`, `gis` | `hastefuncapi`, `hastelib/src/hastegeo/core/utils/predictions.py` |
+| P0 | US-001 | Phase 2/3 — Readiness & UI Entry | `backend-dev`, `ui` | model payloads, Visualizer route |
+| P0 | US-002 | Phase 2/3 — Prep Workflow & Vector Viewer | `backend-dev`, `gis`, `ui` | `hastelib`, queues, Visualizer artifacts |
+| P0 | US-003 | Phase 3 — Results Viewer Edit Mode | `ui` | Visualizer edit panel and map state |
+| P0 | US-004 | Phase 1/2/3 — Data Model, API & UI Save | `backend-dev`, `gis`, `ui` | GPKG + sidecar save |
+| P0 | US-005 | Phase 2/3 — Map Version Selection | `backend-dev`, `ui` | `GetVisualizerResults`, selector |
+| P0 | US-006 | Phase 2/3 — Report Default Split | `backend-dev`, `gis`, `ui` | report endpoints and UI warning |
+| P0 | US-007 | Phase 2/3 — Version Downloads | `backend-dev`, `ui` | `GetModelArtifact`, download controls |
+| P0 | US-008 | Phase 2/4 — Backfill | `backend-dev`, `gis` | prediction-tiles job and metadata |
 
 ## Out of Scope
 
 Stories explicitly excluded from this feature:
 
 - [ ] Publish edited versions through the data-publishing workflow.
-- [ ] Switch served prediction versions from the UI; history is read-only in the current branch.
-- [ ] Add a dedicated one-click edited-version download button in the edit panel.
 - [ ] Add collaborative real-time editing, locking, 409 conflict handling, or audit diff playback.
-- [ ] Introduce a generic artifact registry beyond the Model-level edited version list.
-- [ ] Resolve the assessment-report asymmetry where edited `damaged` changes validation metrics but preserved `damage_pct_0m` drives threshold-based assessment counts.
+- [ ] Resolve the Assessment-report asymmetry where edited `damaged` changes Validation metrics but preserved `damage_pct_0m` drives threshold-based Assessment counts.
+- [ ] Add browser/Playwright coverage in this branch; the repo has no Playwright config.
 - [ ] Fix the pre-existing positional-join risks in the classic prediction writer or add explicit producer-side `overture_id` columns.

@@ -168,7 +168,16 @@ class ArtifactTypes(Enum):
     EDITED_PREDICTIONS_GPKG = Template(
         "edited_predictions_${modelId}_v${version}"
     )
+    # Sidecar of the RAW model output (Model.gpkgUrl).
     PREDICTION_ATTRS = Template("prediction_attrs_${modelId}")
+    # Sidecar of ONE saved edited version (Model.editedPredictions[]).
+    # Every version gets its own so that rendering a version is the same
+    # code path as rendering the raw output with a different URL; a
+    # version whose GeoPackage exists without a matching sidecar would
+    # silently draw the raw classes.
+    PREDICTION_ATTRS_VERSION = Template(
+        "prediction_attrs_${modelId}_v${version}"
+    )
     LAYER_FOOTPRINT_PMTILES = Template("footprints_${imageLayerId}")
 
 

@@ -1435,6 +1435,12 @@ _MODEL_ARTIFACT_CONTENT_TYPES = {
 _MODEL_ARTIFACT_KINDS = sorted(
     set(_MODEL_ARTIFACT_URL_FIELDS) | set(_LAYER_ARTIFACT_URL_FIELDS)
 )
+# Kinds that exist per edited-prediction version. Everything else is
+# version-independent (the footprint tiles are geometry only, and the
+# embedding artifacts predate editing), so a `version` on those is
+# ignored rather than rejected — a client may pass the viewer's current
+# version to every artifact call.
+_VERSIONED_ARTIFACT_KINDS = {"prediction_attrs", "gpkg"}
 
 
 @app.route(
@@ -1466,10 +1472,19 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
     ``application/vnd.pmtiles``). ``footprint_pmtiles`` lives on the
     ImageLayer; pass ``imageLayerId`` to select it explicitly, otherwise
     the model's own image layer is used.
+
+    ``version`` (optional, ``prediction_attrs`` and ``gpkg`` only) picks
+    an analyst-edited revision from ``Model.editedPredictions``: ``0``
+    forces the raw model output, an absent parameter keeps the historic
+    behaviour (the model-level artifact, i.e. the raw output), and ``N``
+    serves that version's own artifact. An unknown version — or a version
+    whose sidecar has not been built yet — is a 404. The parameter is
+    ignored for the version-independent kinds.
     """
     try:
         project_id = _require_guid_param(req, "projectId")
         model_id = _require_short_int_id_param(req, "modelId")
+        version = _optional_version_param(req)
     except ValueError as e:
         return _bad_request(str(e))
 
@@ -1540,7 +1555,43 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
                     "Error loading image layer.", status_code=500
                 )
 
-    blob_url = (document or {}).get(url_field) or ""
+    document = document or {}
+    blob_url = document.get(url_field) or ""
+    if version is not None and kind in _VERSIONED_ARTIFACT_KINDS:
+        # Version resolution is a hastegeo decision (which revision, and
+        # which of its two artifacts); this handler only maps the outcome
+        # onto HTTP. Lazy import: the module pulls in fiona.
+        from hastegeo.core.utils.predictions import (
+            PredictionVersionNotFoundError,
+            describe_prediction_source,
+        )
+
+        try:
+            source = describe_prediction_source(document, version=version)
+        except PredictionVersionNotFoundError as e:
+            logger.warning(f"GetModelArtifact: {e}")
+            return func.HttpResponse(
+                f"Prediction version {version} not found for this model.",
+                status_code=404,
+            )
+        blob_url = (source.url if kind == "gpkg" else source.attrs_url) or ""
+        if not blob_url:
+            logger.warning(
+                f"GetModelArtifact: model {model_id} version {version} "
+                f"has no {kind} artifact yet"
+            )
+            return func.HttpResponse(
+                f"Artifact '{kind}' is not available for prediction "
+                f"version {version} yet; request preparation with "
+                "PutPreparePredictionTilesQueueMessage.",
+                status_code=404,
+            )
+    elif version is not None:
+        logger.info(
+            f"GetModelArtifact: ignoring version={version} for "
+            f"version-independent kind '{kind}'"
+        )
+
     if not blob_url:
         return func.HttpResponse(
             "Artifact not available for this model.", status_code=404
@@ -1574,9 +1625,11 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
     # interactive labeler's other artifacts are fetched by range and parsed
     # in-browser, so they must NOT be forced as downloads).
     if kind == "gpkg":
-        headers[
-            "Content-Disposition"
-        ] = f'attachment; filename="building_predictions_{model_id}.gpkg"'
+        suffix = f"_v{version}" if version else ""
+        headers["Content-Disposition"] = (
+            "attachment; "
+            f'filename="building_predictions_{model_id}{suffix}.gpkg"'
+        )
     if result.etag:
         headers["ETag"] = (
             result.etag if result.etag.startswith('"') else f'"{result.etag}"'
@@ -2320,6 +2373,16 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
             Omit for the newest edit (falling back to the raw model
             output); pass ``0`` to force the raw model output.
 
+    ``predictionAttrsUrl`` points at the SELECTED version's sidecar
+    (``GetModelArtifact?...&kind=prediction_attrs&version=N``), so
+    switching versions only changes a URL. ``predictionVersionIsLatest``
+    says whether that version is the newest saved one: version selection
+    moves the map only, while the Assessment/Validation reports always
+    read the newest version, and the UI has to be able to say when the
+    two diverge. A version whose sidecar has not been built yet reports
+    ``predictionsReadiness.attrsReady = false`` (reason ``preparing``)
+    rather than falling back to the raw model's classes.
+
     The payload assembly lives in
     :func:`hastegeo.core.processors.visualizer.build_visualizer_results`.
     """
@@ -2404,7 +2467,13 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
                 "Requested prediction version not found.", status_code=404
             )
 
-        predictions_info = PredictionInfo(version=source.version)
+        # The sidecar the map renders from belongs to the SELECTED
+        # version; the model-level one always describes the raw output.
+        predictions_info = PredictionInfo(
+            version=source.version,
+            attrs_url=source.attrs_url,
+            is_latest=source.is_latest,
+        )
         if source.url:
             # Read the selected GeoPackage for its flavor: the embedding
             # producer's damage fraction is a degenerate 0/1 copy of
@@ -2420,6 +2489,8 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
                 )
                 predictions_info = PredictionInfo(
                     version=source.version,
+                    attrs_url=source.attrs_url,
+                    is_latest=source.is_latest,
                     flavor=predictions.flavor,
                     supports_threshold=predictions.supports_threshold,
                     building_count=len(predictions),
@@ -3079,20 +3150,29 @@ async def PutPreparePredictionTilesQueueMessage(
           "projectId": "...",
           "imageLayerId": "...",
           "modelId": "5557",
-          "force": false
+          "force": false,
+          "backfillVersions": true
         }
 
-    Returns
-    ``{ modelId, queued, tilesReady, attrsReady, status, statusMessage }``
-    — the state the editor polls ``GetPredictionEditSession`` for while
-    it waits.
+    Returns ``{ modelId, queued, tilesReady, attrsReady, versionsPending,
+    status, statusMessage }`` — the state the editor polls
+    ``GetPredictionEditSession`` for while it waits.
+    ``versionsPending`` counts the analyst-edited versions that still
+    have no attribute sidecar and will be rebuilt by the queued job.
 
     Building the layer's footprint PMTiles and the model's prediction
     attribute sidecar needs ``tippecanoe``, which ships only in the
     training image, so the work is always a queued job; this route only
     requests it. Nothing is enqueued when both artifacts already exist
-    (``queued: false``) unless ``force`` is set — used after predictions
-    are regenerated, which leaves stale artifacts behind.
+    and no version is missing its sidecar (``queued: false``) unless
+    ``force`` is set — used after predictions are regenerated, which
+    leaves stale artifacts behind.
+
+    ``backfillVersions`` (default ``true``) additionally rebuilds the
+    sidecar of every saved version that lacks one. It is idempotent: the
+    version list is derived from the model document, so versions that
+    already have a sidecar are skipped. Set it to ``false`` to prepare
+    the model-level artifacts alone.
     """
     logger.info(
         "PutPreparePredictionTilesQueueMessage HTTP trigger function "
@@ -3145,6 +3225,7 @@ async def PutPreparePredictionTilesQueueMessage(
                 model,
                 ImageLayer(**image_layer_data),
                 force=prep_request.force,
+                backfill_versions=prep_request.backfillVersions,
             )
         except PredictionTilesUnavailableError as e:
             # Raw inputs missing: nothing to prepare from (yet).
@@ -3207,20 +3288,26 @@ async def PutEditedPredictions(req: func.HttpRequest) -> func.HttpResponse:
           "overrides": [ {"id": 12, "class": "Damaged"}, ... ]
         }
 
-    Returns ``{ version, gpkgUrl, editedCount }``.
+    Returns
+    ``{ version, gpkgUrl, predictionAttrsUrl, editedCount, buildingCount }``.
 
     ``Model.gpkgUrl`` is never rewritten: it holds the RAW model output
     that this and every future edit derives from. Each save appends an
     ``EditedPredictionVersion`` to ``Model.editedPredictions`` instead.
+
+    Every version is stored as a PAIR: the edited GeoPackage and its own
+    attribute sidecar, derived from that GeoPackage in one call path
+    (``prediction_edits.save_edited_version``). The map renders from the
+    sidecar, so a version stored without one would draw the raw model's
+    classes while claiming to show the edit.
     """
     logger.info(
         "PutEditedPredictions HTTP trigger function processed a request."
     )
     # Lazy import: prediction_edits pulls in fiona at module scope.
     from hastegeo.core.processors.prediction_edits import (
-        apply_edits,
         next_version,
-        store_edited_version,
+        save_edited_version,
     )
 
     try:
@@ -3247,7 +3334,6 @@ async def PutEditedPredictions(req: func.HttpRequest) -> func.HttpResponse:
 
     src_path = None
     footprints_path = None
-    edited_path = None
     try:
         model_data = await asyncio.to_thread(
             MetadataProcessor(
@@ -3282,22 +3368,25 @@ async def PutEditedPredictions(req: func.HttpRequest) -> func.HttpResponse:
         footprints_path = await download_blob_to_tempfile(
             footprints_url, suffix=".gpkg"
         )
-        fd, edited_path = tempfile.mkstemp(suffix=".gpkg")
-        os.close(fd)
 
         overrides = {
             override.rowIndex: override.editedClass
             for override in edit_request.overrides
         }
+        version = next_version(model_data)
         try:
-            summary = await asyncio.to_thread(
-                apply_edits,
+            # Derives the edited GeoPackage AND its sidecar, and stores
+            # both, before this handler records the version.
+            saved = await asyncio.to_thread(
+                save_edited_version,
+                project_id,
+                model_id,
+                version,
                 src_path,
-                edited_path,
+                footprints_path,
                 threshold=edit_request.threshold,
                 unknown_threshold=edit_request.unknownThreshold,
                 overrides=overrides,
-                footprints_path=footprints_path,
             )
         except ValueError as e:
             # The prediction → footprint join is positional, so a row
@@ -3309,23 +3398,15 @@ async def PutEditedPredictions(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=422,
             )
 
-        version = next_version(model_data)
-        edited_gpkg_url = await asyncio.to_thread(
-            store_edited_version,
-            project_id,
-            model_id,
-            version,
-            edited_path,
-        )
-
         entry = EditedPredictionVersion(
-            version=version,
-            gpkgUrl=edited_gpkg_url,
+            version=saved.version,
+            gpkgUrl=saved.gpkg_url,
+            predictionAttrsUrl=saved.attrs_url,
             createdAt=MetadataUtils.get_timestamp(),
             createdBy=created_by,
             threshold=edit_request.threshold,
             unknownThreshold=edit_request.unknownThreshold,
-            editedCount=summary.overrides_applied,
+            editedCount=saved.summary.overrides_applied,
             sourceGpkgUrl=source_gpkg_url,
         )
         # Append only. model_data["gpkgUrl"] is deliberately untouched:
@@ -3343,13 +3424,7 @@ async def PutEditedPredictions(req: func.HttpRequest) -> func.HttpResponse:
         )
 
         return func.HttpResponse(
-            json.dumps(
-                {
-                    "version": version,
-                    "gpkgUrl": edited_gpkg_url,
-                    "editedCount": summary.overrides_applied,
-                }
-            ),
+            json.dumps(saved.to_dict()),
             status_code=200,
             mimetype="application/json",
         )
@@ -3375,7 +3450,7 @@ async def PutEditedPredictions(req: func.HttpRequest) -> func.HttpResponse:
             "Error saving edited predictions.", status_code=500
         )
     finally:
-        for path in (src_path, footprints_path, edited_path):
+        for path in (src_path, footprints_path):
             if path and os.path.exists(path):
                 try:
                     os.unlink(path)

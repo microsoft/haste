@@ -11,128 +11,98 @@
 
 ## Summary
 
-Prediction editing is now a **mode inside the existing View Results page**, not
-a standalone screen. Analysts open `/visualizer/:projectId/:imageLayerId/:modelId`
-from the Results menu, then enter edit mode with the pencil next to Back or the
-`E` shortcut; Done or `E` exits, with a discard-confirmation dialog for unsaved
-edits (`ui/src/Components/AppBody.jsx:73-75`,
-`ui/src/Components/Visualizer/Labels.jsx:8-12`,
+Prediction editing remains a **mode inside the existing View Results page**, not
+a standalone screen. Analysts open `/visualizer/:projectId/:imageLayerId/:modelId`,
+enter edit mode with the pencil next to Back or the `E` shortcut, and save
+append-only edited prediction GeoPackages as `edit_v1`, `edit_v2`, and later
+versions without mutating raw `Model.gpkgUrl` (`ui/src/Components/AppBody.jsx:73-75`,
 `ui/src/Components/Visualizer/Labels.jsx:117-128`,
-`ui/src/Components/Visualizer/Visualizer.jsx:457-605`).
+`api/hastefuncapi/function_app.py:3186-3325`).
 
-The View Results page is vector-first for both prediction workflows. It draws
-predicted building footprints from footprint PMTiles plus the prediction
-attribute sidecar, artifacts both trained inference and embedding models can
-provide; trained-inference rasters remain optional overlays and are nullable in
-the payload (`hastelib/src/hastegeo/core/processors/visualizer.py:4-29`,
-`hastelib/src/hastegeo/core/processors/visualizer.py:278-331`,
-`hastelib/src/hastegeo/core/models/visualizer.py:45-82`). The embedding model
-row now exposes View Results as the first Results menu action, so the embedding
-workflow has a working results-viewer entry point
-(`ui/src/Components/ProjectManagement/EmbeddingModelRow.jsx:116-130`).
+This extension adds version selection and per-version downloads to View Results.
+The selector changes **only the map**: Assessment and Validation reports continue
+to read the newest edited version, even when the map is showing raw or an older
+version. That trade-off is intentional to avoid adding an active-version pointer;
+the UI must state the mismatch whenever the selected map version is not newest
+(`api/hastefuncapi/function_app.py:4607-4688`,
+`api/hastefuncapi/function_app.py:4929-5027`).
 
-Each save still creates a new, numbered edited prediction GeoPackage (`edit_v1`,
-`edit_v2`, …) as a derived artifact. The raw model output remains in
-`Model.gpkgUrl`, while `GetVisualizerResults`, `GetValidationReport`, and
-`GetAssessmentReport` default to the newest saved edit and accept an optional
-`version` query parameter; `version=0` forces the raw output
-(`hastelib/src/hastegeo/core/utils/predictions.py:332-401`,
-`api/hastefuncapi/function_app.py:2386-2435`,
-`api/hastefuncapi/function_app.py:4677-4688`,
-`api/hastefuncapi/function_app.py:5017-5027`).
+The architectural fix is versioned prediction-attribute sidecars. The current
+sidecar is model-scoped (`prediction_attrs_${modelId}`) and describes only raw
+predictions (`hastelib/src/hastegeo/core/config.py:172`,
+`hastelib/src/hastegeo/core/models/projects.py:529-535`). Each saved edited
+GeoPackage must now get a matching derived sidecar named
+`prediction_attrs_${modelId}_v${version}` and recorded on its
+`EditedPredictionVersion`. Rendering a saved version then uses the same vector
+code path as raw rendering, with different `GetModelArtifact` URLs.
 
 ## Motivation
 
-- Disaster analysts need a fast way to correct false positives, false negatives,
-  and ambiguous buildings before handing outputs to response partners.
-- The previous raster-only viewer could draw only the `_visualizer.tif` and
-  `_predictions.tif` COGs produced by trained inference. Embedding predictions
-  produce no raster, so vector PMTiles plus the attribute sidecar are now the
-  shared results path (`hastelib/src/hastegeo/core/processors/visualizer.py:4-29`,
-  `ui/src/Components/Visualizer/Visualizer.jsx:13-28`).
-- Three call sites previously answered "does this model have results" from
-  different fields. `hastegeo.core.utils.model_readiness` is now the single
-  server-side rule, exposed as `predictionsReady` on model payloads and reused
-  by publishing (`hastelib/src/hastegeo/core/utils/model_readiness.py:4-25`,
-  `api/hastefuncapi/function_app.py:785-788`,
-  `api/hastefuncapi/function_app.py:1262-1266`,
-  `api/hastefuncapi/function_app.py:1380-1383`,
-  `hastelib/src/hastegeo/core/publishing/source.py:116-124`).
-- `GetBuildingFootprintsGeoJSON` remains a sampled preview path, not an editing
-  data path. Editing requires the complete footprint PMTiles and sidecar route
-  (`api/hastefuncapi/function_app.py:1400-1424`,
-  `api/hastefuncapi/function_app.py:1453-1458`).
-- HASTE still has no generic artifact versioning: edited outputs must be
-  numbered derived artifacts rather than overwriting raw model outputs
-  (`hastelib/src/hastegeo/core/models/projects.py:343-385`,
-  `hastelib/src/hastegeo/core/processors/prediction_edits.py:1-19`,
-  `hastelib/src/hastegeo/core/processors/prediction_edits.py:329-422`).
+- Analysts need to compare raw and edited outputs on the map, then download the
+  exact GeoPackage version they intend to share.
+- The vector viewer colors PMTiles from a compact JSON sidecar, not from the
+  GeoPackage directly. Without a per-version sidecar, selecting an edited GPKG
+  would silently render raw classes (`hastelib/src/hastegeo/core/utils/prediction_attrs.py:128-202`).
+- Downloads should use `GetModelArtifact` so authentication, managed identity,
+  and HTTP Range behavior stay centralized instead of relying on direct SAS URL
+  rewriting (`api/hastefuncapi/function_app.py:1430-1570`,
+  `ui/src/Components/ProjectManagement/ModelResultsButton.jsx:61-69`).
+- Pre-existing edited versions need a one-time backfill. The read path must stay
+  free of sidecar generation logic, so the selector disables versions whose
+  sidecar has not been generated yet.
 
 ## Success Criteria
 
-- [ ] Trained and embedding model rows expose **View** as the Results menu entry
-      point, enabled from server-derived `predictionsReady` with legacy
-      fallbacks; there are no model-row Edit buttons or `/edit-predictions/...`
-      route (`ui/src/Components/ProjectManagement/ModelResultsButton.jsx:87-110`,
-      `ui/src/Components/ProjectManagement/EmbeddingModelRow.jsx:85-130`,
-      `ui/src/Components/AppBody.jsx:73-75`).
-- [ ] `GetVisualizerResults` returns the vector artifacts and readiness for both
-      workflows, while `predictedDamageLayer` and `predictionsLayer` are nullable
-      trained-inference-only overlays; the full response shape remains aligned
-      with `docs/api/hastefuncapi.md` (`docs/api/hastefuncapi.md:78-157`).
-- [ ] Opening View Results for an embedding model renders a usable 200 payload
-      and predicted footprints rather than an empty raster-only page
-      (`hastelib/tests/core/processors/test_visualizer_payload.py:222-268`).
-- [ ] The results page loads all predicted footprints through PMTiles and the
-      prediction attribute sidecar; missing PMTiles or attributes are requested
-      through the explicit prep PUT route and generated by a queued job, not by
-      the GET handler (`ui/src/Components/Visualizer/usePredictionArtifacts.js:4-24`,
-      `ui/src/Components/Visualizer/usePredictionArtifacts.js:224-299`,
-      `hastelib/src/hastegeo/core/processors/prediction_tiles.py:251-370`).
-- [ ] Analysts can enter edit mode with the pencil or `E`, click individual
-      buildings, ctrl+drag box-select groups, set `Damaged`, `NotDamaged`, or
-      `Unknown`, and leave through Done/`E` with unsaved-edits confirmation
-      (`ui/src/Components/Visualizer/Visualizer.jsx:496-605`,
-      `ui/src/Components/Visualizer/usePredictionFootprints.js:313-376`,
-      `ui/src/Components/keyboardShortcuts.js:60-80`).
-- [ ] Trained-inference models show live damage/unknown threshold sliders using
-      `damage_pct_0m`; embedding models hide the sliders because their
-      `damage_pct_0m` values are a degenerate 0.0/1.0 copy of `damaged`
-      (`ui/src/Components/Visualizer/PredictionEditPanel.jsx:346-397`,
-      `api/hastefuncapi/function_app.py:2738-2815`).
-- [ ] Saving creates `edit_v1`, `edit_v2`, … without mutating `Model.gpkgUrl` or
-      the raw model output; the written edited GeoPackage preserves row order
-      and adds `edited_class`, `edit_threshold`, and `overture_id`
-      (`api/hastefuncapi/function_app.py:3181-3345`,
-      `hastelib/src/hastegeo/core/processors/prediction_edits.py:226-308`).
-- [ ] Saved versions are visible in the edit panel and the payload reports which
-      version is on the map. Version switching in the UI is **not** wired yet:
-      the history rows are read-only and the visualizer fetch does not append a
-      `version` parameter (`ui/src/Components/Visualizer/Visualizer.jsx:213-223`,
-      `ui/src/Components/Visualizer/PredictionEditPanel.jsx:513-550`).
-- [ ] Validation and assessment/report readers can see edited versions through
-      `resolve_prediction_source`; `version=0` forces raw. The known asymmetry is
-      documented: validation reads edited `damaged`, while assessment thresholds
-      the preserved `damage_pct_0m` and therefore ignores per-building overrides
-      for its threshold-based counts (`api/hastefuncapi/function_app.py:4808-4827`,
-      `hastelib/src/hastegeo/core/utils/assessment.py:150-190`,
-      `docs/api/hastefuncapi.md:480-502`).
+- [ ] Saving an edited version writes both
+      `edited_predictions_${modelId}_v${version}.gpkg` and
+      `prediction_attrs_${modelId}_v${version}` in the same call path, then
+      appends one `EditedPredictionVersion` with both URLs.
+- [ ] `build_prediction_attrs` and `write_prediction_attrs` live in
+      `hastegeo.core.utils` so the Functions app can build sidecars without
+      importing the training-image workflow that previously held them
+      (`hastelib/src/hastegeo/core/utils/prediction_attrs.py:128-202`).
+- [ ] `GetModelArtifact` accepts optional `version` for `kind=gpkg` and
+      `kind=prediction_attrs`; `version=0` returns raw output, positive versions
+      return edited artifacts, and unknown versions return 404
+      (`api/hastefuncapi/function_app.py:1400-1570`).
+- [ ] `GetVisualizerResults?version=N` returns the selected version's
+      `predictionAttrsUrl`, `predictionVersion`, and `isNewestPredictionVersion`
+      flag. Omitting `version` keeps the default newest-edited map behavior.
+- [ ] The View Results version selector refetches the map only. It does not
+      change Assessment or Validation report inputs; the UI states when the map
+      and reports can disagree.
+- [ ] Both swipe panes switch together when the selected version changes. Feature
+      state is per renderer, so source, sidecar, class cache, and repaint state
+      must update for both panes in one transition
+      (`ui/src/Components/Visualizer/usePredictionFootprints.js:19-25`,
+      `ui/src/Components/Visualizer/usePredictionFootprints.js:212-228`).
+- [ ] Download buttons appear beside the View Results selector and on each edit
+      panel history row. They use `GetModelArtifact?kind=gpkg&version=N` instead
+      of direct blob/SAS URL rewriting.
+- [ ] The prediction-tiles job has an idempotent backfill mode that builds
+      missing per-version sidecars and skips versions already carrying a sidecar.
+      Dev models `0448` v1 and `5553` v1 are the known initial backfill targets.
+- [ ] During the backfill window, versions without sidecars are visible but
+      disabled in the selector with an explanation rather than rendering an
+      empty or raw-colored map.
+- [ ] Known out-of-scope gaps remain documented: no concurrent-save 409, no
+      Playwright coverage, and Assessment counts still threshold preserved
+      `damage_pct_0m` even though Validation reads edited `damaged`.
 
 ## HASTE Components Affected
 
 | Component | Impact |
 |---|---|
-| `hastelib/src/hastegeo/core/models/` | add `EditedPredictionVersion`; add `Model.editedPredictions`, `Model.predictedBuildingCount`, `Model.predictedAt`, `Model.predictionAttrsUrl`, `Model.predictionTilesJob`, `Model.predictionTilesStatus`, `Model.predictionTilesStatusMessage`, and `ImageLayer.footprintPmtilesUrl`; add visualizer payload fields for vector artifacts, readiness, flavor, building count, and versions (`hastelib/src/hastegeo/core/models/projects.py:343-505`, `hastelib/src/hastegeo/core/models/projects.py:520-529`, `hastelib/src/hastegeo/core/models/projects.py:842-851`, `hastelib/src/hastegeo/core/models/visualizer.py:45-82`) |
-| `hastelib/src/hastegeo/core/config.py` | add artifact templates for edited prediction GeoPackages, prediction attributes, and layer footprint PMTiles; add the prediction-edit prep queue config (`hastelib/src/hastegeo/core/config.py:112-118`, `hastelib/src/hastegeo/core/config.py:165-172`, `hastelib/src/hastegeo/core/config.py:341-347`) |
-| `hastelib/src/hastegeo/core/processors/` | `prediction_edits.py` applies edits and stores versions; `prediction_tiles.py` queues/finalizes prep; `visualizer.py` assembles the vector-first results payload (`hastelib/src/hastegeo/core/processors/prediction_edits.py:1-19`, `hastelib/src/hastegeo/core/processors/prediction_tiles.py:4-84`, `hastelib/src/hastegeo/core/processors/visualizer.py:215-336`) |
-| `hastelib/src/hastegeo/core/utils/` | `predictions.py` normalizes both prediction GeoPackage flavors and resolves raw vs edited versions; `model_readiness.py` owns the single results-readiness rule (`hastelib/src/hastegeo/core/utils/predictions.py:4-34`, `hastelib/src/hastegeo/core/utils/predictions.py:318-401`, `hastelib/src/hastegeo/core/utils/model_readiness.py:132-237`) |
-| `hastelib/src/hastegeo/workflows/` | queued tile/sidecar preparation workflow that runs where `tippecanoe` is available (`hastelib/src/hastegeo/workflows/prepare_prediction_tiles.py:4-46`, `hastelib/src/hastegeo/workflows/prepare_prediction_tiles.py:322-416`) |
-| `api/hastefuncapi/` | prediction edit session/prep/save/version endpoints; vector-first `GetVisualizerResults`; `version` support in visualizer, validation, and assessment reports; `GetModelArtifact` serves `footprint_pmtiles` and `prediction_attrs` (`api/hastefuncapi/function_app.py:1400-1510`, `api/hastefuncapi/function_app.py:2296-2435`, `api/hastefuncapi/function_app.py:2920-3420`, `api/hastefuncapi/function_app.py:4607-4688`, `api/hastefuncapi/function_app.py:4929-5027`) |
-| `api/hastefuncqueues/` | prediction-edit prep queue trigger supports model-scoped and layer-only preparation (`api/hastefuncqueues/function_app.py:861-914`) |
-| `ui/src/Components/ProjectManagement/` | Results menu View action gates on `predictionsReady`; embedding row gets View Results; standalone Edit buttons are removed (`ui/src/Components/ProjectManagement/ModelResultsButton.jsx:87-110`, `ui/src/Components/ProjectManagement/EmbeddingModelRow.jsx:85-130`) |
-| `ui/src/Components/Visualizer/` | existing View Results page owns vector-footprint loading, status notes, edit mode, edit panel, save flow, version display, and keyboard shortcuts (`ui/src/Components/Visualizer/Visualizer.jsx:166-199`, `ui/src/Components/Visualizer/Visualizer.jsx:873-921`, `ui/src/Components/Visualizer/usePredictionArtifacts.js:177-221`, `ui/src/Components/Visualizer/usePredictionFootprints.js:838-902`) |
-| `ui/src/util/pmtiles.js` | shared PMTiles protocol and in-memory source used by the visualizer's vector artifacts (`ui/src/Components/Visualizer/usePredictionArtifacts.js:25-32`, `ui/src/Components/Visualizer/usePredictionArtifacts.js:201-212`) |
-| `.github/workflows/` | no expected dependency change; CI should enforce tests and no-regression UI lint baseline |
+| `hastelib/src/hastegeo/core/models/` | Extend `EditedPredictionVersion` with a per-version sidecar URL while keeping `Model.gpkgUrl` raw and `Model.predictionAttrsUrl` raw/model-scoped (`hastelib/src/hastegeo/core/models/projects.py:343-389`, `hastelib/src/hastegeo/core/models/projects.py:529-535`). |
+| `hastelib/src/hastegeo/core/config.py` | Keep raw `PREDICTION_ATTRS = Template("prediction_attrs_${modelId}")` and add a versioned sidecar artifact template `prediction_attrs_${modelId}_v${version}` (`hastelib/src/hastegeo/core/config.py:168-180`). |
+| `hastelib/src/hastegeo/core/utils/` | Own shared prediction-attribute sidecar building/writing so API save and queue backfill use the same logic. |
+| `hastelib/src/hastegeo/core/processors/` | Save edited GeoPackage and sidecar together; prediction-tiles processor adds idempotent backfill mode. |
+| `hastelib/src/hastegeo/workflows/` | Continue queued PMTiles/raw-sidecar preparation, but import shared sidecar helpers instead of defining them in the workflow (`hastelib/src/hastegeo/workflows/prepare_prediction_tiles.py:77-92`, `hastelib/src/hastegeo/workflows/prepare_prediction_tiles.py:601-610`). |
+| `api/hastefuncapi/` | Extend `GetModelArtifact`, `GetVisualizerResults`, and `PutEditedPredictions` for versioned sidecars and downloads; reports keep newest-version defaults (`api/hastefuncapi/function_app.py:1430-1570`, `api/hastefuncapi/function_app.py:2307-2435`, `api/hastefuncapi/function_app.py:3186-3325`). |
+| `api/hastefuncqueues/` | Run backfill through the existing prediction-edit prep queue rather than generating sidecars lazily on GET. |
+| `ui/src/Components/Visualizer/` | Add the selector, map-only warning, disabled missing-sidecar states, dual-pane switching, and per-row downloads. |
+| `ui/src/Components/ProjectManagement/` | Replace direct GeoPackage blob download paths with `GetModelArtifact` where prediction downloads are exposed (`ui/src/Components/ProjectManagement/ModelResultsButton.jsx:113-119`). |
+| `.github/workflows/` | No new workflow is expected; validation remains targeted backend tests plus UI helper tests and documented Playwright gap. |
 
 ## Related Specs
 
@@ -140,7 +110,7 @@ Each save still creates a new, numbered edited prediction GeoPackage (`edit_v1`,
 |---|---|
 | [data-publishing](../data-publishing/) | related — edited versions are saved artifacts but are not publishable datasets in this feature |
 | [open-data-catalog](../open-data-catalog/) | related — shares Azure Maps/TiTiler geospatial UI patterns and the queue-first approach for heavy geospatial work |
-| [ADR-0005: Introduce Versioned Derived Prediction Artifacts](../../architecture/decisions/0005-versioned-derived-prediction-artifacts.md) | records the artifact-versioning decision for edited prediction GeoPackages and the no-mutable-pointer reader rule |
+| [ADR-0005: Introduce Versioned Derived Prediction Artifacts](../../architecture/decisions/0005-versioned-derived-prediction-artifacts.md) | records append-only edited artifacts, no active pointer, and this per-version sidecar extension |
 
 ## Document Index
 
@@ -158,11 +128,11 @@ Each save still creates a new, numbered edited prediction GeoPackage (`edit_v1`,
 
 | Date | Decision | Rationale |
 |---|---|---|
-| 2026-08-21 | Support both trained-inference and embedding workflows | Analysts need one review/edit entry point regardless of how predictions were produced. |
-| 2026-08-21 | Store saves as numbered derived artifacts (`edit_v1`, `edit_v2`, …) | HASTE has no generic artifact versioning today, and overwriting `Model.gpkgUrl` would clobber the raw model output. |
-| 2026-08-21 | Use PMTiles plus a columnar JSON attribute sidecar for the full browser dataset | Existing full-attribute APIs do not exist, and the sampled GeoJSON route is capped at 2,000 features. |
-| 2026-08-21 | Keep `GetPredictionEditSession` read-only and queue prep through `PutPreparePredictionTilesQueueMessage` | `tippecanoe` is installed in the training image only, so HTTP handlers must not generate tiles inline (`hastelib/src/hastegeo/core/processors/prediction_tiles.py:13-19`, `hastelib/src/hastegeo/workflows/prepare_prediction_tiles.py:40-45`). |
-| 2026-08-22 | Fold prediction editing into the existing View Results page | The implementation removed the standalone `/edit-predictions/...` route and uses the visualizer pencil/`E` affordance instead (`ui/src/Components/AppBody.jsx:73-75`, `ui/src/Components/Visualizer/Labels.jsx:117-128`). |
-| 2026-08-22 | Make the results viewer vector-first and treat rasters as optional trained-inference overlays | Embedding models produce no rasters but can provide the same footprint PMTiles and sidecar as trained models (`hastelib/src/hastegeo/core/processors/visualizer.py:4-29`, `hastelib/src/hastegeo/core/models/visualizer.py:55-82`). |
-| 2026-08-22 | Centralize model results readiness server-side | `predictionsReady` now comes from `model_readiness.py` and is stamped onto model payloads instead of being derived differently in each UI/publishing call site (`hastelib/src/hastegeo/core/utils/model_readiness.py:132-237`). |
-| 2026-08-22 | Let readers default to the newest edited prediction version, with explicit `version` override and `version=0` raw | The no-mutable-pointer ADR still holds, while edited versions now reach visualizer, validation, and assessment readers (`hastelib/src/hastegeo/core/utils/predictions.py:332-401`, `docs/api/hastefuncapi.md:480-502`). |
+| 2026-08-21 | Store saves as numbered derived artifacts (`edit_v1`, `edit_v2`, …) | Overwriting `Model.gpkgUrl` would clobber raw model output and provenance. |
+| 2026-08-21 | Use PMTiles plus a columnar JSON sidecar for browser rendering | The sampled GeoJSON route is capped and not an editing data path. |
+| 2026-08-22 | Fold prediction editing into View Results | Users should review, edit, and download from one map route. |
+| 2026-08-22 | Keep no mutable active-version pointer | Readers use explicit query parameters or newest defaults; metadata stays append-only. |
+| 2026-08-25 | Add per-version prediction-attribute sidecars | The model-scoped raw sidecar cannot represent edited classes, so each edited GeoPackage needs matching derived class data. |
+| 2026-08-25 | Version selection changes the map only | Reports continuing to use newest avoids broad report state management; the accepted trade-off is that the UI must disclose map/report mismatch. |
+| 2026-08-25 | Route version downloads through `GetModelArtifact` | Auth, managed identity, Range, and content disposition should stay centralized in the Functions app. |
+| 2026-08-25 | Backfill existing version sidecars via the prediction-tiles job | Read handlers must not generate artifacts; dev models `0448` v1 and `5553` v1 require one-time idempotent backfill. |

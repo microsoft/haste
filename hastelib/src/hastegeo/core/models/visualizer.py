@@ -63,6 +63,10 @@ class Visualizer(BaseModel):
     # stream through the function app (auth + Range + managed identity),
     # and the UI turns them into absolute URLs with its own buildUrl().
     footprintTilesUrl: Optional[str] = Field(default=None)
+    # Carries "&version=N" when an edited version is selected, so the
+    # viewer renders that version's own classes instead of the raw
+    # model's. None while the selected version's sidecar is still being
+    # built (predictionsReadiness.attrsReady is then False).
     predictionAttrsUrl: Optional[str] = Field(default=None)
     # Prediction flavor, from hastegeo.core.utils.predictions. The
     # embedding producer's damage fraction is a degenerate 0/1 copy of
@@ -73,6 +77,12 @@ class Visualizer(BaseModel):
     # Which prediction GeoPackage was read: an analyst-edited version
     # number, or None for the raw model output.
     predictionVersion: Optional[int] = Field(default=None)
+    # Whether that version is the newest saved state of the model's
+    # predictions. Version selection changes the MAP only — the
+    # Assessment/Validation reports always read the newest version — so
+    # the UI needs to be told when the two diverge rather than having to
+    # recompute it from predictionVersions.
+    predictionVersionIsLatest: bool = Field(default=True)
     # Model.editedPredictions, newest version first, so the viewer can
     # offer a version switch without a second round trip.
     predictionVersions: List[Dict[str, Any]] = Field(default_factory=list)

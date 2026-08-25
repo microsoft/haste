@@ -6,6 +6,12 @@
 // models that support them), the live "would change class" readout, the save
 // action, and the saved-version history.
 //
+// The history is append-only and every entry is downloadable: the GeoPackage
+// for a version is written when it is saved, so it can be exported even when
+// its per-building sidecar has not been backfilled yet and the map therefore
+// cannot draw it. Downloads go through GetModelArtifact like everything else
+// on this page, never a blob SAS URL.
+//
 // This is the overlay the pencil affordance opens over the results view. It
 // was the standalone Prediction Editor's right panel and is deliberately
 // unchanged in look: the same review controls, now on the map the analyst was
@@ -29,6 +35,7 @@ import {
   RadioGroup,
   Slider,
   Text,
+  Tooltip,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
@@ -47,6 +54,7 @@ import {
   toPercentLabel,
 } from "./predictionClassify";
 import { describeServedVersion } from "./predictionResults";
+import { describeVersionDownload } from "./predictionVersions";
 
 const CLASS_ORDER = [CLASS_DAMAGED, CLASS_NOT_DAMAGED, CLASS_UNKNOWN];
 
@@ -223,9 +231,18 @@ const useStyles = makeStyles({
   },
   versionHeader: {
     display: "flex",
-    alignItems: "baseline",
+    alignItems: "center",
     justifyContent: "space-between",
     gap: tokens.spacingHorizontalXS,
+  },
+  // Badge + download sit together on the right of a version row.
+  versionActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
+  },
+  versionNote: {
+    marginBottom: tokens.spacingVerticalXS,
   },
   versionTitle: {
     fontWeight: tokens.fontWeightSemibold,
@@ -272,6 +289,9 @@ const PredictionEditPanel = ({
   savedResult,
   versions,
   activeVersion = null,
+  onDownloadVersion,
+  reportDivergence = null,
+  thresholdNote = "",
 }) => {
   const styles = useStyles();
 
@@ -392,8 +412,8 @@ const PredictionEditPanel = ({
 
         {!supportsThreshold && (
           <div className={styles.subtle}>
-            This model does not expose a tunable score, so classes come from
-            its own decisions plus your edits.
+            {thresholdNote ||
+              "This model does not expose a tunable score, so classes come from its own decisions plus your edits."}
           </div>
         )}
 
@@ -513,6 +533,14 @@ const PredictionEditPanel = ({
         {/* Saved versions */}
         <div>
           <div className={styles.cardTitle}>Saved versions</div>
+          {reportDivergence && (
+            <MessageBar intent="warning" className={styles.versionNote}>
+              <MessageBarBody>
+                <MessageBarTitle>{reportDivergence.title}</MessageBarTitle>
+                {reportDivergence.body}
+              </MessageBarBody>
+            </MessageBar>
+          )}
           {orderedVersions.length === 0 ? (
             <div className={styles.subtle}>
               No edited versions yet. Saving creates version 1 — the model&rsquo;s
@@ -533,11 +561,30 @@ const PredictionEditPanel = ({
                     <span className={styles.versionTitle}>
                       Version {version.version}
                     </span>
-                    {version.version === activeVersion && (
-                      <Badge appearance="tint" color="brand">
-                        On the map
-                      </Badge>
-                    )}
+                    <span className={styles.versionActions}>
+                      {version.version === activeVersion && (
+                        <Badge appearance="tint" color="brand">
+                          On the map
+                        </Badge>
+                      )}
+                      {/* Every saved version is downloadable, including the
+                          ones whose sidecar has not been backfilled yet: the
+                          GeoPackage is written at save time, so it exists
+                          even when the map cannot draw that version. */}
+                      {typeof onDownloadVersion === "function" && (
+                        <Tooltip
+                          content={describeVersionDownload(version.version)}
+                          relationship="label"
+                        >
+                          <Button
+                            appearance="subtle"
+                            size="small"
+                            icon={<FluentIcon name="download" />}
+                            onClick={() => onDownloadVersion(version.version)}
+                          />
+                        </Tooltip>
+                      )}
+                    </span>
                   </div>
                   <div className={styles.subtle}>
                     {formatDate(version.createdAt)}
@@ -630,10 +677,18 @@ PredictionEditPanel.propTypes = {
   savedResult: PropTypes.shape({
     version: PropTypes.number,
     gpkgUrl: PropTypes.string,
+    predictionAttrsUrl: PropTypes.string,
     editedCount: PropTypes.number,
+    buildingCount: PropTypes.number,
   }),
   versions: PropTypes.array.isRequired,
   activeVersion: PropTypes.number,
+  onDownloadVersion: PropTypes.func,
+  reportDivergence: PropTypes.shape({
+    title: PropTypes.string,
+    body: PropTypes.string,
+  }),
+  thresholdNote: PropTypes.string,
 };
 
 export default PredictionEditPanel;

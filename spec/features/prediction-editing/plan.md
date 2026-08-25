@@ -4,94 +4,79 @@
 
 ## Phases
 
-### Phase 1: Core Library — implemented
+### Phase 1: Core Library — base implemented, versioned sidecars in progress
 
-**Goal:** Implement core models, artifact naming, schema normalization,
-versioned edit writing, readiness, and reader source selection in
-`hastelib/src/hastegeo/`.
+**Goal:** Preserve append-only edited GeoPackages and add per-version sidecars so
+every selectable version has renderable class data.
 
 | Task | Agent | Dependencies | Story Ref | Status |
 |---|---|---|---|---|
-| Add `EditedPredictionVersion`, `Model.editedPredictions`, `Model.predictedBuildingCount`, `Model.predictedAt`, `Model.predictionAttrsUrl`, `Model.predictionTilesJob`, `Model.predictionTilesStatus`, `Model.predictionTilesStatusMessage`, and `ImageLayer.footprintPmtilesUrl` | `backend-dev` | — | US-002, US-004 | complete (`hastelib/src/hastegeo/core/models/projects.py:343-505`, `hastelib/src/hastegeo/core/models/projects.py:520-529`, `hastelib/src/hastegeo/core/models/projects.py:842-851`) |
-| Add transport-only wire models in `hastelib/src/hastegeo/core/models/predictions.py` | `backend-dev` | model fields | US-002, US-004 | complete |
-| Add `EDITED_PREDICTIONS_GPKG`, `PREDICTION_ATTRS`, and `LAYER_FOOTPRINT_PMTILES` artifact types | `backend-dev` | — | US-002, US-004 | complete (`hastelib/src/hastegeo/core/config.py:165-172`) |
-| Implement prediction schema detection for trained inference vs embedding outputs in `core/utils/predictions.py` | `backend-dev`, `gis` | model fields | US-002 | complete (`hastelib/src/hastegeo/core/utils/predictions.py:4-34`) |
-| Implement row-order validation and Overture id extraction from source footprints | `gis` | schema detection | US-002, US-004 | complete (`hastelib/src/hastegeo/workflows/prepare_prediction_tiles.py:322-416`) |
-| Implement class derivation and edited GeoPackage writer in `core/processors/prediction_edits.py` | `backend-dev`, `gis` | row-order validation | US-004 | complete (`hastelib/src/hastegeo/core/processors/prediction_edits.py:226-308`) |
-| Add one server-derived readiness rule in `core/utils/model_readiness.py` | `backend-dev` | model fields | US-001, US-002 | complete (`hastelib/src/hastegeo/core/utils/model_readiness.py:132-237`) |
-| Add `resolve_prediction_source(model, version=None)` next to `read_predictions` | `backend-dev` | `Model.editedPredictions` | US-006 | complete (`hastelib/src/hastegeo/core/utils/predictions.py:332-401`) |
-| Write unit tests for schema detection, class derivation, version allocation, row-order preservation, readiness, source resolution, and visualizer payload assembly | `backend-dev`, `gis` | all above | US-001, US-002, US-004, US-006 | complete (`hastelib/tests/core/utils/test_model_readiness.py:148-229`, `hastelib/tests/core/utils/test_prediction_source.py:89-188`, `hastelib/tests/core/processors/test_visualizer_payload.py:222-392`) |
+| Keep `EditedPredictionVersion` and append-only `Model.editedPredictions`; raw `Model.gpkgUrl` remains unchanged | `backend-dev` | — | US-004 | complete (`hastelib/src/hastegeo/core/models/projects.py:343-389`, `api/hastefuncapi/function_app.py:3202-3204`) |
+| Add `predictionAttrsUrl` to `EditedPredictionVersion` | `backend-dev` | versioned sidecar artifact | US-004, US-005 | complete (`hastelib/src/hastegeo/core/models/projects.py:356-389`) |
+| Keep raw/model-scoped `PREDICTION_ATTRS = prediction_attrs_${modelId}` for raw predictions | `backend-dev` | — | US-002 | complete (`hastelib/src/hastegeo/core/config.py:172`) |
+| Add versioned sidecar artifact type `prediction_attrs_${modelId}_v${version}` | `backend-dev` | artifact naming | US-004, US-005 | complete (`hastelib/src/hastegeo/core/config.py:178-180`) |
+| Use shared `build_prediction_attrs` and `write_prediction_attrs` from `hastegeo.core.utils` | `backend-dev`, `gis` | sidecar schema | US-002, US-004, US-008 | complete (`hastelib/src/hastegeo/core/utils/prediction_attrs.py:128-202`, `hastelib/src/hastegeo/workflows/prepare_prediction_tiles.py:77-92`) |
+| Update the prediction-tiles workflow to import the shared sidecar helpers | `gis` | shared helper move | US-002, US-008 | complete (`hastelib/src/hastegeo/workflows/prepare_prediction_tiles.py:77-92`) |
+| Add edited-version save helpers to build/store GeoPackage and sidecar in one call path | `backend-dev`, `gis` | shared helper, artifact naming | US-004 | complete (`hastelib/src/hastegeo/core/processors/prediction_edits.py:437-488`, `hastelib/src/hastegeo/core/processors/prediction_edits.py:520-608`) |
+| Add idempotent edited-version sidecar backfill helper that skips versions with existing sidecars | `backend-dev`, `gis` | shared helper, model field | US-008 | complete (`hastelib/src/hastegeo/core/processors/prediction_tiles.py:148-165`, `hastelib/src/hastegeo/core/processors/prediction_tiles.py:304-340`) |
+| Add unit tests for versioned sidecar template rendering, save-time sidecar consistency, and backfill skip/build behavior | `backend-dev`, `gis` | implementation above | US-004, US-008 | not-started |
 
 > **Agent column:** Use HASTE agent names (`backend-dev`, `gis`, `ui`, `security`). See [user-stories.md](user-stories.md#agent-assignment-map) for the full agent→story mapping.
 
 **Exit Criteria:**
-- [x] `hastelib` unit tests cover both producer schemas and row-order preservation.
-- [x] Edited GeoPackage generation works independently of the API layer.
-- [x] Raw `Model.gpkgUrl` remains unchanged after saves.
-- [x] Server readiness and raw-vs-edited source selection are pure helpers with targeted tests.
+- [ ] Every new edited version has both `gpkgUrl` and `predictionAttrsUrl`.
+- [ ] Shared sidecar helper is used by save-time generation and queue backfill.
+- [ ] Backfill is idempotent and can target dev models `0448` v1 and `5553` v1.
+- [ ] Raw `Model.gpkgUrl` and raw `Model.predictionAttrsUrl` semantics are unchanged.
 
-### Phase 2: API Layer — implemented with known test gaps
+### Phase 2: API Layer — versioned artifact contract in progress
 
-**Goal:** Expose prediction editing and vector-first results through thin
-`hastefuncapi` routes and a queued preparation worker.
-
-| Task | Agent | Dependencies | Story Ref | Status |
-|---|---|---|---|---|
-| Add side-effect-free `GetPredictionEditSession` route | `backend-dev` | Phase 1 models | US-002 | complete (`api/hastefuncapi/function_app.py:2920-3025`) |
-| Add `PutPreparePredictionTilesQueueMessage` route for explicit prep queue requests | `backend-dev` | `core/processors/prediction_tiles.py` | US-002 | complete |
-| Add `PutEditedPredictions` route | `backend-dev` | edited GeoPackage writer | US-004 | complete (`api/hastefuncapi/function_app.py:3181-3345`) |
-| Add `GetEditedPredictionVersions` route | `backend-dev` | Phase 1 models | US-005 | complete (`api/hastefuncapi/function_app.py:3376-3410`) |
-| Extend `GetModelArtifact` with `footprint_pmtiles` and `prediction_attrs` kinds | `backend-dev` | artifact types | US-002, US-005 | complete (`api/hastefuncapi/function_app.py:1400-1510`) |
-| Add `workflows/prepare_prediction_tiles.py` prep workflow (footprint PMTiles + attribute sidecar) | `gis` | Phase 1 prediction reader | US-002 | complete (`hastelib/src/hastegeo/workflows/prepare_prediction_tiles.py:4-46`, `hastelib/src/hastegeo/workflows/prepare_prediction_tiles.py:322-416`) |
-| Add `core/processors/prediction_tiles.py` runner orchestration | `gis` | prep workflow | US-002 | complete (`hastelib/src/hastegeo/core/processors/prediction_tiles.py:4-84`, `hastelib/src/hastegeo/core/processors/prediction_tiles.py:475-560`) |
-| Add `prediction-edit-prep-queue` trigger in `hastefuncqueues` | `backend-dev`, `gis` | prep workflow | US-002 | complete (`api/hastefuncqueues/function_app.py:861-914`) |
-| Build the layer's footprint PMTiles at image-layer creation (layer-only prep mode; `ImageLayer.footprintTiles*` fields; best-effort enqueue from `ImageryPostProcessor`) | `gis` | prep workflow, queue trigger | US-002 | complete (`hastelib/src/hastegeo/core/processors/imagery.py:249-257`, `hastelib/src/hastegeo/core/processors/imagery.py:399-441`) |
-| Make `GetVisualizerResults` workflow-agnostic and vector-first (footprint tiles + attrs sidecar as `GetModelArtifact` routes, `predictionsReady`/readiness detail, `flavor`/`supportsThreshold`, nullable raster layers); payload assembly in `core/processors/visualizer.py` | `backend-dev` | `core/processors/prediction_tiles.py`, prediction reader | US-001, US-002, US-006 | complete (`api/hastefuncapi/function_app.py:2296-2435`, `hastelib/src/hastegeo/core/processors/visualizer.py:215-336`) |
-| Surface `predictionsReady` on `GetLayerModelsDetails`, `GetProjectDetails`, and `GetLayerDetailView`; reuse the same completion rule in `core/publishing/source.py` | `backend-dev` | `core/utils/model_readiness.py` | US-001 | complete (`api/hastefuncapi/function_app.py:785-788`, `api/hastefuncapi/function_app.py:1262-1266`, `api/hastefuncapi/function_app.py:1380-1383`, `hastelib/src/hastegeo/core/publishing/source.py:116-124`) |
-| Adopt `resolve_prediction_source(model, version=None)` and optional `version` query param in `GetVisualizerResults`, `GetValidationReport`, and `GetAssessmentReport` | `backend-dev` | `Model.editedPredictions` | US-006 | complete (`api/hastefuncapi/function_app.py:2386-2435`, `api/hastefuncapi/function_app.py:4677-4688`, `api/hastefuncapi/function_app.py:5017-5027`) |
-| Document the full `GetVisualizerResults` shape and reader `version` behavior in the API docs | `backend-dev` | route implementation | US-002, US-006 | complete (`docs/api/hastefuncapi.md:78-157`, `docs/api/hastefuncapi.md:480-502`) |
-| Add API integration tests for visualizer payloads, validation, readiness, save, and version-list responses | `backend-dev` | routes | US-002, US-004, US-005, US-006 | not-started |
-| Add `infra/modules/functions.bicep` app-setting parity for the new queue | `backend-dev` | queue config | US-002 | skipped — `Config` has a default and changing Bicep without regenerating `infra/main.json` would create infra drift |
-
-**Exit Criteria:**
-- [x] Endpoints are implemented as Azure Functions routes.
-- [x] Missing PMTiles/sidecars are generated by the queue worker, not inline in HTTP.
-- [x] Footprint PMTiles are built once per image layer at layer-creation time; the on-demand path still covers pre-existing layers.
-- [x] `PutEditedPredictions` returns `version`, `gpkgUrl`, and `editedCount` for both producer schemas.
-- [x] Readers default to the newest edited version and accept an explicit `version` override (no mutable "active version" pointer — see ADR-0005).
-- [x] `GetVisualizerResults` returns a usable 200 payload for an embedding model, with the raster fields nullable rather than broken.
-- [ ] Docker Compose local stack can exercise session prep and save.
-- [ ] API-level integration tests exist for the new and modified routes.
-
-### Phase 3: UI — implemented with validation gaps
-
-**Goal:** Use the existing View Results page as the prediction review and edit
-surface with Azure Maps, PMTiles, Fluent UI, and existing HASTE interaction
-patterns.
+**Goal:** Expose selected-version map payloads and downloads without adding lazy
+generation to GET handlers.
 
 | Task | Agent | Dependencies | Story Ref | Status |
 |---|---|---|---|---|
-| Remove the standalone `/edit-predictions/:projectId/:imageLayerId/:modelId` route and `PredictionEditor` screen; keep only `/visualizer/:projectId/:imageLayerId/:modelId` | `ui` | route component removal | US-001 | complete (`ui/src/Components/AppBody.jsx:73-75`) |
-| Remove standalone model-row Edit buttons; make trained model Results → View use `predictionsReady` with a processed-inference fallback | `ui` | API model payload flag | US-001 | complete (`ui/src/Components/ProjectManagement/ModelResultsButton.jsx:87-110`) |
-| Add embedding View Results as the first Results menu item, gated by `predictionsReady` with a legacy `gpkgUrl` fallback | `ui` | API model payload flag | US-001 | complete (`ui/src/Components/ProjectManagement/EmbeddingModelRow.jsx:85-130`) |
-| Add vector-first predicted-footprint rendering to the Visualizer through `usePredictionArtifacts`, `usePredictionFootprints`, and `predictionFootprintMap.js` | `ui` | `GetVisualizerResults`, `GetModelArtifact` | US-002, US-003 | complete (`ui/src/Components/Visualizer/Visualizer.jsx:166-199`, `ui/src/Components/Visualizer/usePredictionArtifacts.js:177-221`, `ui/src/Components/Visualizer/usePredictionFootprints.js:4-29`) |
-| Add status-note handling for loading/preparing/empty/unavailable predicted buildings | `ui` | readiness contract | US-002 | complete (`ui/src/Components/Visualizer/PredictionStatusNote.jsx`, `ui/src/Components/Visualizer/predictionResults.js:320-385`) |
-| Add pencil/Done affordance next to Back, `E` shortcut, and unsaved-edits discard confirmation | `ui` | vector footprint readiness | US-001, US-003 | complete (`ui/src/Components/Visualizer/Labels.jsx:117-128`, `ui/src/Components/Visualizer/Visualizer.jsx:496-605`, `ui/src/Components/keyboardShortcuts.js:7-17`) |
-| Move the former editor right panel into `Visualizer/PredictionEditPanel.jsx` with filters, counts, edited filter, prev/next traversal, class controls, threshold sliders, save, and read-only version history | `ui` | map selection state | US-003, US-005 | complete (`ui/src/Components/Visualizer/PredictionEditPanel.jsx:4-16`, `ui/src/Components/Visualizer/PredictionEditPanel.jsx:300-585`) |
-| Add save-as-new-version action that calls `PutEditedPredictions`, refreshes versions, and resets the unsaved baseline | `ui` | `PutEditedPredictions`, versions API | US-004, US-005 | complete (`ui/src/Components/Visualizer/usePredictionFootprints.js:838-902`, `ui/src/Components/Visualizer/usePredictionArtifacts.js:159-168`) |
-| Add active-version readout from `predictionVersion`/`predictionVersions` | `ui` | vector-first payload | US-005, US-006 | complete (`ui/src/Components/Visualizer/predictionResults.js:174-180`, `ui/src/Components/Visualizer/predictionResults.js:231-249`, `ui/src/Components/Visualizer/PredictionEditPanel.jsx:513-550`) |
-| Wire version-history row selection to refetch `GetVisualizerResults?version=N` | `ui` | active-version UI design | US-005, US-006 | not-started — history is read-only and `getVisualizerResults` sends no `version` param (`ui/src/Components/Visualizer/Visualizer.jsx:213-223`) |
-| Add one-click edited-version download action in the right panel | `ui` | version history display | US-005 | not-started |
-| Add shared PMTiles protocol singleton in `ui/src/util/pmtiles.js` and use it from Visualizer artifact loading | `ui` | PMTiles map sources | US-002, US-003 | complete (`ui/src/Components/Visualizer/usePredictionArtifacts.js:25-32`, `ui/src/Components/Visualizer/usePredictionArtifacts.js:201-212`) |
-| Add plain Node unit tests for `predictionClassify.js`, `predictionResults.js`, `predictionPrep.js`, `predictionFootprintMap.js`, and `visualizerSwipe.js` behavior | `ui` | UI helpers | US-001-US-006 | complete (`ui/src/Components/Visualizer/predictionClassify.test.js:388-407`, `ui/src/Components/Visualizer/predictionClassify.test.js:958-1030`, `ui/src/Components/Visualizer/predictionClassify.test.js:1112-1243`) |
-| Add browser/Playwright coverage for View Results gating, vector loading, threshold visibility, selection, save flow, and version history | `ui-validation` | UI implementation | US-001, US-003, US-005 | not-started — this repo has no Playwright config or dependency (`ui/package.json:6-15`, `ui/package.json:62-75`) |
+| Extend `GetModelArtifact` so `kind=gpkg` resolves raw with omitted/`version=0` and edited versions with `version=N` | `backend-dev` | `EditedPredictionVersion.gpkgUrl` | US-007 | in-progress (`api/hastefuncapi/function_app.py:1400-1570`) |
+| Extend `GetModelArtifact` so `kind=prediction_attrs` resolves raw and versioned sidecars with the same `version` contract | `backend-dev` | versioned sidecar URLs | US-005, US-007 | in-progress (`api/hastefuncapi/function_app.py:1400-1570`) |
+| Return 400 for malformed `version` and 404 for unknown positive versions in artifact and visualizer routes | `backend-dev` | version parsing | US-005, US-007 | in-progress (`api/hastefuncapi/function_app.py:157-171`, `api/hastefuncapi/function_app.py:2386-2397`) |
+| Extend `GetVisualizerResults?version=N` to return the selected version's `predictionAttrsUrl` and `isNewestPredictionVersion` | `backend-dev` | visualizer payload model | US-005, US-006 | in-progress (`hastelib/src/hastegeo/core/models/visualizer.py:65-78`, `hastelib/src/hastegeo/core/processors/visualizer.py:272-329`) |
+| Update `PutEditedPredictions` to call `save_edited_version`, return `predictionAttrsUrl`, and append it to `EditedPredictionVersion` | `backend-dev` | Phase 1 save helper | US-004 | in-progress (`api/hastefuncapi/function_app.py:3186-3325`) |
+| Keep Assessment and Validation report buttons defaulting to newest; do not pass the View Results selector state to them | `backend-dev`, `ui` | product decision | US-006 | planned (`api/hastefuncapi/function_app.py:4607-4688`, `api/hastefuncapi/function_app.py:4929-5027`) |
+| Add backfill mode to `PutPreparePredictionTilesQueueMessage` / queue worker | `backend-dev`, `gis` | Phase 1 backfill helper | US-008 | in-progress |
+| Ensure backfill is not invoked from `GetVisualizerResults` or `GetModelArtifact` | `backend-dev` | API route review | US-005, US-008 | planned |
+| Add API integration tests for visualizer version selection, artifact downloads, missing sidecars, unknown versions, and report default split | `backend-dev` | API changes | US-005-US-008 | not-started |
 
 **Exit Criteria:**
-- [x] Feature is accessible from both model-row workflows through View Results.
-- [ ] Edit mode works with PMTiles and sidecar data in local SWA dev.
-- [x] UI uses `makeStyles` and Fluent tokens; no hard-coded semantic hex colors in the edit panel/map helpers.
-- [ ] UI validation shows no regression from the current lint baseline.
-- [ ] Browser/Playwright validation exists for the Visualizer edit mode or is explicitly waived.
+- [ ] `GetVisualizerResults?version=N` selects the correct sidecar and reports whether it is newest.
+- [ ] `GetModelArtifact?kind=gpkg&version=N` downloads edited versions through the Function App.
+- [ ] `GetModelArtifact?kind=prediction_attrs&version=N` streams the matching sidecar.
+- [ ] Unknown edited versions return 404; malformed versions return 400.
+- [ ] Read paths never generate sidecars.
+
+### Phase 3: UI — selector and downloads in progress
+
+**Goal:** Let analysts select and download versions while clearly communicating
+that reports still use newest.
+
+| Task | Agent | Dependencies | Story Ref | Status |
+|---|---|---|---|---|
+| Add View Results version selector with Raw, newest, and saved edited versions | `ui` | `GetVisualizerResults` version payload | US-005 | in-progress |
+| Refetch `GetVisualizerResults?version=N` when the selector changes | `ui` | API version contract | US-005 | in-progress (`ui/src/Components/Visualizer/Visualizer.jsx:213-223`) |
+| Disable versions missing `predictionAttrsUrl` and explain that backfill has not completed | `ui` | version metadata | US-005, US-008 | planned |
+| Show a map-only/report-newest warning when selected version is not newest | `ui` | `isNewestPredictionVersion` flag | US-005, US-006 | planned |
+| Switch both swipe panes together by clearing/reloading sidecar and feature-state for both renderers | `ui` | PMTiles/vector state | US-003, US-005 | planned (`ui/src/Components/Visualizer/usePredictionFootprints.js:19-25`, `ui/src/Components/Visualizer/usePredictionFootprints.js:212-228`) |
+| Add download button beside the selector using `GetModelArtifact?kind=gpkg&version=<selected>` | `ui` | artifact route | US-007 | in-progress |
+| Add per-row download action in the edit panel version history | `ui` | artifact route | US-007 | in-progress (`ui/src/Components/Visualizer/PredictionEditPanel.jsx:513-550`) |
+| Replace direct prediction GPKG blob/SAS download usage with `GetModelArtifact` for new versioned download paths | `ui` | artifact route | US-007 | planned (`ui/src/Components/ProjectManagement/ModelResultsButton.jsx:61-69`) |
+| Add helper/unit tests for selector options, disabled missing-sidecar versions, download URL generation, warning copy, and dual-pane state reset | `ui` | UI implementation | US-003, US-005, US-007, US-008 | not-started |
+| Add Playwright/browser coverage | `ui-validation` | Playwright config | US-001-US-008 | not-started — repo has no Playwright config or dependency (`ui/package.json:6-15`, `ui/package.json:62-75`) |
+
+**Exit Criteria:**
+- [ ] Selecting a version changes only the map.
+- [ ] Downloads are available beside the selector and per version-history row.
+- [ ] Missing-sidecar versions are disabled with explanation.
+- [ ] Both swipe panes switch without stale colors.
+- [ ] UI helper tests pass; Playwright gap remains documented if no config is added.
 
 ### Phase 4: Integration & Deployment — TBD
 
@@ -99,38 +84,40 @@ patterns.
 
 | Task | Agent | Dependencies | Story Ref | Status |
 |---|---|---|---|---|
-| Run end-to-end Docker Compose scenario for trained-inference View Results and edit mode | `backend-dev`, `ui`, `gis` | Phases 1-3 | US-001, US-002, US-003, US-004, US-006 | not-started |
-| Run end-to-end Docker Compose scenario for embedding View Results and edit mode | `backend-dev`, `ui`, `gis` | Phases 1-3 | US-001, US-002, US-003, US-004, US-006 | not-started |
-| Verify versioned downloads and raw `Model.gpkgUrl` immutability | `backend-dev` | Phases 1-3 | US-004, US-005 | not-started |
-| Verify `GetValidationReport`, `GetAssessmentReport`, and `GetVisualizerResults` default/newest, explicit version, and `version=0` raw behavior | `backend-dev`, `gis` | Phase 2 | US-006 | not-started |
-| Verify Azure monitoring and queue dead-letter visibility | `backend-dev` | Phase 2 | US-002 | not-started |
-| Update end-user docs only after behavior is implemented and validated | `ui` | Feature complete | US-001-US-006 | not-started |
+| Run backfill for dev models `0448` v1 and `5553` v1 | `backend-dev`, `gis` | Phases 1-2 | US-008 | not-started |
+| Verify View Results selector can show raw, newest, and an older edited version | `backend-dev`, `ui`, `gis` | Phases 1-3 | US-005 | not-started |
+| Verify selector changes the map only and reports still read newest | `backend-dev`, `ui`, `gis` | Phases 2-3 | US-006 | not-started |
+| Verify versioned downloads from selector and edit panel rows | `backend-dev`, `ui` | Phases 2-3 | US-007 | not-started |
+| Verify disabled missing-sidecar state during a simulated backfill window | `ui`, `backend-dev` | Phases 2-3 | US-005, US-008 | not-started |
+| Run targeted backend/unit tests for sidecar, save, backfill, and artifact resolution | `backend-validation` | Phases 1-2 | US-004, US-005, US-007, US-008 | not-started |
+| Run targeted UI helper tests and record Playwright absence | `ui-validation` | Phase 3 | US-003, US-005, US-007 | not-started |
 
 **Exit Criteria:**
-- [ ] Docker Compose validates both workflows.
-- [ ] Targeted backend tests pass.
-- [ ] Targeted UI helper tests pass; Playwright coverage is added or explicitly waived.
-- [ ] CI passes or has a documented no-regression exception for the known UI lint baseline.
-- [ ] Known follow-ups are triaged: UI version switching, API integration tests, browser validation, concurrent-save conflict handling, assessment/report semantics, and producer-side Overture ids.
+- [ ] Dev backfill completes or failures are visible and actionable.
+- [ ] Versioned sidecar and GeoPackage URLs match for every selectable version.
+- [ ] Map/report mismatch warning is visible when applicable.
+- [ ] Direct blob/SAS URL download paths are not used for new version downloads.
+- [ ] Known follow-ups are triaged: concurrent-save 409, Playwright/browser validation, Assessment semantics, and producer-side Overture ids.
 
 ## Milestones
 
 | Milestone | Date | Deliverable |
 |---|---|---|
-| Spec approved | TBD | Draft spec and ADR reviewed. |
-| Core library done | TBD | Models, artifact types, class derivation, readiness, source resolution, and GeoPackage writer merged. |
-| Prep/API done | TBD | Session, save, version list, artifact retrieval, vector-first visualizer, report version params, and queue prep working. |
-| Results edit mode done | TBD | View Results entry, vector map, filters, threshold, overrides, version list, and save flow working. |
+| Spec amended | 2026-08-25 | Draft spec and ADR describe per-version sidecars, map-only selection, downloads, and backfill. |
+| Core/API contract done | TBD | Versioned sidecar schema, helpers, save path, artifact resolution, and backfill implemented. |
+| UI selector/downloads done | TBD | View Results selector, warnings, disabled states, and downloads working. |
+| Dev validation done | TBD | Backfill and E2E selector/download scenarios verified in dev. |
 | Release | TBD | Feature promoted after dev/test validation. |
 
 ## Agent Summary
 
 | Agent | Tasks Owned | Phases |
 |---|---|---|
-| `backend-dev` | 21 | 1, 2, 4 |
-| `gis` | 8 | 1, 2, 4 |
-| `ui` | 15 | 3, 4 |
-| `ui-validation` | 1 | 3 |
+| `backend-dev` | data model, API, artifact resolution, save, backfill | 1, 2, 4 |
+| `gis` | sidecar correctness, GeoPackage row order, backfill validation | 1, 2, 4 |
+| `ui` | selector, warning, dual-pane switch, downloads | 3, 4 |
+| `backend-validation` | targeted backend and queue validation | 4 |
+| `ui-validation` | UI helper validation and Playwright-gap reporting | 3, 4 |
 | `security` | 0 | —; no new dependency is expected |
 
 ## Resource Requirements
@@ -139,20 +126,17 @@ patterns.
   `ui-validation`.
 - **Azure services:** Existing Cosmos metadata store, Blob Storage, Queue
   Storage, Azure Functions, and existing Batch/runner capacity.
-- **GPU compute:** None required for editing or tile generation. The training
-  container is used because it contains `tippecanoe`, not because GPU is needed.
-- **External data:** None beyond existing project imagery, footprints, and model
-  prediction artifacts.
+- **GPU compute:** None required for editing, sidecar generation, or backfill.
+- **External data:** None beyond existing project imagery, footprints, raw
+  predictions, and edited GeoPackages.
 
 ## Open Questions
 
-- [x] Confirm the concrete queue config key name before implementation.
-      Resolved: `prediction_edit_prep_queue_name` in `Config.get_queue_config()`
-      (env `PREDICTION_EDIT_PREP_QUEUE_NAME`, default `prediction-edit-prep-queue`,
-      `local-prediction-edit-prep-queue` in the Docker Compose stack).
 - [ ] Decide whether high-volume saves need an async save path after measuring
-      real production layer sizes.
-- [ ] Decide whether UI version switching should refetch `GetVisualizerResults?version=N`, add a separate version-selection endpoint, or stay read-only.
-- [ ] Decide how assessment counts should incorporate per-building overrides when edited GeoPackages preserve the producer's original `damage_pct_0m`.
-- [ ] Add optimistic concurrency for simultaneous saves before supporting multi-analyst editing of the same model.
-- [ ] Fix or explicitly mitigate the pre-existing positional-join risks: classic inference can drop footprint rows before writing predictions, and neither producer writes an explicit `overture_id` column (`docker/training/code/merge_with_building_footprints.py:151-190`, `docker/training/code/merge_with_building_footprints.py:221-258`, `api/hastefuncapi/function_app.py:2738-2815`).
+      production layer sizes.
+- [ ] Add optimistic concurrency for simultaneous saves before supporting
+      multi-analyst editing of the same model.
+- [ ] Decide how Assessment counts should incorporate per-building overrides
+      when edited GeoPackages preserve the producer's original `damage_pct_0m`.
+- [ ] Fix or explicitly mitigate pre-existing positional-join risks in raw
+      prediction producers.

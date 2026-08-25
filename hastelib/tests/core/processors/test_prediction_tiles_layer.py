@@ -105,6 +105,7 @@ class TestLayerOnlyEnqueue(unittest.TestCase):
                 "sourceGpkgUrl",
                 "sourceFootprintsUrl",
                 "force",
+                "backfillVersions",
             },
         )
         self.assertEqual(message["modelId"], "")

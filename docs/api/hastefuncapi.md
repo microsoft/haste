@@ -54,7 +54,7 @@ All functions are defined in `function_app.py` as a single Azure Functions app. 
 | DELETE | `DeleteModel` | Delete a model. Requires `projectId` and `modelId`. |
 | GET | `GetVisualizerResults` | Results-viewer data for one model: imagery tile URLs, the vector prediction artifacts, readiness, and (inference models only) the raster prediction layers. Requires `projectId`, `imageLayerId`, and `modelId`. See [below](#get-getvisualizerresults). |
 | PUT | `PutArtifactsZipQueueMessage` | Queue a job to zip model artifacts for download. |
-| GET | `GetModelArtifact` | Stream a model artifact (or an image layer's footprint tiles) through the function app instead of a direct blob SAS URL, honoring HTTP `Range`. See [Model artifacts](#model-artifacts). |
+| GET | `GetModelArtifact` | Stream a model artifact (or an image layer's footprint tiles) through the function app instead of a direct blob SAS URL, honoring HTTP `Range`. Accepts an optional `version` for the per-version prediction artifacts. See [Model artifacts](#model-artifacts). |
 
 #### `predictionsReady` on model payloads
 
@@ -102,12 +102,13 @@ See [Prediction Editing](#prediction-editing).
   "predictionsLayer":     { "url": "https://titiler…&colormap=…", "bounds": [ … ], … },
 
   "footprintTilesUrl": "GetModelArtifact?projectId=…&modelId=5557&kind=footprint_pmtiles&imageLayerId=…",
-  "predictionAttrsUrl": "GetModelArtifact?projectId=…&modelId=5557&kind=prediction_attrs",
+  "predictionAttrsUrl": "GetModelArtifact?projectId=…&modelId=5557&kind=prediction_attrs&version=2",
   "flavor": "inference",
   "supportsThreshold": true,
   "buildingCount": 125430,
-  "predictionVersion": null,
-  "predictionVersions": [ { "version": 1, "gpkgUrl": "…", "createdAt": "…", "createdBy": "…", "threshold": 0.5, "unknownThreshold": 0.0, "editedCount": 53, "sourceGpkgUrl": "…" } ],
+  "predictionVersion": 2,
+  "predictionVersionIsLatest": true,
+  "predictionVersions": [ { "version": 1, "gpkgUrl": "…", "predictionAttrsUrl": "…", "createdAt": "…", "createdBy": "…", "threshold": 0.5, "unknownThreshold": 0.0, "editedCount": 53, "sourceGpkgUrl": "…" } ],
   "predictionsReady": true,
   "predictionsReadiness": {
     "ready": true, "reason": "ready", "detail": "",
@@ -146,6 +147,24 @@ See [Prediction Editing](#prediction-editing).
 - **`predictionVersion`** is the edited version that was read (`null` = raw
   model output); **`predictionVersions`** is `Model.editedPredictions`, newest
   first, so the viewer can offer a version switch without a second round trip.
+  Each entry carries its own `predictionAttrsUrl` (the blob URL of that
+  version's sidecar; `null` while it is still being built).
+- **`predictionAttrsUrl` is pinned to the selected version.** It carries
+  `&version=N` for an edited version and no `version` for the raw output, so
+  switching versions in the viewer is the same renderer pointed at a different
+  URL. A version whose sidecar has not been built yet reports
+  `predictionsReadiness.attrsReady: false` with `reason: "preparing"` and a
+  `null` `predictionAttrsUrl` — the raw model's sidecar is never substituted,
+  because it describes the model's classes and not the analyst's. Request the
+  backfill with
+  [`PutPreparePredictionTilesQueueMessage`](#put-putpreparepredictiontilesqueuemessage).
+- **`predictionVersionIsLatest`** (boolean, default `true`) says whether the
+  selected version is the newest saved state of the model's predictions. It is
+  `false` for a pinned older version, and for `version=0` when edits exist.
+  Version selection moves the **map** only: the Assessment and Validation
+  reports always read the newest version, so the UI uses this flag to tell the
+  analyst when the two diverge instead of recomputing it from
+  `predictionVersions`.
 - **`predictionsReady`** here is stricter than the model-payload flag above: it
   additionally requires both browser artifacts to exist, because that is what
   the viewer actually needs to draw. `predictionsReadiness.reason` is one of
@@ -226,7 +245,7 @@ fetch `footprint_pmtiles` and `prediction_attrs` through `GetModelArtifact` →
 | Method | Route | Description |
 |--------|-------|-------------|
 | GET | `GetPredictionEditSession` | Everything the editor needs to open a session: prediction flavor, threshold support, building count, artifact readiness, preparation status, and existing versions. |
-| PUT | `PutPreparePredictionTilesQueueMessage` | Queue the job that builds the layer's footprint PMTiles and the model's prediction attribute sidecar. |
+| PUT | `PutPreparePredictionTilesQueueMessage` | Queue the job that builds the layer's footprint PMTiles and the model's prediction attribute sidecar, and backfills the sidecar of any saved version that lacks one. |
 | PUT | `PutEditedPredictions` | Apply thresholds plus analyst overrides to the raw predictions and store the result as the next numbered version. |
 | GET | `GetEditedPredictionVersions` | List a model's saved edited-prediction versions, newest first. |
 
@@ -251,6 +270,7 @@ fetch `footprint_pmtiles` and `prediction_attrs` through `GetModelArtifact` →
     {
       "version": 1,
       "gpkgUrl": "https://.../edited_predictions_5557_v1.gpkg",
+      "predictionAttrsUrl": "https://.../prediction_attrs_5557_v1.json",
       "createdAt": "2026-08-21T05:10:48.123456+00:00",
       "createdBy": "analyst@example.com",
       "threshold": 0.5,
@@ -282,7 +302,12 @@ fetch `footprint_pmtiles` and `prediction_attrs` through `GetModelArtifact` →
   requested. It lets the UI tell "still building" from "failed" instead of
   polling forever; `predictionTilesStatusMessage` carries the job's appended
   progress/failure lines (empty string when there are none).
-- `versions` is `Model.editedPredictions` sorted by version descending.
+- `versions` is `Model.editedPredictions` sorted by version descending. Each
+  entry carries the version's own `gpkgUrl` **and** `predictionAttrsUrl` (the
+  attribute sidecar the map renders that version from). `predictionAttrsUrl` is
+  `null` for a version saved before per-version sidecars existed — request the
+  backfill with
+  [`PutPreparePredictionTilesQueueMessage`](#put-putpreparepredictiontilesqueuemessage).
 
 | Code | Condition |
 |------|-----------|
@@ -316,13 +341,21 @@ tiles built here on demand instead.
   "projectId": "string — required, GUID",
   "imageLayerId": "string — required, GUID",
   "modelId": "string — required",
-  "force": false
+  "force": false,
+  "backfillVersions": true
 }
 ```
 
 - `force` (default `false`) rebuilds both artifacts even when they already
   exist, and re-queues even when a job is already in flight. Use it after
   predictions are regenerated, which leaves stale artifacts behind.
+- `backfillVersions` (default `true`) additionally rebuilds the attribute
+  sidecar of every entry in `Model.editedPredictions` that has a `gpkgUrl` but
+  no `predictionAttrsUrl` — versions saved before per-version sidecars existed,
+  or whose sidecar write failed. It is **idempotent**: the version list is
+  derived from the model document at submit time, so versions that already have
+  a sidecar are skipped and re-running changes nothing. Set it to `false` to
+  prepare the model-level artifacts alone.
 
 **Response (200):**
 
@@ -332,16 +365,23 @@ tiles built here on demand instead.
   "queued": true,
   "tilesReady": false,
   "attrsReady": false,
+  "versionsPending": 2,
   "status": "Queued",
   "statusMessage": "\n2026-08-21T05:10:48.123456+00:00: Queued for prediction tile preparation"
 }
 ```
 
 - `queued` says whether a message was actually put on the queue. It is `false`
-  — with `status: "Processed"` — when both artifacts already exist, so opening
-  the editor on a prepared model costs no Batch task. It is also `false` when a
-  job for this model is already `Queued`/`InProgress`, so a double-click or a
-  retry cannot submit a duplicate job.
+  — with `status: "Processed"` — when both artifacts already exist **and** no
+  saved version is missing its sidecar, so opening the editor on a prepared
+  model costs no Batch task. It is also `false` when a job for this model is
+  already `Queued`/`InProgress`, so a double-click or a retry cannot submit a
+  duplicate job.
+- `versionsPending` counts the saved versions whose sidecar the queued job will
+  build (`0` when everything is already backfilled, or when
+  `backfillVersions: false`). Each URL lands on its version entry when the job
+  finishes; a version that could not be rebuilt keeps a `null`
+  `predictionAttrsUrl` and is retried by the next request.
 - `tilesReady` / `attrsReady` describe the state **at request time**; they flip
   to `true` once the queued job finishes. Poll
   [`GetPredictionEditSession`](#get-getpredictioneditsession) (or this route)
@@ -352,7 +392,7 @@ tiles built here on demand instead.
 
 | Code | Condition |
 |------|-----------|
-| 400 | Invalid JSON, non-GUID `projectId`/`imageLayerId`, non-numeric `modelId`, or non-boolean `force` |
+| 400 | Invalid JSON, non-GUID `projectId`/`imageLayerId`, non-numeric `modelId`, or non-boolean `force`/`backfillVersions` |
 | 404 | Model or image layer not found; model has no raw prediction GeoPackage (`gpkgUrl`); layer has no cached building footprints — in either case there is nothing to tile |
 | 500 | Metadata or queue failure |
 
@@ -391,7 +431,9 @@ leaves the model document unchanged.
 {
   "version": 2,
   "gpkgUrl": "https://.../edited_predictions_5557_v2.gpkg",
-  "editedCount": 53
+  "predictionAttrsUrl": "https://.../prediction_attrs_5557_v2.json",
+  "editedCount": 53,
+  "buildingCount": 125430
 }
 ```
 
@@ -399,8 +441,18 @@ The stored GeoPackage keeps every source column and row **in source order**
 (the downstream join is positional) and adds `edited_class`, `edit_threshold`,
 and `overture_id`; `damaged` is rewritten to agree with the final class. The
 new `EditedPredictionVersion` is appended to `Model.editedPredictions` with
-`createdAt` (UTC ISO-8601) and `createdBy` (from the Static Web Apps client
-principal when present).
+`createdAt` (UTC ISO-8601), `createdBy` (from the Static Web Apps client
+principal when present) and `predictionAttrsUrl`.
+
+Every save stores a **pair**: the edited GeoPackage and that version's own
+attribute sidecar, derived from the very same file in one call path
+(`hastegeo.core.processors.prediction_edits.save_edited_version`). The map
+renders from the sidecar, so a version stored without one would draw the raw
+model's classes while claiming to show the edit. `predictionAttrsUrl` is the
+blob URL of that sidecar; fetch it through
+[`GetModelArtifact`](#get-getmodelartifact) with
+`kind=prediction_attrs&version=N`. `buildingCount` is the number of rows the
+sidecar (and the GeoPackage) describes.
 
 | Code | Condition |
 |------|-----------|
@@ -431,16 +483,35 @@ function app does the blob I/O server-side. `Range` is honored (`206` partial
 content, `416` when unsatisfiable) so `pmtiles.js` can do partial reads.
 
 **Query params:** `projectId` (GUID), `modelId`, `kind`, plus optional
-`imageLayerId` (GUID) for layer-scoped kinds.
+`imageLayerId` (GUID) for layer-scoped kinds and optional `version` (integer)
+for the per-version kinds.
 
 | `kind` | Source field | Content type | Notes |
 |--------|--------------|--------------|-------|
 | `pmtiles` | `Model.pmtilesUrl` | `application/octet-stream` | Interactive labeler footprint tiles. |
 | `sidecar` | `Model.featuresSidecarUrl` | `application/octet-stream` | Per-building embedding vectors. |
 | `geojson` | `Model.embeddingsGeoJSONUrl` | `application/geo+json` | |
-| `gpkg` | `Model.gpkgUrl` | `application/geopackage+sqlite3` | Served as a download attachment. |
-| `prediction_attrs` | `Model.predictionAttrsUrl` | `application/json` | Columnar prediction attribute sidecar for the prediction editor. |
+| `gpkg` | `Model.gpkgUrl` | `application/geopackage+sqlite3` | Served as a download attachment. Accepts `version`. |
+| `prediction_attrs` | `Model.predictionAttrsUrl` | `application/json` | Columnar prediction attribute sidecar for the prediction editor and results viewer. Accepts `version`. |
 | `footprint_pmtiles` | `ImageLayer.footprintPmtilesUrl` | `application/vnd.pmtiles` | Geometry-only footprint tiles, shared by every model on that layer. Pass `imageLayerId` to select the layer explicitly; it defaults to the model's own image layer. |
+
+**`version` (optional, `prediction_attrs` and `gpkg` only)** picks an
+analyst-edited revision out of `Model.editedPredictions`:
+
+| `version` | Artifact served |
+|-----------|-----------------|
+| omitted | the model-level artifact — i.e. the **raw** model output (unchanged historic behaviour) |
+| `0` | the raw model output, explicitly, even when edits exist |
+| `N` | that version's own artifact (`EditedPredictionVersion.gpkgUrl` / `.predictionAttrsUrl`) |
+
+An unknown `N` is a **404** naming the version; a version whose sidecar has not
+been built yet is also a 404, telling the caller to request preparation with
+[`PutPreparePredictionTilesQueueMessage`](#put-putpreparepredictiontilesqueuemessage).
+A non-numeric or negative value is a **400**. The parameter is ignored (and
+logged) for the version-independent kinds, so a client may pass the viewer's
+current version to every artifact call. `Range`, the content types and the
+`gpkg` download attachment are unchanged; a versioned `gpkg` download is named
+`building_predictions_<modelId>_v<N>.gpkg`.
 
 The sidecar payload is columnar and index-aligned with the prediction
 GeoPackage rows:
@@ -450,10 +521,24 @@ GeoPackage rows:
   "damage": [0.0, 0.42, 0.8], "unknown": [0.0, 0.2, 0.0], "damaged": [0, 1, 1] }
 ```
 
+A **version's** sidecar has the same shape plus a `classes` array holding the
+analyst's final class per row:
+
+```json
+{ "n": 3, "ids": [0, 1, 2], "overtureIds": [ … ],
+  "damage": [0.0, 0.42, 0.8], "unknown": [0.0, 0.2, 0.0], "damaged": [0, 0, 1],
+  "classes": ["NotDamaged", "Unknown", "Damaged"] }
+```
+
+`damage` / `unknown` stay the model's raw fractions (the edit changes the class,
+not the model's confidence), so a building the analyst forced to `Unknown` is
+only visible in `classes`. `damaged` already agrees with the edit, so a client
+that ignores `classes` still renders damaged-vs-not correctly.
+
 | Code | Condition |
 |------|-----------|
-| 400 | Missing/malformed `projectId`, `modelId`, `kind`, or an `imageLayerId` that is neither supplied nor resolvable from the model |
-| 404 | Model or image layer not found, or the artifact is not available yet |
+| 400 | Missing/malformed `projectId`, `modelId`, `kind`, `version`, or an `imageLayerId` that is neither supplied nor resolvable from the model |
+| 404 | Model or image layer not found; the artifact is not available yet; or the requested `version` does not exist (or has no such artifact yet) |
 | 416 | Requested range starts past the end of the artifact |
 | 502 | Blob read failure |
 
@@ -494,6 +579,14 @@ An unknown `N` returns **404** with `{"error": "..."}`; a non-numeric value
 returns **400**. There is deliberately no mutable "active version" pointer on
 the model — newest-wins plus an explicit override is the design in
 [ADR-0005](../../spec/architecture/decisions/0005-versioned-derived-prediction-artifacts.md).
+
+[`GetModelArtifact`](#get-getmodelartifact) resolves `version` through the same
+seam for `kind=prediction_attrs` and `kind=gpkg`, with one deliberate
+difference: an **omitted** `version` there keeps serving the model-level
+artifact (the raw output) rather than the newest edit, because that route is
+also how pre-existing clients fetch the raw artifacts. Pass the version
+explicitly — `GetVisualizerResults` already returns a version-pinned
+`predictionAttrsUrl`.
 
 Note that an edited GeoPackage overrides `damaged` (and adds `edited_class`,
 `edit_threshold`, `overture_id`) but preserves the producer's original

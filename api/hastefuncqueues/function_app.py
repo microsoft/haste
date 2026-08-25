@@ -31,6 +31,7 @@ from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.processors.prediction_tiles import (
     PredictionTilesPostprocessor,
     needs_preparation,
+    versions_needing_attrs,
 )
 from hastegeo.core.processors.publishing import PublishingProcessor
 from hastegeo.core.processors.stats import StatsPostProcessor
@@ -723,6 +724,7 @@ async def _prepare_model_prediction_tiles(
     image_layer_id: Optional[str],
     model_id: str,
     force: bool,
+    backfill_versions: bool = True,
 ) -> None:
     """Build a model's attribute sidecar (+ the layer's tiles if absent).
 
@@ -730,6 +732,11 @@ async def _prepare_model_prediction_tiles(
     poll -> finalize) for one model. On completion the model gets its
     attribute-sidecar URL and the image layer gets the shared footprint
     PMTiles URL, so both documents are persisted.
+
+    With ``backfill_versions`` the run also rebuilds the sidecar of every
+    saved edited version that has none, and records each URL on its
+    ``Model.editedPredictions`` entry. Versions that already have one are
+    skipped, so this is safe to repeat.
     """
     model_data = None
     try:
@@ -775,7 +782,18 @@ async def _prepare_model_prediction_tiles(
             needs_pmtiles, needs_attrs = needs_preparation(
                 model_data, image_layer
             )
-            if not force and not needs_pmtiles and not needs_attrs:
+            # A saved version with no sidecar cannot be rendered, so it
+            # is outstanding work even when the model's own artifacts
+            # are already there.
+            pending_versions = (
+                versions_needing_attrs(model_data) if backfill_versions else []
+            )
+            if (
+                not force
+                and not needs_pmtiles
+                and not needs_attrs
+                and not pending_versions
+            ):
                 logger.info(
                     f"Prediction tiles for model {model_id} are already "
                     "available; nothing to do."
@@ -792,7 +810,9 @@ async def _prepare_model_prediction_tiles(
                 return
             model_data.predictionTilesStatus = statuses.PENDING.value
 
-        processor = PredictionTilesPostprocessor(model_data, image_layer)
+        processor = PredictionTilesPostprocessor(
+            model_data, image_layer, backfill_versions=backfill_versions
+        )
         output = await asyncio.to_thread(processor.process)
 
         await asyncio.to_thread(
@@ -872,14 +892,16 @@ async def GetPreparePredictionTilesQueueMessage(
     Message schema (identifiers only)::
 
         {"projectId", "imageLayerId", "modelId", "sourceGpkgUrl",
-         "sourceFootprintsUrl", "force"}
+         "sourceFootprintsUrl", "force", "backfillVersions"}
 
     An empty/absent ``modelId`` selects **layer-only** preparation: build
     the image layer's shared footprint PMTiles and nothing else. Imagery
     preprocessing queues that as soon as a layer's footprints are cached
     so the editor never has to wait for tiling. With a ``modelId`` the
     message is **model-scoped**: build the model's attribute sidecar,
-    plus the layer's tiles when they are still missing.
+    plus the layer's tiles when they are still missing, and (unless
+    ``backfillVersions`` is false) the sidecar of every saved edited
+    version that has none.
 
     The authoritative job state is read from metadata, so a fresh
     request and the postprocessor's own poll messages take the same
@@ -898,6 +920,7 @@ async def GetPreparePredictionTilesQueueMessage(
         model_id = payload.get("modelId")
         image_layer_id = payload.get("imageLayerId")
         force = bool(payload.get("force", False))
+        backfill_versions = bool(payload.get("backfillVersions", True))
         if not project_id or not (model_id or image_layer_id):
             raise ValueError(
                 "Queue message requires projectId plus modelId or "
@@ -906,7 +929,11 @@ async def GetPreparePredictionTilesQueueMessage(
 
         if model_id:
             await _prepare_model_prediction_tiles(
-                project_id, image_layer_id, model_id, force
+                project_id,
+                image_layer_id,
+                model_id,
+                force,
+                backfill_versions=backfill_versions,
             )
         else:
             await _prepare_layer_footprint_tiles(

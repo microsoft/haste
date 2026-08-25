@@ -16,11 +16,19 @@ call, and ``edited_class`` / ``edit_threshold`` / ``overture_id`` are
 appended. **Row order is preserved exactly**, because the prediction →
 footprint join downstream is positional (see
 ``hastegeo.core.utils.assessment.build_assessment_inputs_from_gpkgs``).
+
+Every saved version also gets its OWN attribute sidecar, derived from
+the edited GeoPackage in the same call path
+(:func:`save_edited_version`). The map renders from the sidecar, not the
+GeoPackage, so a version stored without one would silently draw the raw
+model's classes; deriving both together is what makes that impossible.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
@@ -32,6 +40,10 @@ from ..models.projects import Model
 from ..utils.assessment import DAMAGED, NOT_DAMAGED, UNKNOWN
 from ..utils.gdal_security import harden_gdal
 from ..utils.logs import Logger
+from ..utils.prediction_attrs import (
+    version_attrs_artifact_name,
+    write_edited_prediction_attrs,
+)
 from ..utils.predictions import DAMAGED_FIELD, PredictionRow, read_predictions
 
 if TYPE_CHECKING:
@@ -420,3 +432,177 @@ def store_edited_version(
         artifact_name,
     )
     return url
+
+
+def store_version_attrs(
+    project_id: str,
+    model_id: str,
+    version: int,
+    local_attrs_path: str,
+    *,
+    processor: Optional["ArtifactProcessor"] = None,
+    config: Optional[Config] = None,
+) -> str:
+    """Store one version's attribute sidecar and return its URL.
+
+    Mirrors :func:`store_edited_version` for the JSON payload the map
+    actually renders from
+    (``ArtifactTypes.PREDICTION_ATTRS_VERSION``).
+
+    Args:
+        project_id: Storage partition key.
+        model_id: Model whose predictions were edited.
+        version: Version number the sidecar describes.
+        local_attrs_path: Path to the JSON written by
+            ``hastegeo.core.utils.prediction_attrs``.
+        processor: Optional pre-built ``ArtifactProcessor``.
+        config: Optional ``Config`` used when building the processor.
+
+    Returns:
+        The download URL of the stored artifact.
+
+    Raises:
+        FileNotFoundError: if ``local_attrs_path`` does not exist.
+    """
+    if not os.path.exists(local_attrs_path):
+        raise FileNotFoundError(
+            f"Prediction attribute sidecar not found: {local_attrs_path}"
+        )
+
+    if processor is None:
+        from .artifacts import ArtifactProcessor as _ArtifactProcessor
+
+        processor = _ArtifactProcessor(project_id, config=config)
+
+    artifact_name = version_attrs_artifact_name(model_id, version)
+    processor.store_artifact(
+        artifact_name=artifact_name, src_path=local_attrs_path
+    )
+    url = processor.get_download_url(identifier=artifact_name)
+    logger.info(
+        "Stored prediction attributes for v%s of model %s at %s",
+        version,
+        model_id,
+        artifact_name,
+    )
+    return url
+
+
+@dataclass
+class SavedEditedVersion:
+    """Everything one save produced: the GeoPackage AND its sidecar.
+
+    Attributes:
+        version: Version number that was saved.
+        gpkg_url: Blob URL of the edited GeoPackage.
+        attrs_url: Blob URL of that version's attribute sidecar.
+        summary: The :class:`EditSummary` from :func:`apply_edits`.
+        building_count: Rows in the sidecar (and in the GeoPackage).
+    """
+
+    version: int
+    gpkg_url: str
+    attrs_url: str
+    summary: EditSummary
+    building_count: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Render as the JSON body ``PutEditedPredictions`` returns."""
+        return {
+            "version": self.version,
+            "gpkgUrl": self.gpkg_url,
+            "predictionAttrsUrl": self.attrs_url,
+            "editedCount": self.summary.overrides_applied,
+            "buildingCount": self.building_count,
+        }
+
+
+def save_edited_version(
+    project_id: str,
+    model_id: str,
+    version: int,
+    src_gpkg: str,
+    footprints_path: str,
+    *,
+    threshold: float,
+    unknown_threshold: float = 0.0,
+    overrides: Dict[int, str],
+    processor: Optional["ArtifactProcessor"] = None,
+    config: Optional[Config] = None,
+) -> SavedEditedVersion:
+    """Derive, store and describe one edited-prediction version.
+
+    ONE call path produces both halves of a version: the GeoPackage
+    (:func:`apply_edits`) and the attribute sidecar built from that very
+    file. They are stored before the caller records the version, so a
+    version entry can never reference a GeoPackage whose sidecar is
+    missing — which would leave the map drawing the raw model's classes
+    while claiming to show the edit.
+
+    Args:
+        project_id: Storage partition key.
+        model_id: Model whose predictions were edited.
+        version: Version number from :func:`next_version`.
+        src_gpkg: Local path to the RAW prediction GeoPackage. Never
+            modified.
+        footprints_path: Local path to the image layer's footprints
+            GeoPackage; the positional join that resolves Overture ids.
+        threshold: Damage fraction in [0, 1].
+        unknown_threshold: Unknown/cloud fraction in [0, 1].
+        overrides: Analyst class overrides keyed by row index.
+        processor: Optional pre-built ``ArtifactProcessor``.
+        config: Optional ``Config`` used when building the processor.
+
+    Returns:
+        A :class:`SavedEditedVersion`.
+
+    Raises:
+        ValueError: on an invalid threshold or override, or when the
+            predictions and footprints do not line up row for row.
+    """
+    work_dir = tempfile.mkdtemp(prefix="haste-edited-version-")
+    try:
+        edited_path = os.path.join(
+            work_dir, edited_version_artifact_name(model_id, version)
+        )
+        attrs_path = os.path.join(
+            work_dir, version_attrs_artifact_name(model_id, version)
+        )
+        summary = apply_edits(
+            src_gpkg,
+            edited_path,
+            threshold=threshold,
+            unknown_threshold=unknown_threshold,
+            overrides=overrides,
+            footprints_path=footprints_path,
+        )
+        # Derived from the EDITED file, so its classes are the analyst's
+        # and not the model's.
+        payload = write_edited_prediction_attrs(
+            edited_path, footprints_path, attrs_path
+        )
+        gpkg_url = store_edited_version(
+            project_id,
+            model_id,
+            version,
+            edited_path,
+            processor=processor,
+            config=config,
+        )
+        attrs_url = store_version_attrs(
+            project_id,
+            model_id,
+            version,
+            attrs_path,
+            processor=processor,
+            config=config,
+        )
+        return SavedEditedVersion(
+            version=version,
+            gpkg_url=gpkg_url,
+            attrs_url=attrs_url,
+            summary=summary,
+            building_count=int(payload["n"]),
+        )
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)

@@ -24,6 +24,15 @@
 // feature-state write and paint expression — otherwise half the map is inert
 // and the far side draws every footprint in the "not classified" colour.
 //
+// SWITCHING VERSIONS goes through the same rule and is the easiest place to
+// break it: feature-state lives on the RENDERER, one per pane, so pointing
+// the page at another version's sidecar has to tear down and rebuild the
+// source, the layers and the feature-state on BOTH panes. `renderKey` — the
+// version-pinned sidecar URL — is in the layer effect's deps for exactly that
+// reason, and the teardown clears the feature-state before removing the
+// source so nothing from the previous version can survive under a re-created
+// source of the same name.
+//
 // Saving PUTs the thresholds plus the sparse override list to
 // PutEditedPredictions, which writes a brand-new version — nothing is
 // destructive.
@@ -114,6 +123,10 @@ const usePredictionFootprints = ({
   palette,
   defaultThreshold,
   onSaved,
+  // Identity of the prediction data on the map (the version-pinned sidecar
+  // URL). A new value means a different version is being drawn, so the layers
+  // and every scrap of per-building state are rebuilt from scratch.
+  renderKey = "",
 }) => {
   // ── Refs the long-lived map handlers read ────────────────────────────────
   // A handler registered when the layers are built closes over that render's
@@ -480,6 +493,11 @@ const usePredictionFootprints = ({
   // Built once the maps are ready and the archive is in memory, on BOTH panes.
   // Everything the handlers need comes from refs, so this effect never re-runs
   // for an edit-mode toggle or a class change.
+  //
+  // It DOES re-run for `renderKey`: a version switch draws different classes
+  // for the same buildings, and feature-state is per renderer, so both panes
+  // are torn down (state cleared, layers and source removed, handlers and the
+  // hydrate timer detached) and rebuilt rather than repainted in place.
   useEffect(() => {
     if (!mapsReady || !archiveKey || !window.atlas) return undefined;
     const maps = (mapRefs || [])
@@ -606,6 +624,21 @@ const usePredictionFootprints = ({
             console.warn("Could not detach a footprint handler:", error);
           }
         }
+        // Wipe this pane's feature-state BEFORE the source goes: a rebuild
+        // re-creates the source under the same id, and a renderer that kept
+        // its state map keyed by that id would hand the next version the
+        // previous one's colours on this pane only. That asymmetry between
+        // the two panes is the bug this page has shipped twice.
+        try {
+          if (pane.glMap && typeof pane.glMap.removeFeatureState === "function") {
+            pane.glMap.removeFeatureState({
+              source: sourceIdsRef.current[pane.key] || pane.sourceId,
+              sourceLayer: PMTILES_SOURCE_LAYER,
+            });
+          }
+        } catch (error) {
+          console.warn("Could not clear the footprint feature-state:", error);
+        }
         try {
           pane.map.layers.remove(pane.fillLayer);
           pane.map.layers.remove(pane.lineLayer);
@@ -631,7 +664,35 @@ const usePredictionFootprints = ({
     // would not change when this effect runs, and featureAtEvent /
     // attachBoxSelect are plain closures defined in this module scope.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapsReady, archiveKey]);
+  }, [mapsReady, archiveKey, renderKey]);
+
+  // A different version means different classes for the same buildings, so
+  // every piece of per-building state belongs to the version it came from:
+  // the analyst's in-progress overrides, what "saved" means, the selection,
+  // the filter and the thresholds. Rewinding them here (rather than leaving
+  // them to bleed across the switch) is what stops version 2 being saved with
+  // version 1's edits silently folded in.
+  //
+  // Skipped on the first run: everything below is already at its initial
+  // value, and setting it again would cost a render for nothing.
+  const renderKeyRef = useRef(renderKey);
+  useEffect(() => {
+    if (renderKeyRef.current === renderKey) return;
+    renderKeyRef.current = renderKey;
+    setOverridesState({});
+    setSavedBaseline(null);
+    setSavedResult(null);
+    setSaveError("");
+    setSelectedIndex(-1);
+    setFilter(FILTER_ALL);
+    setThresholdOverride(null);
+    setUnknownThresholdOverride(null);
+    selectedIdRef.current = null;
+    // Centroids were harvested from the previous render pass; the geometry is
+    // the same, but the cache refills itself on the next hydrate and keeping
+    // it would pin memory to a version nobody is looking at any more.
+    centroidsRef.current = new Map();
+  }, [renderKey]);
 
   // ── Classification ───────────────────────────────────────────────────────
   // Every building's class is a pure function of the scores, the thresholds
@@ -847,6 +908,11 @@ const usePredictionFootprints = ({
         threshold,
         unknownThreshold,
         overrides,
+        // Carries the loaded version's own classes into the save: the server
+        // derives every version from the RAW GeoPackage, so editing on top of
+        // version N has to re-send what N established or the new version
+        // would quietly lose it.
+        attrs,
       });
       const result = await apiPut("PutEditedPredictions", payload);
       // apiPut surfaces a conflict as the bare status code.
@@ -884,6 +950,7 @@ const usePredictionFootprints = ({
     threshold,
     unknownThreshold,
     overrides,
+    attrs,
     onSaved,
   ]);
 

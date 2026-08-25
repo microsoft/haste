@@ -6,12 +6,16 @@
 
 | Level | Scope | Tool/Framework | Coverage Target |
 |---|---|---|---|
-| Unit | `hastegeo` readiness, source resolution, schema detection, class derivation, sidecar generation, row-order preservation, and version allocation | pytest / unittest (`hastelib/tests/`) | all core rules, both producer schemas, and raw/newest/explicit version selection |
-| Integration | `GetVisualizerResults`, prediction edit/prep/version HTTP endpoints, artifact retrieval, and report `version` query handling | pytest + Azure Functions test harness | success and negative responses; API-level tests for the rewritten handler are not implemented in the current branch |
-| Queue | PMTiles and sidecar prep worker | pytest / Docker Compose worker test | idempotent generation, layer-only prep, model prep, and failure handling |
-| UI | Existing Visualizer route, vector layer loading, edit-mode entry/exit, keyboard shortcut, discard confirmation, save flow, and read-only version history | Plain Node unit tests for helper modules today; browser/Playwright follow-up | critical analyst flows without a standalone editor screen |
-| E2E | Full stack with trained and embedding predictions | Docker Compose + manual verification; Playwright unavailable today | View Results works for both workflows and at least one edited version can be saved |
-| Performance | Large layer prep/save/browser memory | custom scripts with representative GeoPackages | no timeout/memory regression beyond agreed thresholds |
+| Unit | sidecar generation, artifact template rendering, source resolution, save consistency, backfill skip/build | pytest / unittest (`hastelib/tests/`) | raw and edited sidecars agree with their GeoPackages |
+| Integration | `GetVisualizerResults`, `GetModelArtifact`, save, backfill queue, and reports | pytest + Azure Functions test harness | version success and negative responses; report default split |
+| Queue | prediction-tiles prep and edited-version sidecar backfill | pytest / Docker Compose worker test | idempotent generation and failure handling |
+| UI | selector, disabled versions, map-only warning, downloads, dual-pane switching | existing plain Node helper tests plus manual/browser evidence | critical analyst flows without Playwright |
+| E2E | full stack trained and embedding predictions | Docker Compose + manual verification | map selection, downloads, and backfill work for representative data |
+| Performance | large layer save/backfill/browser memory | custom scripts with representative GeoPackages | no timeout/memory regression beyond agreed thresholds |
+
+No Playwright coverage is available in the current repo: `ui/package.json` has no
+Playwright script or dependency (`ui/package.json:6-15`, `ui/package.json:62-75`).
+Do not imply browser automation is solved unless that configuration is added.
 
 ## Test Scenarios
 
@@ -19,167 +23,144 @@
 
 | ID | Module | Scenario | Input | Expected Output | Story Ref |
 |---|---|---|---|---|---|
-| UT-001 | `hastegeo/core/models/projects.py` | Model defaults | Model without optional prediction fields | `editedPredictions` behaves as empty list; prediction count/timestamps/sidecar/job/status fields nullable/defaulted | US-004, US-005 |
-| UT-002 | `hastegeo/core/config.py` | Artifact template rendering | `modelId=123`, `version=2`, `imageLayerId=abc` | `edited_predictions_123_v2`, `prediction_attrs_123`, `footprints_abc` | US-002, US-004 |
-| UT-003 | `hastegeo/core/utils/model_readiness.py` | Unified model-row readiness | Inference, embedding, empty, clear-label, and missing-artifact model states | One `predictionsReady` result and reason contract is applied across model payloads and publishing (`hastelib/src/hastegeo/core/utils/model_readiness.py:132-237`) | US-001, US-002 |
-| UT-004 | `hastegeo/core/utils/predictions.py` | Source resolution | No `version`, `version=0`, explicit edited version, missing version | Defaults to newest edited version; `version=0` returns raw output; explicit version returns that edit or raises not found (`hastelib/src/hastegeo/core/utils/predictions.py:332-401`) | US-006 |
-| UT-005 | `hastegeo/core/utils/predictions.py` | Trained schema detection | GPKG with `damage_pct_0m`, `damage_pct_10m`, `damage_pct_20m`, `damaged`, `unknown_pct` | `flavor="inference"`, `supportsThreshold=true` | US-002, US-003 |
-| UT-006 | `hastegeo/core/utils/predictions.py` | Embedding schema detection | GPKG layer `predictions` with `area`, `damaged`, degenerate `damage_pct_0m` | `flavor="embedding"`, `supportsThreshold=false` | US-002, US-003 |
-| UT-007 | `hastegeo/core/processors/prediction_edits.py` | Class derivation without override | damage `0.2`, unknown `0.0`, threshold `0.1` | `Damaged`, `damaged=1` | US-003, US-004 |
-| UT-008 | `hastegeo/core/processors/prediction_edits.py` | Unknown wins before damage | damage `0.8`, unknown `0.3`, unknownThreshold `0.0` | `Unknown`, `damaged=0` | US-003, US-004 |
-| UT-009 | `hastegeo/core/processors/prediction_edits.py` | Override wins over thresholds | override `NotDamaged`, damage `0.9` | `NotDamaged`, `damaged=0` | US-003, US-004 |
-| UT-010 | `hastegeo/core/processors/prediction_edits.py` | Row-order invariant | Footprints ids `[a,b,c]`; predictions rows `[0,1,2]` | Edited rows remain `[0,1,2]` with `overture_id` `[a,b,c]` | US-004 |
-| UT-011 | `hastegeo/core/processors/prediction_edits.py` | Row-count mismatch | Footprints 3 rows; predictions 2 rows | Raises validation error; no version metadata appended | US-002, US-004 |
-| UT-012 | `hastegeo/core/processors/prediction_edits.py` | Version allocation | Existing versions `[1,2]` | Next artifact uses version `3`; concurrent-save conflict is a known follow-up, not expected here | US-004, US-005 |
-| UT-013 | `hastegeo/workflows/prepare_prediction_tiles.py` | Sidecar shape | Three prediction rows | JSON has `n=3` and same-length `ids`, `overtureIds`, `damage`, `unknown`, `damaged` arrays | US-002 |
-| UT-014 | `hastegeo/core/models/predictions.py` | Wire request validation | Save/prep request bodies | Invalid IDs, thresholds, classes, duplicate override IDs rejected before processors run | US-002, US-004 |
-| UT-015 | `hastegeo/core/processors/prediction_tiles.py` | Prep request idempotency | Ready, missing, in-flight, forced model, and layer-only states | Returns `{modelId, queued, tilesReady, attrsReady, status, statusMessage}` and enqueues at most one message | US-002 |
+| UT-001 | `core/models/projects.py` | Version metadata schema | Edited version with GPKG and sidecar URLs | `EditedPredictionVersion` stores `gpkgUrl` and `predictionAttrsUrl` without changing `Model.gpkgUrl` | US-004 |
+| UT-002 | `core/config.py` | Artifact template rendering | `modelId=5553`, `version=2` | `edited_predictions_5553_v2` and `prediction_attrs_5553_v2`; raw sidecar remains `prediction_attrs_5553` | US-004, US-005 |
+| UT-003 | `core/utils/prediction_attrs.py` | Raw sidecar shape | Raw prediction GPKG + matching footprints | JSON arrays have equal length/order and expected `damaged` values | US-002 |
+| UT-004 | `core/utils/prediction_attrs.py` | Edited sidecar shape | Edited GPKG with overrides | Sidecar `damaged` and class inputs reflect edited rows, not raw rows | US-004, US-005 |
+| UT-005 | `core/utils/prediction_attrs.py` | Row-count mismatch | Predictions and footprints differ | Raises validation error; no sidecar written | US-002, US-004 |
+| UT-006 | `core/utils/predictions.py` | Source resolution | No `version`, `version=0`, explicit edited version, missing version | Newest/raw/explicit behavior remains correct; unknown positive version raises not found | US-006 |
+| UT-007 | `core/processors/prediction_edits.py` | Save consistency | Overrides and thresholds | Store helper returns both GPKG URL and versioned sidecar URL | US-004 |
+| UT-008 | `core/processors/prediction_edits.py` | Sidecar failure | Simulated sidecar upload failure | Version metadata is not appended/advertised | US-004 |
+| UT-009 | `core/processors/prediction_tiles.py` | Backfill builds missing sidecar | Edited version has `gpkgUrl` and no `predictionAttrsUrl` | Writes `prediction_attrs_${modelId}_v${version}` and updates metadata | US-008 |
+| UT-010 | `core/processors/prediction_tiles.py` | Backfill idempotent skip | Version already has sidecar and `force=false` | No rebuild; metadata unchanged | US-008 |
+| UT-011 | `core/processors/visualizer.py` | Versioned artifact URL | Selected raw, v1, v2 | `predictionAttrsUrl` includes the selected version query; `isNewestPredictionVersion` is correct | US-005 |
+| UT-012 | `core/processors/visualizer.py` | Report split metadata | Map selected v2 while v3 exists | Payload supports UI warning without changing reports | US-005, US-006 |
 
 ### API Integration Tests
 
-No prediction-editing API integration tests are implemented in the current
-branch. `api/hastefuncapi/tests/` contains only publishing-route coverage; the
-cases below remain follow-up coverage for the rewritten handlers.
-
 | ID | Endpoint | Method | Scenario | Preconditions | Expected Response | Story Ref |
 |---|---|---|---|---|---|---|
-| IT-001 | `/api/GetVisualizerResults` | GET | Ready trained model | Processed inference model with raw GPKG, footprint PMTiles, and sidecar | 200 with `footprintTilesUrl`, `predictionAttrsUrl`, readiness object, `flavor="inference"`, `supportsThreshold=true`, `predictionVersion`, `predictionVersions`, and nullable raster fields as documented (`docs/api/hastefuncapi.md:78-157`) | US-002, US-006 |
-| IT-002 | `/api/GetVisualizerResults` | GET | Ready embedding model | Embedding model with `gpkgUrl`, PMTiles, sidecar, and `predictedBuildingCount>0` | 200 with vector fields, `flavor="embedding"`, `supportsThreshold=false`, and no required classic rasters | US-001, US-002 |
-| IT-003 | `/api/GetVisualizerResults` | GET | Explicit raw version | Model with edited versions; query `version=0` | Payload reports raw source version and raw building count/readiness | US-006 |
-| IT-004 | `/api/GetVisualizerResults` | GET | Explicit edited version | Model with version `2`; query `version=2` | Payload reports `predictionVersion=2` and selects the edited GeoPackage | US-006 |
-| IT-005 | `/api/GetVisualizerResults` | GET | Missing prep artifacts | Raw GPKG exists, PMTiles/sidecar absent | 200 with readiness false, null vector URLs as applicable, and `predictionsReadiness` reason | US-002 |
-| IT-006 | `/api/GetPredictionEditSession` | GET | Ready trained model | Processed inference model with raw GPKG, PMTiles, sidecar | 200 with `flavor="inference"`, `supportsThreshold=true`, `defaultThreshold=0.0`, readiness flags, and prep status fields | US-002, US-003 |
-| IT-007 | `/api/GetPredictionEditSession` | GET | Ready embedding model | Embedding model with `gpkgUrl` and `predictedBuildingCount>0` | 200 with `flavor="embedding"`, `supportsThreshold=false` | US-002, US-003 |
-| IT-008 | `/api/GetPredictionEditSession` | GET | Missing prep artifacts | Raw GPKG exists, PMTiles/sidecar absent | 200 with readiness false and no queued message | US-002 |
-| IT-009 | `/api/PutPreparePredictionTilesQueueMessage` | PUT | Queue missing prep | Raw GPKG and building footprints exist; artifacts missing | 200 with `queued=true`, `status="Queued"`, and exactly one queue message | US-002 |
-| IT-010 | `/api/PutPreparePredictionTilesQueueMessage` | PUT | Ready no-op | PMTiles and sidecar already exist; `force=false` | 200 with `queued=false`, `tilesReady=true`, `attrsReady=true`, no queue message | US-002 |
-| IT-011 | `/api/PutPreparePredictionTilesQueueMessage` | PUT | In-flight no-op | `predictionTilesStatus` is `Queued` or `InProgress`; `force=false` | 200 with `queued=false`, current status, no duplicate queue message | US-002 |
-| IT-012 | `/api/PutPreparePredictionTilesQueueMessage` | PUT | Missing source inputs | No `gpkgUrl` or no `buildingFootprintsUrl` | 404 | US-002 |
-| IT-013 | `/api/PutEditedPredictions` | PUT | Save first edit | Valid thresholds and overrides from Visualizer edit mode | 200 with `version=1`, `gpkgUrl`, `editedCount`; Model gets one version | US-004 |
-| IT-014 | `/api/PutEditedPredictions` | PUT | Invalid threshold | `threshold=2` | 400 | US-004 |
-| IT-015 | `/api/PutEditedPredictions` | PUT | Override out of range | `id >= buildingCount` | 200; unmatched override ignored and not counted | US-004 |
-| IT-016 | `/api/GetEditedPredictionVersions` | GET | Existing versions | Model has versions | 200 with version metadata list, newest first | US-005 |
-| IT-017 | `/api/GetModelArtifact` | GET | Fetch new artifact kinds | Prepared PMTiles and sidecar | 200 for `footprint_pmtiles` and JSON `prediction_attrs` | US-002, US-005 |
-| IT-018 | `/api/GetValidationReport` | GET | Edited version selected by default | Model has edited version whose `damaged` differs from raw | Default response reflects newest edit; `version=0` restores raw (`api/hastefuncapi/function_app.py:4607-4688`) | US-006 |
-| IT-019 | `/api/GetAssessmentReport` | GET | Edited version selected by default | Model has edited version whose `damaged` differs but `damage_pct_0m` is preserved | Default reader opens newest edit, but thresholded counts remain tied to `damage_pct_0m`; this asymmetry is documented (`api/hastefuncapi/function_app.py:4929-5027`) | US-006 |
-| IT-020 | `/api/GetPredictionEditSession` | GET | Missing model | Unknown `modelId` | 404 | US-002 |
+| IT-001 | `/api/GetVisualizerResults` | GET | Default newest map | Model has raw and versions 1, 2 | 200 selects version 2 and returns version 2 sidecar URL | US-005 |
+| IT-002 | `/api/GetVisualizerResults` | GET | Explicit raw map | Query `version=0` | 200 uses raw `Model.predictionAttrsUrl`; newest flag false when edits exist | US-005 |
+| IT-003 | `/api/GetVisualizerResults` | GET | Explicit older map | Query `version=1` and version 2 exists | 200 uses v1 sidecar; `isNewestPredictionVersion=false` | US-005, US-006 |
+| IT-004 | `/api/GetVisualizerResults` | GET | Unknown version | Query `version=99` | 404 | US-005 |
+| IT-005 | `/api/GetVisualizerResults` | GET | Malformed version | Query `version=abc` | 400 | US-005 |
+| IT-006 | `/api/GetVisualizerResults` | GET | Missing sidecar | Version has GPKG but no `predictionAttrsUrl` | Payload lists version as disabled/unready or route returns documented non-selectable state | US-005, US-008 |
+| IT-007 | `/api/GetModelArtifact` | GET | Raw GPKG download | `kind=gpkg&version=0` | 200 attachment from raw `Model.gpkgUrl` | US-007 |
+| IT-008 | `/api/GetModelArtifact` | GET | Edited GPKG download | `kind=gpkg&version=2` | 200 attachment from `EditedPredictionVersion.gpkgUrl` | US-007 |
+| IT-009 | `/api/GetModelArtifact` | GET | Raw attrs download | `kind=prediction_attrs&version=0` | 200 JSON from raw `Model.predictionAttrsUrl` | US-005 |
+| IT-010 | `/api/GetModelArtifact` | GET | Edited attrs download | `kind=prediction_attrs&version=2` | 200 JSON from `EditedPredictionVersion.predictionAttrsUrl` | US-005, US-007 |
+| IT-011 | `/api/GetModelArtifact` | GET | Missing edited sidecar | Version lacks sidecar URL | 404; no lazy generation | US-005, US-008 |
+| IT-012 | `/api/PutEditedPredictions` | PUT | Save first new version | Valid overrides | 200 returns `version`, `gpkgUrl`, `predictionAttrsUrl`, `editedCount`; model stores both URLs | US-004 |
+| IT-013 | `/api/PutEditedPredictions` | PUT | Sidecar generation failure | Mock helper failure | 500 or documented failure; version not appended | US-004 |
+| IT-014 | `/api/PutPreparePredictionTilesQueueMessage` | PUT | Backfill missing versions | `backfillVersions=true` | Queues/executes backfill and skips ready versions | US-008 |
+| IT-015 | `/api/GetValidationReport` | GET | Selector map v1, report default | Model has versions 1 and 2 | Report default uses version 2 because UI does not pass selector version | US-006 |
+| IT-016 | `/api/GetAssessmentReport` | GET | Preserved fraction gap | Edited `damaged` differs but `damage_pct_0m` preserved | Endpoint opens selected/default GPKG, but threshold counts remain tied to `damage_pct_0m` | US-006 |
 
 ### Queue Worker Tests
 
 | ID | Queue | Scenario | Message | Expected Side Effect | Story Ref |
 |---|---|---|---|---|---|
-| QT-001 | `prediction-edit-prep-queue` | Build missing PMTiles and sidecar | valid project/layer/model/source urls | PMTiles and sidecar blobs uploaded; metadata fields updated | US-002 |
-| QT-002 | `prediction-edit-prep-queue` | Idempotent no-op | artifacts already exist and `force=false` | No duplicate work; metadata remains consistent | US-002 |
-| QT-003 | `prediction-edit-prep-queue` | Force rebuild | artifacts exist and `force=true` | Artifacts regenerated and metadata timestamp refreshed | US-002 |
-| QT-004 | `prediction-edit-prep-queue` | Malformed message | neither `modelId` nor `imageLayerId` | Worker logs validation error and fails without partial metadata | US-002 |
-| QT-005 | `prediction-edit-prep-queue` | Row-count mismatch | predictions and footprints lengths differ | Prep fails; no `predictedAt` update | US-002 |
-| QT-006 | `prediction-edit-prep-queue` | Layer-only prep | empty `modelId`, layer with footprints | PMTiles blob uploaded; only `ImageLayer.footprintPmtilesUrl`/`footprintTiles*` written; no sidecar and no model document touched | US-002 |
-| QT-007 | `prediction-edit-prep-queue` | Layer-only no-op | empty `modelId`, layer already has `footprintPmtilesUrl`, `force=false` | No job submitted; layer marked `Processed` | US-002 |
-| QT-008 | imagery prep (`ImageryPostProcessor`) | Layer-time scheduling | layer completes with cached footprints and no tiles | Exactly one layer-only message enqueued; none when tiles exist or the footprint step errored; enqueue failure never fails imagery prep | US-002 |
+| QT-001 | `prediction-edit-prep-queue` | Backfill dev model 0448 | model `0448`, version 1 missing sidecar | Sidecar uploaded and metadata updated, or visible failure status | US-008 |
+| QT-002 | `prediction-edit-prep-queue` | Backfill dev model 5553 | model `5553`, version 1 missing sidecar | Sidecar uploaded and metadata updated, or visible failure status | US-008 |
+| QT-003 | `prediction-edit-prep-queue` | Idempotent no-op | all versions already have sidecars | No duplicate artifact writes when `force=false` | US-008 |
+| QT-004 | `prediction-edit-prep-queue` | Force rebuild | version has sidecar and `force=true` | Sidecar regenerated and metadata refreshed | US-008 |
+| QT-005 | `prediction-edit-prep-queue` | Row-count mismatch | edited GPKG and footprints differ | Backfill fails visibly; old metadata not replaced | US-008 |
 
 ### UI Component Tests
 
-The current branch includes plain Node helper tests, but it does not include a
-React Testing Library, Vitest, or Playwright harness for browser rendering. UI
-coverage below is therefore a required follow-up before release sign-off.
+Current automated UI coverage is helper-level only. Browser behavior must be
+validated manually or with new tooling before release.
 
 | ID | Component | Scenario | User Action | Expected Behavior | Story Ref |
 |---|---|---|---|---|---|
-| UI-001 | `ModelResultsButton.jsx` | Trained results gating | Render model variations | Results menu follows server-derived `predictionsReady` with legacy fallback (`ui/src/Components/ProjectManagement/ModelResultsButton.jsx:87-110`) | US-001 |
-| UI-002 | `EmbeddingModelRow.jsx` | Embedding View Results | Open Results menu for ready and unready embedding models | First menu item navigates to `/visualizer/...` only when `predictionsReady` is true (`ui/src/Components/ProjectManagement/EmbeddingModelRow.jsx:85-130`) | US-001 |
-| UI-003 | `Visualizer.jsx` | Vector-first load | Open `/visualizer/:projectId/:imageLayerId/:modelId` | Fetches visualizer payload and loads footprint PMTiles plus prediction attrs before edit mode (`ui/src/Components/Visualizer/Visualizer.jsx:457-605`) | US-002 |
-| UI-004 | `Labels.jsx` / `Visualizer.jsx` | Enter edit mode | Click pencil next to Back or press `E` | Existing visualizer switches to edit mode; no route change or standalone screen (`ui/src/Components/Visualizer/Labels.jsx:117-128`, `ui/src/Components/Visualizer/Visualizer.jsx:873-921`) | US-003 |
-| UI-005 | `Visualizer.jsx` | Leave clean edit mode | Click Done or press `E` with no unsaved edits | Edit controls disappear; vectors remain visible on the View Results page | US-003 |
-| UI-006 | `Visualizer.jsx` | Discard confirmation | Press `E`, Back, or Done with unsaved edits | Confirmation dialog appears; cancel keeps edits; discard exits mode | US-003 |
-| UI-007 | `PredictionEditPanel.jsx` / `predictionResults.js` | Trained threshold | Load `supportsThreshold=true`; move slider | Slider visible; colors and flip counts update | US-003 |
-| UI-008 | `PredictionEditPanel.jsx` | Embedding no threshold | Load `supportsThreshold=false` | Slider hidden; manual overrides available | US-003 |
-| UI-009 | `Visualizer.jsx` | Click classify | Click footprint and choose class | Feature color and counts update via vector state | US-003 |
-| UI-010 | `Visualizer.jsx` | Box-select classify | Ctrl+drag selection and choose class | All selected features update | US-003 |
-| UI-011 | `PredictionEditPanel.jsx` | Save version | Click Save | PUT body includes thresholds and overrides; version list refreshes; raw route stays on `/visualizer/...` | US-004, US-005 |
-| UI-012 | `PredictionEditPanel.jsx` | Version history read-only | Load existing versions or save a version | History displays version, timestamp, threshold, editor, edited count, and which version is mapped; selecting another version does not refetch in this branch (`ui/src/Components/Visualizer/PredictionEditPanel.jsx:513-550`) | US-005 |
-| UI-013 | `Visualizer.jsx` | Dark mode | Render in dark theme | Styles use Fluent tokens and remain legible | US-003 |
-| UI-014 | `ui/src/util/pmtiles.js` | Shared protocol singleton | Render multiple PMTiles screens | Both screens share one `pmtiles://` protocol instance | US-002, US-003 |
+| UI-001 | Version selector | Default latest | Open View Results with versions | Selector shows latest; map loads latest sidecar | US-005 |
+| UI-002 | Version selector | Select raw | Choose Raw | Calls `GetVisualizerResults?version=0`; warning says reports still use newest when edits exist | US-005, US-006 |
+| UI-003 | Version selector | Select older edit | Choose version 1 while version 2 exists | Calls `GetVisualizerResults?version=1`; warning appears | US-005, US-006 |
+| UI-004 | Version selector | Missing sidecar | Open list with version lacking `predictionAttrsUrl` | Option is disabled and explains backfill is pending | US-005, US-008 |
+| UI-005 | Visualizer map | Dual-pane switch | Change selected version | Both swipe panes update colors and no pane keeps stale feature-state | US-003, US-005 |
+| UI-006 | Selector download | Download selected | Click download beside selector | Uses `GetModelArtifact?kind=gpkg&version=<selected>` | US-007 |
+| UI-007 | Edit panel | Per-row download | Click a version row download | Downloads that row's GPKG through `GetModelArtifact` | US-007 |
+| UI-008 | Report buttons | Map-only split | Map on raw/older | Report action copy states reports use newest; request does not include selector version | US-006 |
+| UI-009 | Save flow | Save new version | Click Save | Version list refreshes with sidecar URL and saved baseline resets | US-004 |
 
 ### End-to-End Tests (Docker Compose)
 
 | ID | User Flow | Steps | Expected Outcome | Story Ref |
 |---|---|---|---|---|
-| E2E-001 | Trained View Results and edit mode | 1. Start Docker Compose 2. Use a processed trained model with `predictionsReady=true` 3. Open Results → View Results 4. Confirm vector footprints render 5. Enter edit mode with pencil or `E` 6. Change threshold/override one building 7. Save | `edit_v1` GeoPackage downloads; raw `Model.gpkgUrl` unchanged; visualizer payload defaults to newest edit after refresh | US-001-US-006 |
-| E2E-002 | Embedding View Results and edit mode | 1. Start Docker Compose 2. Use an embedding model with non-empty predictions 3. Open Results → View Results 4. Confirm vector footprints render and no threshold slider 5. Override one building 6. Save | `edit_v1` GeoPackage downloads with expected class columns; embedding View Results uses `/visualizer/...` | US-001-US-006 |
-| E2E-003 | Empty embedding predictions | 1. Save empty embedding predictions 2. Return to project management | Results View remains disabled because server-derived `predictionsReady` is false with `no_buildings` readiness reason | US-001, US-002 |
-| E2E-004 | Unsaved edit discard | 1. Enter edit mode 2. Modify one building 3. Press `E` or Done 4. Cancel and then discard | Dialog protects unsaved edits; discard returns to normal visualizer mode | US-003 |
-| E2E-005 | Report reader versions | 1. Save edited version 2. Request validation and assessment reports with default, `version=0`, and explicit version | Validation metrics follow edited `damaged`; assessment opens the requested GeoPackage but counts still threshold `damage_pct_0m` | US-006 |
+| E2E-001 | Trained version selection | 1. Start stack 2. Open trained model View Results 3. Save two versions 4. Select raw, v1, v2 | Map changes to each selected sidecar; reports still default newest; raw `Model.gpkgUrl` unchanged | US-001-US-007 |
+| E2E-002 | Embedding version selection | 1. Open embedding model 2. Save version 3. Select raw and v1 | Selector works; threshold slider remains hidden; downloads use API route | US-001-US-007 |
+| E2E-003 | Backfill window | 1. Seed edited version without sidecar 2. Open View Results 3. Run backfill | Version is disabled before backfill and selectable after sidecar URL appears | US-005, US-008 |
+| E2E-004 | Version downloads | 1. Select v1 2. Download selected 3. Download v2 row | Downloaded files match requested versions | US-007 |
+| E2E-005 | Assessment gap | 1. Save override that changes `damaged` only 2. Run reports | Validation changes; Assessment counts do not move with override because `damage_pct_0m` is preserved | US-006 |
 
 ### Edge Case & Negative Tests
 
 | ID | Scenario | Input | Expected Behavior |
 |---|---|---|---|
-| NEG-001 | Unauthenticated API request | No function key / invalid auth context | 401 or existing platform auth failure |
-| NEG-002 | Non-existent project ID | Random GUID | 404 |
-| NEG-003 | Invalid class | override class `Destroyed` | 400 |
-| NEG-004 | Duplicate override ids | two overrides for id `7` | 400 or deterministic client-side collapse before request |
-| NEG-005 | Missing raw GPKG | Model lacks `gpkgUrl` | 404 from edit session; Results disabled in UI through readiness |
-| EDGE-001 | Very large layer | Representative large GeoPackage | Prep/save complete within agreed memory/time budget or produce actionable error |
-| EDGE-002 | Concurrent saves | Parallel PUT requests | Known gap: current implementation can allocate the same next version; add optimistic concurrency follow-up |
-| EDGE-003 | Threshold default split | Session default vs report default | Editor session remains `0.0`; assessment report default remains `0.1`; product decision is documented |
-| EDGE-004 | UI lint baseline | Current repo-wide ESLint 9 flat-config failure | Validation records no regression from baseline, not necessarily clean lint |
-| EDGE-005 | Version switching | User clicks an older version in the history | Known gap: history is read-only; payload reports current version but selection does not refetch |
-| EDGE-006 | Classic footprint row loss | Prediction GPKG has fewer rows than source footprints | Prep/save should fail loudly; producer-side fix remains a follow-up |
-| EDGE-007 | Raw Overture id absence | Raw prediction GeoPackage has no explicit `overture_id` | Prep/save relies on positional join today; explicit producer column remains a follow-up |
+| NEG-001 | Unknown version selected | `version=99` | 404 from API; UI shows unavailable state. |
+| NEG-002 | Malformed version selected | `version=abc` | 400 from API; UI shows error. |
+| NEG-003 | Missing sidecar download | `kind=prediction_attrs&version=1` without sidecar | 404; no generation in GET. |
+| NEG-004 | Direct URL fallback | Version download after API 404 | UI does not fall back to raw blob/SAS URL. |
+| NEG-005 | Concurrent saves | Parallel PUT requests | Known gap: no 409; document behavior and follow-up. |
+| EDGE-001 | Partial swipe switch | Switch while both panes mounted | Both panes repaint from same selected sidecar. |
+| EDGE-002 | Backfill rerun | Run backfill twice | Second run skips ready sidecars. |
+| EDGE-003 | No Playwright | CI/UI validation | Record absence; do not claim browser automation. |
 
 ### Performance Tests
 
 | ID | Scenario | Load Profile | Target Metric | Threshold |
 |---|---|---|---|---|
-| PERF-001 | Visualizer payload readiness | 50 concurrent `GetVisualizerResults` requests that read selected prediction GeoPackages for flavor/count | p99 latency | threshold TBD after representative GPKG measurement |
-| PERF-002 | PMTiles/sidecar prep | One dense urban layer | job duration and peak memory | fit existing worker/Batch limits; no OOM |
-| PERF-003 | Save edited version | GeoPackage at 95th percentile building count | function duration and peak memory | complete below platform timeout or trigger async-save follow-up |
-| PERF-004 | Browser editing | PMTiles + sidecar for dense layer | Chrome heap and interaction latency | no tab crash; pan/selection remains usable |
+| PERF-001 | Version switch | 50 `GetVisualizerResults?version=N` requests | p99 latency | threshold TBD after representative measurement |
+| PERF-002 | Save with sidecar | 95th percentile building-count GPKG | function duration and memory | below platform timeout or async-save follow-up |
+| PERF-003 | Backfill | All historical edited versions in dev/test | queue duration and failures | completes without sustained queue growth |
+| PERF-004 | Browser switch | Dense PMTiles + multiple sidecars | heap and interaction latency | no tab crash; both panes repaint promptly |
 
 ## Test Data Requirements
 
 | Dataset | Description | Source | Sensitive? |
 |---|---|---|---|
-| Trained inference sample GeoPackage | Includes continuous `damage_pct_0m`, `damage_pct_10m`, `damage_pct_20m`, `damaged`, `unknown_pct` | Synthetic or sanitized existing fixture | no |
-| Embedding prediction sample GeoPackage | Layer `predictions`, `area`, `damaged`, degenerate `damage_pct_0m` | Synthetic or sanitized existing fixture | no |
-| Source footprints GeoPackage | Ordered Overture ids matching prediction rows | Synthetic | no |
-| Layer footprint PMTiles | Building geometry artifact independent of a model | Synthetic or generated by prep worker | no |
-| Prediction attribute sidecar | Model-scoped arrays matching PMTiles feature ids | Synthetic or generated by prep worker | no |
-| Edited prediction GeoPackages | Raw plus `edit_v1` and `edit_v2` documents | Synthetic | no |
-| Large dense footprint set | Stress PMTiles, sidecar, and save memory | Synthetic | no |
-| Model/ImageLayer metadata fixtures | Raw, unready, ready, and edited model documents | Synthetic | no |
+| Raw trained inference GeoPackage | Continuous damage fractions and `damaged` | synthetic or sanitized fixture | no |
+| Raw embedding GeoPackage | Degenerate 0/1 `damage_pct_0m` copy of `damaged` | synthetic or sanitized fixture | no |
+| Edited GeoPackages v1/v2 | Override `damaged` while preserving `damage_pct_0m` | synthetic | no |
+| Source footprints GeoPackage | Ordered Overture ids matching prediction rows | synthetic | no |
+| Raw sidecar | `prediction_attrs_${modelId}` | generated fixture | no |
+| Versioned sidecars | `prediction_attrs_${modelId}_v1/v2` | generated fixture/backfill | no |
+| Historical metadata | Version with `gpkgUrl` but no `predictionAttrsUrl` | synthetic plus dev models `0448`, `5553` | no |
+| Large dense footprint set | Stress save/backfill/browser memory | synthetic | no |
 
 ## Coverage Matrix
 
 | User Story | Unit | API Integration | Queue | UI | E2E | Performance |
 |---|---|---|---|---|---|---|
-| US-001 | UT-003 | IT-002 | — | UI-001, UI-002 | E2E-001, E2E-002, E2E-003 | — |
-| US-002 | UT-002, UT-003, UT-005, UT-006, UT-010, UT-011, UT-013, UT-014, UT-015 | IT-001-IT-012, IT-017, IT-020 | QT-001-QT-008 | UI-003, UI-014 | E2E-001, E2E-002, E2E-003 | PERF-001, PERF-002 |
-| US-003 | UT-005-UT-009 | — | — | UI-004-UI-010, UI-013, UI-014 | E2E-001, E2E-002, E2E-004 | PERF-004 |
-| US-004 | UT-001, UT-002, UT-007-UT-012, UT-014 | IT-013-IT-015 | — | UI-011 | E2E-001, E2E-002 | PERF-003 |
-| US-005 | UT-001 | IT-016, IT-017 | — | UI-011, UI-012 | E2E-001, E2E-002 | — |
-| US-006 | UT-004 | IT-001, IT-003, IT-004, IT-018, IT-019 | — | UI-012 | E2E-001, E2E-005 | — |
+| US-001 | — | — | — | UI-001 | E2E-001, E2E-002 | — |
+| US-002 | UT-003, UT-005 | IT-009, IT-010 | — | UI-001 | E2E-001, E2E-002 | PERF-001 |
+| US-003 | — | — | — | UI-005 | E2E-001, E2E-002 | PERF-004 |
+| US-004 | UT-001, UT-002, UT-004, UT-007, UT-008 | IT-012, IT-013 | — | UI-009 | E2E-001, E2E-002 | PERF-002 |
+| US-005 | UT-011, UT-012 | IT-001-IT-006 | — | UI-001-UI-005 | E2E-001-E2E-003 | PERF-001, PERF-004 |
+| US-006 | UT-006, UT-012 | IT-015, IT-016 | — | UI-002, UI-003, UI-008 | E2E-001, E2E-005 | — |
+| US-007 | — | IT-007-IT-011 | — | UI-006, UI-007 | E2E-004 | — |
+| US-008 | UT-009, UT-010 | IT-014 | QT-001-QT-005 | UI-004 | E2E-003 | PERF-003 |
 
 ## Environment Requirements
 
 | Environment | Purpose | Config |
 |---|---|---|
-| Local (Docker Compose) | Developer testing of UI, API, queue, Azurite artifacts | `docker/docker-compose.yml`; no prediction-editing feature flags implemented |
-| CI (GitHub Actions) | Automated backend and UI tests | Existing secret scan/deploy workflows plus targeted tests |
-| Dev1 SWA | Integration testing with realistic project data | Internal testers use existing route and auth; no runtime feature flag |
-| Testing SWA | Pre-production validation | Promote after dev1 sign-off; no runtime feature flag |
+| Local (Docker Compose) | Developer testing of UI, API, queue, Azurite artifacts | `docker/docker-compose.yml`; no feature flag |
+| CI (GitHub Actions) | Automated backend and UI helper tests | Existing workflows plus targeted tests |
+| Dev1 SWA | Backfill and selector validation with known models | Includes models `0448` and `5553` historical v1 sidecar backfill |
+| Testing SWA | Pre-production analyst validation | Promote after dev sign-off |
 
 ## Sign-off Criteria
 
-- [ ] All P0 stories have E2E coverage for trained and embedding workflows.
-- [ ] Row-order preservation is asserted in unit tests; producer-side row loss and missing raw `overture_id` are tracked as follow-ups.
-- [ ] `hastelib` targeted tests pass for readiness, source resolution, prep, and edit processors.
-- [ ] API integration tests are added and pass for visualizer payloads, session, prep, save, version list, artifact retrieval, validation report, and assessment report version handling.
-- [ ] UI helper tests pass; browser/Playwright tests are added for gating,
-      vector-first rendering, edit-mode entry/exit, discard confirmation,
-      threshold visibility, selection, save, read-only version history, and dark
-      mode.
-- [ ] Performance tests establish safe limits or document a follow-up async-save
-      requirement.
-- [ ] UI lint validation records no regression from the known repo-wide ESLint 9
-      flat-config baseline.
+- [ ] Every selectable edited version has a matching `predictionAttrsUrl`.
+- [ ] `GetVisualizerResults` version selection changes the map only.
+- [ ] Assessment and Validation report buttons keep newest defaults and the UI
+      warns when map/report versions can differ.
+- [ ] Versioned downloads use `GetModelArtifact`, not direct blob/SAS rewriting.
+- [ ] Backfill is complete for known dev historical versions or their failures
+      are visible and selector options remain disabled.
+- [ ] Both swipe panes update together on version switch.
+- [ ] Targeted backend/API/queue tests pass.
+- [ ] UI helper tests pass; Playwright/browser gap is explicitly documented if
+      no Playwright config is added.
