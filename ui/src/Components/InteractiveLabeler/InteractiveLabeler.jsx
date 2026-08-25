@@ -1627,14 +1627,24 @@ const InteractiveLabeler = () => {
   function clearBuildings(items) {
     let n = 0;
     for (const it of items) {
-      const entry = it && it.id != null && labeledMapRef.current[it.id];
-      if (!entry) continue;
-      // Drop it from the saved mirror too, or the merge on save resurrects
-      // a label the user just cleared.
-      delete savedLabelsRef.current[entry.overtureId ?? it.id];
+      if (!it || it.id == null) continue;
+      const entry = labeledMapRef.current[it.id];
+      // Fall back to the tile's overture_id: a label saved on the server
+      // whose feature vector is missing never enters labeledMapRef, because
+      // hydrateViewport skips it. It still shows in the counts, so the user
+      // can box-clear it — and leaving it in the mirror would let the merge
+      // in handleSaveLabels bring it straight back.
+      const overtureId =
+        entry?.overtureId ?? it.properties?.overture_id ?? it.id;
+      const had = entry != null || savedLabelsRef.current[overtureId] != null;
+      delete savedLabelsRef.current[overtureId];
       delete labeledMapRef.current[it.id];
-      clearFeatureStateLabel(it.source || primarySourceId(), it.id);
-      n++;
+      // primarySourceId(), not it.source: forEachStateTarget pairs the main
+      // renderer with whatever is passed and the swipe renderer with its own
+      // id, so passing the swipe map's source when the box was drawn there
+      // would leave the main map's colour behind.
+      clearFeatureStateLabel(primarySourceId(), it.id);
+      if (had) n++;
     }
     if (n === 0) return;
     labelsDirtyRef.current = true;
