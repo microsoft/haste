@@ -50,8 +50,8 @@ silently wrong objective, and its damage reports cannot be trusted.
 - [x] Clustering is opt-in and leaves the previous single-pair output
       byte-identical when unset
 - [x] Every mask class is rasterized in the imagery CRS
-- [x] Derived training images and masks select BigTIFF when their size may
-      exceed the classic TIFF limit
+- [x] Derived training images, masks, predictions, and visualizer rasters
+      select BigTIFF when their size may exceed the classic TIFF limit
 - [ ] A dev retraining run confirms the above end-to-end *(outstanding — see
       [test-plan.md](test-plan.md))*
 

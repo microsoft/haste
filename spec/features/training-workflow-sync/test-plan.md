@@ -2,7 +2,7 @@
 
 ## Coverage
 
-**92 container-side tests, plus 16 `hastegeo` tests.** Container-side tests
+**95 container-side tests, plus 16 `hastegeo` tests.** Container-side tests
 live in `docker/training/code/tests/` and run without the conda env unless
 noted; `hastegeo` tests follow the repo's usual layout.
 
@@ -19,7 +19,7 @@ PYTHONPATH=$PWD/hastelib/src python -m unittest \
 | `tests/test_create_masks.py` | 13 | Grid assignment, STRtree/brute-force equivalence, CRS gate, extent clipping, skip-path exception type |
 | `tests/test_datasets.py` | 10 | Channel clipping, too-few-bands rejection, preload equivalence and aliasing |
 | `tests/test_create_masks_cleanup.py` | 9 | Stale and partial output removal, prefix safety |
-| `tests/test_create_masks_writes.py` | 5 | BigTIFF option, profile immutability, both write forms, and production call-site wiring |
+| `tests/test_create_masks_writes.py` | 8 | BigTIFF option, profile immutability, all production write paths, and raw-mask rasterization |
 | `hastelib/tests/core/utils/test_label_classes.py` | 16 | The auto-enable decision across class layouts and spellings |
 
 ## Load-bearing tests

@@ -74,6 +74,41 @@ def _get_training_raster_calls():
     ]
 
 
+def _get_bigtiff_assignment_and_write_lines(filename):
+    """Find the BigTIFF profile assignment and rasterio write calls."""
+    path = os.path.join(CODE_DIR, filename)
+    with open(path) as source_file:
+        tree = ast.parse(source_file.read())
+
+    assignments = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Subscript)
+            and isinstance(target.value, ast.Name)
+            and target.value.id == "profile"
+            and target.slice.value == "BIGTIFF"
+            for target in node.targets
+        )
+        and node.value.value == "IF_SAFER"
+    ]
+    write_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "rasterio"
+        and node.func.attr == "open"
+        and any(
+            isinstance(argument, ast.Constant) and argument.value == "w"
+            for argument in node.args
+        )
+    ]
+    return assignments, write_calls
+
+
 class TestWriteTrainingRaster(unittest.TestCase):
     def setUp(self):
         self.rasterio = _FakeRasterio()
@@ -146,6 +181,48 @@ class TestCreateMaskWritePaths(unittest.TestCase):
         self.assertEqual(len(mask_call.keywords), 1)
         self.assertEqual(mask_call.keywords[0].arg, "band")
         self.assertEqual(mask_call.keywords[0].value.value, 1)
+
+
+class TestWorkflowBigTiffProfiles(unittest.TestCase):
+    def _assert_bigtiff_precedes_raster_write(self, filename):
+        assignments, write_calls = _get_bigtiff_assignment_and_write_lines(
+            filename
+        )
+
+        self.assertEqual(len(assignments), 1)
+        self.assertEqual(len(write_calls), 1)
+        self.assertLess(assignments[0].lineno, write_calls[0].lineno)
+
+    def test_inference_predictions_use_if_safer(self):
+        self._assert_bigtiff_precedes_raster_write("inference.py")
+
+    def test_visualizer_output_uses_if_safer(self):
+        self._assert_bigtiff_precedes_raster_write("output2visualizer.py")
+
+    def test_raw_mask_rasterizer_uses_bigtiff(self):
+        with open(CREATE_MASKS_PATH) as source_file:
+            tree = ast.parse(source_file.read())
+
+        rasterize_commands = [
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.List)
+            and node.value.elts
+            and isinstance(node.value.elts[0], ast.Constant)
+            and node.value.elts[0].value == "gdal_rasterize"
+        ]
+
+        self.assertTrue(
+            any(
+                any(
+                    isinstance(argument, ast.Constant)
+                    and argument.value == "BIGTIFF=YES"
+                    for argument in command.elts
+                )
+                for command in rasterize_commands
+            )
+        )
 
 
 if __name__ == "__main__":

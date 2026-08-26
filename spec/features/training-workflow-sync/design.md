@@ -170,10 +170,12 @@ The cropped training image and buffered mask can exceed the classic TIFF
 source dataset's BigTIFF creation option, so derived writes must apply it
 explicitly.
 
-Both rasterio write paths go through one helper that copies the source
-profile and sets `BIGTIFF=IF_SAFER`. Copying avoids mutating a profile that a
-caller may reuse. `IF_SAFER` lets GDAL retain classic TIFF for small outputs
-while selecting BigTIFF when the uncompressed result could exceed 4 GiB.
+The two `create_masks.py` rasterio write paths go through one helper that
+copies the source profile and sets `BIGTIFF=IF_SAFER`. Copying avoids
+mutating a profile that a caller may reuse. The inference prediction and
+visualizer writers also set `BIGTIFF=IF_SAFER` before opening their outputs.
+`IF_SAFER` lets GDAL retain classic TIFF for small outputs while selecting
+BigTIFF when the uncompressed result could exceed 4 GiB.
 
 The raw mask is created by `gdal_rasterize` and already uses
 `BIGTIFF=YES`. This change aligns the surrounding rasterio writes without
