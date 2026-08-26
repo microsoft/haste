@@ -25,8 +25,9 @@ shapely==2.1.2
 pyyaml==6.0.3
 # Planetary Computer publishing (vendored REST client) — geo stack used by the
 # PC provider's STAC builder (lazy-loaded when the API resolves the PC target
-# to validate a publish request).
-pystac[validation]==1.15.2
+# to validate a publish request). Keep pystac < 1.12: 1.12+ defaults to
+# emitting STAC 1.1.0, but MPC Pro requires STAC 1.0.0 (stac.py STAC_VERSION).
+pystac[validation]==1.11.0
 geopandas==1.0.1
 pyproj==3.6.1
 pyogrio==0.10.0

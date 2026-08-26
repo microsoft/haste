@@ -24,8 +24,10 @@ GDAL @ https://github.com/microsoft/haste/releases/download/haste-binaries/GDAL-
 shapely==2.1.2
 pyyaml==6.0.3
 # Planetary Computer publishing (vendored REST client) — geo stack used by the
-# PC provider's STAC builder (lazy-loaded when resolving the PC target).
-pystac[validation]==1.15.2
+# PC provider's STAC builder (lazy-loaded when resolving the PC target). Keep
+# pystac < 1.12: 1.12+ defaults to emitting STAC 1.1.0, but MPC Pro requires
+# STAC 1.0.0 (stac.py STAC_VERSION).
+pystac[validation]==1.11.0
 geopandas==1.0.1
 pyproj==3.6.1
 pyogrio==0.10.0
