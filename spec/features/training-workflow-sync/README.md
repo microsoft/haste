@@ -35,6 +35,9 @@ on GDAL reprojecting on the fly.
   observed in dev.
 - **Training was dataloader-bound.** Patch reads from compressed GeoTIFFs left
   the GPU at roughly half utilization.
+- **Large aerial scenes exceeded classic TIFF limits.** Derived training
+  images inherited the source profile without a BigTIFF creation option, so
+  crops larger than 4 GiB failed during `create_masks.py`.
 
 Without this, a project defining a **No Damage** class trains against a
 silently wrong objective, and its damage reports cannot be trusted.
@@ -47,6 +50,8 @@ silently wrong objective, and its damage reports cannot be trusted.
 - [x] Clustering is opt-in and leaves the previous single-pair output
       byte-identical when unset
 - [x] Every mask class is rasterized in the imagery CRS
+- [x] Derived training images and masks select BigTIFF when their size may
+      exceed the classic TIFF limit
 - [ ] A dev retraining run confirms the above end-to-end *(outstanding — see
       [test-plan.md](test-plan.md))*
 
@@ -95,3 +100,4 @@ of step. See [rollout.md](rollout.md).
 | 2026-08-21 | Give "No Damage" no output channel at all | Penalizing its probability only made it unattractive; removing the channel makes it unrepresentable |
 | 2026-08-21 | Choose training precision at runtime | HASTE's Batch pools are heterogeneous — T4s have no bf16 — so `bf16-mixed` cannot be hardcoded as upstream does |
 | 2026-08-21 | Keep `log_dict(train_metrics)` where upstream dropped it | `hastegeo`'s `tbparser` reads `train_MulticlassAccuracy` out of the TensorBoard events |
+| 2026-08-26 | Use `BIGTIFF=IF_SAFER` for rasterio-generated training artifacts | `YES` changes every small output; `IF_SAFER` keeps classic TIFFs when safe and prevents the observed 4 GiB write failure |
