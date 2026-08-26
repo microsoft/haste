@@ -133,32 +133,42 @@ def build_providers(
         if info is None or info["name"].lower() in seen:
             continue
         seen.add(info["name"].lower())
+        # Imagery vendors only *license* the source scenes used to derive the
+        # published output — they did not produce the output itself.
         providers.append(
             pystac.Provider(
                 name=info["name"],
                 url=info["url"],
-                roles=[
-                    pystac.ProviderRole.PRODUCER,
-                    pystac.ProviderRole.LICENSOR,
-                ],
+                roles=[pystac.ProviderRole.LICENSOR],
             )
         )
     if organization and organization.get("name"):
         name = str(organization["name"]).strip()
         if name and name.lower() not in seen:
             seen.add(name.lower())
+            # The organization operating the app produced (and processed) the
+            # published derived product.
             providers.append(
                 pystac.Provider(
                     name=name,
                     url=organization.get("url") or None,
-                    roles=[pystac.ProviderRole.PROCESSOR],
+                    roles=[
+                        pystac.ProviderRole.PRODUCER,
+                        pystac.ProviderRole.PROCESSOR,
+                    ],
                 )
             )
     return providers
 
 
 def source_imagery_property(refs: Sequence[Any]) -> list:
-    """Compact per-program source-imagery display value, deduped by programId."""
+    """Per-program source-imagery display value, deduped by programId.
+
+    Each program lists the fully-qualified source **scene** URLs (the STAC item
+    hrefs) it contributed — not the program home page — so consumers can reach
+    the actual imagery a dataset was derived from. ``programUrl`` (the program's
+    home page) is kept as a secondary link.
+    """
     by_program: Dict[str, Dict[str, Any]] = {}
     for ref in refs:
         entry = by_program.get(ref.programId)
@@ -167,12 +177,15 @@ def source_imagery_property(refs: Sequence[Any]) -> list:
             entry = {
                 "program": ref.programName,
                 "license": ref.license,
-                "sceneCount": 0,
+                "scenes": [],
             }
             if program.get("url"):
-                entry["url"] = program["url"]
+                entry["programUrl"] = program["url"]
             by_program[ref.programId] = entry
-        entry["sceneCount"] += 1
+        scene: Dict[str, Any] = {"href": ref.href}
+        if ref.title:
+            scene["title"] = ref.title
+        entry["scenes"].append(scene)
     return list(by_program.values())
 
 

@@ -32,18 +32,25 @@ export function selectSupportedArtifacts(options, provider) {
 }
 
 // Summarize source-imagery references into per-program display rows
-// (deduped by program) for the publish/edit dialogs.
+// (deduped by program) for the publish/edit dialogs. Each row carries the
+// fully-qualified source scene URLs (STAC item hrefs) so the dialog can link
+// to the actual imagery a dataset was derived from.
 export function summarizeSourceImagery(refs) {
   const byProgram = new Map();
   for (const ref of refs || []) {
     const key = ref.programId || ref.programName || "";
-    const entry = byProgram.get(key) || {
-      program: ref.programName || key,
-      license: ref.license || "",
-      count: 0,
-    };
-    entry.count += 1;
-    byProgram.set(key, entry);
+    let entry = byProgram.get(key);
+    if (!entry) {
+      entry = {
+        program: ref.programName || key,
+        license: ref.license || "",
+        scenes: [],
+      };
+      byProgram.set(key, entry);
+    }
+    if (ref.href) {
+      entry.scenes.push({ href: ref.href, title: ref.title || ref.href });
+    }
   }
   return [...byProgram.values()];
 }

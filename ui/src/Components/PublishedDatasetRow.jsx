@@ -415,17 +415,29 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
                       </Field>
                       <Field
                         label="Source imagery citation"
-                        hint="Optional. A URL becomes a provenance link; plain text a citation."
+                        hint="Optional. A URL becomes a provenance link; plain text a citation. Open-data sources below are auto-linked."
                       >
                         {summarizeSourceImagery(
                           item.sourceImageryReferences
                         ).map((program) => (
-                          <Text key={program.program} size={200} block>
-                            {program.program}
-                            {program.license ? ` · ${program.license}` : ""} ·{" "}
-                            {program.count} scene
-                            {program.count === 1 ? "" : "s"} (from open data)
-                          </Text>
+                          <div key={program.program} style={{ marginBottom: 4 }}>
+                            <Text size={200} block>
+                              {program.program}
+                              {program.license ? ` · ${program.license}` : ""}{" "}
+                              (from open data)
+                            </Text>
+                            {program.scenes.map((scene) => (
+                              <Link
+                                key={scene.href}
+                                href={scene.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ display: "block", fontSize: 12 }}
+                              >
+                                {scene.title}
+                              </Link>
+                            ))}
+                          </div>
                         ))}
                         <Input
                           placeholder="https://… or a citation"

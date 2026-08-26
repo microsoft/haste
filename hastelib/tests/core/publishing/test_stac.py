@@ -388,13 +388,15 @@ class TestStacObjects(unittest.TestCase):
             # the Vantor provider; Sentinel-2 to the ESA/Copernicus provider.
             self.assertIn("Vantor", by_name)
             self.assertEqual(by_name["Vantor"]["url"], "https://vantor.com")
-            self.assertEqual(
-                sorted(by_name["Vantor"]["roles"]), ["licensor", "producer"]
-            )
+            # Imagery vendors only license the source, not the derived output.
+            self.assertEqual(by_name["Vantor"]["roles"], ["licensor"])
             self.assertIn("European Space Agency (Copernicus)", by_name)
-            # Deployment organization is the processor.
+            # The deployment organization produced + processed the output.
             self.assertIn("Acme Relief", by_name)
-            self.assertEqual(by_name["Acme Relief"]["roles"], ["processor"])
+            self.assertEqual(
+                sorted(by_name["Acme Relief"]["roles"]),
+                ["processor", "producer"],
+            )
 
     def test_unknown_imagery_source_passes_through_without_url(self) -> None:
         dataset = self.dataset.model_copy(
@@ -416,10 +418,7 @@ class TestStacObjects(unittest.TestCase):
         by_name = {p["name"]: p for p in providers}
         self.assertIn("Acme Aerial Survey", by_name)
         self.assertNotIn("url", by_name["Acme Aerial Survey"])
-        self.assertEqual(
-            sorted(by_name["Acme Aerial Survey"]["roles"]),
-            ["licensor", "producer"],
-        )
+        self.assertEqual(by_name["Acme Aerial Survey"]["roles"], ["licensor"])
 
     def test_no_providers_emitted_when_no_imagery_or_org(self) -> None:
         objects = self._build(
@@ -599,7 +598,19 @@ class TestStacObjects(unittest.TestCase):
         )
         prop = item["properties"]["haste:source_imagery"]
         self.assertEqual(len(prop), 2)  # deduped by program
-        self.assertEqual(sorted(p["sceneCount"] for p in prop), [1, 2])
+        # The property carries the fully-qualified source scene URLs.
+        self.assertEqual(sorted(len(p["scenes"]) for p in prop), [1, 2])
+        all_scene_hrefs = {
+            scene["href"] for p in prop for scene in p["scenes"]
+        }
+        self.assertEqual(
+            all_scene_hrefs,
+            {
+                "https://a.example/1.json",
+                "https://a.example/2.json",
+                "https://a.example/3.json",
+            },
+        )
         self.assertTrue(all(p["license"] == "CC-BY-NC-4.0" for p in prop))
 
     def test_source_imagery_citation_url_adds_link(self) -> None:
