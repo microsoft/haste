@@ -5,6 +5,7 @@ from hastegeo.core.models.publishing import (
     ArtifactBundle,
     PublishedDataset,
     SourceArtifact,
+    SourceImageryRef,
 )
 from hastegeo.core.publishing.stac import (
     ASSET_KEY_MAX_LENGTH,
@@ -541,6 +542,107 @@ class TestStacObjects(unittest.TestCase):
 
         self.assertEqual(updated["haste:datasets"], [])
         self.assertNotIn("providers", updated)
+
+    def _build_with(self, **dataset_updates):
+        dataset = self.dataset.model_copy(update=dataset_updates)
+        objects = build_stac_objects(
+            dataset,
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            ),
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
+        )
+        return objects, serialize_stac_objects(objects).item
+
+    def test_source_imagery_derived_from_links_and_property(self) -> None:
+        objects, item = self._build_with(
+            sourceImageryReferences=[
+                SourceImageryRef(
+                    programId="vantor-open-data",
+                    href="https://a.example/1.json",
+                    title="Scene A",
+                ),
+                SourceImageryRef(
+                    programId="vantor-open-data",
+                    href="https://a.example/2.json",
+                    title="Scene B",
+                ),
+                SourceImageryRef(
+                    programId="planet-open-data",
+                    href="https://a.example/3.json",
+                    title="Scene C",
+                ),
+                SourceImageryRef(  # unregistered -> dropped
+                    programId="commercial-vendor",
+                    href="https://a.example/4.json",
+                ),
+            ]
+        )
+        validate_stac_objects(objects)  # derived_from links stay STAC-valid
+
+        derived = [
+            link
+            for link in item["links"]
+            if link.get("rel") == "derived_from"
+        ]
+        self.assertEqual(
+            {link["href"] for link in derived},
+            {
+                "https://a.example/1.json",
+                "https://a.example/2.json",
+                "https://a.example/3.json",
+            },
+        )
+        prop = item["properties"]["haste:source_imagery"]
+        self.assertEqual(len(prop), 2)  # deduped by program
+        self.assertEqual(sorted(p["sceneCount"] for p in prop), [1, 2])
+        self.assertTrue(all(p["license"] == "CC-BY-NC-4.0" for p in prop))
+
+    def test_source_imagery_citation_url_adds_link(self) -> None:
+        _, item = self._build_with(
+            sourceImageryCitation="https://example.org/src"
+        )
+        self.assertEqual(
+            item["properties"]["haste:source_imagery_citation"],
+            "https://example.org/src",
+        )
+        html_links = [
+            link
+            for link in item["links"]
+            if link.get("rel") == "derived_from"
+            and link.get("type") == "text/html"
+        ]
+        self.assertEqual(len(html_links), 1)
+        self.assertEqual(html_links[0]["href"], "https://example.org/src")
+
+    def test_source_imagery_citation_text_is_property_only(self) -> None:
+        _, item = self._build_with(
+            sourceImageryCitation="Imagery courtesy of Foo"
+        )
+        self.assertEqual(
+            item["properties"]["haste:source_imagery_citation"],
+            "Imagery courtesy of Foo",
+        )
+        html_links = [
+            link
+            for link in item["links"]
+            if link.get("rel") == "derived_from"
+        ]
+        self.assertEqual(html_links, [])
+
+    def test_no_source_imagery_when_absent(self) -> None:
+        _, item = self._build_with()
+        self.assertNotIn("haste:source_imagery", item["properties"])
+        self.assertNotIn(
+            "haste:source_imagery_citation", item["properties"]
+        )
+        self.assertFalse(
+            [l for l in item["links"] if l.get("rel") == "derived_from"]
+        )
 
     def test_no_preview_link_without_a_viewer_url(self) -> None:
         objects = self._build(

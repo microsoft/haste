@@ -247,6 +247,8 @@ class PublishingProcessor:
             modelId=request.modelId,
             modelName=options.modelName,
             imagerySources=options.imagerySources,
+            sourceImageryReferences=options.sourceImageryReferences,
+            sourceImageryCitation=request.sourceImageryCitation,
             target=request.target,
             status=PublishStatus.PENDING,
             publishedByUser=prepared.publisher_id.strip().lower(),
@@ -388,6 +390,7 @@ class PublishingProcessor:
             "description",
             "interactiveViewerUrl",
             "imagerySources",
+            "sourceImageryCitation",
         }
         updates = {k: v for k, v in fields.items() if k in editable}
         if updates.get("description") is None and "description" in updates:
@@ -397,6 +400,11 @@ class PublishingProcessor:
             and "imagerySources" in updates
         ):
             updates["imagerySources"] = []
+        if (
+            not updates.get("sourceImageryCitation")
+            and "sourceImageryCitation" in updates
+        ):
+            updates["sourceImageryCitation"] = None
         if not updates:
             return dataset
         updates["updatedDate"] = _utc_timestamp()

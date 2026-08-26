@@ -27,7 +27,10 @@ import { v4 as uuidv4 } from "uuid";
 import { apiGet, apiPut } from "../util/api";
 import { buildAssessmentSummary } from "../util/assessmentSummary";
 import { FluentIcon } from "../util/icons";
-import { selectSupportedArtifacts } from "../util/publishing";
+import {
+  selectSupportedArtifacts,
+  summarizeSourceImagery,
+} from "../util/publishing";
 
 
 const ARTIFACT_LABELS = {
@@ -110,6 +113,7 @@ const PublishDatasetModal = ({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [interactiveViewerUrl, setInteractiveViewerUrl] = useState("");
+  const [sourceImageryCitation, setSourceImageryCitation] = useState("");
   const [target, setTarget] = useState("");
   const [selectedArtifacts, setSelectedArtifacts] = useState([]);
   const [submitting, setSubmitting] = useState(false);
@@ -221,6 +225,7 @@ const PublishDatasetModal = ({
         name: name.trim(),
         description: description.trim(),
         interactiveViewerUrl: interactiveViewerUrl.trim() || null,
+        sourceImageryCitation: sourceImageryCitation.trim() || null,
         target,
         artifacts: effectiveSelectedArtifacts,
       });
@@ -307,6 +312,30 @@ const PublishDatasetModal = ({
                       value={interactiveViewerUrl}
                       onChange={(_, data) =>
                         setInteractiveViewerUrl(data.value)
+                      }
+                      disabled={submitting}
+                    />
+                  </Field>
+                  <Field
+                    label="Source imagery"
+                    hint="A URL becomes a provenance link on the dataset; plain text a citation."
+                  >
+                    {summarizeSourceImagery(
+                      options?.sourceImageryReferences
+                    ).map((program) => (
+                      <Text key={program.program} size={200} block>
+                        {program.program}
+                        {program.license ? ` · ${program.license}` : ""} ·{" "}
+                        {program.count} scene
+                        {program.count === 1 ? "" : "s"} (auto-detected from
+                        open data)
+                      </Text>
+                    ))}
+                    <Input
+                      placeholder="https://… or a citation (optional)"
+                      value={sourceImageryCitation}
+                      onChange={(_, data) =>
+                        setSourceImageryCitation(data.value)
                       }
                       disabled={submitting}
                     />

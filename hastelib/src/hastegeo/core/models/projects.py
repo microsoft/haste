@@ -5,6 +5,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from .publishing import SourceImageryRef
+
 
 class PrimaryClass(BaseModel):
     """Primary classification definition for labeling tasks.
@@ -714,6 +716,12 @@ class ImageLayer(BaseModel):
     sourceType: Optional[str] = Field(default=None)  # Deprecate
     sourceTypePreEvent: Optional[str] = Field(default=None)
     sourceTypePostEvent: Optional[str] = Field(default=None)
+    # Source-imagery provenance captured from the Open Data Catalog (scenes the
+    # layer was built from). Drives publish-time derived_from attribution; empty
+    # for user-supplied imagery. See publishing.open_data.validate_source_refs.
+    sourceImageryReferences: List[SourceImageryRef] = Field(
+        default_factory=list
+    )
     imageryCaptureDatePreEvent: Optional[str] = Field(default=None)
     imageryCaptureDatePostEvent: Optional[str] = Field(default=None)
     normalizationFactor: Optional[float] = Field(default=None)

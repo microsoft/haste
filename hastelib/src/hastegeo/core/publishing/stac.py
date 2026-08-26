@@ -19,7 +19,9 @@ from ..models.publishing import (
     ArtifactKind,
     PublishedDataset,
     SourceArtifact,
+    is_https_url,
 )
+from .open_data import OPEN_DATA_PROGRAMS, validate_source_refs
 
 COLLECTION_ID_MAX_LENGTH = 242
 ITEM_ID_MAX_LENGTH = 149
@@ -153,6 +155,74 @@ def build_providers(
                 )
             )
     return providers
+
+
+def source_imagery_property(refs: Sequence[Any]) -> list:
+    """Compact per-program source-imagery display value, deduped by programId."""
+    by_program: Dict[str, Dict[str, Any]] = {}
+    for ref in refs:
+        entry = by_program.get(ref.programId)
+        if entry is None:
+            program = OPEN_DATA_PROGRAMS.get(ref.programId) or {}
+            entry = {
+                "program": ref.programName,
+                "license": ref.license,
+                "sceneCount": 0,
+            }
+            if program.get("url"):
+                entry["url"] = program["url"]
+            by_program[ref.programId] = entry
+        entry["sceneCount"] += 1
+    return list(by_program.values())
+
+
+def _add_source_imagery_provenance(
+    item: Any, dataset: PublishedDataset
+) -> None:
+    """Emit ``derived_from`` links + ``haste:source_imagery`` for the source
+    scenes an output was derived from, plus the URL-aware user citation.
+
+    References are re-validated against the open-data registry (fail-safe): any
+    that are not from a registered program are dropped.
+    """
+    pystac = _load_pystac()
+    refs = validate_source_refs(
+        getattr(dataset, "sourceImageryReferences", None)
+    )
+    for ref in refs:
+        title = (
+            f"{ref.programName} — {ref.title}"
+            if ref.title
+            else ref.programName
+        )
+        item.add_link(
+            pystac.Link(
+                rel="derived_from",
+                target=ref.href,
+                media_type=pystac.MediaType.JSON,
+                title=title,
+            )
+        )
+    if refs:
+        item.properties[
+            f"{PROPERTY_PREFIX}:source_imagery"
+        ] = source_imagery_property(refs)
+
+    citation = getattr(dataset, "sourceImageryCitation", None)
+    citation = citation.strip() if isinstance(citation, str) else None
+    if citation:
+        item.properties[
+            f"{PROPERTY_PREFIX}:source_imagery_citation"
+        ] = citation
+        if is_https_url(citation):
+            item.add_link(
+                pystac.Link(
+                    rel="derived_from",
+                    target=citation,
+                    media_type="text/html",
+                    title="Source imagery",
+                )
+            )
 
 
 @dataclass(frozen=True)
@@ -381,6 +451,10 @@ def build_vector_item(
         item.properties["providers"] = [
             provider.to_dict() for provider in providers
         ]
+
+    # Provenance: link the specific source scenes this output was derived from
+    # (open-data programs only) + the optional URL-aware user citation.
+    _add_source_imagery_provenance(item, dataset)
 
     # Optional operator-provided link to an interactive web viewer for this
     # dataset (rel=preview, text/html) — the vendored pattern, in place of an

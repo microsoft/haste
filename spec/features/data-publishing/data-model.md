@@ -39,6 +39,11 @@ an array of `PublishedDataset`:
   "description": "string",             // prefilled from assessment report summary
   "interactiveViewerUrl": "https://… | null", // optional, editable; PC rel=preview link
   "imagerySources": ["Vantor"],        // provider attribution; inferred, editable override
+  "sourceImageryReferences": [         // source-scene provenance (open-data only)
+    { "programId": "vantor-open-data", "href": "https://…/scene.json",
+      "title": "…", "license": "CC-BY-NC-4.0", "attributable": true }
+  ],
+  "sourceImageryCitation": "https://… | text | null", // optional, editable, URL-aware
   "projectId": "uuid",
   "imageLayerId": "string",
   "modelId": "string",                 // source model whose artifacts were published

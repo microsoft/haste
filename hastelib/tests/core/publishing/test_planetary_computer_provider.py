@@ -953,6 +953,92 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
         _, _, body = self.sdk.item_updates[0]
         self.assertNotIn("providers", body["properties"])
 
+    def test_update_published_metadata_reemits_citation_url(self) -> None:
+        # Seed an item that already has scene-level derived_from links + an old
+        # citation link; editing the citation must replace only the citation.
+        collection_id, item_id = self.provider._ids(self.dataset)
+        self.sdk.items[(collection_id, item_id)] = {
+            "type": "Feature",
+            "id": item_id,
+            "collection": collection_id,
+            "properties": {"title": "Old"},
+            "links": [
+                {
+                    "rel": "derived_from",
+                    "href": "https://scene.example/a.json",
+                    "type": "application/json",
+                    "title": "Vantor — A",
+                },
+                {
+                    "rel": "derived_from",
+                    "href": "https://old.example/cite",
+                    "type": "text/html",
+                    "title": "Source imagery",
+                },
+            ],
+            "assets": {},
+        }
+        edited = self.dataset.model_copy(
+            update={"sourceImageryCitation": "https://new.example/cite"}
+        )
+
+        self.provider.update_published_metadata(edited)
+
+        _, _, body = self.sdk.item_updates[0]
+        self.assertEqual(
+            body["properties"]["haste:source_imagery_citation"],
+            "https://new.example/cite",
+        )
+        derived = [
+            link
+            for link in body["links"]
+            if link.get("rel") == "derived_from"
+        ]
+        hrefs = {link["href"] for link in derived}
+        # Scene link preserved; old citation link replaced by the new one.
+        self.assertIn("https://scene.example/a.json", hrefs)
+        self.assertIn("https://new.example/cite", hrefs)
+        self.assertNotIn("https://old.example/cite", hrefs)
+
+    def test_update_published_metadata_clears_citation(self) -> None:
+        collection_id, item_id = self.provider._ids(self.dataset)
+        self.sdk.items[(collection_id, item_id)] = {
+            "type": "Feature",
+            "id": item_id,
+            "collection": collection_id,
+            "properties": {
+                "title": "Old",
+                "haste:source_imagery_citation": "https://old.example/cite",
+            },
+            "links": [
+                {
+                    "rel": "derived_from",
+                    "href": "https://old.example/cite",
+                    "type": "text/html",
+                    "title": "Source imagery",
+                }
+            ],
+            "assets": {},
+        }
+        edited = self.dataset.model_copy(
+            update={"sourceImageryCitation": None}
+        )
+
+        self.provider.update_published_metadata(edited)
+
+        _, _, body = self.sdk.item_updates[0]
+        self.assertNotIn(
+            "haste:source_imagery_citation", body["properties"]
+        )
+        self.assertFalse(
+            [
+                link
+                for link in body["links"]
+                if link.get("rel") == "derived_from"
+                and link.get("type") == "text/html"
+            ]
+        )
+
     def test_update_published_metadata_refreshes_collection_union(
         self,
     ) -> None:

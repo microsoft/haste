@@ -13,6 +13,7 @@ from ..models.publishing import (
 )
 from ..processors.metadata import MetadataProcessor
 from ..utils.metadata import MetadataUtils
+from .open_data import validate_source_refs
 
 
 class PublishingSourceNotFoundError(FileNotFoundError):
@@ -443,6 +444,9 @@ class PublishingSourceResolver:
             modelName=model.name or model_id,
             defaultName=f"{project_name} – {image_layer_name}",
             imagerySources=_imagery_sources(image_layer),
+            sourceImageryReferences=validate_source_refs(
+                image_layer.sourceImageryReferences
+            ),
             availableArtifacts=available_artifacts,
         )
 

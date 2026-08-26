@@ -30,3 +30,20 @@ export function selectSupportedArtifacts(options, provider) {
     .filter((artifact) => supported.has(artifact.kind))
     .map((artifact) => artifact.kind);
 }
+
+// Summarize source-imagery references into per-program display rows
+// (deduped by program) for the publish/edit dialogs.
+export function summarizeSourceImagery(refs) {
+  const byProgram = new Map();
+  for (const ref of refs || []) {
+    const key = ref.programId || ref.programName || "";
+    const entry = byProgram.get(key) || {
+      program: ref.programName || key,
+      license: ref.license || "",
+      count: 0,
+    };
+    entry.count += 1;
+    byProgram.set(key, entry);
+  }
+  return [...byProgram.values()];
+}

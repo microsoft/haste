@@ -32,7 +32,10 @@ import { toBrowserStorageUrl } from "../util/blobUrl";
 import { limitTextLength } from "../util/conversion";
 import { fileDownload } from "../util/file";
 import { FluentIcon } from "../util/icons";
-import { getPublishingStatusDisplay } from "../util/publishing";
+import {
+  getPublishingStatusDisplay,
+  summarizeSourceImagery,
+} from "../util/publishing";
 
 const PublishedDatasetRow = ({ item, index, onRefresh }) => {
   const { appParams, setDialog, setIsLoading } = useContext(AppContext);
@@ -43,6 +46,7 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
   const [editDescription, setEditDescription] = useState("");
   const [editViewer, setEditViewer] = useState("");
   const [editImagery, setEditImagery] = useState("");
+  const [editSourceCitation, setEditSourceCitation] = useState("");
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState("");
   const preds = item.assessmentSummary?.predictions;
@@ -100,6 +104,7 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
     setEditDescription(item.description || "");
     setEditViewer(item.interactiveViewerUrl || "");
     setEditImagery((item.imagerySources || []).join(", "));
+    setEditSourceCitation(item.sourceImageryCitation || "");
     setEditError("");
     setEditing(!!edit);
     setShowDetails(true);
@@ -119,6 +124,7 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
           .split(",")
           .map((source) => source.trim())
           .filter(Boolean),
+        sourceImageryCitation: editSourceCitation.trim() || null,
       });
       setEditing(false);
       setShowDetails(false);
@@ -404,6 +410,27 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
                           placeholder="Vantor, Planet"
                           value={editImagery}
                           onChange={(_, d) => setEditImagery(d.value)}
+                          disabled={saving}
+                        />
+                      </Field>
+                      <Field
+                        label="Source imagery citation"
+                        hint="Optional. A URL becomes a provenance link; plain text a citation."
+                      >
+                        {summarizeSourceImagery(
+                          item.sourceImageryReferences
+                        ).map((program) => (
+                          <Text key={program.program} size={200} block>
+                            {program.program}
+                            {program.license ? ` · ${program.license}` : ""} ·{" "}
+                            {program.count} scene
+                            {program.count === 1 ? "" : "s"} (from open data)
+                          </Text>
+                        ))}
+                        <Input
+                          placeholder="https://… or a citation"
+                          value={editSourceCitation}
+                          onChange={(_, d) => setEditSourceCitation(d.value)}
                           disabled={saving}
                         />
                       </Field>

@@ -83,6 +83,7 @@ can be added later without reworking the UI, API, or async workflow.
 | [ux-spec.md](ux-spec.md) | UX specification: Published Datasets section + Publish dialog, all UI states | draft |
 | [design.md](design.md) | Technical design, provider interface, Local + Planetary Computer providers, API contracts | draft |
 | [data-model.md](data-model.md) | Cosmos/Blob metadata schema, published-dataset storage layout, STAC mapping | draft |
+| [source-imagery-provenance.md](source-imagery-provenance.md) | Source-imagery `derived_from` provenance, gated on open-data programs | implemented |
 | [plan.md](plan.md) | Execution plan, milestones, phases | draft |
 | [impact-analysis.md](impact-analysis.md) | Risk, dependencies, blast radius | draft |
 | [test-plan.md](test-plan.md) | Test strategy & coverage matrix | draft |

@@ -246,6 +246,33 @@ class TestPublishingSourceResolver(unittest.TestCase):
             },
         )
 
+    def test_options_carry_validated_source_imagery_refs(self) -> None:
+        FakeMetadataProcessor.records[
+            ("imagelayer", self.project_id, self.layer_id)
+        ]["sourceImageryReferences"] = [
+            {
+                "programId": "vantor-open-data",
+                "href": "https://a.example/1.json",
+                "title": "Scene A",
+                "license": "CC0-1.0",  # client-supplied; registry must win
+                "attributable": False,
+            },
+            {
+                "programId": "commercial-vendor",  # unregistered -> dropped
+                "href": "https://a.example/2.json",
+            },
+        ]
+
+        options = self.resolver.resolve_options(
+            self.project_id, self.layer_id, self.model_id
+        )
+
+        self.assertEqual(len(options.sourceImageryReferences), 1)
+        ref = options.sourceImageryReferences[0]
+        self.assertEqual(ref.programId, "vantor-open-data")
+        self.assertEqual(ref.license, "CC-BY-NC-4.0")
+        self.assertTrue(ref.attributable)
+
     def test_bundle_separates_selected_and_supporting_artifacts(self) -> None:
         request = self.build_request(["gpkg"])
 

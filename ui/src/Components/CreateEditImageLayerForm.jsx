@@ -231,6 +231,15 @@ const CreateEditImageLayerModal = () => {
           imageryCaptureDatePostEvent: imageryCaptureDatePostEvent,
           userBuildingFootprintsUrl: userBuildingFootprintsUrl,
           clipBbox: componentState.clipBbox || null,
+          // Source-imagery provenance captured from the Open Data Catalog
+          // (strip the UI-only sourceUrl correlation field).
+          sourceImageryReferences: (
+            componentState.sourceImageryReferences || []
+          ).map((ref) => {
+            const clean = { ...ref };
+            delete clean.sourceUrl;
+            return clean;
+          }),
           userId: appParams.userId,
         };
 

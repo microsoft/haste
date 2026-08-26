@@ -25,6 +25,7 @@ from ..models.publishing import (
     PublishRequest,
     PublishResult,
     SourceArtifact,
+    is_https_url,
 )
 from ..utils.gdal_security import harden_gdal
 from ..utils.logs import Logger
@@ -35,6 +36,7 @@ from .planetary_computer_transport import (
 )
 from .stac import (
     ASSET_KEYS,
+    PROPERTY_PREFIX,
     StacObjects,
     build_collection_id,
     build_item_id,
@@ -618,14 +620,42 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             ]
         else:
             properties.pop("providers", None)
+        # Re-emit the (editable) source-imagery citation. The scene-level
+        # derived_from links are provenance from the source layer and are left
+        # untouched; only the user citation property/link is refreshed.
+        citation = (dataset.sourceImageryCitation or "").strip()
+        citation_key = f"{PROPERTY_PREFIX}:source_imagery_citation"
+        if citation:
+            properties[citation_key] = citation
+        else:
+            properties.pop(citation_key, None)
         item["properties"] = properties
         links = [
             link
             for link in (item.get("links") or [])
             if not (
-                isinstance(link, Mapping) and link.get("rel") == "preview"
+                isinstance(link, Mapping)
+                and (
+                    link.get("rel") == "preview"
+                    or (
+                        link.get("rel") == "derived_from"
+                        and link.get("type") == "text/html"
+                        and link.get("title") == "Source imagery"
+                    )
+                )
             )
         ]
+        if citation and is_https_url(citation):
+            links.append(
+                {
+                    "rel": "derived_from",
+                    "href": self._safe_https_url(
+                        citation, allow_path=True, allow_query=True
+                    ).geturl(),
+                    "type": "text/html",
+                    "title": "Source imagery",
+                }
+            )
         if dataset.interactiveViewerUrl:
             links.append(
                 {

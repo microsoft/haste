@@ -4683,6 +4683,7 @@ async def PutUpdatePublishedDataset(
                 "description",
                 "interactiveViewerUrl",
                 "imagerySources",
+                "sourceImageryCitation",
             )
             if key in body
         }
