@@ -13,6 +13,7 @@ import {
   setGuidedTourState,
   validateIsGuidedTourDisabled,
 } from "./GuidedTourHelper.js";
+import { getTourCardStyle } from "./guidedTourLayout.js";
 
 /** True only when the element exists AND is actually rendered/visible.
  *  Guards against targets that are in the DOM but hidden (e.g. tables
@@ -118,21 +119,11 @@ const GuidedTour = () => {
     const holeW = spot.width + pad * 2;
     const holeH = spot.height + pad * 2;
 
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const cardW = Math.min(340, vw - 32);
-    const placeBelow = spot.top + spot.height + 12 + 220 < vh;
-
-    const cardStyle = {
-      position: "fixed",
-      width: cardW,
-      left: Math.max(16, Math.min(holeLeft, vw - cardW - 16)),
-    };
-    if (placeBelow) {
-      cardStyle.top = spot.top + spot.height + 14;
-    } else {
-      cardStyle.bottom = vh - spot.top + 14;
-    }
+    const cardStyle = getTourCardStyle(
+      spot,
+      window.innerWidth,
+      window.innerHeight
+    );
 
     const totalSteps = filteedTourSteps.length;
 

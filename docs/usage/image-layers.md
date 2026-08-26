@@ -99,8 +99,8 @@ Adding a catalog scene also fills in that section's imagery capture date and sou
 type when the catalog provides them. Review the populated values before creating the
 layer, especially when combining multiple scenes.
 
-The catalog currently browses the Vantor Open Data Program (formerly Maxar) and Planet
-Disaster Data. You can still add imagery manually by URL or file upload when the scene
+The catalog currently browses the Vantor Open Data Program (formerly Maxar) and
+Planet Disaster Data. You can still add imagery manually by URL or file upload when the scene
 you need is not available in the catalog.
 
 Add imagery files by providing publicly accessible URLs or uploading files from a local

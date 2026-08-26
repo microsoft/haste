@@ -1,6 +1,6 @@
 ---
 name: gis
-description: "GIS / Geospatial Agent — Specialized agent for satellite imagery processing, damage assessment workflows, geospatial logic, and imagery provider adapters. Deep domain knowledge in GDAL, rasterio, COG, remote sensing, and ML-based damage classification. Use when: 'imagery', 'satellite', 'geospatial', 'GDAL', 'rasterio', 'COG', 'GeoTIFF', 'tile', 'preprocessing', 'labeling', 'damage assessment', 'Planet', 'Vantor', 'Maxar', 'Airbus', 'source type', 'image layer', 'mosaic', 'coordinate system', 'projection', 'bounding box'."
+description: "GIS / Geospatial Agent — Specialized agent for satellite imagery processing, damage assessment workflows, geospatial logic, and imagery provider adapters. Deep domain knowledge in GDAL, rasterio, COG, remote sensing, and ML-based damage classification. Use when: 'imagery', 'satellite', 'geospatial', 'GDAL', 'rasterio', 'COG', 'GeoTIFF', 'tile', 'preprocessing', 'labeling', 'damage assessment', 'Planet', 'Vantor', 'Airbus', 'source type', 'image layer', 'mosaic', 'coordinate system', 'projection', 'bounding box'."
 tools: ["read", "edit", "search", "execute"]
 ---
 

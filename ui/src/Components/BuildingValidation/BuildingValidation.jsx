@@ -8,6 +8,11 @@ import { apiGet, apiPut } from "../../util/api";
 import { getAzureMapsAuthOptions, isAzureMapsPlaceholder } from "../../util/azureMapsAuth";
 import { AppContext } from "../../AppContext.jsx";
 import BuildingValidationRightPanel from "./BuildingValidationRightPanel.jsx";
+import ValidationConfigModal from "./ValidationConfigModal.jsx";
+import {
+  DEFAULT_VALIDATION_SAMPLE,
+  resolveSampleSize,
+} from "./validationConfig.js";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
 import { shouldIgnoreShortcut } from "../keyboardShortcuts.js";
 import "../../assets/css/labels.css";
@@ -102,6 +107,10 @@ const BuildingValidation = () => {
   // bail out, and never re-run — leaving the initial footprints drawn
   // from the raw GeoJSON with no _label/_selected/_passesFilter set.
   const [isDatasourceReady, setIsDatasourceReady] = useState(false);
+  // How many footprints this layer validates. Read from the validation
+  // document on load and changed through the settings modal.
+  const [sampleSize, setSampleSize] = useState(DEFAULT_VALIDATION_SAMPLE);
+  const [configOpen, setConfigOpen] = useState(false);
 
   // Post-event is only genuinely showable once that layer exists. Without
   // this, the toggle defaults to "post" on a layer that has no post-event
@@ -177,6 +186,40 @@ const BuildingValidation = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function fetchFootprints(size) {
+    return apiGet(
+      `GetBuildingFootprintsGeoJSON?projectId=${projectId}` +
+        `&imageLayerId=${imageLayerId}&sample=${size}`
+    );
+  }
+
+  // Apply a new sample size without leaving the page. The sample is a
+  // permutation prefix, so a larger size returns the same buildings plus
+  // more — the labels held in state stay valid and simply re-attach to the
+  // features they already belonged to.
+  async function reloadFootprints(size) {
+    setIsLoading(true, "Loading buildings…");
+    try {
+      const footprintsGeoJSON = await fetchFootprints(size);
+      const featuresArr = footprintsGeoJSON?.features || [];
+      setSampleSize(size);
+      setFeatures(featuresArr);
+      setSelectedIndex(0);
+    } catch (e) {
+      console.error("Failed to reload building footprints:", e);
+      setDialog("Error", "Failed to reload the buildings for this layer.", [
+        {
+          type: "primary",
+          key: "close",
+          text: "Close",
+          onClick: () => setDialog(),
+        },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   async function createMap() {
     // Load imagery tile URLs (reuse labeling tool endpoint); may not exist if no labels yet
     let layerData = null;
@@ -188,15 +231,18 @@ const BuildingValidation = () => {
       // No label project yet — imagery won't be shown, validation still works
     }
 
-    // Load building footprints as GeoJSON (random sample of 200)
-    const footprintsGeoJSON = await apiGet(
-      `GetBuildingFootprintsGeoJSON?projectId=${projectId}&imageLayerId=${imageLayerId}&sample=200`
-    );
-
-    // Load any existing validation labels
+    // Load any existing validation labels. This comes first because it also
+    // carries the layer's configured sample size, which decides how many
+    // footprints to ask for below.
     const validationData = await apiGet(
       `GetBuildingValidation?projectId=${projectId}&imageLayerId=${imageLayerId}`
     );
+    const configuredSample = resolveSampleSize(validationData);
+    setSampleSize(configuredSample);
+
+    // Load building footprints as GeoJSON — a deterministic sample of the
+    // configured size.
+    const footprintsGeoJSON = await fetchFootprints(configuredSample);
 
     const existingLabels = validationData?.labels || {};
     setLabels(existingLabels);
@@ -541,6 +587,57 @@ const BuildingValidation = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [features, selectedIndex, filteredIndices, hasPostImagery]);
 
+  function handleClearLabels() {
+    const count = Object.keys(labels).length;
+    if (count === 0) return;
+
+    setDialog(
+      "Clear validation labels?",
+      `This deletes all ${count} validation label${count === 1 ? "" : "s"} ` +
+        "for this image layer. This cannot be undone.",
+      [
+        {
+          type: "primary",
+          key: "clear",
+          text: "Yes, clear them",
+          onClick: () => {
+            setDialog();
+            clearLabels();
+          },
+        },
+        {
+          key: "cancel",
+          text: "Cancel",
+          onClick: () => setDialog(),
+        },
+      ]
+    );
+  }
+
+  async function clearLabels() {
+    setIsSaving(true);
+    try {
+      // An empty label set. The server preserves this layer's configured
+      // sample size on this route, so clearing does not reset the count.
+      await apiPut("PutBuildingValidation", {
+        projectId,
+        imageLayerId,
+        labels: {},
+      });
+      setLabels({});
+      setDialog("Cleared", "Validation labels cleared.", [
+        { type: "primary", key: "close", text: "Close", onClick: () => setDialog() },
+      ]);
+    } catch (e) {
+      console.error("Failed to clear validation labels:", e);
+      setDialog("Error", "Failed to clear validation labels.", [
+        { type: "primary", key: "close", text: "Close", onClick: () => setDialog() },
+      ]);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function handleSave() {
     setIsSaving(true);
     try {
@@ -599,7 +696,28 @@ const BuildingValidation = () => {
         >
           Back
         </Button>
+        <Button
+          id="validationConfigButton"
+          appearance="transparent"
+          icon={<FluentIcon name="Settings" />}
+          title="Building Validation settings"
+          onClick={() => setConfigOpen(true)}
+        >
+          Settings
+        </Button>
       </div>
+
+      {configOpen && (
+        <ValidationConfigModal
+          projectId={projectId}
+          imageLayerId={imageLayerId}
+          onClose={() => setConfigOpen(false)}
+          onSaved={(size) => {
+            if (size !== sampleSize) reloadFootprints(size);
+          }}
+          onCleared={() => setLabels({})}
+        />
+      )}
 
       {/* Map container */}
       <div ref={mapContainerRef} id="validationMap" style={{ flexGrow: 1 }} />
@@ -613,6 +731,7 @@ const BuildingValidation = () => {
           onLabel={handleLabel}
           onSave={handleSave}
           onDownload={handleDownload}
+          onClearLabels={handleClearLabels}
           isSaving={isSaving}
           labeledCount={labeledCount}
           filter={filter}

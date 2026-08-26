@@ -62,7 +62,7 @@ export function sourceImageryRef(scene, phase) {
 // Maps a normalized scene to the HASTE source-type dropdown key
 // (see sourceTypeOptions in CreateEditImageLayerHelper.js).
 const SOURCE_TYPE_KEYS = {
-  vantor: "maxar", // Vantor is the rebranded Maxar Open Data Program
+  vantor: "vantor",
   planetSkysat: "planet_skysat",
   planet: "planet_scope",
 };

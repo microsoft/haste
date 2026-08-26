@@ -244,6 +244,75 @@ export const AppProvider = ({ children }) => {
         },
       ],
     },
+    {
+      name: "interactiveLabelerGuide",
+      cookieName: "interactiveLabelerGuidedTour",
+      steps: [
+        {
+          type: "teachingBubble",
+          target: "#interactiveLabelerMapArea",
+          title: "Compare and label buildings",
+          content:
+            "Click a building to apply the selected class, right-click to clear it, or hold Ctrl while dragging to label several buildings. Open Advanced and enable Swipe to compare pre- and post-event imagery.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#interactiveLabelerClasses",
+          title: "Choose a damage class",
+          content:
+            "Select Intact, Damaged, or Cloudy before labeling. The counters update as you work; you can also press 1, 2, or 3 to change class.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#interactiveLabelerViewControls",
+          title: "Review labels and predictions",
+          content:
+            "After labeling at least three buildings in two classes, switch between your labels and the model predictions. Hide footprints when you need an unobstructed imagery view.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#interactiveLabelerProgress",
+          title: "Track labeling progress",
+          content:
+            "This area reports training activity, the number of labeled buildings, and how many buildings have predictions in the current map view.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#interactiveLabelerActions",
+          title: "Save or predict the full layer",
+          content:
+            "Save labels to continue later. Predict all buildings runs the current model across the full layer and stores the results for validation and assessment reports.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#interactiveLabelerAdvanced",
+          title: "Open advanced review tools",
+          content:
+            "Advanced includes cross-validation, swipe controls, model uncertainty, and a view that highlights labels which disagree with the current prediction.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#interactiveLabelerShortcuts",
+          title: "Work faster with shortcuts",
+          content:
+            "Expand Keyboard shortcuts for the complete reference, including class selection, footprint visibility, box labeling, prediction view, and swipe controls.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#backButton",
+          title: "Return to the project",
+          content:
+            "Use Back to leave the Interactive Labeler. Your work is persisted only after you select Save labels.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#helpButton",
+          title: "Restart this tour",
+          content:
+            "Select Help at any time to restart the Interactive Labeler tour.",
+        },
+      ],
+    },
   ];
 
   const [appParams, setAppParams] = useState({

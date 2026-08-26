@@ -8,10 +8,13 @@ import {
   validateFileType,
 } from "../util/validation";
 import { v4 as uuidv4 } from 'uuid';
-import { sourceTypeOptions } from "./sourceTypeOptions.js";
+import {
+  sourceTypeOptions,
+  normalizeSourceTypeKey,
+} from "./sourceTypeOptions.js";
 import { sourceImageryRef } from "./OpenDataCatalog/openDataCatalog.js";
 
-export { sourceTypeOptions };
+export { sourceTypeOptions, normalizeSourceTypeKey };
 
 const imageryOriginOptions = [
     { key: "url", text: "URL" },

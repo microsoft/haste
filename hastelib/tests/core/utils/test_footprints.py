@@ -15,6 +15,12 @@ from hastegeo.core.utils.footprints import (
     FALLBACK_RELEASE,
     _dataset_path,
     get_latest_release,
+    sample_indices,
+)
+from hastegeo.core.utils.validation_config import (
+    MAX_VALIDATION_SAMPLE,
+    MIN_VALIDATION_SAMPLE,
+    clamp_validation_sample,
 )
 
 
@@ -711,6 +717,90 @@ class TestClipAndNormalizeUserFootprints(unittest.TestCase):
                 self._aoi(),
                 "/tmp/out.geojson",
             )
+
+
+class TestSampleIndices(unittest.TestCase):
+    """Tests for sample_indices() and clamp_validation_sample()."""
+
+    N_ROWS = 5000
+
+    def test_larger_sample_extends_the_smaller_one(self):
+        """The load-bearing property of the whole feature.
+
+        Raising a layer's validation sample size must keep every building
+        already in the set — otherwise a user who has labeled 40 of 200 and
+        asks for 300 silently loses their work. The draw is a permutation
+        prefix, so the 200-draw is the literal start of the 300-draw.
+        """
+        small = sample_indices(self.N_ROWS, 200)
+        large = sample_indices(self.N_ROWS, 300)
+
+        self.assertEqual(list(small), list(large[:200]))
+        self.assertTrue(set(small).issubset(set(large)))
+        self.assertEqual(len(large), 300)
+
+    def test_matches_pandas_sample_with_the_same_seed(self):
+        """Existing validation sets must not be reshuffled.
+
+        This logic was hoisted out of ``gdf.sample(n, random_state=42)``.
+        Pinning the equivalence means a layer someone has already validated
+        keeps the same buildings after the refactor.
+        """
+        import pandas as pd
+
+        frame = pd.DataFrame({"a": range(self.N_ROWS)})
+        expected = frame.sample(n=200, random_state=42).index.to_numpy()
+
+        self.assertEqual(
+            list(sample_indices(self.N_ROWS, 200)), list(expected)
+        )
+
+    def test_is_deterministic(self):
+        """Repeated calls return the same rows, so reloads are stable."""
+        self.assertEqual(
+            list(sample_indices(self.N_ROWS, 200)),
+            list(sample_indices(self.N_ROWS, 200)),
+        )
+
+    def test_indices_are_unique_and_in_range(self):
+        picked = sample_indices(self.N_ROWS, 200)
+
+        self.assertEqual(len(set(picked)), 200)
+        self.assertTrue(all(0 <= i < self.N_ROWS for i in picked))
+
+    def test_returns_every_row_when_layer_is_smaller_than_sample(self):
+        """Preserves the old ``if len(gdf) > sample_size`` behavior."""
+        picked = sample_indices(50, 200)
+
+        self.assertEqual(list(picked), list(range(50)))
+
+    def test_returns_every_row_when_counts_are_equal(self):
+        picked = sample_indices(200, 200)
+
+        self.assertEqual(list(picked), list(range(200)))
+
+    def test_handles_an_empty_layer(self):
+        self.assertEqual(len(sample_indices(0, 200)), 0)
+
+    def test_clamps_high_requests(self):
+        self.assertEqual(
+            clamp_validation_sample(10_000), MAX_VALIDATION_SAMPLE
+        )
+        self.assertEqual(
+            len(sample_indices(self.N_ROWS, 10_000)), MAX_VALIDATION_SAMPLE
+        )
+
+    def test_clamps_low_requests(self):
+        self.assertEqual(clamp_validation_sample(0), MIN_VALIDATION_SAMPLE)
+        self.assertEqual(clamp_validation_sample(-5), MIN_VALIDATION_SAMPLE)
+        self.assertEqual(len(sample_indices(self.N_ROWS, 0)), 1)
+
+    def test_clamped_requests_still_nest(self):
+        """A clamped request must not break the extend guarantee."""
+        capped = sample_indices(self.N_ROWS, MAX_VALIDATION_SAMPLE)
+        over = sample_indices(self.N_ROWS, 99_999)
+
+        self.assertEqual(list(capped), list(over))
 
 
 if __name__ == "__main__":

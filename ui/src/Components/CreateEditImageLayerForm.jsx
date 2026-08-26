@@ -24,6 +24,7 @@ import {
   onFormChange,
   getUrlList,
   addSceneToEventImagery,
+  normalizeSourceTypeKey,
 } from "./CreateEditImageLayerHelper";
 
 import { apiPut } from "../util/api";
@@ -481,10 +482,14 @@ const CreateEditImageLayerModal = () => {
                 <Dropdown
                   id="createEditImageLayerPostEventSourceType"
                   placeholder="Select a Source Type"
-                  selectedOptions={[String(componentState.sourceTypePostEvent ?? "")]}
+                  selectedOptions={[
+                    String(normalizeSourceTypeKey(componentState.sourceTypePostEvent) ?? ""),
+                  ]}
                   value={
                     componentState.sourceTypeList.find(
-                      (o) => o.key === componentState.sourceTypePostEvent
+                      (o) =>
+                        o.key ===
+                        normalizeSourceTypeKey(componentState.sourceTypePostEvent)
                     )?.text || ""
                   }
                   onOptionSelect={(e, data) =>
@@ -582,10 +587,14 @@ const CreateEditImageLayerModal = () => {
                 <Dropdown
                   id="createEditImageLayerPreEventSourceType"
                   placeholder="Select a Source Type"
-                  selectedOptions={[String(componentState.sourceTypePreEvent ?? "")]}
+                  selectedOptions={[
+                    String(normalizeSourceTypeKey(componentState.sourceTypePreEvent) ?? ""),
+                  ]}
                   value={
                     componentState.sourceTypeList.find(
-                      (o) => o.key === componentState.sourceTypePreEvent
+                      (o) =>
+                        o.key ===
+                        normalizeSourceTypeKey(componentState.sourceTypePreEvent)
                     )?.text || ""
                   }
                   onOptionSelect={(e, data) =>

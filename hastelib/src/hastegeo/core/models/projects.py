@@ -637,8 +637,14 @@ class ImageLayer(BaseModel):
         description: Detailed description of the imagery content and purpose
         format: Imagery file format (e.g., 'GeoTIFF', 'COG')
         sourceType: Legacy field for imagery source type (deprecated)
-        sourceTypePreEvent: Source type for pre-event imagery (e.g., 'Sentinel-2', 'WorldView')
-        sourceTypePostEvent: Source type for post-event imagery
+        sourceTypePreEvent: Source type key for pre-event imagery. One of
+            the keys defined in the UI's ``sourceTypeOptions``: ``n/a``,
+            ``rgb/no_processing``, ``vantor``, ``planet_scope``,
+            ``planet_skysat``, ``sentinel_2``, ``azure_maps``. The
+            pre-rebrand ``maxar`` is still accepted as an alias for
+            ``vantor`` on layers created before the rename.
+        sourceTypePostEvent: Source type key for post-event imagery
+            (same accepted values as ``sourceTypePreEvent``)
         imageryCaptureDatePreEvent: ISO formatted capture date for pre-event imagery
         imageryCaptureDatePostEvent: ISO formatted capture date for post-event imagery
         normalizationFactor: Scaling factor for pixel value normalization
@@ -696,8 +702,8 @@ class ImageLayer(BaseModel):
         imagery_layer = ImageLayer(
             imageLayerId="layer_123",
             name="Hurricane Harvey - Houston",
-            sourceTypePreEvent="Sentinel-2",
-            sourceTypePostEvent="WorldView-3",
+            sourceTypePreEvent="sentinel_2",
+            sourceTypePostEvent="vantor",
             imageryCaptureDatePreEvent="2017-08-20T00:00:00Z",
             imageryCaptureDatePostEvent="2017-08-30T00:00:00Z"
         )
@@ -797,12 +803,16 @@ class BuildingValidation(BaseModel):
         imageLayerId: Reference to the imagery layer being validated
         projectId: Reference to the parent project
         labels: Mapping of Overture building ID to ValidationLabel
+        sampleSize: How many building footprints the validation set draws
+            from the layer's footprints file. Defaults to 200, which is what
+            the workflow used when the value was hardcoded.
         dependsOn: Dependency tuple specifying parent resource type and ID
     """
 
     imageLayerId: Optional[str] = Field(default=None)
     projectId: Optional[str] = Field(default=None)
     labels: Optional[dict] = Field(default_factory=dict)
+    sampleSize: Optional[int] = Field(default=200)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("ImageLayer", "imageLayerId")
     )

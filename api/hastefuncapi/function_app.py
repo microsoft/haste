@@ -39,10 +39,7 @@ from hastegeo.core.models.training import CatalogModel
 from hastegeo.core.models.users import User
 from hastegeo.core.models.visualizer import Imagery, Visualizer
 from hastegeo.core.processors.artifacts import ArtifactProcessor
-from hastegeo.core.processors.assessment import (
-    AssessmentReportProcessor,
-    AssessmentSizeLimitError,
-)
+from hastegeo.core.processors.assessment import AssessmentReportProcessor
 from hastegeo.core.processors.embedding import EmbeddingPreprocessor
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
@@ -58,6 +55,7 @@ from hastegeo.core.processors.publishing import (
 from hastegeo.core.processors.stats import StatsPreProcessor
 from hastegeo.core.processors.train import TrainPreprocessor
 from hastegeo.core.processors.uploader import FileUploader
+from hastegeo.core.processors.validation import BuildingValidationProcessor
 from hastegeo.core.publishing.lease import LeaseUnavailableError
 from hastegeo.core.publishing.registry import (
     ProviderUnavailableError,
@@ -83,10 +81,18 @@ from hastegeo.core.utils.blob import (
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
+from hastegeo.core.utils.source_types import normalize_source_type
 from hastegeo.core.utils.url_allowlist import (
     validate_clip_bbox,
     validate_image_layer_imagery_urls,
     validate_image_layer_user_footprints_url,
+)
+from hastegeo.core.utils.validation_config import (
+    DEFAULT_VALIDATION_SAMPLE,
+    OUTCOME_BLOCKED,
+    OUTCOME_INVALID,
+    check_sample_size_change,
+    resolve_sample_size,
 )
 from pydantic import ValidationError  # type: ignore
 
@@ -237,7 +243,11 @@ async def _get_active_publishing_caller(
             or principal.get("userDetails")
             or "development@local"
         )
-        return {"id": str(caller_id).lower(), "roles": roles, "name": principal.get("userDetails")}, None
+        return {
+            "id": str(caller_id).lower(),
+            "roles": roles,
+            "name": principal.get("userDetails"),
+        }, None
 
     if principal is None:
         return None, _publishing_error_response(
@@ -290,7 +300,11 @@ async def _get_active_publishing_caller(
     caller_id = principal_id or user_details
     # Persist the email/login as the publisher identifier, never the display
     # name (privacy: display names are resolved from Entra at read time).
-    return {"id": str(caller_id).lower(), "roles": roles, "name": (active_user.email or user_details)}, None
+    return {
+        "id": str(caller_id).lower(),
+        "roles": roles,
+        "name": (active_user.email or user_details),
+    }, None
 
 
 def _publishing_json_response(
@@ -354,19 +368,17 @@ def _publishing_exception_response(error: Exception) -> func.HttpResponse:
             "PUBLISHING_UNAVAILABLE", str(error), 503
         )
     if isinstance(error, ValueError):
-        return _publishing_error_response(
-            "VALIDATION_ERROR", str(error), 400
-        )
-    logger.error(
-        "Publishing request failed with %s", type(error).__name__
-    )
+        return _publishing_error_response("VALIDATION_ERROR", str(error), 400)
+    logger.error("Publishing request failed with %s", type(error).__name__)
     return _publishing_error_response(
         "INTERNAL_ERROR", "Publishing request failed.", 500
     )
 
 
 def _publishing_mutation_authorized(caller: dict) -> bool:
-    return bool(caller["roles"].intersection({"contributors", "administrators"}))
+    return bool(
+        caller["roles"].intersection({"contributors", "administrators"})
+    )
 
 
 def _publishing_processor() -> PublishingProcessor:
@@ -3188,12 +3200,15 @@ async def GetModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         if imagery_source and imagery_source.strip():
+            # Normalize both sides so a legacy "maxar" layer and a
+            # "vantor" layer resolve to the same model pool.
+            wanted_source = normalize_source_type(imagery_source)
             model_catalog = [
                 model
                 for model in model_catalog
                 if model.get("imagerySource", "")
-                and model.get("imagerySource", "").lower()
-                == imagery_source.lower()
+                and normalize_source_type(model.get("imagerySource", ""))
+                == wanted_source
             ]
             logger.info(
                 f"Filtered by imagery source '{imagery_source}': {len(model_catalog)} models"
@@ -3653,15 +3668,18 @@ async def GetBuildingFootprintsGeoJSON(
     try:
         import geopandas as gpd
 
+        # Imported here rather than at module scope: footprints pulls in
+        # geopandas, which is too heavy for the function app's cold start.
+        from hastegeo.core.utils.footprints import sample_indices
+
         project_id = req.params.get("projectId")
         image_layer_id = req.params.get("imageLayerId")
         try:
-            requested_sample = int(req.params.get("sample", 200))
+            requested_sample = int(
+                req.params.get("sample", DEFAULT_VALIDATION_SAMPLE)
+            )
         except (TypeError, ValueError):
-            requested_sample = 200
-        # Clamp to a sane range so callers can't accidentally pull the
-        # entire dataset (which can be millions of features) into memory.
-        sample_size = max(1, min(requested_sample, 2000))
+            requested_sample = DEFAULT_VALIDATION_SAMPLE
 
         if not project_id or not image_layer_id:
             return func.HttpResponse(
@@ -3692,10 +3710,12 @@ async def GetBuildingFootprintsGeoJSON(
 
         gdf = await asyncio.to_thread(gpd.read_file, tmp_path)
 
-        # Random sample (fixed random_state so repeated calls return the
-        # same subset; the visualizer page shouldn't reshuffle on refresh).
-        if len(gdf) > sample_size:
-            gdf = gdf.sample(n=sample_size, random_state=42)
+        # Deterministic sample, drawn as a prefix of a seeded permutation:
+        # repeated calls return the same subset (the page shouldn't reshuffle
+        # on refresh), and a larger sample keeps every building the smaller
+        # one had, so raising a layer's count adds buildings instead of
+        # replacing them. sample_indices clamps the request.
+        gdf = gdf.iloc[sample_indices(len(gdf), requested_sample)]
 
         # Ensure only the columns we care about are returned.
         keep_cols = [
@@ -3807,6 +3827,10 @@ async def PutBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
                 "<overture-id>": {"id": "...", "label": "Damaged|NotDamaged|Unknown", "updatedAt": "..."}
             }
         }
+
+    ``sampleSize`` is not accepted here: the stored value is always kept.
+    Use PutBuildingValidationConfig to change it, which is where the
+    "cannot shrink while labels exist" rule is enforced.
     """
     logger.info(
         "PutBuildingValidation HTTP trigger function processed a request."
@@ -3820,17 +3844,42 @@ async def PutBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
                 "projectId and imageLayerId are required.", status_code=400
             )
 
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().VALIDATION.value,
-                partition_key=validation.projectId,
-            ).save,
-            validation.imageLayerId,
-            validation.model_dump(),
+        processor = BuildingValidationProcessor(validation.projectId)
+
+        # This route owns labels and nothing else. It replaces the stored
+        # document wholesale, so the count has to be carried across
+        # explicitly — otherwise the model default would silently undo the
+        # user's configured value on every label save.
+        #
+        # Any sampleSize in the body is deliberately ignored rather than
+        # honored. Writing it here would route around
+        # PutBuildingValidationConfig, whose whole job is to refuse a
+        # reduction while the layer holds labels: a single request carrying
+        # both the existing labels and a smaller sampleSize would otherwise
+        # shrink the set with no check at all.
+        stored = await asyncio.to_thread(
+            processor.load, validation.imageLayerId
         )
+        stored_sample_size = resolve_sample_size(stored)
+        requested_sample_size = req_body.get("sampleSize")
+        if (
+            requested_sample_size is not None
+            and requested_sample_size != stored_sample_size
+        ):
+            logger.info(
+                "Ignoring sampleSize=%s on PutBuildingValidation for layer "
+                "%s; the count is owned by PutBuildingValidationConfig "
+                "(stored value %s kept).",
+                requested_sample_size,
+                validation.imageLayerId,
+                stored_sample_size,
+            )
+        validation.sampleSize = stored_sample_size
+
+        saved = await asyncio.to_thread(processor.save, validation)
 
         return func.HttpResponse(
-            json.dumps(validation.model_dump()),
+            json.dumps(saved),
             status_code=200,
             mimetype="application/json",
         )
@@ -3842,6 +3891,100 @@ async def PutBuildingValidation(req: func.HttpRequest) -> func.HttpResponse:
         )
         return func.HttpResponse(
             "Error saving building validation.", status_code=500
+        )
+
+
+@app.route(
+    route="PutBuildingValidationConfig",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutBuildingValidationConfig(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    """Set how many building footprints an image layer validates.
+
+    Request body:
+        {"projectId": "...", "imageLayerId": "...", "sampleSize": 300}
+
+    Raising the count keeps every building already in the validation set and
+    adds only the difference, because the sample is a prefix of a seeded
+    permutation (see hastegeo.core.utils.footprints.sample_indices).
+    Lowering it truncates that prefix, so it is refused with 409 while the
+    layer holds labels — the request is well-formed and becomes valid once
+    the labels are cleared.
+    """
+    logger.info(
+        "PutBuildingValidationConfig HTTP trigger function processed a "
+        "request."
+    )
+    try:
+        req_body = req.get_json()
+        project_id = req_body.get("projectId")
+        image_layer_id = req_body.get("imageLayerId")
+
+        if not project_id or not image_layer_id:
+            return func.HttpResponse(
+                json.dumps(
+                    {"error": "projectId and imageLayerId are required."}
+                ),
+                status_code=400,
+                mimetype="application/json",
+            )
+
+        processor = BuildingValidationProcessor(project_id)
+        stored = await asyncio.to_thread(processor.load, image_layer_id)
+        current = resolve_sample_size(stored)
+        label_count = len((stored or {}).get("labels") or {})
+
+        change = check_sample_size_change(
+            current, req_body.get("sampleSize"), label_count
+        )
+        # JSON error bodies: the shared apiPut client reads `error` off the
+        # body to show the user what went wrong.
+        if change.outcome == OUTCOME_INVALID:
+            return func.HttpResponse(
+                json.dumps({"error": change.message}),
+                status_code=400,
+                mimetype="application/json",
+            )
+        if change.outcome == OUTCOME_BLOCKED:
+            logger.info(
+                "Refused to lower validation sample size for layer "
+                f"{image_layer_id}: {label_count} label(s) present."
+            )
+            return func.HttpResponse(
+                json.dumps({"error": change.message}),
+                status_code=409,
+                mimetype="application/json",
+            )
+
+        validation = BuildingValidation(
+            projectId=project_id,
+            imageLayerId=image_layer_id,
+            labels=(stored or {}).get("labels") or {},
+            sampleSize=req_body.get("sampleSize"),
+        )
+
+        if change.writes:
+            saved = await asyncio.to_thread(processor.save, validation)
+        else:
+            saved = validation.model_dump()
+
+        return func.HttpResponse(
+            json.dumps(saved),
+            status_code=200,
+            mimetype="application/json",
+        )
+
+    except Exception as e:
+        logger.error(
+            "Error in PutBuildingValidationConfig: "
+            f"{e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        return func.HttpResponse(
+            "Error saving building validation config.", status_code=500
         )
 
 
@@ -4433,6 +4576,8 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             "Error generating assessment report.", status_code=500
         )
+
+
 @app.route(
     route="GetPublishingProviders",
     auth_level=AUTH_LEVEL,

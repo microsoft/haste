@@ -1,6 +1,6 @@
 ---
 name: imagery-provider-adaptation
-description: "Imagery provider adaptation skill for HASTE. Encapsulates provider-specific logic for satellite imagery sources (Planet, Vantor, Airbus, etc.). Use when: 'new imagery provider', 'add source type', 'satellite provider', 'Planet', 'Vantor', 'Maxar', 'Airbus', 'Pleiades', 'WorldView', 'SkySat', 'imagery ingestion', 'provider adapter'."
+description: "Imagery provider adaptation skill for HASTE. Encapsulates provider-specific logic for satellite imagery sources (Planet, Vantor, Airbus, etc.). Use when: 'new imagery provider', 'add source type', 'satellite provider', 'Planet', 'Vantor', 'Airbus', 'Pleiades', 'WorldView', 'SkySat', 'imagery ingestion', 'provider adapter'."
 source: "HASTE imagery processing pipeline, satellite provider documentation"
 domain: "geospatial"
 level: "advanced"

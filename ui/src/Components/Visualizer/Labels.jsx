@@ -5,7 +5,10 @@ import { Button, Text, Link, makeStyles, tokens } from "@fluentui/react-componen
 import { FluentIcon } from "../../util/icons";
 import { useNavigate } from "react-router-dom";
 import { convertDateToString } from "../../util/conversion";
-import { sourceTypeOptions } from "../CreateEditImageLayerHelper";
+import {
+  sourceTypeOptions,
+  normalizeSourceTypeKey,
+} from "../CreateEditImageLayerHelper";
 import { safeHref } from "../../util/validation";
 import "../../assets/css/labels.css";
 import PropType from "prop-types";
@@ -48,7 +51,7 @@ const Labels = ({
     }
 
     const sourceTypeTempObject = sourceTypeOptions.find(
-      (option) => option.key === sourceTypeTemp
+      (option) => option.key === normalizeSourceTypeKey(sourceTypeTemp)
     ) || null;
 
     if (!sourceType || sourceType === "" || !sourceTypeTempObject) return "Source: Unknown";

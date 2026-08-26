@@ -15,6 +15,7 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             ".github/workflows/hastegeo-publish.yml",
             ".github/workflows/deploy-apps.yml",
             ".github/workflows/docker-build-and-push.yml",
+            ".github/workflows/dependency-validation.yml",
             ".github/workflows/rc-cleanup.yml",
         ]
 
@@ -39,8 +40,8 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
 
     def test_action_shas_match_their_repositories(self):
         expected = {
-            "actions/setup-node": ("49933ea5288caeca8642d1e84afbd3f7d6820020"),
-            "azure/login": "1384c340ab2dda50fed2bee3041d1d87018aa5e8",
+            "actions/setup-node": "49933ea5288caeca8642d1e84afbd3f7d6820020",  # pragma: allowlist secret
+            "azure/login": "1384c340ab2dda50fed2bee3041d1d87018aa5e8",  # pragma: allowlist secret
         }
         workflows = [
             ".github/workflows/hastegeo-build.yml",
@@ -112,9 +113,7 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         # HASTEGEO_PUBLISH_ENABLED stays as the kill switch.
         self.assertNotIn("environment:", stable_block)
         self.assertIn("HASTEGEO_PUBLISH_ENABLED", stable_block)
-        self.assertNotIn(
-            "HASTEGEO_RELEASE_APPROVAL_CONFIGURED", stable_block
-        )
+        self.assertNotIn("HASTEGEO_RELEASE_APPROVAL_CONFIGURED", stable_block)
         self.assertIn("contents: write", workflow)
         self.assertNotIn("--clobber", publisher)
 
@@ -189,6 +188,75 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             "RC deployments require matching wheel and image tags",
             workflow,
         )
+
+    @staticmethod
+    def _top_level_block(content, key):
+        """Text under a top-level azure.yaml key, up to the next top-level key."""
+        marker = "\n{}:".format(key)
+        if marker not in content:
+            return ""
+        lines = []
+        for line in content.split(marker, 1)[1].splitlines():
+            if line and not line[0].isspace() and not line.startswith("#"):
+                break
+            lines.append(line)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _service_block(services_block, name):
+        """Text under one service entry (2-space indent), up to the next one."""
+        marker = "\n  {}:".format(name)
+        if marker not in services_block:
+            return ""
+        lines = []
+        for line in services_block.split(marker, 1)[1].splitlines():
+            if line.strip() and not line.startswith("    "):
+                break
+            lines.append(line)
+        return "\n".join(lines)
+
+    def test_hastegeo_pin_hooks_are_service_scoped(self):
+        """The hastegeo pin/unpin hooks must be per service, never root-level.
+
+        azd fires root-level hooks around the matching *command*, so a root
+        `prepackage` runs for `azd package` but is skipped by `azd deploy`'s
+        internal packaging step. The package then ships the unresolvable
+        `-e ../../hastelib` line and the Oryx build fails with "not a valid
+        editable requirement". The two placements look identical in review and
+        only diverge at deploy time, so pin the invariant here.
+
+        Parsed with stdlib only: this suite runs in CI via `unittest discover`
+        on a runner that installs nothing but the build frontend.
+        """
+        content = (REPO_ROOT / "azure.yaml").read_text(encoding="utf-8")
+
+        root_hooks = self._top_level_block(content, "hooks")
+        self.assertIn("preprovision", root_hooks, "root hooks block not found")
+        for hook in ("prepackage", "postpackage"):
+            self.assertNotIn(
+                hook,
+                root_hooks,
+                "'{}' must not be a root hook -- azd deploy skips it, "
+                "shipping an unresolvable editable requirement.".format(hook),
+            )
+
+        # titiler has no hastegeo dependency and deliberately has neither hook.
+        services = self._top_level_block(content, "services")
+        for service in ("api", "queues"):
+            block = self._service_block(services, service)
+            self.assertTrue(block, "service '{}' not found".format(service))
+            self.assertIn("prepackage", block, service + " lost its pin hook")
+            self.assertIn(
+                "postpackage", block, service + " lost its unpin hook"
+            )
+            # Service hooks run with the service directory as cwd, so the paths
+            # must climb back to the repo root.
+            self.assertIn("../../deploy/pin-hastegeo-wheel.ps1", block)
+            self.assertIn("../../deploy/unpin-hastegeo-wheel.ps1", block)
+            # A failed pin must fail the deploy: an unpinned package "succeeds"
+            # and only breaks at task runtime.
+            pin = block.split("prepackage:", 1)[1].split("postpackage:", 1)[0]
+            self.assertIn("continueOnError: false", pin)
 
 
 if __name__ == "__main__":
