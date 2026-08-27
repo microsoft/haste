@@ -140,23 +140,17 @@ For `sourceImageryCitation` (URL-aware — Decision #5):
 `haste:source_imagery` is deduped by **`programId`** (a scene count per program),
 not per license.
 
-### Local target — download-bundle sidecar
+### Local target — record only
 
-`derived_from`/citation are STAC concepts with no catalog to surface them on the
-Local target, so the Local provider writes a **`source_imagery.json` sidecar**
-into the published bundle (`published/{datasetId}/source_imagery.json`) alongside
-the artifacts, and includes it in the download set:
+`derived_from`/citation are STAC concepts and the Local target has no catalog
+(and only per-file downloads, no bundle). The validated source-imagery
+references + citation are kept on the `PublishedDataset` record and surfaced in
+the HASTE UI (publish + view/edit dialogs); nothing extra is written to storage.
 
-```jsonc
-{
-  "sourceImageryReferences": [ /* validated SourceImageryRef[] */ ],
-  "sourceImageryCitation": "https://example.org/my-imagery-source",
-  "note": "Source imagery provenance for the assets in this bundle."
-}
-```
-
-Same validated data as the PC path (unknown `programId` dropped, registry license
-used); just serialized to a file instead of STAC links.
+> A `source_imagery.json` sidecar was considered (to travel with the downloaded
+> assets), but since downloads are per-artifact and the provenance is already
+> visible in the UI, it was dropped as redundant. If per-file provenance ever
+> matters, add it back and expose it as a download (not a silent blob).
 
 ## Published STAC output (example)
 
@@ -221,8 +215,8 @@ carries it to downstream consumers.
 
 ## Resolved decisions (v1)
 
-- **Local target** → expose provenance in the Local **download bundle** as a
-  `source_imagery.json` sidecar (see *Local target — download-bundle sidecar*).
+- **Local target** → keep provenance on the dataset record + shown in the UI;
+  no storage sidecar (see *Local target — record only*).
 - **Collection-level `derived_from`** → **out of scope for v1**; emitted per
   **item** only. A per-collection union (like the provider union) is deferred.
 - **`haste:source_imagery` de-dup key** → by **`programId`**.
@@ -239,8 +233,7 @@ carries it to downstream consumers.
   from the client are ignored in favor of the registry.
 - Emit (PC): N scenes → N `derived_from` links + `haste:source_imagery` deduped
   by `programId`; URL citation → link + property; text citation → property only.
-- Emit (Local): `source_imagery.json` sidecar written to the bundle with the same
-  validated data and included in the download set.
+- Emit (Local): provenance stays on the dataset record + UI; no sidecar written.
 - Edit: changing the citation re-emits on the live item; refs unchanged.
 - Non-open-data layer: no auto refs; only the optional citation is honored.
 
@@ -291,7 +284,7 @@ until Phase 4.
 
 **Exit:** `GetPublishDatasetOptions` and the stored dataset expose validated refs.
 
-### Phase 4 — Emit (PC `derived_from` + Local sidecar)
+### Phase 4 — Emit (PC `derived_from` + property)
 
 **Goal:** produce the actual provenance output (first user-visible phase).
 
@@ -299,10 +292,10 @@ until Phase 4.
 |---|---|---|---|
 | `build_vector_item`: emit `derived_from` links (all scenes) + `haste:source_imagery` (dedup by `programId`); URL-aware citation → link+property, text → property | `publishing/stac.py` | links + property shapes | done |
 | `update_published_metadata`: re-emit citation on edit | `publishing/planetary_computer_provider.py` | edit re-emits | done |
-| Local provider writes `published/{datasetId}/source_imagery.json` sidecar + include in downloads | `publishing/local_provider.py` | sidecar written + downloadable | done |
+| Local provider: provenance kept on the record + UI, no sidecar written | `publishing/local_provider.py` | no storage sidecar | done |
 | Tests | `tests/core/publishing/` | PC + Local + edit paths | done |
 
-**Exit:** PC item carries `derived_from`+property; Local bundle carries the sidecar.
+**Exit:** PC item carries `derived_from` + property; Local keeps provenance on the record.
 
 ### Phase 5 — UI surfacing (publish + edit dialogs)
 
@@ -321,6 +314,6 @@ until Phase 4.
 | Task | Files | Verification | Status |
 |---|---|---|---|
 | Update `design.md`, `data-model.md`, `ux-spec.md`; add user story + `test-plan.md` rows | `spec/features/data-publishing/` | specs consistent | done |
-| Local-docker smoke: catalog layer → publish → verify refs on dataset + sidecar | — | e2e green | done |
+| Local-docker smoke: catalog layer → publish → verify refs on dataset | — | e2e green | done |
 
 **Exit:** specs consistent; end-to-end verified on the local instance.

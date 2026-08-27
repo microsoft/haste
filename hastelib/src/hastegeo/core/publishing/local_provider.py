@@ -13,7 +13,6 @@ from ..models.publishing import (
     PublishResult,
 )
 from .base import PublishingProvider
-from .open_data import validate_source_refs
 
 
 class LocalPublishingProvider(PublishingProvider):
@@ -80,33 +79,12 @@ class LocalPublishingProvider(PublishingProvider):
             data=dataset.assessmentSummary,
             namespace=prefix.split("/"),
         )
-        provider_metadata = {"assessmentReportPath": report_path}
-
-        # Source-imagery provenance sidecar — the Local analogue of the STAC
-        # derived_from links (there is no catalog to surface them on). Same
-        # fail-safe validation; written only when there is provenance to record.
-        refs = validate_source_refs(dataset.sourceImageryReferences)
-        citation = (dataset.sourceImageryCitation or "").strip() or None
-        if refs or citation:
-            sidecar_path = self.artifact_storage.store_artifact(
-                artifact_name="source_imagery.json",
-                data={
-                    "sourceImageryReferences": [
-                        ref.model_dump() for ref in refs
-                    ],
-                    "sourceImageryCitation": citation,
-                    "note": (
-                        "Source imagery provenance for the assets in this "
-                        "bundle."
-                    ),
-                },
-                namespace=prefix.split("/"),
-            )
-            provider_metadata["sourceImageryPath"] = sidecar_path
-
+        # Source-imagery provenance is kept on the dataset record and shown in
+        # the UI; the Local target has no catalog and per-file downloads, so it
+        # is not written as a bundle sidecar.
         return PublishResult(
             artifacts=published_artifacts,
-            providerMetadata=provider_metadata,
+            providerMetadata={"assessmentReportPath": report_path},
             isComplete=True,
         )
 

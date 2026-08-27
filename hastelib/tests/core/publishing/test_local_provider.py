@@ -12,7 +12,6 @@ from hastegeo.core.models.publishing import (
     PublishedDataset,
     PublishRequest,
     SourceArtifact,
-    SourceImageryRef,
 )
 from hastegeo.core.publishing.local_provider import LocalPublishingProvider
 
@@ -114,44 +113,6 @@ class TestLocalPublishingProvider(unittest.TestCase):
             encoding="utf-8",
         ) as report_file:
             self.assertEqual(json.load(report_file), {"predictedDamaged": 5})
-
-    def test_publish_writes_source_imagery_sidecar(self) -> None:
-        dataset = self.dataset.model_copy(
-            update={
-                "sourceImageryReferences": [
-                    SourceImageryRef(
-                        programId="vantor-open-data",
-                        href="https://a.example/1.json",
-                        title="Scene A",
-                        license="CC0-1.0",  # registry must override
-                    ),
-                    SourceImageryRef(
-                        programId="commercial-vendor",  # dropped
-                        href="https://a.example/2.json",
-                    ),
-                ],
-                "sourceImageryCitation": "https://example.org/src",
-            }
-        )
-
-        result = self.provider.start_publish(dataset, self.bundle)
-
-        sidecar_path = result.providerMetadata["sourceImageryPath"]
-        with open(
-            Path(self.temporary_directory.name, sidecar_path),
-            encoding="utf-8",
-        ) as sidecar_file:
-            sidecar = json.load(sidecar_file)
-        self.assertEqual(sidecar["sourceImageryCitation"], "https://example.org/src")
-        refs = sidecar["sourceImageryReferences"]
-        self.assertEqual(len(refs), 1)  # unregistered dropped
-        self.assertEqual(refs[0]["programId"], "vantor-open-data")
-        self.assertEqual(refs[0]["license"], "CC-BY-NC-4.0")
-        self.assertTrue(refs[0]["attributable"])
-
-    def test_publish_omits_sidecar_without_provenance(self) -> None:
-        result = self.provider.start_publish(self.dataset, self.bundle)
-        self.assertNotIn("sourceImageryPath", result.providerMetadata)
 
     def test_publish_and_unpublish_are_idempotent(self) -> None:
         first = self.provider.start_publish(self.dataset, self.bundle)
