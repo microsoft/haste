@@ -454,6 +454,58 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
                           </Link>
                         </p>
                       )}
+                      {(item.sourceImageryReferences?.length > 0 ||
+                        item.sourceImageryCitation) && (
+                        <div style={{ marginTop: 0 }}>
+                          <Text size={200} weight="semibold" block>
+                            Source imagery
+                          </Text>
+                          {summarizeSourceImagery(
+                            item.sourceImageryReferences
+                          ).map((program) => (
+                            <div
+                              key={program.program}
+                              style={{ marginBottom: 4 }}
+                            >
+                              <Text size={200} block>
+                                {program.program}
+                                {program.license
+                                  ? ` · ${program.license}`
+                                  : ""}{" "}
+                                (from open data)
+                              </Text>
+                              {program.scenes.map((scene) => (
+                                <Link
+                                  key={scene.href}
+                                  href={scene.href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ display: "block", fontSize: 12 }}
+                                >
+                                  {scene.title}
+                                </Link>
+                              ))}
+                            </div>
+                          ))}
+                          {item.sourceImageryCitation &&
+                            (item.sourceImageryCitation.startsWith(
+                              "https://"
+                            ) ? (
+                              <Link
+                                href={item.sourceImageryCitation}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ fontSize: 12 }}
+                              >
+                                {item.sourceImageryCitation}
+                              </Link>
+                            ) : (
+                              <Text size={200} block>
+                                {item.sourceImageryCitation}
+                              </Text>
+                            ))}
+                        </div>
+                      )}
                     </>
                   )}
                   <Divider />
