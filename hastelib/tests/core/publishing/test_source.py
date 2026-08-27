@@ -4,7 +4,6 @@ import uuid
 from hastegeo.core.models.projects import ImageLayer
 from hastegeo.core.models.publishing import (
     ArtifactKind,
-    PublishMetadataUpdate,
     PublishRequest,
 )
 from hastegeo.core.publishing.source import (
@@ -50,25 +49,6 @@ class TestImagerySources(unittest.TestCase):
             sourceTypePostEvent="maxar",
         )
         self.assertEqual(_imagery_sources(layer), ["maxar"])
-
-
-class TestPublishMetadataUpdateImagery(unittest.TestCase):
-    def _update(self, **kwargs) -> PublishMetadataUpdate:
-        return PublishMetadataUpdate(
-            projectId=uuid.uuid4(), datasetId=uuid.uuid4(), **kwargs
-        )
-
-    def test_none_leaves_unchanged(self) -> None:
-        self.assertIsNone(self._update().imagerySources)
-
-    def test_empty_list_clears(self) -> None:
-        self.assertEqual(self._update(imagerySources=[]).imagerySources, [])
-
-    def test_trims_dedupes_and_drops_blanks(self) -> None:
-        update = self._update(
-            imagerySources=["  Vantor ", "Planet", "vantor", "  "]
-        )
-        self.assertEqual(update.imagerySources, ["Vantor", "Planet"])
 
 
 class FakeTypes:

@@ -389,17 +389,11 @@ class PublishingProcessor:
             "name",
             "description",
             "interactiveViewerUrl",
-            "imagerySources",
             "sourceImageryCitation",
         }
         updates = {k: v for k, v in fields.items() if k in editable}
         if updates.get("description") is None and "description" in updates:
             updates["description"] = ""
-        if (
-            updates.get("imagerySources") is None
-            and "imagerySources" in updates
-        ):
-            updates["imagerySources"] = []
         if (
             not updates.get("sourceImageryCitation")
             and "sourceImageryCitation" in updates
