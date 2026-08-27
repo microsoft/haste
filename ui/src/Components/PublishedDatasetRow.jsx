@@ -182,6 +182,49 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
     );
   }
 
+  async function handleForceRemove() {
+    setDialog();
+    setIsLoading(true, "Removing dataset...");
+    try {
+      await apiDelete(
+        `ForceRemovePublishedDataset?projectId=${encodeURIComponent(item.projectId)}` +
+          `&datasetId=${encodeURIComponent(item.datasetId)}`,
+      );
+      await onRefresh();
+    } catch (error) {
+      setDialog("Force remove failed", error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function confirmForceRemove() {
+    const orphanWarning =
+      item.target === "planetary_computer"
+        ? " Any collection or item already created in Planetary Computer may " +
+          "remain and must be deleted manually in the catalog."
+        : "";
+    setDialog(
+      "Force remove dataset",
+      `Remove “${item.name}” from HASTE without waiting for cleanup to ` +
+        `succeed?${orphanWarning}`,
+      [
+        {
+          type: "primary",
+          key: "force-remove",
+          text: "Force remove",
+          onClick: handleForceRemove,
+        },
+        {
+          type: "default",
+          key: "cancel",
+          text: "Cancel",
+          onClick: () => setDialog(),
+        },
+      ],
+    );
+  }
+
   const menuItems = [];
   menuItems.push({
     key: "details",
@@ -231,6 +274,12 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
       text: "Retry",
       icon: "Redo",
       onClick: handleRetry,
+    });
+    menuItems.push({
+      key: "force-remove",
+      text: "Force remove",
+      icon: "Delete",
+      onClick: confirmForceRemove,
     });
   }
   if (

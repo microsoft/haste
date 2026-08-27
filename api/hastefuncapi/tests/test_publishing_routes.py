@@ -27,6 +27,7 @@ from hastegeo.core.processors.publishing import (  # noqa: E402
     PublishingDependencyError,
     PublishingDisabledError,
     PublishingPermissionError,
+    PublishingStateConflictError,
 )
 from hastegeo.core.publishing.repository import (  # noqa: E402
     PublishedDatasetsExistError,
@@ -566,6 +567,68 @@ class TestPublishingRoutes(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response_json(response)["error"]["code"], "FORBIDDEN")
+
+    async def test_force_remove_returns_removed_record(self) -> None:
+        caller = {"id": "publisher-object-id", "roles": {"contributors"}}
+        processor = Mock()
+        processor.force_remove.return_value = make_dataset("UNPUBLISH_FAILED")
+        with patch.object(
+            function_app,
+            "_get_active_publishing_caller",
+            new=AsyncMock(return_value=(caller, None)),
+        ), patch.object(
+            function_app,
+            "_publishing_processor",
+            return_value=processor,
+        ):
+            response = await function_app.ForceRemovePublishedDataset(
+                make_request(
+                    method="DELETE",
+                    params={
+                        "projectId": PROJECT_ID,
+                        "datasetId": DATASET_ID,
+                    },
+                )
+            )
+
+        self.assertEqual(response.status_code, 200)
+        processor.force_remove.assert_called_once_with(
+            PROJECT_ID, DATASET_ID, "publisher-object-id", False
+        )
+        self.assertEqual(
+            response_json(response)["publishedDataset"]["datasetId"],
+            DATASET_ID,
+        )
+
+    async def test_force_remove_returns_structured_state_conflict(
+        self,
+    ) -> None:
+        caller = {"id": "publisher-object-id", "roles": {"contributors"}}
+        processor = Mock()
+        processor.force_remove.side_effect = PublishingStateConflictError(
+            "Force-remove is only allowed for a dataset stuck in a failed "
+            "state, not PUBLISHED"
+        )
+        with patch.object(
+            function_app,
+            "_get_active_publishing_caller",
+            new=AsyncMock(return_value=(caller, None)),
+        ), patch.object(
+            function_app,
+            "_publishing_processor",
+            return_value=processor,
+        ):
+            response = await function_app.ForceRemovePublishedDataset(
+                make_request(
+                    method="DELETE",
+                    params={
+                        "projectId": PROJECT_ID,
+                        "datasetId": DATASET_ID,
+                    },
+                )
+            )
+
+        self.assertEqual(response.status_code, 409)
 
     async def test_detail_returns_fresh_urls_separate_from_metadata(
         self,

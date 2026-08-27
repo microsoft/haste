@@ -4870,3 +4870,35 @@ async def DeletePublishedDataset(req: func.HttpRequest) -> func.HttpResponse:
         )
     except Exception as error:
         return _publishing_exception_response(error)
+
+
+@app.route(
+    route="ForceRemovePublishedDataset",
+    auth_level=AUTH_LEVEL,
+    methods=["DELETE"],
+)
+async def ForceRemovePublishedDataset(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    # Escape hatch for a dataset stuck in a terminal failure state whose
+    # provider cleanup cannot complete: best-effort cleanup, then drop the
+    # tracking record so the row leaves the list. Owner-or-admin gated in the
+    # processor; provider resources may be orphaned (the UI warns the caller).
+    caller, auth_error = await _get_active_publishing_caller(req)
+    if auth_error:
+        return auth_error
+    try:
+        project_id = _require_guid_param(req, "projectId")
+        dataset_id = _require_guid_param(req, "datasetId")
+        record = await asyncio.to_thread(
+            _publishing_processor().force_remove,
+            project_id,
+            dataset_id,
+            caller["id"],
+            "administrators" in caller["roles"],
+        )
+        return _publishing_json_response(
+            {"publishedDataset": record.model_dump(mode="json")}, 200
+        )
+    except Exception as error:
+        return _publishing_exception_response(error)

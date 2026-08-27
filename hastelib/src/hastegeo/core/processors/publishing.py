@@ -457,6 +457,52 @@ class PublishingProcessor:
             ) from error
         return updated
 
+    def force_remove(
+        self,
+        project_id: str,
+        dataset_id: str,
+        caller_id: str,
+        is_admin: bool = False,
+    ) -> PublishedDataset:
+        """Drop a stuck dataset's tracking record after a best-effort cleanup.
+
+        Escape hatch for a dataset wedged in a terminal failure state
+        (``FAILED`` / ``UNPUBLISH_FAILED``) whose provider resources cannot be
+        cleared by retry. Runs a single best-effort provider unpublish pass,
+        then deletes the tracking record regardless so the row leaves the list.
+        Provider resources created before the failure may remain and must be
+        removed manually in the target catalog.
+        """
+        self._require_enabled()
+        dataset = self.repository.load(project_id, dataset_id)
+        self._require_owner(dataset, caller_id, is_admin)
+        with self.repository.operation_lock(project_id, dataset_id):
+            current = self.repository.load(project_id, dataset_id)
+            self._require_owner(current, caller_id, is_admin)
+            if current.status not in {
+                PublishStatus.FAILED,
+                PublishStatus.UNPUBLISH_FAILED,
+            }:
+                raise PublishingStateConflictError(
+                    "Force-remove is only allowed for a dataset stuck in a "
+                    f"failed state, not {current.status.value}"
+                )
+            try:
+                provider = self.registry.resolve(current.target.value)
+                provider.start_unpublish(current)
+            except Exception as error:
+                # Best-effort only: the whole point of force-remove is to drop
+                # the record even when cleanup cannot complete. Log and proceed.
+                self.logger.warning(
+                    "Best-effort cleanup during force-remove failed for "
+                    "%s: %s",
+                    current.datasetId,
+                    type(error).__name__,
+                )
+            self.repository.delete_locked(project_id, dataset_id)
+            self._audit(current, "force_removed", caller_id)
+        return current
+
     def run_step(
         self, message: PublishQueueMessage
     ) -> Optional[PublishedDataset]:
