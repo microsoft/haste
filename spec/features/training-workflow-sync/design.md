@@ -161,3 +161,22 @@ carries matching `gt`/`ge` constraints for the API path.
 | `assert subprocess.call(...) == 0` | `subprocess.run` with captured stderr | Pre-existing HASTE hardening |
 | Broad `except ValueError` on the cluster skip | `CropGeometryOutsideRasterError` | Not swallowing real errors per cluster |
 | `configure_losses()` override | Not ported | Adds a `dice` branch this repo never uses; `torchgeo` is pinned here and unpinned upstream |
+
+## 7. Large raster outputs
+
+The cropped training image and buffered mask can exceed the classic TIFF
+4 GiB limit when labels span a large, high-resolution aerial scene.
+`rasterio.DatasetReader.profile` preserves raster metadata but not the
+source dataset's BigTIFF creation option, so derived writes must apply it
+explicitly.
+
+The two `create_masks.py` rasterio write paths go through one helper that
+copies the source profile and sets `BIGTIFF=IF_SAFER`. Copying avoids
+mutating a profile that a caller may reuse. The inference prediction and
+visualizer writers also set `BIGTIFF=IF_SAFER` before opening their outputs.
+`IF_SAFER` lets GDAL retain classic TIFF for small outputs while selecting
+BigTIFF when the uncompressed result could exceed 4 GiB.
+
+The raw mask is created by `gdal_rasterize` and already uses
+`BIGTIFF=YES`. This change aligns the surrounding rasterio writes without
+changing CRS, transform, dimensions, compression, tiling, nodata, or dtype.

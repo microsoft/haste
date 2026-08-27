@@ -217,6 +217,7 @@ def main() -> None:
     profile["blockysize"] = 512
     profile["tiled"] = True
     profile["interleave"] = "pixel"
+    profile["BIGTIFF"] = "IF_SAFER"
 
     with rasterio.open(output_fn, "w", **profile) as f:
         f.write(output, 1)
