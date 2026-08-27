@@ -224,7 +224,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
                   {
                     type: "primary",
                     key: "view",
-                    text: "View Published Datasets",
+                    text: "View",
                     onClick: () => {
                       setDialog();
                       navigate("/published-datasets");

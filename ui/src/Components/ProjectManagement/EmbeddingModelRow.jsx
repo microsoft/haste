@@ -221,7 +221,7 @@ const EmbeddingModelRow = ({
                 {
                   type: "primary",
                   key: "view",
-                  text: "View Published Datasets",
+                  text: "View",
                   onClick: () => {
                     setDialog();
                     navigate("/published-datasets");
