@@ -129,15 +129,23 @@ class PlanetaryComputerRestAdapter:
         collection_id: str,
         body: Mapping[str, Any],
     ) -> None:
-        # MPC Pro rejects collection-level `assets` in a collection PUT ("must
-        # be removed using the GeoCatalog Collection Asset API"). The thumbnail
-        # is managed through that Asset API, and a GET-then-PUT round-trip (edit
-        # / unpublish / re-publish) carries the managed asset back in the body.
-        # Strip it: the PUT updates collection metadata only and leaves the
-        # managed asset intact.
+        # MPC Pro manages collection-level assets (the thumbnail) through the
+        # Collection Asset API. A collection PUT is a full-document replace, so
+        # a body that OMITS an existing managed asset is read as an attempt to
+        # REMOVE it and rejected ("'thumbnail' must be removed using the
+        # GeoCatalog Collection Asset API"). Our rebuilt collection body carries
+        # no assets, so on re-publish/edit/unpublish we must carry the live
+        # managed assets forward verbatim. Fetch the current collection and echo
+        # its assets back; only send `assets` when the collection actually has
+        # them (a freshly POST-created collection has none, and MPC rejects an
+        # asset map on create).
         payload = {
             key: value for key, value in body.items() if key != "assets"
         }
+        current = self.get_collection(collection_id)
+        current_assets = (current or {}).get("assets")
+        if current_assets:
+            payload["assets"] = current_assets
         self.client.request(
             "PUT",
             f"/stac/collections/{collection_id}",

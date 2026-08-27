@@ -154,24 +154,56 @@ class TestRestAdapter(unittest.TestCase):
             ("thumbnail.png", b"\x89PNG", "image/png"),
         )
 
-    def test_replace_collection_strips_assets_from_put_body(self):
-        # MPC Pro rejects collection-level assets in a PUT; a GET-then-PUT
-        # round-trip carries the managed thumbnail back, so it must be dropped.
-        client = FakeClient(lambda m, u: FakeResponse(200, payload={}))
+    def test_replace_collection_preserves_live_managed_assets(self):
+        # MPC Pro's collection PUT is a full-document replace: omitting the
+        # live managed thumbnail reads as REMOVING it and is rejected. The
+        # rebuilt body carries no assets, so the PUT must carry the live
+        # thumbnail (fetched via GET) forward verbatim.
+        live_thumbnail = {
+            "thumbnail": {"href": "https://x/live.png", "roles": ["thumbnail"]}
+        }
+
+        def handler(method, url):
+            if method == "GET":
+                return FakeResponse(
+                    200, payload={"id": "haste-x", "assets": live_thumbnail}
+                )
+            return FakeResponse(200, payload={})
+
+        client = FakeClient(handler)
+        rest = PlanetaryComputerRestAdapter(ENDPOINT, client=client)
+        rest.replace_collection(
+            "haste-x",
+            {"id": "haste-x", "description": "d"},
+        )
+        put = client.calls[-1]
+        self.assertEqual(put["method"], "PUT")
+        self.assertEqual(put["url"], "/stac/collections/haste-x")
+        self.assertEqual(put["json"]["description"], "d")
+        # The live thumbnail is carried forward so MPC does not read the PUT
+        # as an asset removal.
+        self.assertEqual(put["json"]["assets"], live_thumbnail)
+
+    def test_replace_collection_omits_assets_when_none_live(self):
+        # A freshly POST-created collection has no managed assets yet; the PUT
+        # must not send an `assets` map (MPC rejects it on such collections).
+        def handler(method, url):
+            return FakeResponse(200, payload={"id": "haste-x"})
+
+        client = FakeClient(handler)
         rest = PlanetaryComputerRestAdapter(ENDPOINT, client=client)
         rest.replace_collection(
             "haste-x",
             {
                 "id": "haste-x",
                 "description": "d",
-                "assets": {"thumbnail": {"href": "https://x/t.png"}},
+                "assets": {"thumbnail": {"href": "https://x/stale.png"}},
             },
         )
-        call = client.calls[-1]
-        self.assertEqual(call["method"], "PUT")
-        self.assertEqual(call["url"], "/stac/collections/haste-x")
-        self.assertNotIn("assets", call["json"])
-        self.assertEqual(call["json"]["description"], "d")
+        put = client.calls[-1]
+        self.assertEqual(put["method"], "PUT")
+        self.assertNotIn("assets", put["json"])
+        self.assertEqual(put["json"]["description"], "d")
 
     def test_start_collection_async_202_pins_operation_url(self):
         step = adapter(
