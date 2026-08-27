@@ -129,10 +129,19 @@ class PlanetaryComputerRestAdapter:
         collection_id: str,
         body: Mapping[str, Any],
     ) -> None:
+        # MPC Pro rejects collection-level `assets` in a collection PUT ("must
+        # be removed using the GeoCatalog Collection Asset API"). The thumbnail
+        # is managed through that Asset API, and a GET-then-PUT round-trip (edit
+        # / unpublish / re-publish) carries the managed asset back in the body.
+        # Strip it: the PUT updates collection metadata only and leaves the
+        # managed asset intact.
+        payload = {
+            key: value for key, value in body.items() if key != "assets"
+        }
         self.client.request(
             "PUT",
             f"/stac/collections/{collection_id}",
-            json=dict(body),
+            json=payload,
             expected=(200, 201, 202, 204),
         )
 

@@ -154,6 +154,25 @@ class TestRestAdapter(unittest.TestCase):
             ("thumbnail.png", b"\x89PNG", "image/png"),
         )
 
+    def test_replace_collection_strips_assets_from_put_body(self):
+        # MPC Pro rejects collection-level assets in a PUT; a GET-then-PUT
+        # round-trip carries the managed thumbnail back, so it must be dropped.
+        client = FakeClient(lambda m, u: FakeResponse(200, payload={}))
+        rest = PlanetaryComputerRestAdapter(ENDPOINT, client=client)
+        rest.replace_collection(
+            "haste-x",
+            {
+                "id": "haste-x",
+                "description": "d",
+                "assets": {"thumbnail": {"href": "https://x/t.png"}},
+            },
+        )
+        call = client.calls[-1]
+        self.assertEqual(call["method"], "PUT")
+        self.assertEqual(call["url"], "/stac/collections/haste-x")
+        self.assertNotIn("assets", call["json"])
+        self.assertEqual(call["json"]["description"], "d")
+
     def test_start_collection_async_202_pins_operation_url(self):
         step = adapter(
             lambda m, u: FakeResponse(202, {"operation-location": OP_URL})
