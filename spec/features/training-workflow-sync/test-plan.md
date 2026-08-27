@@ -2,9 +2,9 @@
 
 ## Coverage
 
-**87 tests.** Container-side tests live in `docker/training/code/tests/` and run
-without the conda env unless noted; `hastegeo` tests follow the repo's usual
-layout.
+**95 container-side tests, plus 16 `hastegeo` tests.** Container-side tests
+live in `docker/training/code/tests/` and run without the conda env unless
+noted; `hastegeo` tests follow the repo's usual layout.
 
 ```bash
 cd docker/training/code && python -m unittest discover -s tests -t .
@@ -19,6 +19,7 @@ PYTHONPATH=$PWD/hastelib/src python -m unittest \
 | `tests/test_create_masks.py` | 13 | Grid assignment, STRtree/brute-force equivalence, CRS gate, extent clipping, skip-path exception type |
 | `tests/test_datasets.py` | 10 | Channel clipping, too-few-bands rejection, preload equivalence and aliasing |
 | `tests/test_create_masks_cleanup.py` | 9 | Stale and partial output removal, prefix safety |
+| `tests/test_create_masks_writes.py` | 8 | BigTIFF option, profile immutability, all production write paths, and raw-mask rasterization |
 | `hastelib/tests/core/utils/test_label_classes.py` | 16 | The auto-enable decision across class layouts and spellings |
 
 ## Load-bearing tests
@@ -35,6 +36,7 @@ each was **verified to fail against the code it replaced**:
 | `test_matches_a_brute_force_scan` | The STRtree selects exactly what the scan it replaced did |
 | `test_patches_are_identical_to_the_disk_path` | Preload is a speed-up; any difference in what it returns is a bug |
 | `test_is_distinct_from_valueerror` | The cluster skip path cannot swallow a config error |
+| `test_applies_if_safer_without_mutating_input_profile` | Both derived raster paths can exceed 4 GiB, and the source profile remains reusable |
 
 ## Method notes
 
@@ -64,6 +66,10 @@ for a config the container rejects.
       not reproduce on GDAL 3.4.1. Decisive check: pull an existing
       experiment's `masks/` artifact and look for any value above 1. If it is
       all `{0, 1}`, every multi-class model trained here saw background only.
+- [ ] **Affected-layer retraining with a BigTIFF image.** Unit tests pin the
+      GDAL creation option without allocating a 4+ GiB array. Re-run the
+      Buenaventura layer after deploying the patched training image to verify
+      the production-sized path.
 
 ## CI gap
 

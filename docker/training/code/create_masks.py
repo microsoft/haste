@@ -119,6 +119,28 @@ def _run(command: List[str], what: str) -> None:
         )
 
 
+def write_training_raster(
+    output_fn: str,
+    data: np.ndarray,
+    profile: dict,
+    band: Optional[int] = None,
+) -> None:
+    """Write a training raster without the classic TIFF 4 GiB limit.
+
+    ``Dataset.profile`` does not retain the source dataset's BigTIFF creation
+    option. Apply it to every derived image and mask while allowing GDAL to
+    keep small outputs as classic TIFFs.
+    """
+    output_profile = profile.copy()
+    output_profile["BIGTIFF"] = "IF_SAFER"
+
+    with rasterio.open(output_fn, "w", **output_profile) as output:
+        if band is None:
+            output.write(data)
+        else:
+            output.write(data, band)
+
+
 def get_class_names_from_labels(labels_fn: str, key: str = "class") -> set:
     """Get the class names from a GeoJSON file.
 
@@ -481,8 +503,7 @@ def create_mask_for_labels(
     profile["count"] = data.shape[0]
     profile["transform"] = transform
     profile["predictor"] = 2
-    with rasterio.open(output_cropped_image_fn, "w", **profile) as f:
-        f.write(data)
+    write_training_raster(output_cropped_image_fn, data, profile)
 
     ##########
     # Create mask
@@ -579,8 +600,7 @@ def create_mask_for_labels(
         background_mask = (transform > 0) & (transform < buffer_in_meters)
         mask[background_mask] = class_name_to_idx_map[class_to_buffer_by]
 
-    with rasterio.open(output_buffered_mask_fn, "w", **mask_profile) as f:
-        f.write(mask, 1)
+    write_training_raster(output_buffered_mask_fn, mask, mask_profile, band=1)
 
     ##########
     # Check that the buffered mask and the cropped image have the same dimensions

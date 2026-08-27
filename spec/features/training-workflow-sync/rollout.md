@@ -11,6 +11,9 @@ training image**.
 | `docker/training/code/**` | `docker-build-and-push.yml` (triggers on that path) | training image, pinned by `AZURE_BATCH_DOCKER_IMAGE` | Batch tasks |
 | `hastelib/**` | `deploy-apps.yml` | `hastegeo` wheel | `hastefuncapi`, `hastefuncqueues` |
 
+The BigTIFF correction touches only `docker/training/code/**`. It requires a
+new training image but no `hastegeo` wheel or Function App deployment.
+
 Config generation runs in **`hastefuncqueues`**, not `hastefuncapi` — a deploy
 covering only the API app changes nothing.
 

@@ -101,6 +101,7 @@ def main(args):
 
     profile["count"] = 4
     profile["nodata"] = 0
+    profile["BIGTIFF"] = "IF_SAFER"
 
     with rasterio.open(args.output_fn, "w", **profile) as f:
         f.colorinterp = [
