@@ -57,6 +57,22 @@ class PreparedPublish:
     bundle: Optional[ArtifactBundle] = None
 
 
+# How long a queued operation is deferred when the master publishing switch is
+# off, before it is re-posted and re-checked.
+_PUBLISHING_DISABLED_DEFER_SECONDS = 300
+
+# Metadata edits are only safe once an operation has reached a terminal state;
+# editing a PENDING/IN_PROGRESS/UNPUBLISH_* record could diverge the stored
+# metadata from a STAC item being created or removed concurrently.
+_METADATA_EDITABLE_STATUSES = frozenset(
+    {
+        PublishStatus.PUBLISHED,
+        PublishStatus.FAILED,
+        PublishStatus.UNPUBLISH_FAILED,
+    }
+)
+
+
 def _utc_timestamp(now: Optional[datetime] = None) -> str:
     timestamp = now or datetime.now(timezone.utc)
     return (
@@ -385,6 +401,13 @@ class PublishingProcessor:
         self._require_enabled()
         dataset = self.repository.load(project_id, dataset_id)
         self._require_owner(dataset, caller_id, is_admin)
+        if dataset.status not in _METADATA_EDITABLE_STATUSES:
+            # Editing an in-progress record could diverge the stored metadata
+            # from the live STAC item created mid-flight; only allow it once
+            # the operation has reached a terminal state.
+            raise PublishingStateConflictError(
+                f"Cannot edit metadata while dataset is {dataset.status.value}"
+            )
         editable = {
             "name",
             "description",
@@ -490,6 +513,9 @@ class PublishingProcessor:
             try:
                 provider = self.registry.resolve(current.target.value)
                 provider.start_unpublish(current)
+                finalize = getattr(provider, "finalize_unpublish", None)
+                if callable(finalize):
+                    finalize(current)
             except Exception as error:
                 # Best-effort only: the whole point of force-remove is to drop
                 # the record even when cleanup cannot complete. Log and proceed.
@@ -508,6 +534,23 @@ class PublishingProcessor:
     ) -> Optional[PublishedDataset]:
         project_id = str(message.projectId)
         dataset_id = str(message.datasetId)
+        if not self.config.publishing_config["publishing_enabled"]:
+            # Master kill switch is off: park the operation without consuming
+            # or failing it. Both publish and unpublish flow through here, so
+            # this gates them uniformly -- otherwise a disabled Local provider
+            # would mark messages FAILED while Planetary Computer (gated only
+            # by PC_PROVIDER_ENABLED) kept processing. Re-post with a delay so
+            # the operation resumes once publishing is re-enabled.
+            self.logger.info(
+                "Publishing disabled; deferring %s for dataset %s",
+                message.operation.value,
+                dataset_id,
+            )
+            self._get_queue_handler().put_message(
+                message.model_dump_json(),
+                visibility_timeout=_PUBLISHING_DISABLED_DEFER_SECONDS,
+            )
+            return None
         try:
             with self.repository.operation_lock(
                 project_id, dataset_id
@@ -713,6 +756,9 @@ class PublishingProcessor:
                 )
                 self._enqueue(updated, visibility_timeout=30)
                 return updated
+            finalize = getattr(provider, "finalize_unpublish", None)
+            if callable(finalize):
+                finalize(current)
             self.repository.delete_locked(
                 str(current.projectId), str(current.datasetId)
             )

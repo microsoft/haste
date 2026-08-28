@@ -40,8 +40,8 @@ export const OPEN_DATA_PROGRAMS = {
 
 // Build a source-imagery reference from a catalog scene (or null if the scene
 // is not from a registered open-data program or has no STAC item href). The
-// `sourceUrl` field is UI-only (correlates the ref with the added COG for
-// removal); the backend ignores it.
+// `sourceUrl` field correlates the ref with the added COG so it is dropped
+// together on a later layer edit; it is persisted but never emitted to STAC.
 export function sourceImageryRef(scene, phase) {
   const program = OPEN_DATA_PROGRAMS[scene?.source];
   if (!program || !scene?.itemHref) return null;

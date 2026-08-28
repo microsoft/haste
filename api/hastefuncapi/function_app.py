@@ -23,7 +23,6 @@ from hastegeo.core.models.projects import (
     Project,
 )
 from hastegeo.core.models.publishing import (
-    ArtifactKind,
     PublishMetadataUpdate,
     PublishRequest,
     PublishStatus,

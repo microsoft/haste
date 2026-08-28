@@ -5,6 +5,8 @@ from unittest.mock import Mock
 
 from hastegeo.core.models.publishing import (
     PublishedDataset,
+    PublishOperation,
+    PublishQueueMessage,
     PublishStatus,
     PublishTarget,
 )
@@ -56,19 +58,22 @@ class FakeRepository:
         self._dataset = None
 
 
-def _processor(dataset: PublishedDataset):
+def _processor(dataset: PublishedDataset, enabled: bool = True):
     repository = FakeRepository(dataset)
     provider = Mock()
     registry = Mock()
     registry.resolve.return_value = provider
     config = Mock()
-    config.publishing_config = {"publishing_enabled": True}
+    config.publishing_config = {"publishing_enabled": enabled}
+    queue_handler = Mock()
     processor = PublishingProcessor(
         config=config,
         repository=repository,
         source_resolver=Mock(),
         registry=registry,
+        queue_handler=queue_handler,
     )
+    processor._test_queue_handler = queue_handler
     return processor, repository, provider
 
 
@@ -129,6 +134,59 @@ class TestForceRemove(unittest.TestCase):
         self.assertEqual(
             repository.deleted, [(str(PROJECT_ID), str(DATASET_ID))]
         )
+
+
+class TestRunStepKillSwitch(unittest.TestCase):
+    def test_run_step_defers_when_publishing_disabled(self) -> None:
+        processor, repository, provider = _processor(
+            _dataset(PublishStatus.PENDING), enabled=False
+        )
+        message = PublishQueueMessage(
+            datasetId=DATASET_ID,
+            projectId=PROJECT_ID,
+            operation=PublishOperation.PUBLISH,
+            attempt=1,
+        )
+        result = processor.run_step(message)
+        # Parked, not processed: no provider resolution, no record change.
+        self.assertIsNone(result)
+        provider.start_unpublish.assert_not_called()
+        self.assertEqual(repository.deleted, [])
+        # The message is re-posted with a delay so it resumes when re-enabled.
+        processor._test_queue_handler.put_message.assert_called_once()
+        _, kwargs = processor._test_queue_handler.put_message.call_args
+        self.assertGreater(kwargs["visibility_timeout"], 0)
+
+
+class TestUpdateMetadataStateGuard(unittest.TestCase):
+    def test_update_metadata_rejects_in_progress(self) -> None:
+        processor, repository, _ = _processor(
+            _dataset(PublishStatus.IN_PROGRESS)
+        )
+        with self.assertRaises(PublishingStateConflictError):
+            processor.update_metadata(
+                str(PROJECT_ID),
+                str(DATASET_ID),
+                OWNER,
+                False,
+                {"name": "new name"},
+            )
+
+    def test_update_metadata_allows_published(self) -> None:
+        processor, repository, provider = _processor(
+            _dataset(PublishStatus.PUBLISHED)
+        )
+        # repository.update returns the edited record for the PUBLISHED push.
+        repository.update = Mock(side_effect=lambda d, expected_revision: d)
+        saved = processor.update_metadata(
+            str(PROJECT_ID),
+            str(DATASET_ID),
+            OWNER,
+            False,
+            {"name": "new name"},
+        )
+        self.assertEqual(saved.name, "new name")
+        provider.update_published_metadata.assert_called_once()
 
 
 if __name__ == "__main__":

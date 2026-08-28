@@ -1543,6 +1543,26 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
                 namespace=["published", str(dataset_id)],
             )
 
+    def finalize_unpublish(self, dataset: PublishedDataset) -> None:
+        """Remove staging copies once an unpublish has fully completed.
+
+        With a dedicated publish container, published assets are copied under
+        ``published/<datasetId>/``. GeoCatalog cleanup only removes the STAC
+        item/collection, so those staging blobs would otherwise accumulate
+        indefinitely. Best-effort: a failure here must not fail the unpublish.
+        """
+        if not self._stages_to_publish:
+            return
+        prefix = f"published/{dataset.datasetId}/"
+        try:
+            self.publish_storage.delete_prefix(prefix)
+        except Exception as error:
+            self.logger.warning(
+                "Failed to delete publish staging prefix %s: %s",
+                prefix,
+                type(error).__name__,
+            )
+
     def _publish_href(self, published_path: str) -> str:
         base_url = str(self.publish_storage.get_base_url()).rstrip("/")
         parsed = self._safe_https_url(base_url, allow_path=True)

@@ -123,6 +123,11 @@ class SourceImageryRef(BaseModel):
     attributable: bool = False
     phase: Optional[str] = Field(default=None, max_length=16)
     capturedDate: Optional[str] = Field(default=None, max_length=64)
+    # The specific COG/asset URL this ref was captured from. Persisted purely to
+    # correlate a reference with its imagery entry so that removing imagery in
+    # the layer edit form also drops the matching provenance ref; it is never
+    # emitted to STAC (which uses ``href``).
+    sourceUrl: Optional[str] = Field(default=None, max_length=2000)
 
     @field_validator("href")
     @classmethod

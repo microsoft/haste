@@ -232,15 +232,12 @@ const CreateEditImageLayerModal = () => {
           imageryCaptureDatePostEvent: imageryCaptureDatePostEvent,
           userBuildingFootprintsUrl: userBuildingFootprintsUrl,
           clipBbox: componentState.clipBbox || null,
-          // Source-imagery provenance captured from the Open Data Catalog
-          // (strip the UI-only sourceUrl correlation field).
-          sourceImageryReferences: (
-            componentState.sourceImageryReferences || []
-          ).map((ref) => {
-            const clean = { ...ref };
-            delete clean.sourceUrl;
-            return clean;
-          }),
+          // Source-imagery provenance captured from the Open Data Catalog.
+          // sourceUrl (the COG asset URL) is persisted so it can correlate a
+          // reference with its imagery entry when imagery is removed on a later
+          // edit; the backend keeps it but never emits it to STAC.
+          sourceImageryReferences:
+            componentState.sourceImageryReferences || [],
           userId: appParams.userId,
         };
 

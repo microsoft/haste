@@ -46,9 +46,16 @@ class FakeArtifactStorage:
         self.blobs: set = set()
         self.copied: list = []
         self.stored: list = []
+        self.deleted_prefixes: list = []
 
     def get_base_url(self) -> str:
         return self.base_url
+
+    def delete_prefix(self, prefix: str) -> int:
+        self.deleted_prefixes.append(prefix)
+        removed = [b for b in self.blobs if b.startswith(prefix)]
+        self.blobs.difference_update(removed)
+        return len(removed)
 
     def resolve_artifact_path(self, path: str) -> str:
         return path
@@ -816,6 +823,39 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
             f"published/{self.dataset.datasetId}/gpkg_damage.gpkg",
             publish.stored,
         )
+
+    def test_finalize_unpublish_deletes_staging_prefix(self) -> None:
+        publish = FakeArtifactStorage(
+            "https://publishsa.blob.core.windows.net/publish"
+        )
+        publish.blobs.add(f"published/{self.dataset.datasetId}/gpkg_damage.gpkg")
+        provider = PlanetaryComputerPublishingProvider(
+            config=self.config,
+            artifact_storage=self.storage,
+            publish_storage=publish,
+            sdk_adapter=self.sdk,
+            json_reader=lambda artifact: self.valid_mask,
+            projection_resolver=lambda artifact: "EPSG:4326",
+            asset_reachability_checker=lambda href: None,
+        )
+        provider.finalize_unpublish(self.dataset)
+        self.assertEqual(
+            publish.deleted_prefixes,
+            [f"published/{self.dataset.datasetId}/"],
+        )
+
+    def test_finalize_unpublish_noop_without_dedicated_store(self) -> None:
+        # No publish_storage -> staging never happened; nothing to delete.
+        provider = PlanetaryComputerPublishingProvider(
+            config=self.config,
+            artifact_storage=self.storage,
+            sdk_adapter=self.sdk,
+            json_reader=lambda artifact: self.valid_mask,
+            projection_resolver=lambda artifact: "EPSG:4326",
+            asset_reachability_checker=lambda href: None,
+        )
+        provider.finalize_unpublish(self.dataset)
+        self.assertEqual(self.storage.deleted_prefixes, [])
 
     def test_ingestion_source_validates_against_publish_container(
         self,

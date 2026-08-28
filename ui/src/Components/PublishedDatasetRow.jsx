@@ -232,7 +232,12 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
     icon: "Info",
     onClick: () => openMetadata(false),
   });
-  if (canManage) {
+  // Editing is only safe once the operation has settled; an in-progress edit
+  // could diverge the stored record from a STAC item created mid-flight.
+  const canEditMetadata = ["PUBLISHED", "FAILED", "UNPUBLISH_FAILED"].includes(
+    item.status,
+  );
+  if (canManage && canEditMetadata) {
     menuItems.push({
       key: "edit",
       text: "Edit metadata",
@@ -654,7 +659,7 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
                     </>
                   ) : (
                     <>
-                      {canManage && (
+                      {canManage && canEditMetadata && (
                         <Button
                           appearance="secondary"
                           onClick={() => openMetadata(true)}
