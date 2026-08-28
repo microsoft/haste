@@ -151,13 +151,17 @@ actions (menu on `PublishedDatasetRow.jsx`):
   confirm).
 
 **Edit metadata** (`PutUpdatePublishedDataset`, owner/admin) opens an inline
-form on `PublishedDatasetRow.jsx`. Editable fields: **name**, **description**,
-**interactive viewer URL** (optional https `rel=preview` link), and **imagery
-sources** (optional, comma-separated — an override for the provider attribution
-otherwise inferred from the image-layer source type; leave blank to omit). For
-a PC dataset the edit pushes to the live STAC item
-(title/description/preview-link + `providers`) and refreshes the collection's
-rolling summary and provider union; for Local it updates the stored record only.
+form on `PublishedDatasetRow.jsx`, available only for datasets in a terminal
+state (`PUBLISHED` / `FAILED` / `UNPUBLISH_FAILED`) — in-progress records aren't
+editable, enforced both in the UI and server-side in `update_metadata`. Editable
+fields: **name**, **description**, **interactive viewer URL** (optional https
+`rel=preview` link), and **source-imagery citation** (optional free-text /
+URL-aware attribution surfaced on the dataset). Imagery-source provider
+attribution is inferred from the image-layer source type and is not editable.
+For a PC dataset the edit pushes to the live STAC item
+(title/description/preview-link + `providers` + citation) and refreshes the
+collection's rolling summary and provider union; for Local it updates the stored
+record only.
 
 ## UI states (all)
 

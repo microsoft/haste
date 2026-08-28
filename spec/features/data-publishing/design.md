@@ -350,15 +350,16 @@ assessment response.
   `assessmentSummary`. The prefix is a single constant (`PROPERTY_PREFIX` in
   `stac.py`) so it can be changed in one place.
 - **Providers:** a STAC `providers` list layers attribution — the imagery
-  source(s) as `producer`/`licensor` (inferred from the image layer's
-  `sourceType*` via a small canonical map, unknown types passed through,
-  non-vendor placeholders like `n/a`/`rgb/no_processing` dropped),
-  and the deployment's operating organization as `processor` (from
+  source(s) as `licensor` (inferred from the image layer's `sourceType*` via a
+  small canonical map, unknown types passed through, non-vendor placeholders
+  like `n/a`/`rgb/no_processing` dropped), and the deployment's operating
+  organization as `producer` + `processor` (from
   `PUBLISHING_ORGANIZATION_NAME`/`_URL`; omitted when unset). Present on the item
-  (per-dataset) and unioned onto the collection. Operators can **override** the
-  inferred imagery sources per dataset via the Edit-metadata form; the value is
-  persisted on `PublishedDataset.imagerySources`. Editing re-emits the item
-  `providers` and recomputes the collection union; unpublish likewise re-unions
+  (per-dataset) and unioned onto the collection. The imagery sources are
+  **inferred** and not user-editable; per-dataset attribution the operator wants
+  to surface is captured instead as a free-text `sourceImageryCitation` through
+  the Edit-metadata form. Editing a dataset re-emits the item `providers` (and
+  citation) and recomputes the collection union; unpublish likewise re-unions
   the collection from the datasets that remain (`stac.py` helpers
   `refresh_collection_after_edit` / `rebuild_collection_after_removal`).
 - `stac_extensions: [projection/v2.0.0]`; `item["collection"] = collection_id`;

@@ -15,7 +15,7 @@ open-data, because commercially-licensed imagery may not be freely referenceable
 ## Two complementary concepts
 
 We already emit **attribution** on published items — a STAC `providers` list
-(`Vantor` / `Planet` as `producer`/`licensor`), inferred from the image layer's
+(`Vantor` / `Planet` as `licensor`), inferred from the image layer's
 `sourceType`. This design adds **provenance** — a link to the *specific source
 scenes* an output was derived from. They are complementary:
 
