@@ -113,14 +113,14 @@ jobs:
           VITE_SHOW_FOOTER: ${{ vars.VITE_SHOW_FOOTER }}
           # Data-publishing config, mirroring the publishing/PC params on the
           # Bicep path. Non-sensitive flags/prefix are Environment variables;
-          # the URLs, ingestion source, license, and publish-storage target are
-          # Environment *secrets* (masked in logs). Each defaults to off/unset
-          # in deploy_apps.sh when absent.
+          # the organization attribution, URLs, ingestion source, license, and
+          # publish-storage target are Environment *secrets* (masked in logs).
+          # Each defaults to off/unset in deploy_apps.sh when absent.
           PUBLISHING_ENABLED: ${{ vars.PUBLISHING_ENABLED }}
           PC_PROVIDER_ENABLED: ${{ vars.PC_PROVIDER_ENABLED }}
           PC_COLLECTION_PREFIX: ${{ vars.PC_COLLECTION_PREFIX }}
-          PUBLISHING_ORGANIZATION_NAME: ${{ vars.PUBLISHING_ORGANIZATION_NAME }}
-          PUBLISHING_ORGANIZATION_URL: ${{ vars.PUBLISHING_ORGANIZATION_URL }}
+          PUBLISHING_ORGANIZATION_NAME: ${{ secrets.PUBLISHING_ORGANIZATION_NAME }}
+          PUBLISHING_ORGANIZATION_URL: ${{ secrets.PUBLISHING_ORGANIZATION_URL }}
           PC_GEOCATALOG_URL: ${{ secrets.PC_GEOCATALOG_URL }}
           PC_EXPLORER_URL: ${{ secrets.PC_EXPLORER_URL }}
           PC_INGESTION_SOURCE: ${{ secrets.PC_INGESTION_SOURCE }}
