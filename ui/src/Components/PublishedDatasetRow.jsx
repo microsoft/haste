@@ -643,25 +643,25 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
                   {editing ? (
                     <>
                       <Button
-                        appearance="secondary"
-                        onClick={() => setEditing(false)}
-                        disabled={saving}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
                         appearance="primary"
                         onClick={saveMetadata}
                         disabled={saving || !editName.trim()}
                       >
                         {saving ? "Saving…" : "Save"}
                       </Button>
+                      <Button
+                        appearance="secondary"
+                        onClick={() => setEditing(false)}
+                        disabled={saving}
+                      >
+                        Cancel
+                      </Button>
                     </>
                   ) : (
                     <>
                       {canManage && canEditMetadata && (
                         <Button
-                          appearance="secondary"
+                          appearance="primary"
                           onClick={() => openMetadata(true)}
                         >
                           Edit

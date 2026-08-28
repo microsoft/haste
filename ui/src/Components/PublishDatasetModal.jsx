@@ -79,12 +79,6 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     whiteSpace: "nowrap",
   },
-  loading: {
-    minHeight: "180px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
 });
 
 function formatFileSize(bytes) {
@@ -272,8 +266,13 @@ const PublishDatasetModal = ({
             </DialogTitle>
             <DialogContent className={styles.content}>
               {loading ? (
-                <div className={styles.loading}>
-                  <Spinner label="Loading publishing options" />
+                <div className="app-loading-inline">
+                  <div className="app-loading-card">
+                    <Text className="app-loading-message">
+                      Loading publishing options…
+                    </Text>
+                    <Spinner size="tiny" className="app-loading-spinner" />
+                  </div>
                 </div>
               ) : (
                 <>
@@ -433,11 +432,16 @@ const PublishDatasetModal = ({
               )}
             </DialogContent>
             <DialogActions>
-              <Button appearance="secondary" onClick={onDismiss} disabled={submitting}>
-                Cancel
-              </Button>
               <Button appearance="primary" type="submit" disabled={!canSubmit}>
                 {submitting ? <Spinner size="tiny" /> : "Publish"}
+              </Button>
+              <Button
+                appearance="secondary"
+                type="button"
+                onClick={onDismiss}
+                disabled={submitting}
+              >
+                Cancel
               </Button>
             </DialogActions>
           </DialogBody>
