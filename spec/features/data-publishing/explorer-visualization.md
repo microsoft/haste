@@ -158,8 +158,8 @@ Staging + cleanup reuse the `-pc` publish store and `finalize_unpublish` hook.
 
 | Phase | Task | Files | Status |
 |---|---|---|---|
-| 1 | Rasterize damage → classification COG (reuse `detect_damage_mask`) | `publishing/raster.py` (new), `publishing/tile.py` | not-started |
-| 2 | Publish COG as `damage_class` item asset (+ `item_assets`) | `publishing/planetary_computer_provider.py`, `publishing/stac.py` | not-started |
-| 3 | Transport: render-options / mosaics / tile-settings methods | `publishing/planetary_computer_transport.py` | not-started |
-| 4 | Wire config registration into publish flow (idempotent) | `publishing/planetary_computer_provider.py` | not-started |
-| 5 | Config knobs + tests + this spec | `config.py`, `tests/core/publishing/` | not-started |
+| 1 | Rasterize damage → classification COG (reuse `detect_damage_mask`) | `publishing/raster.py` (new), `publishing/tile.py` | done |
+| 2 | Publish COG as `damage_class` item asset (+ `item_assets`) | `publishing/planetary_computer_provider.py` | done |
+| 3 | Transport: render-options / mosaics / tile-settings methods | `publishing/planetary_computer_transport.py` | done |
+| 4 | Wire config registration into publish flow (idempotent) | `publishing/planetary_computer_provider.py` | done |
+| 5 | Config knobs + tests + this spec | `config.py`, `tests/core/publishing/` | done |

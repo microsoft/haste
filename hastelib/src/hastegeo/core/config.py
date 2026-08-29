@@ -368,6 +368,21 @@ class Config:
             "pc_verify_attempts": _get_bounded_int_env(
                 "PC_VERIFY_ATTEMPTS", 20, 1, 60
             ),
+            # Explorer visualization: render a damage-classification COG (our
+            # derived output, not source imagery) plus the render/mosaic/tile
+            # config the GeoCatalog Explorer requires.
+            "publish_explorer_render_enabled": _get_bool_env(
+                "PUBLISH_EXPLORER_RENDER_ENABLED", True
+            ),
+            "publish_damage_raster_meters": os.getenv(
+                "PUBLISH_DAMAGE_RASTER_METERS", "0.5"
+            ),
+            "publish_damage_raster_max_pixels": _get_bounded_int_env(
+                "PUBLISH_DAMAGE_RASTER_MAX_PIXELS", 8192, 256, 20000
+            ),
+            "publish_damage_raster_min_zoom": _get_bounded_int_env(
+                "PUBLISH_DAMAGE_RASTER_MIN_ZOOM", 13, 0, 24
+            ),
             "lease_connection_string": os.getenv("AzureWebJobsStorage"),
             "lease_account_url": os.getenv("BLOB_ACCOUNT_URL"),
             "lease_container": os.getenv(
