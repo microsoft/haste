@@ -245,6 +245,71 @@ class PlanetaryComputerRestAdapter:
             expected=(200, 201),
         )
 
+    # ------------------------------------------------ visualization config
+
+    @staticmethod
+    def _config_list(payload: Any) -> list:
+        """Normalize a configurations GET body to a list of dicts."""
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, Mapping):
+            for key in ("renderOptions", "render_options", "mosaics", "value"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return value
+        return []
+
+    def get_render_options(self, collection_id: str) -> list:
+        response = self.client.request(
+            "GET",
+            f"/stac/collections/{collection_id}/configurations/render-options",
+            expected=(200, 404),
+        )
+        if response.status_code == 404:
+            return []
+        return self._config_list(response.json())
+
+    def create_render_option(
+        self, collection_id: str, body: Mapping[str, Any]
+    ) -> None:
+        self.client.request(
+            "POST",
+            f"/stac/collections/{collection_id}/configurations/render-options",
+            json=dict(body),
+            expected=(200, 201),
+        )
+
+    def get_mosaics(self, collection_id: str) -> list:
+        response = self.client.request(
+            "GET",
+            f"/stac/collections/{collection_id}/configurations/mosaics",
+            expected=(200, 404),
+        )
+        if response.status_code == 404:
+            return []
+        return self._config_list(response.json())
+
+    def create_mosaic(
+        self, collection_id: str, body: Mapping[str, Any]
+    ) -> None:
+        self.client.request(
+            "POST",
+            f"/stac/collections/{collection_id}/configurations/mosaics",
+            json=dict(body),
+            expected=(200, 201),
+        )
+
+    def replace_tile_settings(
+        self, collection_id: str, body: Mapping[str, Any]
+    ) -> None:
+        # PUT is replace-semantics, so this is naturally idempotent.
+        self.client.request(
+            "PUT",
+            f"/stac/collections/{collection_id}/configurations/tile-settings",
+            json=dict(body),
+            expected=(200, 201, 202, 204),
+        )
+
     # ------------------------------------------------------------------ items
 
     def get_item(
