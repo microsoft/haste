@@ -28,7 +28,7 @@ pyyaml==6.0.3
 # to validate a publish request). Keep pystac < 1.12: 1.12+ defaults to
 # emitting STAC 1.1.0, but MPC Pro requires STAC 1.0.0 (stac.py STAC_VERSION).
 pystac[validation]==1.11.0
-geopandas==1.0.1
+geopandas==1.1.2
 pyproj==3.6.1
 pyogrio==0.10.0
 boto3==1.43.73
