@@ -19,6 +19,7 @@ This guide documents each configuration mode. For the end-to-end workflow, see
 - [Email sender domain](#email-sender-domain)
 - [Front Door](#front-door)
 - [Development mode](#development-mode)
+- [Data publishing](#data-publishing)
 - [First-admin bootstrap](#first-admin-bootstrap)
 - [Cleaning up an environment](#cleaning-up-an-environment)
 
@@ -295,6 +296,56 @@ adds them.
 The Docker Compose UI image pre-fills `administrators` in the SWA emulator's
 mock-login form. The source `staticwebapp.config.json` used for production is
 unchanged.
+
+## Data publishing
+
+Enables the **Published Datasets** feature and the **Publish** action on model results. The
+**Local** target (an immutable copy in the app's storage) is on by default; the **Planetary
+Computer** target is off until you configure it. For how the feature is used, see
+{doc}`Publishing datasets </usage/data-publishing>`.
+
+### Feature flags
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HASTE_PUBLISHING_ENABLED` | `true` | Master switch for the Published Datasets section and the Publish action. |
+| `HASTE_PC_PROVIDER_ENABLED` | `false` | Register/expose the Planetary Computer publishing target. |
+| `HASTE_PUBLISH_EXPLORER_RENDER_ENABLED` | `true` | Render a damage-classification COG and register the Explorer render/mosaic/tile config on Planetary Computer publish. |
+
+### Planetary Computer target
+
+Required to publish to a Microsoft Planetary Computer Pro GeoCatalog. The GeoCatalog is
+**external** to this template — you provision and own it (see the
+[out-of-app setup](usage/data-publishing.md#enabling-and-configuring-publishing)).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HASTE_PC_GEOCATALOG_URL` | — | GeoCatalog base URL (no trailing slash). Required for the PC target. |
+| `HASTE_PC_EXPLORER_URL` | — | Explorer base URL used to build published-dataset links. |
+| `HASTE_PC_INGESTION_SOURCE` | — | GeoCatalog ingestion-source name. Only for **private** publish containers; public containers need none. |
+| `HASTE_PC_COLLECTION_PREFIX` | `haste-` | Prefix for STAC collection ids (one collection per project/event). |
+| `HASTE_PC_PUBLISHING_LICENSE` | `CC-BY-4.0` | STAC license id applied to published collections/items. |
+| `HASTE_PC_GEOCATALOG_INGEST_PRINCIPAL_ID` | — | Object id of the GeoCatalog managed identity to grant **Storage Blob Data Reader** on HASTE storage (asset ingestion). Empty = skip the role grant. |
+
+### Publish storage and attribution
+
+HASTE copies published assets into a network-reachable container the GeoCatalog ingests from,
+and records the operating organization as the STAC `processor` provider.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HASTE_PUBLISH_STORAGE_ACCOUNT_URL` | — | Storage account URL the GeoCatalog ingests published assets from. Empty = reference assets in place from the primary store. |
+| `HASTE_PUBLISH_BLOB_CONTAINER` | — | Blob container (on the publish storage account) HASTE copies published PC assets into. |
+| `HASTE_PUBLISHING_ORGANIZATION_NAME` | — | Organization operating this deployment, recorded as the STAC `processor` provider. Empty = omit. |
+| `HASTE_PUBLISHING_ORGANIZATION_URL` | — | URL companion to `HASTE_PUBLISHING_ORGANIZATION_NAME`. |
+
+```{admonition} Organization attribution and PC URLs are treated as secrets in CI
+:class: note
+On the GitHub Actions deploy path the organization values and the GeoCatalog/publish-storage
+URLs are read from environment **secrets** (masked in logs), while the non-sensitive feature
+flags and collection prefix are environment **variables**. The Bicep/azd path reads them all
+as `HASTE_*` settings.
+```
 
 ## First-admin bootstrap
 
