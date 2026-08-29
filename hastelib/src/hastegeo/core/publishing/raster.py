@@ -25,6 +25,13 @@ UNDAMAGED_VALUE = 0
 DAMAGED_VALUE = 1
 DAMAGE_CLASS_NODATA = 255
 
+# STAC asset identity for the classification COG (the renderable raster).
+DAMAGE_CLASS_ASSET_KEY = "damage_class"
+DAMAGE_CLASS_ASSET_TITLE = "Damage classification"
+DAMAGE_CLASS_MEDIA_TYPE = (
+    "image/tiff; application=geotiff; profile=cloud-optimized"
+)
+
 # Discrete colormap the Explorer render option applies (value -> RGBA). Mirrors
 # tile.py's palette: undamaged grey (#7f8fa6), damaged red (#ff4d4d).
 DAMAGE_CLASS_COLORMAP = {

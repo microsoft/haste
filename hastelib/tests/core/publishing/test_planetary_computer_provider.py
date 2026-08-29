@@ -844,8 +844,12 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
             [f"published/{self.dataset.datasetId}/"],
         )
 
-    def test_finalize_unpublish_noop_without_dedicated_store(self) -> None:
-        # No publish_storage -> staging never happened; nothing to delete.
+    def test_finalize_unpublish_cleans_cog_without_dedicated_store(
+        self,
+    ) -> None:
+        # Even without a dedicated publish store, a damage classification COG
+        # is written under published/<id>/, so finalize must clean it up when
+        # Explorer rendering is enabled (the default).
         provider = PlanetaryComputerPublishingProvider(
             config=self.config,
             artifact_storage=self.storage,
@@ -855,7 +859,83 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
             asset_reachability_checker=lambda href: None,
         )
         provider.finalize_unpublish(self.dataset)
+        self.assertEqual(
+            self.storage.deleted_prefixes,
+            [f"published/{self.dataset.datasetId}/"],
+        )
+
+    def test_finalize_unpublish_noop_when_nothing_staged(self) -> None:
+        # No dedicated store and Explorer rendering disabled -> nothing was
+        # written under the prefix, so finalize is a no-op.
+        provider = PlanetaryComputerPublishingProvider(
+            config=self.config,
+            artifact_storage=self.storage,
+            sdk_adapter=self.sdk,
+            json_reader=lambda artifact: self.valid_mask,
+            projection_resolver=lambda artifact: "EPSG:4326",
+            asset_reachability_checker=lambda href: None,
+        )
+        provider._explorer_render_enabled = False
+        provider.finalize_unpublish(self.dataset)
         self.assertEqual(self.storage.deleted_prefixes, [])
+
+    def test_damage_class_asset_injected_into_documents(self) -> None:
+        publish = FakeArtifactStorage(
+            "https://publishsa.blob.core.windows.net/publish"
+        )
+        provider = PlanetaryComputerPublishingProvider(
+            config=self.config,
+            artifact_storage=self.storage,
+            publish_storage=publish,
+            sdk_adapter=self.sdk,
+            json_reader=lambda artifact: self.valid_mask,
+            projection_resolver=lambda artifact: "EPSG:4326",
+            asset_reachability_checker=lambda href: None,
+        )
+        # Stub the (heavy) rasterization; assert only the injection wiring here.
+        provider._stage_damage_class_asset = lambda dataset, source: {
+            "href": (
+                "https://publishsa.blob.core.windows.net/publish/"
+                f"published/{dataset.datasetId}/damage_class.tif"
+            ),
+            "type": "image/tiff; application=geotiff; profile=cloud-optimized",
+            "title": "Damage classification",
+            "roles": ["data"],
+        }
+        documents = provider._build_documents(
+            self.dataset,
+            self.bundle,
+            provider._projection_codes(self.dataset, self.bundle),
+            None,
+        )
+        self.assertIn("damage_class", documents.item["assets"])
+        self.assertEqual(
+            documents.item["assets"]["damage_class"]["roles"], ["data"]
+        )
+        self.assertIn("damage_class", documents.collection["item_assets"])
+
+    def test_damage_class_asset_absent_when_disabled(self) -> None:
+        provider = PlanetaryComputerPublishingProvider(
+            config=self.config,
+            artifact_storage=self.storage,
+            sdk_adapter=self.sdk,
+            json_reader=lambda artifact: self.valid_mask,
+            projection_resolver=lambda artifact: "EPSG:4326",
+            asset_reachability_checker=lambda href: None,
+        )
+        provider._explorer_render_enabled = False
+        documents = provider._build_documents(
+            self.dataset,
+            self.bundle,
+            provider._projection_codes(self.dataset, self.bundle),
+            None,
+        )
+        self.assertNotIn(
+            "damage_class", documents.item.get("assets", {})
+        )
+        self.assertNotIn(
+            "damage_class", documents.collection.get("item_assets", {})
+        )
 
     def test_ingestion_source_validates_against_publish_container(
         self,
