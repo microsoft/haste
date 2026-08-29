@@ -126,6 +126,9 @@ param publishingEnabled bool = true
 @description('Register/expose the Planetary Computer publishing provider.')
 param pcProviderEnabled bool = false
 
+@description('Render a damage classification COG + Explorer visualization config on PC publish.')
+param publishExplorerRenderEnabled bool = true
+
 @description('MPC Pro GeoCatalog base URL (no trailing slash). Operator-provisioned.')
 param pcGeocatalogUrl string = ''
 
@@ -331,6 +334,7 @@ module functions 'modules/functions.bicep' = {
     managePools: managePools
     publishingEnabled: publishingEnabled
     pcProviderEnabled: pcProviderEnabled
+    publishExplorerRenderEnabled: publishExplorerRenderEnabled
     pcGeocatalogUrl: pcGeocatalogUrl
     pcExplorerUrl: pcExplorerUrl
     pcIngestionSource: pcIngestionSource
