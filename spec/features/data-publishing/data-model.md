@@ -37,6 +37,14 @@ an array of `PublishedDataset`:
   "datasetId": "uuid",                 // primary key within the array
   "name": "Hurricane Harvey – Layer 1",// user-edited, prefilled '<project> – <layer>'
   "description": "string",             // prefilled from assessment report summary
+  "interactiveViewerUrl": "https://… | null", // optional, editable; PC rel=preview link
+  "imagerySources": ["Vantor"],        // provider attribution; inferred from source type (not editable)
+  "sourceImageryReferences": [         // source-scene provenance (open-data only)
+    { "programId": "vantor-open-data", "href": "https://…/scene.json",
+      "title": "…", "license": "CC-BY-NC-4.0", "attributable": true,
+      "sourceUrl": "https://…/scene.tif | null" } // COG the ref was captured from; UI correlation only, never emitted to STAC
+  ],
+  "sourceImageryCitation": "https://… | text | null", // optional, editable, URL-aware
   "projectId": "uuid",
   "imageLayerId": "string",
   "modelId": "string",                 // source model whose artifacts were published
@@ -152,10 +160,12 @@ Logical mapping from HASTE artifacts to STAC (see
 
 | HASTE artifact | STAC representation | Key fields |
 |---|---|---|
-| Valid-area mask GeoJSON | **Item geometry** (+ `aoi` asset) | union polygon → EPSG:4326 `geometry`/`bbox`; `ai4g:aoi_area_km2` computed; asset `application/geo+json`, roles `[metadata]` |
+| Valid-area mask GeoJSON | **Item geometry** (+ `aoi` asset) | union polygon → EPSG:4326 `geometry`/`bbox`; `haste:aoi_area_km2` computed; asset `application/geo+json`, roles `[metadata]` |
 | Damage GPKG (`predicted_damage_*`) | `buildings` asset on the Item | `application/geopackage+sqlite3`, roles `[data]`, `proj:code` of source CRS |
 | Building footprints GPKG | `buildings` GPKG already carries footprints (or its own asset) | `application/geopackage+sqlite3` |
-| Assessment report | Item `properties` (`ai4g:buildings_total/cloud/clear/damaged`, `…validation_*`) | from `assessmentSummary` |
+| Assessment report | Item `properties` (`haste:buildings_total/cloud/clear/damaged`, `…validation_*`) | from `assessmentSummary` |
+| Imagery source type(s) | STAC `providers` (`licensor`) | inferred from image layer `sourceType*`; canonical map + passthrough; unioned onto the collection |
+| Deployment organization | STAC `providers` (`producer` + `processor`) | `PUBLISHING_ORGANIZATION_NAME`/`_URL`; omitted when unset |
 | Project (≈ event) | STAC Collection | `id=haste-<projectSlug>`, `extent`, `providers`, `keywords`, `summaries`, `item_assets`, `stac_extensions:[item-assets/v1.0.0]` |
 | Item | `stac_extensions:[projection/v2.0.0]`, `collection=<id>` | id sanitized (no `-_+().`) |
 

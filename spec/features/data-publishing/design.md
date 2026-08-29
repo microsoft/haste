@@ -336,17 +336,32 @@ per event**; a HASTE project maps to one event → `id` derived from the project
 assessment response.
 - **Geometry = the valid-area mask polygon** (the region actually assessed),
   read via `geopandas`, unioned, reprojected to EPSG:4326; `bbox` and
-  `ai4g:aoi_area_km2` computed from it (better than a raster footprint for damage
+  `haste:aoi_area_km2` computed from it (better than a raster footprint for damage
   products).
 - **Assets:** `buildings` — damage GeoPackage (`application/geopackage+sqlite3`,
   roles `[data]`, `proj:code` of the source CRS); `aoi` — valid mask GeoJSON
   (`application/geo+json`, roles `[metadata]`). Only the analyst-**selected**
   artifacts become assets.
 - **Properties:** `title`, `description`, `datetime`, `license`, `proj:code`, and
-  HASTE stats under an `ai4g:`-style prefix (`buildings_total`, `buildings_cloud`,
-  `buildings_clear`, `buildings_damaged`, `damaged_pct_of_clear`), plus
-  `…validation_*` (precision/recall/extrapolated) from the assessment report and
-  `…merge_*` for merged products — sourced from `assessmentSummary`.
+  HASTE stats under the tool-neutral `haste:` prefix (`buildings_total`,
+  `buildings_cloud`, `buildings_clear`, `buildings_damaged`,
+  `damaged_pct_of_clear`), plus `…validation_*` (precision/recall/extrapolated)
+  from the assessment report and `…merge_*` for merged products — sourced from
+  `assessmentSummary`. The prefix is a single constant (`PROPERTY_PREFIX` in
+  `stac.py`) so it can be changed in one place.
+- **Providers:** a STAC `providers` list layers attribution — the imagery
+  source(s) as `licensor` (inferred from the image layer's `sourceType*` via a
+  small canonical map, unknown types passed through, non-vendor placeholders
+  like `n/a`/`rgb/no_processing` dropped), and the deployment's operating
+  organization as `producer` + `processor` (from
+  `PUBLISHING_ORGANIZATION_NAME`/`_URL`; omitted when unset). Present on the item
+  (per-dataset) and unioned onto the collection. The imagery sources are
+  **inferred** and not user-editable; per-dataset attribution the operator wants
+  to surface is captured instead as a free-text `sourceImageryCitation` through
+  the Edit-metadata form. Editing a dataset re-emits the item `providers` (and
+  citation) and recomputes the collection union; unpublish likewise re-unions
+  the collection from the datasets that remain (`stac.py` helpers
+  `refresh_collection_after_edit` / `rebuild_collection_after_removal`).
 - `stac_extensions: [projection/v2.0.0]`; `item["collection"] = collection_id`;
   **item id sanitized** to the GeoCatalog charset (no `-_+().`).
 

@@ -8,13 +8,18 @@ import {
   DialogSurface,
   DialogTitle,
   Divider,
+  Field,
+  Input,
   Link,
   Menu,
   MenuItem,
   MenuList,
   MenuPopover,
   MenuTrigger,
+  MessageBar,
+  MessageBarBody,
   Text,
+  Textarea,
   Tooltip,
 } from "@fluentui/react-components";
 import PropTypes from "prop-types";
@@ -27,12 +32,22 @@ import { toBrowserStorageUrl } from "../util/blobUrl";
 import { limitTextLength } from "../util/conversion";
 import { fileDownload } from "../util/file";
 import { FluentIcon } from "../util/icons";
-import { getPublishingStatusDisplay } from "../util/publishing";
+import {
+  getPublishingStatusDisplay,
+  summarizeSourceImagery,
+} from "../util/publishing";
 
 const PublishedDatasetRow = ({ item, index, onRefresh }) => {
   const { appParams, setDialog, setIsLoading } = useContext(AppContext);
   const navigate = useNavigate();
   const [showDetails, setShowDetails] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editViewer, setEditViewer] = useState("");
+  const [editSourceCitation, setEditSourceCitation] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState("");
   const preds = item.assessmentSummary?.predictions;
   const status = getPublishingStatusDisplay(item.status);
 
@@ -80,6 +95,38 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
       setDialog("Download failed", error.message);
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  function openMetadata(edit) {
+    setEditName(item.name || "");
+    setEditDescription(item.description || "");
+    setEditViewer(item.interactiveViewerUrl || "");
+    setEditSourceCitation(item.sourceImageryCitation || "");
+    setEditError("");
+    setEditing(!!edit);
+    setShowDetails(true);
+  }
+
+  async function saveMetadata() {
+    setSaving(true);
+    setEditError("");
+    try {
+      await apiPut("PutUpdatePublishedDataset", {
+        projectId: item.projectId,
+        datasetId: item.datasetId,
+        name: editName.trim(),
+        description: editDescription.trim(),
+        interactiveViewerUrl: editViewer.trim() || null,
+        sourceImageryCitation: editSourceCitation.trim() || null,
+      });
+      setEditing(false);
+      setShowDetails(false);
+      await onRefresh();
+    } catch (error) {
+      setEditError(error.message || "Unable to save changes.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -135,13 +182,69 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
     );
   }
 
+  async function handleForceRemove() {
+    setDialog();
+    setIsLoading(true, "Removing dataset...");
+    try {
+      await apiDelete(
+        `ForceRemovePublishedDataset?projectId=${encodeURIComponent(item.projectId)}` +
+          `&datasetId=${encodeURIComponent(item.datasetId)}`,
+      );
+      await onRefresh();
+    } catch (error) {
+      setDialog("Force remove failed", error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function confirmForceRemove() {
+    const orphanWarning =
+      item.target === "planetary_computer"
+        ? " Any collection or item already created in Planetary Computer may " +
+          "remain and must be deleted manually in the catalog."
+        : "";
+    setDialog(
+      "Force remove dataset",
+      `Remove “${item.name}” from HASTE without waiting for cleanup to ` +
+        `succeed?${orphanWarning}`,
+      [
+        {
+          type: "primary",
+          key: "force-remove",
+          text: "Force remove",
+          onClick: handleForceRemove,
+        },
+        {
+          type: "default",
+          key: "cancel",
+          text: "Cancel",
+          onClick: () => setDialog(),
+        },
+      ],
+    );
+  }
+
   const menuItems = [];
   menuItems.push({
     key: "details",
     text: "View details",
     icon: "Info",
-    onClick: () => setShowDetails(true),
+    onClick: () => openMetadata(false),
   });
+  // Editing is only safe once the operation has settled; an in-progress edit
+  // could diverge the stored record from a STAC item created mid-flight.
+  const canEditMetadata = ["PUBLISHED", "FAILED", "UNPUBLISH_FAILED"].includes(
+    item.status,
+  );
+  if (canManage && canEditMetadata) {
+    menuItems.push({
+      key: "edit",
+      text: "Edit metadata",
+      icon: "Edit",
+      onClick: () => openMetadata(true),
+    });
+  }
   if (item.status === "PUBLISHED" && item.target === "local") {
     for (const artifact of item.artifacts || []) {
       menuItems.push({
@@ -176,6 +279,12 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
       text: "Retry",
       icon: "Redo",
       onClick: handleRetry,
+    });
+    menuItems.push({
+      key: "force-remove",
+      text: "Force remove",
+      icon: "Delete",
+      onClick: confirmForceRemove,
     });
   }
   if (
@@ -288,23 +397,170 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
           <Dialog
             open
             onOpenChange={(_, data) => {
-              if (!data.open) setShowDetails(false);
+              if (!data.open) {
+                setShowDetails(false);
+                setEditing(false);
+              }
             }}
           >
             <DialogSurface aria-describedby={undefined}>
               <DialogBody>
-                <DialogTitle>{item.name}</DialogTitle>
+                <DialogTitle>
+                  {editing ? "Edit metadata" : item.name}
+                </DialogTitle>
                 <DialogContent>
-                  {item.description && (
-                    <p
+                  {editing ? (
+                    <div
                       style={{
-                        marginTop: 0,
-                        whiteSpace: "pre-wrap",
-                        lineHeight: 1.4,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 12,
+                        margin: "4px 0 12px",
                       }}
                     >
-                      {item.description}
-                    </p>
+                      {editError && (
+                        <MessageBar intent="error">
+                          <MessageBarBody>{editError}</MessageBarBody>
+                        </MessageBar>
+                      )}
+                      <Field label="Dataset name" required>
+                        <Input
+                          value={editName}
+                          onChange={(_, d) => setEditName(d.value)}
+                          disabled={saving}
+                        />
+                      </Field>
+                      <Field label="Description">
+                        <Textarea
+                          value={editDescription}
+                          resize="vertical"
+                          onChange={(_, d) => setEditDescription(d.value)}
+                          disabled={saving}
+                        />
+                      </Field>
+                      <Field
+                        label="Interactive viewer URL"
+                        hint="Optional https link shown as a preview."
+                      >
+                        <Input
+                          type="url"
+                          placeholder="https://…"
+                          value={editViewer}
+                          onChange={(_, d) => setEditViewer(d.value)}
+                          disabled={saving}
+                        />
+                      </Field>
+                      <Field
+                        label="Source imagery citation"
+                        hint="Optional. A URL becomes a provenance link; plain text a citation. Open-data sources below are auto-linked."
+                      >
+                        {summarizeSourceImagery(
+                          item.sourceImageryReferences
+                        ).map((program) => (
+                          <div key={program.program} style={{ marginBottom: 4 }}>
+                            <Text size={200} block>
+                              {program.program}
+                              {program.license ? ` · ${program.license}` : ""}{" "}
+                              (from open data)
+                            </Text>
+                            {program.scenes.map((scene) => (
+                              <Link
+                                key={scene.href}
+                                href={scene.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ display: "block", fontSize: 12 }}
+                              >
+                                {scene.title}
+                              </Link>
+                            ))}
+                          </div>
+                        ))}
+                        <Input
+                          placeholder="https://… or a citation"
+                          value={editSourceCitation}
+                          onChange={(_, d) => setEditSourceCitation(d.value)}
+                          disabled={saving}
+                        />
+                      </Field>
+                    </div>
+                  ) : (
+                    <>
+                      {item.description && (
+                        <p
+                          style={{
+                            marginTop: 0,
+                            whiteSpace: "pre-wrap",
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          {item.description}
+                        </p>
+                      )}
+                      {item.interactiveViewerUrl && (
+                        <p style={{ marginTop: 0 }}>
+                          <Link
+                            href={item.interactiveViewerUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            Open interactive viewer
+                          </Link>
+                        </p>
+                      )}
+                      {(item.sourceImageryReferences?.length > 0 ||
+                        item.sourceImageryCitation) && (
+                        <div style={{ marginTop: 0 }}>
+                          <Text size={200} weight="semibold" block>
+                            Source imagery
+                          </Text>
+                          {summarizeSourceImagery(
+                            item.sourceImageryReferences
+                          ).map((program) => (
+                            <div
+                              key={program.program}
+                              style={{ marginBottom: 4 }}
+                            >
+                              <Text size={200} block>
+                                {program.program}
+                                {program.license
+                                  ? ` · ${program.license}`
+                                  : ""}{" "}
+                                (from open data)
+                              </Text>
+                              {program.scenes.map((scene) => (
+                                <Link
+                                  key={scene.href}
+                                  href={scene.href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ display: "block", fontSize: 12 }}
+                                >
+                                  {scene.title}
+                                </Link>
+                              ))}
+                            </div>
+                          ))}
+                          {item.sourceImageryCitation &&
+                            (item.sourceImageryCitation.startsWith(
+                              "https://"
+                            ) ? (
+                              <Link
+                                href={item.sourceImageryCitation}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ fontSize: 12 }}
+                              >
+                                {item.sourceImageryCitation}
+                              </Link>
+                            ) : (
+                              <Text size={200} block>
+                                {item.sourceImageryCitation}
+                              </Text>
+                            ))}
+                        </div>
+                      )}
+                    </>
                   )}
                   <Divider />
                   <div
@@ -384,12 +640,41 @@ const PublishedDatasetRow = ({ item, index, onRefresh }) => {
                   )}
                 </DialogContent>
                 <DialogActions>
-                  <Button
-                    appearance="secondary"
-                    onClick={() => setShowDetails(false)}
-                  >
-                    Close
-                  </Button>
+                  {editing ? (
+                    <>
+                      <Button
+                        appearance="primary"
+                        onClick={saveMetadata}
+                        disabled={saving || !editName.trim()}
+                      >
+                        {saving ? "Saving…" : "Save"}
+                      </Button>
+                      <Button
+                        appearance="secondary"
+                        onClick={() => setEditing(false)}
+                        disabled={saving}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      {canManage && canEditMetadata && (
+                        <Button
+                          appearance="primary"
+                          onClick={() => openMetadata(true)}
+                        >
+                          Edit
+                        </Button>
+                      )}
+                      <Button
+                        appearance="secondary"
+                        onClick={() => setShowDetails(false)}
+                      >
+                        Close
+                      </Button>
+                    </>
+                  )}
                 </DialogActions>
               </DialogBody>
             </DialogSurface>

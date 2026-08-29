@@ -12,6 +12,7 @@ import {
   Field,
   Input,
   Label,
+  Link,
   MessageBar,
   MessageBarBody,
   Option,
@@ -27,7 +28,10 @@ import { v4 as uuidv4 } from "uuid";
 import { apiGet, apiPut } from "../util/api";
 import { buildAssessmentSummary } from "../util/assessmentSummary";
 import { FluentIcon } from "../util/icons";
-import { selectSupportedArtifacts } from "../util/publishing";
+import {
+  selectSupportedArtifacts,
+  summarizeSourceImagery,
+} from "../util/publishing";
 
 
 const ARTIFACT_LABELS = {
@@ -75,12 +79,6 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     whiteSpace: "nowrap",
   },
-  loading: {
-    minHeight: "180px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
 });
 
 function formatFileSize(bytes) {
@@ -109,6 +107,8 @@ const PublishDatasetModal = ({
   const [providers, setProviders] = useState([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [interactiveViewerUrl, setInteractiveViewerUrl] = useState("");
+  const [sourceImageryCitation, setSourceImageryCitation] = useState("");
   const [target, setTarget] = useState("");
   const [selectedArtifacts, setSelectedArtifacts] = useState([]);
   const [submitting, setSubmitting] = useState(false);
@@ -219,6 +219,8 @@ const PublishDatasetModal = ({
         modelId,
         name: name.trim(),
         description: description.trim(),
+        interactiveViewerUrl: interactiveViewerUrl.trim() || null,
+        sourceImageryCitation: sourceImageryCitation.trim() || null,
         target,
         artifacts: effectiveSelectedArtifacts,
       });
@@ -264,8 +266,13 @@ const PublishDatasetModal = ({
             </DialogTitle>
             <DialogContent className={styles.content}>
               {loading ? (
-                <div className={styles.loading}>
-                  <Spinner label="Loading publishing options" />
+                <div className="app-loading-inline">
+                  <div className="app-loading-card">
+                    <Text className="app-loading-message">
+                      Loading publishing options…
+                    </Text>
+                    <Spinner size="tiny" className="app-loading-spinner" />
+                  </div>
                 </div>
               ) : (
                 <>
@@ -292,6 +299,55 @@ const PublishDatasetModal = ({
                         descriptionTouched.current = true;
                         setDescription(data.value);
                       }}
+                      disabled={submitting}
+                    />
+                  </Field>
+                  <Field
+                    label="Interactive viewer URL"
+                    hint="Optional https link shown as a preview on the dataset."
+                  >
+                    <Input
+                      type="url"
+                      placeholder="https://…"
+                      value={interactiveViewerUrl}
+                      onChange={(_, data) =>
+                        setInteractiveViewerUrl(data.value)
+                      }
+                      disabled={submitting}
+                    />
+                  </Field>
+                  <Field
+                    label="Source imagery"
+                    hint="Open-data sources are auto-linked below. Add an optional citation (a URL becomes a provenance link; plain text a citation)."
+                  >
+                    {summarizeSourceImagery(
+                      options?.sourceImageryReferences
+                    ).map((program) => (
+                      <div key={program.program} style={{ marginBottom: 4 }}>
+                        <Text size={200} block>
+                          {program.program}
+                          {program.license ? ` · ${program.license}` : ""}{" "}
+                          (auto-detected from open data)
+                        </Text>
+                        {program.scenes.map((scene) => (
+                          <Link
+                            key={scene.href}
+                            href={scene.href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ display: "block", fontSize: 12 }}
+                          >
+                            {scene.title}
+                          </Link>
+                        ))}
+                      </div>
+                    ))}
+                    <Input
+                      placeholder="https://… or a citation (optional)"
+                      value={sourceImageryCitation}
+                      onChange={(_, data) =>
+                        setSourceImageryCitation(data.value)
+                      }
                       disabled={submitting}
                     />
                   </Field>
@@ -376,11 +432,16 @@ const PublishDatasetModal = ({
               )}
             </DialogContent>
             <DialogActions>
-              <Button appearance="secondary" onClick={onDismiss} disabled={submitting}>
-                Cancel
-              </Button>
               <Button appearance="primary" type="submit" disabled={!canSubmit}>
                 {submitting ? <Spinner size="tiny" /> : "Publish"}
+              </Button>
+              <Button
+                appearance="secondary"
+                type="button"
+                onClick={onDismiss}
+                disabled={submitting}
+              >
+                Cancel
               </Button>
             </DialogActions>
           </DialogBody>

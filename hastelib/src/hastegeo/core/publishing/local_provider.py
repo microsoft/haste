@@ -79,6 +79,9 @@ class LocalPublishingProvider(PublishingProvider):
             data=dataset.assessmentSummary,
             namespace=prefix.split("/"),
         )
+        # Source-imagery provenance is kept on the dataset record and shown in
+        # the UI; the Local target has no catalog and per-file downloads, so it
+        # is not written as a bundle sidecar.
         return PublishResult(
             artifacts=published_artifacts,
             providerMetadata={"assessmentReportPath": report_path},

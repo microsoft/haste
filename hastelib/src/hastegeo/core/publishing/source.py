@@ -13,6 +13,7 @@ from ..models.publishing import (
 )
 from ..processors.metadata import MetadataProcessor
 from ..utils.metadata import MetadataUtils
+from .open_data import validate_source_refs
 
 
 class PublishingSourceNotFoundError(FileNotFoundError):
@@ -25,6 +26,39 @@ class PublishingSourceNotEligibleError(RuntimeError):
 
 class PublishingArtifactUnavailableError(RuntimeError):
     """Raised when a requested or supporting artifact is unavailable."""
+
+
+# Source-type dropdown values that carry no imagery-provider meaning (the
+# "Unknown" option and bring-your-own placeholders). Excluded from provider
+# attribution so they don't surface as bogus STAC providers.
+_NON_PROVIDER_SOURCE_TYPES = frozenset(
+    {"", "n/a", "na", "none", "unknown", "rgb/no_processing"}
+)
+
+
+def _imagery_sources(image_layer: ImageLayer) -> list:
+    """Distinct imagery source types for provider attribution, in order.
+
+    Pulls the pre/post-event source types (and the legacy ``sourceType``) from
+    the image layer, preserving order and dropping blanks/duplicates and
+    non-provider placeholders (e.g. ``n/a``, ``rgb/no_processing``).
+    """
+    sources: list = []
+    seen = set()
+    for value in (
+        image_layer.sourceTypePreEvent,
+        image_layer.sourceTypePostEvent,
+        image_layer.sourceType,
+    ):
+        if not value:
+            continue
+        normalized = value.strip()
+        key = normalized.lower()
+        if key in _NON_PROVIDER_SOURCE_TYPES or key in seen:
+            continue
+        seen.add(key)
+        sources.append(normalized)
+    return sources
 
 
 ARTIFACT_FIELDS: Dict[ArtifactKind, Tuple[str, str, str]] = {
@@ -409,6 +443,10 @@ class PublishingSourceResolver:
             modelId=model_id,
             modelName=model.name or model_id,
             defaultName=f"{project_name} – {image_layer_name}",
+            imagerySources=_imagery_sources(image_layer),
+            sourceImageryReferences=validate_source_refs(
+                image_layer.sourceImageryReferences
+            ),
             availableArtifacts=available_artifacts,
         )
 

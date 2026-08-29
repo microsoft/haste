@@ -23,6 +23,7 @@ from hastegeo.core.models.projects import (
     Project,
 )
 from hastegeo.core.models.publishing import (
+    PublishMetadataUpdate,
     PublishRequest,
     PublishStatus,
     PublishTarget,
@@ -4805,6 +4806,46 @@ async def PutRetryPublishedDatasetQueueMessage(
 
 
 @app.route(
+    route="PutUpdatePublishedDataset",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutUpdatePublishedDataset(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    caller, auth_error = await _get_active_publishing_caller(req)
+    if auth_error:
+        return auth_error
+    try:
+        body = req.get_json()
+        update = PublishMetadataUpdate(**body)
+        # Only apply the fields the caller actually supplied.
+        fields = {
+            key: getattr(update, key)
+            for key in (
+                "name",
+                "description",
+                "interactiveViewerUrl",
+                "sourceImageryCitation",
+            )
+            if key in body
+        }
+        record = await asyncio.to_thread(
+            _publishing_processor().update_metadata,
+            str(update.projectId),
+            str(update.datasetId),
+            caller["id"],
+            "administrators" in caller["roles"],
+            fields,
+        )
+        return _publishing_json_response(
+            {"publishedDataset": record.model_dump(mode="json")}, 200
+        )
+    except Exception as error:
+        return _publishing_exception_response(error)
+
+
+@app.route(
     route="DeletePublishedDataset",
     auth_level=AUTH_LEVEL,
     methods=["DELETE"],
@@ -4825,6 +4866,38 @@ async def DeletePublishedDataset(req: func.HttpRequest) -> func.HttpResponse:
         )
         return _publishing_json_response(
             {"publishedDataset": record.model_dump(mode="json")}, 202
+        )
+    except Exception as error:
+        return _publishing_exception_response(error)
+
+
+@app.route(
+    route="ForceRemovePublishedDataset",
+    auth_level=AUTH_LEVEL,
+    methods=["DELETE"],
+)
+async def ForceRemovePublishedDataset(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    # Escape hatch for a dataset stuck in a terminal failure state whose
+    # provider cleanup cannot complete: best-effort cleanup, then drop the
+    # tracking record so the row leaves the list. Owner-or-admin gated in the
+    # processor; provider resources may be orphaned (the UI warns the caller).
+    caller, auth_error = await _get_active_publishing_caller(req)
+    if auth_error:
+        return auth_error
+    try:
+        project_id = _require_guid_param(req, "projectId")
+        dataset_id = _require_guid_param(req, "datasetId")
+        record = await asyncio.to_thread(
+            _publishing_processor().force_remove,
+            project_id,
+            dataset_id,
+            caller["id"],
+            "administrators" in caller["roles"],
+        )
+        return _publishing_json_response(
+            {"publishedDataset": record.model_dump(mode="json")}, 200
         )
     except Exception as error:
         return _publishing_exception_response(error)

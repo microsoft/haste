@@ -14,7 +14,7 @@ of API/UI.
 | Add `publishing/base.py` (`PublishingProvider` ABC, `ProviderConfigField`) + `registry.py` | `backend-dev` | models | US-006 | not-started |
 | Implement `publishing/local_provider.py` (copy → `published/{datasetId}/`, links) | `backend-dev` | base, artifact storage | US-003 | not-started |
 | Add `publishing/geocatalog_client.py` (hardened REST client + Entra auth) and `planetary_computer_transport.py` (resumable async-ingestion adapter) | `backend-dev` | — | US-004 | not-started |
-| Implement `publishing/stac.py` (collection + vector item builders; geometry from valid-area mask, `ai4g:` stats) | `gis` | models | US-004 | not-started |
+| Implement `publishing/stac.py` (collection + vector item builders; geometry from valid-area mask, `haste:` stats) | `gis` | models | US-004 | not-started |
 | Add `processors/publishing.py` (`enqueue`, `run`, `ArtifactBundle`) | `backend-dev` | providers, registry | US-001/003 | not-started |
 | Unit tests in `hastelib/tests/core/{models,publishing,processors}/` | `backend-dev` | all above | US-001/003/006 | not-started |
 

@@ -90,6 +90,7 @@ ALLOWLIST = {
     "AzureWebJobsStorage": "provided by the Functions runtime",
     "WEBSITE_HOSTNAME": "provided by the Functions runtime",
     "FUNCTIONS_WORKER_RUNTIME": "provided by the Functions runtime",
+    "AzureFunctionsWebHost__hostId": "consumed by the Functions host runtime",
     # Deprecated legacy name, still read as a fallback so environments
     # provisioned before the rename keep working. Deliberately not emitted.
     "AZURE_BATCH_REGISTRY_SERVER_URL": "deprecated legacy fallback",

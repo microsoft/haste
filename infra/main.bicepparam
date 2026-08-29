@@ -49,6 +49,21 @@ param managePools = bool(readEnvironmentVariable('HASTE_BATCH_MANAGE_POOLS', 'tr
 // HASTE_PUBLISHING_ENABLED=false to disable.
 param publishingEnabled = bool(readEnvironmentVariable('HASTE_PUBLISHING_ENABLED', 'true'))
 
+// Planetary Computer publishing target. Provisioned/owned by the operator; the
+// GeoCatalog is external to this template. Default off / unset.
+param pcProviderEnabled = bool(readEnvironmentVariable('HASTE_PC_PROVIDER_ENABLED', 'false'))
+param pcGeocatalogUrl = readEnvironmentVariable('HASTE_PC_GEOCATALOG_URL', '')
+param pcExplorerUrl = readEnvironmentVariable('HASTE_PC_EXPLORER_URL', '')
+param pcIngestionSource = readEnvironmentVariable('HASTE_PC_INGESTION_SOURCE', '')
+param pcCollectionPrefix = readEnvironmentVariable('HASTE_PC_COLLECTION_PREFIX', 'haste-')
+param pcPublishingLicense = readEnvironmentVariable('HASTE_PC_PUBLISHING_LICENSE', 'CC-BY-4.0')
+// STAC processor attribution (the organization operating this deployment).
+param publishingOrganizationName = readEnvironmentVariable('HASTE_PUBLISHING_ORGANIZATION_NAME', '')
+param publishingOrganizationUrl = readEnvironmentVariable('HASTE_PUBLISHING_ORGANIZATION_URL', '')
+param publishStorageAccountUrl = readEnvironmentVariable('HASTE_PUBLISH_STORAGE_ACCOUNT_URL', '')
+param publishBlobContainer = readEnvironmentVariable('HASTE_PUBLISH_BLOB_CONTAINER', '')
+param pcGeoCatalogIngestPrincipalId = readEnvironmentVariable('HASTE_PC_GEOCATALOG_INGEST_PRINCIPAL_ID', '')
+
 // Shared hub batch-subnet the multi-tenant pools live in; this env's storage
 // allowlists it so those pools can reach its blobs. Empty for single-tenant prod.
 param sharedBatchSubnetId = readEnvironmentVariable('HASTE_SHARED_BATCH_SUBNET_ID', '')

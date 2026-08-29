@@ -32,6 +32,13 @@ class PublishingProvider(ABC):
         """Return provider metadata safe for a new operation attempt."""
         return dict(dataset.providerMetadata)
 
+    def update_published_metadata(self, dataset: PublishedDataset) -> None:
+        """Push edited metadata (name/description/viewer) to the live target.
+
+        No-op by default; providers backed by an external catalog override it.
+        """
+        return None
+
     @abstractmethod
     def start_publish(
         self, dataset: PublishedDataset, source: ArtifactBundle

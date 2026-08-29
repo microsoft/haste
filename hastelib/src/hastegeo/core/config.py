@@ -345,8 +345,28 @@ class Config:
                 "PC_COLLECTION_PREFIX", "haste-"
             ),
             "pc_explorer_url": os.getenv("PC_EXPLORER_URL", ""),
+            "pc_publishing_license": os.getenv(
+                "PC_PUBLISHING_LICENSE", "CC-BY-4.0"
+            ),
+            # Attribution: the organization operating this deployment, recorded
+            # as the STAC "processor" provider on published datasets. Empty =
+            # omit the provider (no default org for the open-source build).
+            "publishing_organization_name": os.getenv(
+                "PUBLISHING_ORGANIZATION_NAME", ""
+            ),
+            "publishing_organization_url": os.getenv(
+                "PUBLISHING_ORGANIZATION_URL", ""
+            ),
+            # Network-reachable container the GeoCatalog ingests from. When set,
+            # the PC provider copies published assets here (out of the
+            # firewalled data store) and points STAC hrefs at it. Empty =
+            # reference assets in place from the primary artifact store.
+            "publish_storage_account_url": os.getenv(
+                "PUBLISH_STORAGE_ACCOUNT_URL", ""
+            ),
+            "publish_blob_container": os.getenv("PUBLISH_BLOB_CONTAINER", ""),
             "pc_verify_attempts": _get_bounded_int_env(
-                "PC_VERIFY_ATTEMPTS", 5, 1, 20
+                "PC_VERIFY_ATTEMPTS", 20, 1, 60
             ),
             "lease_connection_string": os.getenv("AzureWebJobsStorage"),
             "lease_account_url": os.getenv("BLOB_ACCOUNT_URL"),

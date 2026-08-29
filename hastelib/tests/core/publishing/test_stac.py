@@ -1,0 +1,979 @@
+import unittest
+import uuid
+
+from hastegeo.core.models.publishing import (
+    ArtifactBundle,
+    PublishedDataset,
+    SourceArtifact,
+    SourceImageryRef,
+)
+from hastegeo.core.publishing.stac import (
+    ASSET_KEY_MAX_LENGTH,
+    COLLECTION_ID_MAX_LENGTH,
+    ITEM_ID_MAX_LENGTH,
+    STAC_VERSION,
+    build_collection_id,
+    build_stac_objects,
+    resolve_valid_mask_geometry,
+    sanitize_asset_key,
+    sanitize_collection_id,
+    sanitize_item_id,
+    serialize_stac_objects,
+    validate_stac_objects,
+)
+
+
+class TestStacIdentifiers(unittest.TestCase):
+    def test_identifier_rules_preserve_documented_punctuation(self) -> None:
+        self.assertEqual(
+            sanitize_collection_id("haste-Project_1.v2 / draft"),
+            "haste-Project_1.v2-draft",
+        )
+        self.assertEqual(
+            sanitize_item_id("response_(v2)+final,ok / 1"),
+            "response_(v2)+final,ok-1",
+        )
+        self.assertEqual(
+            sanitize_asset_key("damage_(merged)+v2.gpkg"),
+            "damage_(merged)+v2.gpkg",
+        )
+        self.assertEqual(sanitize_item_id("valid."), "valid.")
+
+    def test_identifier_rules_enforce_geocatalog_lengths(self) -> None:
+        self.assertEqual(
+            len(sanitize_collection_id("a" * 300)),
+            COLLECTION_ID_MAX_LENGTH,
+        )
+        self.assertEqual(len(sanitize_item_id("a" * 300)), ITEM_ID_MAX_LENGTH)
+        self.assertEqual(
+            len(sanitize_asset_key("a" * 300)),
+            ASSET_KEY_MAX_LENGTH,
+        )
+
+    def test_identifier_rules_reject_unicode_only_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "letter or digit"):
+            sanitize_collection_id("災害")
+
+
+class TestValidMaskGeometry(unittest.TestCase):
+    def test_resolves_union_bbox_and_area_in_wgs84(self) -> None:
+        valid_mask = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]
+                        ],
+                    },
+                },
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [[2, 0], [3, 0], [3, 1], [2, 1], [2, 0]]
+                        ],
+                    },
+                },
+            ],
+        }
+
+        result = resolve_valid_mask_geometry(valid_mask)
+
+        self.assertEqual(result.geometry["type"], "MultiPolygon")
+        self.assertEqual(result.bbox, [0.0, 0.0, 3.0, 1.0])
+        self.assertAlmostEqual(
+            result.area_square_kilometers,
+            24616.93,
+            delta=25,
+        )
+
+    def test_reprojects_projected_mask_to_wgs84(self) -> None:
+        valid_mask = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [0, 0],
+                                [111319.49, 0],
+                                [111319.49, 111325.14],
+                                [0, 111325.14],
+                                [0, 0],
+                            ]
+                        ],
+                    },
+                }
+            ],
+        }
+
+        result = resolve_valid_mask_geometry(valid_mask, "EPSG:3857")
+
+        self.assertAlmostEqual(result.bbox[0], 0, places=5)
+        self.assertAlmostEqual(result.bbox[1], 0, places=5)
+        self.assertAlmostEqual(result.bbox[2], 1, places=5)
+        self.assertAlmostEqual(result.bbox[3], 1, places=5)
+
+    def test_rejects_wgs84_coordinates_outside_world_bounds(self) -> None:
+        valid_mask = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [[200, 0], [201, 0], [201, 1], [200, 1], [200, 0]]
+                        ],
+                    },
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(ValueError, "within EPSG:4326"):
+            resolve_valid_mask_geometry(valid_mask)
+
+    def test_rejects_non_polygon_geometry(self) -> None:
+        valid_mask = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {"type": "Point", "coordinates": [0, 0]},
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(ValueError, "polygon"):
+            resolve_valid_mask_geometry(valid_mask)
+
+
+class TestStacObjects(unittest.TestCase):
+    def setUp(self) -> None:
+        self.dataset = PublishedDataset(
+            datasetId=uuid.UUID("11111111-1111-4111-8111-111111111111"),
+            requestId=uuid.UUID("22222222-2222-4222-8222-222222222222"),
+            requestFingerprint="a" * 64,
+            name="Caracas damage assessment",
+            description="Post-event building damage predictions",
+            projectId=uuid.UUID("33333333-3333-4333-8333-333333333333"),
+            projectName="Venezuela Earthquake / Caracas",
+            imageLayerId="layer-1",
+            imageLayerName="Post-event",
+            modelId="42",
+            modelName="Damage model",
+            target="planetary_computer",
+            status="IN_PROGRESS",
+            publishedByUser="publisher",
+            createdDate="2026-08-07T00:00:00Z",
+            updatedDate="2026-08-07T01:00:00Z",
+            assessmentSummary={
+                "predictions": {
+                    "total": 100,
+                    "knownNonCloudy": 90,
+                    "cloudy": 10,
+                    "predictedDamaged": 18,
+                    "predictedDamagedPctOfKnown": 20.0,
+                },
+                "metrics": {"precision": 0.8, "recall": 0.75},
+                "populationEstimate": {
+                    "estimatedDamaged": 19.2,
+                    "ciLower": 15.0,
+                    "ciUpper": 24.0,
+                },
+            },
+        )
+        self.damage = SourceArtifact(
+            kind="gpkg",
+            sourcePath="source/damage.gpkg",
+            mediaType="application/geopackage+sqlite3",
+            sizeBytes=100,
+            sourceEtag="damage-etag",
+        )
+        self.footprints = SourceArtifact(
+            kind="footprints",
+            sourcePath="source/footprints.gpkg",
+            mediaType="application/geopackage+sqlite3",
+            sizeBytes=200,
+            sourceEtag="footprints-etag",
+        )
+        self.mask = SourceArtifact(
+            kind="valid_mask",
+            sourcePath="source/mask.geojson",
+            mediaType="application/geo+json",
+            sizeBytes=300,
+            sourceEtag="mask-etag",
+        )
+        self.valid_mask = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [-67.1, 10.4],
+                                [-67.0, 10.4],
+                                [-67.0, 10.5],
+                                [-67.1, 10.5],
+                                [-67.1, 10.4],
+                            ]
+                        ],
+                    },
+                }
+            ],
+        }
+        self.hrefs = {
+            self.damage.sourcePath: "https://storage.test/damage.gpkg",
+            self.footprints.sourcePath: (
+                "https://storage.test/footprints.gpkg"
+            ),
+            self.mask.sourcePath: "https://storage.test/mask.geojson",
+        }
+        self.projections = {
+            self.damage.sourcePath: "EPSG:4326",
+            self.footprints.sourcePath: "EPSG:4326",
+        }
+        self.collection_href = (
+            "https://catalog.test/stac/collections/"
+            "haste-33333333-3333-4333-8333-333333333333"
+        )
+
+    def _build(self, source: ArtifactBundle, **kwargs):
+        return build_stac_objects(
+            self.dataset,
+            source,
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
+            **kwargs,
+        )
+
+    def test_collection_id_is_stable_and_collision_resistant(self) -> None:
+        renamed = self.dataset.model_copy(update={"projectName": "Renamed"})
+        same_name_other_project = self.dataset.model_copy(
+            update={
+                "projectId": uuid.UUID("44444444-4444-4444-8444-444444444444")
+            }
+        )
+
+        collection_id = build_collection_id(self.dataset)
+
+        self.assertEqual(collection_id, build_collection_id(renamed))
+        self.assertNotEqual(
+            collection_id,
+            build_collection_id(same_name_other_project),
+        )
+        self.assertTrue(collection_id.endswith(str(self.dataset.projectId)))
+
+    def test_builds_collection_and_exact_selected_assets(self) -> None:
+        objects = self._build(
+            ArtifactBundle(
+                selectedArtifacts=[self.damage, self.footprints],
+                supportingArtifacts=[self.mask],
+            )
+        )
+
+        validate_stac_objects(objects)
+        documents = serialize_stac_objects(objects)
+        item = documents.item
+        collection = documents.collection
+
+        self.assertEqual(collection["stac_version"], STAC_VERSION)
+        self.assertEqual(item["stac_version"], STAC_VERSION)
+        self.assertEqual(
+            collection["id"],
+            "haste-33333333-3333-4333-8333-333333333333",
+        )
+        self.assertEqual(item["id"], "11111111-1111-4111-8111-111111111111")
+        self.assertEqual(set(item["assets"]), {"damage", "footprints"})
+        self.assertEqual(
+            item["assets"]["damage"]["type"],
+            "application/geopackage+sqlite3",
+        )
+        self.assertEqual(item["assets"]["damage"]["roles"], ["data"])
+        self.assertEqual(item["assets"]["damage"]["proj:code"], "EPSG:4326")
+        self.assertEqual(
+            item["assets"]["footprints"]["type"],
+            "application/geopackage+sqlite3",
+        )
+        self.assertEqual(item["assets"]["footprints"]["roles"], ["data"])
+        self.assertEqual(item["properties"]["haste:buildings_total"], 100)
+        self.assertEqual(item["properties"]["haste:buildings_cloud"], 10)
+        self.assertEqual(item["properties"]["haste:buildings_clear"], 90)
+        self.assertEqual(item["properties"]["haste:buildings_damaged"], 18)
+        self.assertEqual(item["properties"]["haste:damaged_pct_of_clear"], 20.0)
+        self.assertEqual(item["properties"]["haste:validation_precision"], 0.8)
+        self.assertEqual(item["properties"]["haste:validation_recall"], 0.75)
+        self.assertEqual(
+            item["properties"]["haste:validation_extrapolated_damaged"],
+            19.2,
+        )
+        self.assertEqual(item["properties"]["haste:validation_ci_lower"], 15.0)
+        self.assertEqual(item["properties"]["haste:validation_ci_upper"], 24.0)
+        self.assertGreater(item["properties"]["haste:aoi_area_km2"], 0)
+
+    def test_interactive_viewer_link_added_when_set(self) -> None:
+        dataset = self.dataset.model_copy(
+            update={"interactiveViewerUrl": "https://viewer.example.com/x"}
+        )
+        objects = build_stac_objects(
+            dataset,
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            ),
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
+        )
+        validate_stac_objects(objects)
+        documents = serialize_stac_objects(objects)
+
+        preview = [
+            link
+            for link in documents.item["links"]
+            if link.get("rel") == "preview"
+        ]
+        self.assertEqual(len(preview), 1)
+        self.assertEqual(preview[0]["href"], "https://viewer.example.com/x")
+        self.assertEqual(preview[0]["type"], "text/html")
+        # No image thumbnail on the item or the collection.
+        self.assertNotIn("thumbnail", documents.item.get("assets") or {})
+        self.assertNotIn("thumbnail", documents.collection.get("assets") or {})
+
+    def test_providers_map_imagery_source_and_organization(self) -> None:
+        dataset = self.dataset.model_copy(
+            update={"imagerySources": ["Maxar WorldView-3", "Sentinel-2"]}
+        )
+        objects = build_stac_objects(
+            dataset,
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            ),
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
+            organization={
+                "name": "Acme Relief",
+                "url": "https://acme.example.org",
+            },
+        )
+        validate_stac_objects(objects)
+        documents = serialize_stac_objects(objects)
+
+        for providers in (
+            documents.item["properties"]["providers"],
+            documents.collection["providers"],
+        ):
+            by_name = {p["name"]: p for p in providers}
+            # "Maxar WorldView-3" (legacy stored sourceType) canonicalizes to
+            # the Vantor provider; Sentinel-2 to the ESA/Copernicus provider.
+            self.assertIn("Vantor", by_name)
+            self.assertEqual(by_name["Vantor"]["url"], "https://vantor.com")
+            # Imagery vendors only license the source, not the derived output.
+            self.assertEqual(by_name["Vantor"]["roles"], ["licensor"])
+            self.assertIn("European Space Agency (Copernicus)", by_name)
+            # The deployment organization produced + processed the output.
+            self.assertIn("Acme Relief", by_name)
+            self.assertEqual(
+                sorted(by_name["Acme Relief"]["roles"]),
+                ["processor", "producer"],
+            )
+
+    def test_unknown_imagery_source_passes_through_without_url(self) -> None:
+        dataset = self.dataset.model_copy(
+            update={"imagerySources": ["Acme Aerial Survey"]}
+        )
+        objects = build_stac_objects(
+            dataset,
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            ),
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
+        )
+        documents = serialize_stac_objects(objects)
+        providers = documents.item["properties"]["providers"]
+        by_name = {p["name"]: p for p in providers}
+        self.assertIn("Acme Aerial Survey", by_name)
+        self.assertNotIn("url", by_name["Acme Aerial Survey"])
+        self.assertEqual(by_name["Acme Aerial Survey"]["roles"], ["licensor"])
+
+    def test_no_providers_emitted_when_no_imagery_or_org(self) -> None:
+        objects = self._build(
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            ),
+        )
+        documents = serialize_stac_objects(objects)
+        self.assertNotIn("providers", documents.item["properties"])
+        self.assertNotIn("providers", documents.collection)
+
+    def test_refresh_collection_after_edit_resyncs_imagery(self) -> None:
+        from hastegeo.core.publishing.stac import (
+            refresh_collection_after_edit,
+        )
+
+        existing = {
+            "id": "haste-x",
+            "description": "old",
+            "providers": [{"name": "Vantor"}],
+            "haste:datasets": [
+                {
+                    "id": str(self.dataset.datasetId),
+                    "name": "old",
+                    "imagery": ["WorldView-3"],
+                },
+                {"id": "other", "name": "Other", "imagery": ["Planet"]},
+            ],
+        }
+        edited = self.dataset.model_copy(
+            update={"name": "New name", "imagerySources": ["Sentinel-2"]}
+        )
+
+        updated = refresh_collection_after_edit(existing, edited)
+
+        entry = next(
+            e
+            for e in updated["haste:datasets"]
+            if e["id"] == str(self.dataset.datasetId)
+        )
+        self.assertEqual(entry["name"], "New name")
+        self.assertEqual(entry["imagery"], ["Sentinel-2"])
+        # Union across both datasets: this one's new source + the other's Planet.
+        names = {p["name"] for p in updated["providers"]}
+        self.assertEqual(
+            names, {"European Space Agency (Copernicus)", "Planet Labs PBC"}
+        )
+
+    def test_refresh_collection_after_edit_clears_imagery(self) -> None:
+        from hastegeo.core.publishing.stac import (
+            refresh_collection_after_edit,
+        )
+
+        existing = {
+            "id": "haste-x",
+            "providers": [{"name": "Vantor"}],
+            "haste:datasets": [
+                {
+                    "id": str(self.dataset.datasetId),
+                    "name": "old",
+                    "imagery": ["WorldView-3"],
+                }
+            ],
+        }
+        edited = self.dataset.model_copy(update={"imagerySources": []})
+
+        updated = refresh_collection_after_edit(existing, edited)
+
+        self.assertNotIn("imagery", updated["haste:datasets"][0])
+        self.assertNotIn("providers", updated)
+
+    def test_rebuild_collection_after_removal_reunions_providers(self) -> None:
+        from hastegeo.core.publishing.stac import (
+            rebuild_collection_after_removal,
+        )
+
+        existing = {
+            "id": "haste-x",
+            "providers": [{"name": "Vantor"}, {"name": "Planet Labs PBC"}],
+            "haste:datasets": [
+                {
+                    "id": str(self.dataset.datasetId),
+                    "name": "gone",
+                    "imagery": ["WorldView-3"],
+                },
+                {"id": "keep", "name": "Keep", "imagery": ["Planet"]},
+            ],
+        }
+
+        updated = rebuild_collection_after_removal(existing, self.dataset)
+
+        self.assertEqual(
+            [e["id"] for e in updated["haste:datasets"]], ["keep"]
+        )
+        # The removed dataset's Vantor source drops out; Planet remains.
+        names = {p["name"] for p in updated["providers"]}
+        self.assertEqual(names, {"Planet Labs PBC"})
+
+    def test_rebuild_collection_after_removal_clears_last_providers(
+        self,
+    ) -> None:
+        from hastegeo.core.publishing.stac import (
+            rebuild_collection_after_removal,
+        )
+
+        existing = {
+            "id": "haste-x",
+            "providers": [{"name": "Vantor"}],
+            "haste:datasets": [
+                {
+                    "id": str(self.dataset.datasetId),
+                    "name": "gone",
+                    "imagery": ["WorldView-3"],
+                }
+            ],
+        }
+
+        updated = rebuild_collection_after_removal(existing, self.dataset)
+
+        self.assertEqual(updated["haste:datasets"], [])
+        self.assertNotIn("providers", updated)
+
+    def _build_with(self, **dataset_updates):
+        dataset = self.dataset.model_copy(update=dataset_updates)
+        objects = build_stac_objects(
+            dataset,
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            ),
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
+        )
+        return objects, serialize_stac_objects(objects).item
+
+    def test_source_imagery_derived_from_links_and_property(self) -> None:
+        objects, item = self._build_with(
+            sourceImageryReferences=[
+                SourceImageryRef(
+                    programId="vantor-open-data",
+                    href="https://a.example/1.json",
+                    title="Scene A",
+                ),
+                SourceImageryRef(
+                    programId="vantor-open-data",
+                    href="https://a.example/2.json",
+                    title="Scene B",
+                ),
+                SourceImageryRef(
+                    programId="planet-open-data",
+                    href="https://a.example/3.json",
+                    title="Scene C",
+                ),
+                SourceImageryRef(  # unregistered -> dropped
+                    programId="commercial-vendor",
+                    href="https://a.example/4.json",
+                ),
+            ]
+        )
+        validate_stac_objects(objects)  # derived_from links stay STAC-valid
+
+        derived = [
+            link
+            for link in item["links"]
+            if link.get("rel") == "derived_from"
+        ]
+        self.assertEqual(
+            {link["href"] for link in derived},
+            {
+                "https://a.example/1.json",
+                "https://a.example/2.json",
+                "https://a.example/3.json",
+            },
+        )
+        prop = item["properties"]["haste:source_imagery"]
+        self.assertEqual(len(prop), 2)  # deduped by program
+        # The property carries the fully-qualified source scene URLs.
+        self.assertEqual(sorted(len(p["scenes"]) for p in prop), [1, 2])
+        all_scene_hrefs = {
+            scene["href"] for p in prop for scene in p["scenes"]
+        }
+        self.assertEqual(
+            all_scene_hrefs,
+            {
+                "https://a.example/1.json",
+                "https://a.example/2.json",
+                "https://a.example/3.json",
+            },
+        )
+        self.assertTrue(all(p["license"] == "CC-BY-NC-4.0" for p in prop))
+
+    def test_source_imagery_citation_url_adds_link(self) -> None:
+        _, item = self._build_with(
+            sourceImageryCitation="https://example.org/src"
+        )
+        self.assertEqual(
+            item["properties"]["haste:source_imagery_citation"],
+            "https://example.org/src",
+        )
+        html_links = [
+            link
+            for link in item["links"]
+            if link.get("rel") == "derived_from"
+            and link.get("type") == "text/html"
+        ]
+        self.assertEqual(len(html_links), 1)
+        self.assertEqual(html_links[0]["href"], "https://example.org/src")
+
+    def test_source_imagery_citation_text_is_property_only(self) -> None:
+        _, item = self._build_with(
+            sourceImageryCitation="Imagery courtesy of Foo"
+        )
+        self.assertEqual(
+            item["properties"]["haste:source_imagery_citation"],
+            "Imagery courtesy of Foo",
+        )
+        html_links = [
+            link
+            for link in item["links"]
+            if link.get("rel") == "derived_from"
+        ]
+        self.assertEqual(html_links, [])
+
+    def test_no_source_imagery_when_absent(self) -> None:
+        _, item = self._build_with()
+        self.assertNotIn("haste:source_imagery", item["properties"])
+        self.assertNotIn(
+            "haste:source_imagery_citation", item["properties"]
+        )
+        self.assertFalse(
+            [l for l in item["links"] if l.get("rel") == "derived_from"]
+        )
+
+    def test_no_preview_link_without_a_viewer_url(self) -> None:
+        objects = self._build(
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            )
+        )
+        documents = serialize_stac_objects(objects)
+        preview = [
+            link
+            for link in (documents.item.get("links") or [])
+            if link.get("rel") == "preview"
+        ]
+        self.assertFalse(preview)
+        self.assertNotIn("thumbnail", documents.item.get("assets") or {})
+
+    def test_collection_description_is_a_rolling_dataset_summary(
+        self,
+    ) -> None:
+        first = self._build(
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            )
+        )
+        first_collection = serialize_stac_objects(first).collection
+
+        self.assertIn(
+            "1 published dataset.", first_collection["description"]
+        )
+        self.assertIn(
+            "Caracas damage assessment", first_collection["description"]
+        )
+        self.assertIn(
+            "18 of 100 buildings assessed as damaged",
+            first_collection["description"],
+        )
+        entries = first_collection["haste:datasets"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["id"], str(self.dataset.datasetId))
+        self.assertEqual(entries[0]["buildings_damaged"], 18)
+        self.assertEqual(entries[0]["buildings_total"], 100)
+
+        second_dataset = self.dataset.model_copy(
+            update={
+                "datasetId": uuid.UUID(
+                    "55555555-5555-4555-8555-555555555555"
+                ),
+                "name": "Second layer assessment",
+            }
+        )
+        second = build_stac_objects(
+            second_dataset,
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            ),
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
+            existing_collection=first_collection,
+        )
+        second_collection = serialize_stac_objects(second).collection
+
+        self.assertIn(
+            "2 published datasets.", second_collection["description"]
+        )
+        self.assertIn(
+            "Caracas damage assessment", second_collection["description"]
+        )
+        self.assertIn(
+            "Second layer assessment", second_collection["description"]
+        )
+        self.assertEqual(len(second_collection["haste:datasets"]), 2)
+
+    def test_collection_extent_merges_existing_project_items(self) -> None:
+        existing_collection = {
+            "id": build_collection_id(self.dataset),
+            "summaries": {"haste:project_id": [str(self.dataset.projectId)]},
+            "extent": {
+                "spatial": {"bbox": [[-70, 8, -69, 9]]},
+                "temporal": {
+                    "interval": [
+                        [
+                            "2025-01-01T00:00:00Z",
+                            "2025-02-01T00:00:00Z",
+                        ]
+                    ]
+                },
+            },
+        }
+
+        objects = self._build(
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            ),
+            existing_collection=existing_collection,
+        )
+        extent = serialize_stac_objects(objects).collection["extent"]
+
+        self.assertEqual(
+            extent["spatial"]["bbox"],
+            [[-70.0, 8.0, -67.0, 10.5]],
+        )
+        self.assertEqual(
+            extent["temporal"]["interval"],
+            [["2025-01-01T00:00:00Z", "2026-08-07T00:00:00Z"]],
+        )
+
+    def test_collection_extent_rejects_reversed_interval(self) -> None:
+        existing_collection = {
+            "id": build_collection_id(self.dataset),
+            "summaries": {"haste:project_id": [str(self.dataset.projectId)]},
+            "extent": {
+                "spatial": {"bbox": [[-70, 8, -69, 9]]},
+                "temporal": {
+                    "interval": [
+                        [
+                            "2025-02-01T00:00:00Z",
+                            "2025-01-01T00:00:00Z",
+                        ]
+                    ]
+                },
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, "interval"):
+            self._build(
+                ArtifactBundle(
+                    selectedArtifacts=[self.damage],
+                    supportingArtifacts=[self.mask],
+                ),
+                existing_collection=existing_collection,
+            )
+
+    def test_collection_extent_requires_matching_project_provenance(
+        self,
+    ) -> None:
+        source = ArtifactBundle(
+            selectedArtifacts=[self.damage],
+            supportingArtifacts=[self.mask],
+        )
+        base_collection = {
+            "id": build_collection_id(self.dataset),
+            "extent": {
+                "spatial": {"bbox": [[-70, 8, -69, 9]]},
+                "temporal": {
+                    "interval": [
+                        [
+                            "2025-01-01T00:00:00Z",
+                            "2025-02-01T00:00:00Z",
+                        ]
+                    ]
+                },
+            },
+        }
+        for project_ids in (
+            None,
+            ["44444444-4444-4444-8444-444444444444"],
+        ):
+            existing_collection = dict(base_collection)
+            if project_ids is not None:
+                existing_collection["summaries"] = {
+                    "haste:project_id": project_ids
+                }
+            with self.subTest(project_ids=project_ids):
+                with self.assertRaisesRegex(ValueError, "provenance"):
+                    self._build(
+                        source,
+                        existing_collection=existing_collection,
+                    )
+
+    def test_item_datetime_is_stable_across_retries(self) -> None:
+        source = ArtifactBundle(
+            selectedArtifacts=[self.damage],
+            supportingArtifacts=[self.mask],
+        )
+        retried = self.dataset.model_copy(
+            update={
+                "updatedDate": "2026-09-01T00:00:00Z",
+                "publishedDate": "2026-09-02T00:00:00Z",
+            }
+        )
+
+        first = self._build(source)
+        retry = build_stac_objects(
+            retried,
+            source,
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
+        )
+
+        self.assertEqual(first.item.datetime, retry.item.datetime)
+        self.assertEqual(
+            serialize_stac_objects(first).item["properties"]["datetime"],
+            "2026-08-07T00:00:00Z",
+        )
+
+    def test_selected_mask_is_exposed_as_aoi_asset(self) -> None:
+        objects = self._build(
+            ArtifactBundle(selectedArtifacts=[self.damage, self.mask])
+        )
+
+        self.assertEqual(set(objects.item.assets), {"damage", "aoi"})
+        self.assertEqual(objects.item.assets["aoi"].roles, ["metadata"])
+        self.assertEqual(
+            objects.item.assets["aoi"].media_type,
+            "application/geo+json",
+        )
+
+    def test_footprints_only_item_uses_footprints_projection(self) -> None:
+        objects = build_stac_objects(
+            self.dataset,
+            ArtifactBundle(
+                selectedArtifacts=[self.footprints],
+                supportingArtifacts=[self.mask],
+            ),
+            self.valid_mask,
+            self.hrefs,
+            {self.footprints.sourcePath: "EPSG:3857"},
+            self.collection_href,
+        )
+        item = serialize_stac_objects(objects).item
+
+        self.assertEqual(item["properties"]["proj:code"], "EPSG:3857")
+        self.assertEqual(
+            item["assets"]["footprints"]["proj:code"], "EPSG:3857"
+        )
+
+    def test_projected_aoi_only_item_uses_source_projection(self) -> None:
+        objects = build_stac_objects(
+            self.dataset,
+            ArtifactBundle(selectedArtifacts=[self.mask]),
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
+            valid_mask_crs="EPSG:3857",
+        )
+        item = serialize_stac_objects(objects).item
+
+        self.assertEqual(item["properties"]["proj:code"], "EPSG:3857")
+        self.assertEqual(item["assets"]["aoi"]["proj:code"], "EPSG:3857")
+
+    def test_rejects_invalid_asset_inputs(self) -> None:
+        source = ArtifactBundle(
+            selectedArtifacts=[self.damage],
+            supportingArtifacts=[self.mask],
+        )
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            build_stac_objects(
+                self.dataset,
+                source,
+                self.valid_mask,
+                {self.damage.sourcePath: "http://storage.test/damage.gpkg"},
+                self.projections,
+                self.collection_href,
+            )
+        with self.assertRaisesRegex(ValueError, "projection"):
+            build_stac_objects(
+                self.dataset,
+                source,
+                self.valid_mask,
+                self.hrefs,
+                {},
+                self.collection_href,
+            )
+        with self.assertRaisesRegex(ValueError, "known EPSG"):
+            build_stac_objects(
+                self.dataset,
+                source,
+                self.valid_mask,
+                self.hrefs,
+                {self.damage.sourcePath: "EPSG:999999"},
+                self.collection_href,
+            )
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            self._build(ArtifactBundle(supportingArtifacts=[self.mask]))
+
+    def test_flat_assessment_summary_is_mapped(self) -> None:
+        dataset = self.dataset.model_copy(
+            update={
+                "assessmentSummary": {
+                    "predictedDamaged": 12,
+                    "precision": 0.7,
+                    "recall": 0.6,
+                    "estimatedDamaged": 15.5,
+                    "ciLower": 10.0,
+                    "ciUpper": 20.0,
+                }
+            }
+        )
+
+        objects = build_stac_objects(
+            dataset,
+            ArtifactBundle(
+                selectedArtifacts=[self.damage],
+                supportingArtifacts=[self.mask],
+            ),
+            self.valid_mask,
+            self.hrefs,
+            self.projections,
+            self.collection_href,
+        )
+        properties = serialize_stac_objects(objects).item["properties"]
+
+        self.assertEqual(properties["haste:buildings_damaged"], 12)
+        self.assertEqual(properties["haste:validation_precision"], 0.7)
+        self.assertEqual(properties["haste:validation_recall"], 0.6)
+        self.assertEqual(
+            properties["haste:validation_extrapolated_damaged"], 15.5
+        )
+        self.assertEqual(properties["haste:validation_ci_lower"], 10.0)
+        self.assertEqual(properties["haste:validation_ci_upper"], 20.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

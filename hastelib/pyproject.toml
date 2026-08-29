@@ -60,6 +60,21 @@ dependencies = [
   "typing-extensions"
 ]
 
+[project.optional-dependencies]
+# Planetary Computer publishing target. Installed only where the PC provider is
+# enabled; uses a vendored REST GeoCatalog client (no azure-planetarycomputer SDK).
+planetary-computer = [
+  "azure-identity>=1.17",
+  "requests>=2.31",
+  # Keep pystac < 1.12: 1.12+ defaults to emitting STAC 1.1.0, but MPC Pro
+  # requires STAC 1.0.0 (stac.py STAC_VERSION).
+  "pystac[validation]==1.11.0",
+  "geopandas>=1.0",
+  "pyogrio>=0.9",
+  "pyproj>=3.6",
+  "shapely>=2.0",
+]
+
 [project.urls]
 Documentation = "https://microsoft.github.io/haste"
 Issues = "https://github.com/microsoft/haste/issues"
