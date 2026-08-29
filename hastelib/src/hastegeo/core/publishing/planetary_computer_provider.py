@@ -1153,6 +1153,7 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
         )
         collection_id, _ = self._ids(dataset)
         self._upload_collection_tile(dataset, source, collection_id)
+        self._ensure_explorer_config(dataset, collection_id)
         metadata = self._stable_metadata(dataset)
         metadata["assetsCopiedToManagedStorage"] = True
         return PublishResult(
@@ -1651,6 +1652,92 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             "title": DAMAGE_CLASS_ASSET_TITLE,
             "roles": ["data"],
         }
+
+    def _damage_render_option(self) -> dict:
+        import json
+        import urllib.parse
+
+        from .raster import (
+            DAMAGE_CLASS_ASSET_KEY,
+            DAMAGE_CLASS_COLORMAP,
+            DAMAGE_CLASS_NODATA,
+        )
+
+        colormap = json.dumps(
+            {str(value): list(rgba) for value, rgba in DAMAGE_CLASS_COLORMAP.items()}
+        )
+        options = urllib.parse.urlencode(
+            {
+                "assets": DAMAGE_CLASS_ASSET_KEY,
+                "nodata": DAMAGE_CLASS_NODATA,
+                "colormap": colormap,
+            }
+        )
+        return {
+            "id": "damage",
+            "name": "Damage classification",
+            "description": (
+                "Predicted building damage (red) over undamaged buildings "
+                "(grey)."
+            ),
+            "type": "raster-tile",
+            "options": options,
+            "minZoom": self._damage_raster_min_zoom,
+        }
+
+    def _ensure_explorer_config(
+        self, dataset: PublishedDataset, collection_id: str
+    ) -> None:
+        """Register the render/mosaic/tile config the Explorer requires.
+
+        Idempotent (create-if-absent; tile-settings is a PUT). Runs only when a
+        damage classification COG was actually staged for this dataset, so the
+        render option always points at a real renderable asset. Best-effort: a
+        failure never fails the publish, it just leaves the collection
+        non-explorable until the next publish.
+        """
+        if not self._explorer_render_enabled:
+            return
+        destination = f"published/{dataset.datasetId}/damage_class.tif"
+        try:
+            if not self.publish_storage.artifact_exists(destination):
+                return
+            render_ids = {
+                option.get("id")
+                for option in self.sdk.get_render_options(collection_id)
+                if isinstance(option, Mapping)
+            }
+            if "damage" not in render_ids:
+                self.sdk.create_render_option(
+                    collection_id, self._damage_render_option()
+                )
+            mosaic_ids = {
+                mosaic.get("id")
+                for mosaic in self.sdk.get_mosaics(collection_id)
+                if isinstance(mosaic, Mapping)
+            }
+            if "most-recent" not in mosaic_ids:
+                self.sdk.create_mosaic(
+                    collection_id,
+                    {
+                        "id": "most-recent",
+                        "name": "Most recent available",
+                        "description": "Show the most recent available data",
+                        "cql": [],
+                    },
+                )
+            self.sdk.replace_tile_settings(
+                collection_id,
+                {
+                    "minZoom": self._damage_raster_min_zoom,
+                    "maxItemsPerTile": 35,
+                },
+            )
+        except Exception as error:
+            self.logger.warning(
+                "Skipping Planetary Computer Explorer configuration: %s",
+                type(error).__name__,
+            )
 
     def finalize_unpublish(self, dataset: PublishedDataset) -> None:
         """Remove staging copies once an unpublish has fully completed.

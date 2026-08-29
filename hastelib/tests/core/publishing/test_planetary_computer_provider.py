@@ -108,6 +108,28 @@ class FakeSdkAdapter:
         self.pending_collection_delete = None
         self.collection_asset_uploads = []
         self.item_updates = []
+        self.render_options = []
+        self.mosaics = []
+        self.tile_settings = None
+        self.render_option_creates = 0
+        self.mosaic_creates = 0
+
+    def get_render_options(self, collection_id):
+        return list(self.render_options)
+
+    def create_render_option(self, collection_id, body):
+        self.render_option_creates += 1
+        self.render_options.append(dict(body))
+
+    def get_mosaics(self, collection_id):
+        return list(self.mosaics)
+
+    def create_mosaic(self, collection_id, body):
+        self.mosaic_creates += 1
+        self.mosaics.append(dict(body))
+
+    def replace_tile_settings(self, collection_id, body):
+        self.tile_settings = dict(body)
 
     def get_ingestion_source(self, source_id):
         self.ingestion_source_calls += 1
@@ -936,6 +958,68 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
         self.assertNotIn(
             "damage_class", documents.collection.get("item_assets", {})
         )
+
+    def _explorer_provider(self):
+        publish = FakeArtifactStorage(
+            "https://publishsa.blob.core.windows.net/publish"
+        )
+        # A staged damage COG gates config registration.
+        publish.blobs.add(f"published/{self.dataset.datasetId}/damage_class.tif")
+        provider = PlanetaryComputerPublishingProvider(
+            config=self.config,
+            artifact_storage=self.storage,
+            publish_storage=publish,
+            sdk_adapter=self.sdk,
+            json_reader=lambda artifact: self.valid_mask,
+            projection_resolver=lambda artifact: "EPSG:4326",
+            asset_reachability_checker=lambda href: None,
+        )
+        return provider
+
+    def test_ensure_explorer_config_registers_render_mosaic_tile(self) -> None:
+        provider = self._explorer_provider()
+        provider._ensure_explorer_config(self.dataset, "haste-c")
+        self.assertEqual([o["id"] for o in self.sdk.render_options], ["damage"])
+        self.assertEqual([m["id"] for m in self.sdk.mosaics], ["most-recent"])
+        self.assertIsNotNone(self.sdk.tile_settings)
+        self.assertEqual(self.sdk.tile_settings["minZoom"], 13)
+        # The render option points at the damage_class raster asset.
+        self.assertIn("assets=damage_class", self.sdk.render_options[0]["options"])
+
+    def test_ensure_explorer_config_is_idempotent(self) -> None:
+        provider = self._explorer_provider()
+        self.sdk.render_options = [{"id": "damage"}]
+        self.sdk.mosaics = [{"id": "most-recent"}]
+        provider._ensure_explorer_config(self.dataset, "haste-c")
+        # No duplicate render option / mosaic; tile-settings still PUT.
+        self.assertEqual(self.sdk.render_option_creates, 0)
+        self.assertEqual(self.sdk.mosaic_creates, 0)
+        self.assertIsNotNone(self.sdk.tile_settings)
+
+    def test_ensure_explorer_config_skips_without_cog(self) -> None:
+        # No staged COG -> nothing renderable -> register nothing.
+        publish = FakeArtifactStorage(
+            "https://publishsa.blob.core.windows.net/publish"
+        )
+        provider = PlanetaryComputerPublishingProvider(
+            config=self.config,
+            artifact_storage=self.storage,
+            publish_storage=publish,
+            sdk_adapter=self.sdk,
+            json_reader=lambda artifact: self.valid_mask,
+            projection_resolver=lambda artifact: "EPSG:4326",
+            asset_reachability_checker=lambda href: None,
+        )
+        provider._ensure_explorer_config(self.dataset, "haste-c")
+        self.assertEqual(self.sdk.render_option_creates, 0)
+        self.assertIsNone(self.sdk.tile_settings)
+
+    def test_ensure_explorer_config_noop_when_disabled(self) -> None:
+        provider = self._explorer_provider()
+        provider._explorer_render_enabled = False
+        provider._ensure_explorer_config(self.dataset, "haste-c")
+        self.assertEqual(self.sdk.render_option_creates, 0)
+        self.assertIsNone(self.sdk.tile_settings)
 
     def test_ingestion_source_validates_against_publish_container(
         self,
