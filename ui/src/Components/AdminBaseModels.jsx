@@ -1,5 +1,5 @@
 // Components
-import { Button, Text } from "@fluentui/react-components";
+import { Text } from "@fluentui/react-components";
 
 import { useState, useEffect, useContext } from "react";
 
@@ -11,12 +11,9 @@ import SectionHeader from "./Section/SectionHeader";
 
 import { AppContext } from "../AppContext";
 
-import CreateEditBaseModelModal from "./CreateEditBaseModelModal";
-
 const AdminBaseModels = () => {
 
   const [componentState, setComponentState] = useState(null);
-  const [modalComponent, setModalComponent] = useState(null);
   const { setIsLoading } = useContext(AppContext);
   const [sort, setSort] = useState({ key: "creationDate", dir: "desc" });
 
@@ -87,23 +84,6 @@ const AdminBaseModels = () => {
         <SectionHeader properties={sectionHeaderProperties} />
 
         <div className="container p-0">
-          <div className="row m-0 mt-5 p-0">
-            <div className="col-12 d-flex justify-content-startr">
-              <Button
-                appearance="primary"
-                icon={<FluentIcon name="FabricNewFolder" />}
-                onClick={() =>
-                  setModalComponent(
-                    <CreateEditBaseModelModal
-                      onClose={() => setModalComponent(null)}
-                    />
-                  )
-                }
-              >
-                Add Base Model
-              </Button>
-            </div>
-          </div>
           <div className="row m-0 p-0 pt-5">
             <div className="col-12">
               <table className="col-12 dashboard-table">
@@ -188,7 +168,6 @@ const AdminBaseModels = () => {
           </div>
         </div>
       </div>
-      {modalComponent}
     </>
   );
 };
