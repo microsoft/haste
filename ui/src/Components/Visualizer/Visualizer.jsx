@@ -112,14 +112,19 @@ const useStyles = makeStyles({
   // They share one stack rather than each pinning itself to the map, because
   // both are variable height (a divergence warning, a failed switch, a
   // progress bar) and two independently positioned overlays at fixed offsets
-  // would sooner or later cover each other. It starts below the navigation
-  // controls' row so a narrow desktop cannot overlap them either.
+  // would sooner or later cover each other.
+  //
+  // It sits on the same row as the Back/Edit controls and the layer dock,
+  // which are pinned to the two top corners. Below ~1100px a 560px centre
+  // column plus both corner blocks stops fitting on one row, so it drops to
+  // its own row rather than sliding under them (they are z-index 1000, this
+  // is 950).
   //
   // The column itself is transparent to the pointer; only the cards inside it
   // take clicks, so the map still pans through the gaps.
   topStack: {
     position: "absolute",
-    top: "66px",
+    top: "10px",
     left: "50%",
     transform: "translateX(-50%)",
     zIndex: 950,
@@ -130,6 +135,9 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: tokens.spacingVerticalS,
     pointerEvents: "none",
+    "@media (max-width: 1100px)": {
+      top: "66px",
+    },
   },
   // Ctrl+drag box-select rectangle. Absolutely positioned inside the
   // visualizer container, which shares its top-left corner with both map

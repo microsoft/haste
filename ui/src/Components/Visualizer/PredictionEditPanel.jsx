@@ -117,6 +117,14 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: tokens.spacingVerticalM,
     touchAction: "pan-y",
+    // A column flex item shrinks to fit by default, so once the panel's
+    // content is taller than the panel every block in here gets squeezed —
+    // buttons lose the top and bottom of their own label rather than the
+    // column simply scrolling. Nothing in this panel should ever be shorter
+    // than its content.
+    "& > *": {
+      flexShrink: 0,
+    },
   },
   header: {
     paddingBottom: tokens.spacingVerticalS,
@@ -180,6 +188,11 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalXS,
+    // Same reason as `scroll`: these stacks hold buttons, and a squeezed
+    // button clips its label instead of getting a scrollbar.
+    "& > *": {
+      flexShrink: 0,
+    },
   },
   buttonRow: {
     display: "flex",
