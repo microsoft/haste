@@ -2,7 +2,10 @@
 // Licensed under the MIT License.
 
 import { apiGet } from "../util/api";
-import { buildModelCatalogEndpoint } from "./BaseModelDropdownHelper";
+import {
+  buildBaseModelOptionKey,
+  buildModelCatalogEndpoint,
+} from "./BaseModelDropdownHelper";
 
 export async function fetchModelCatalog(imageLayer, eventTypes) {
   const cataloguedModels = [];
@@ -11,7 +14,7 @@ export async function fetchModelCatalog(imageLayer, eventTypes) {
       .then((response) => {
         cataloguedModels.push(
           ...response.modelCatalog.map((model) => ({
-            key: model.modelId || model.baseModelName,
+            key: buildBaseModelOptionKey(model),
             text: model.baseModelName,
             value: model,
           }))

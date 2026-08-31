@@ -20,6 +20,12 @@ export function buildModelCatalogEndpoint(imageLayer = {}, eventTypes) {
   return query ? `GetModelCatalog?${query}` : "GetModelCatalog";
 }
 
+export function buildBaseModelOptionKey(model) {
+  return model?.modelId
+    ? `modelId:${model.modelId}`
+    : `baseModelName:${model?.baseModelName || ""}`;
+}
+
 export function normalizeBaseModelOptions(cataloguedModels = []) {
   return cataloguedModels.map((model) => {
     const value = model?.value ?? {};
@@ -29,7 +35,7 @@ export function normalizeBaseModelOptions(cataloguedModels = []) {
       : String(value.description);
 
     return {
-      key: model?.key || baseModelName,
+      key: model?.key || `baseModelName:${baseModelName}`,
       baseModelName,
       description: description ? `${description.substring(0, 30)}...` : "",
       checkpointFilePath: value.checkpointFilePath || "",

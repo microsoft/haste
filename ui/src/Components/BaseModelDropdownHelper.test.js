@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   applyBaseModelSelection,
+  buildBaseModelOptionKey,
   buildModelCatalogEndpoint,
   normalizeBaseModelOptions,
   resolveBaseModelId,
@@ -41,6 +42,20 @@ test("encodes catalog filter values", () => {
   );
 });
 
+test("keeps model ID and fallback name keys in disjoint namespaces", () => {
+  const hasteModelKey = buildBaseModelOptionKey({
+    modelId: "3516",
+    baseModelName: "HASTE model",
+  });
+  const externalModelKey = buildBaseModelOptionKey({
+    baseModelName: "3516",
+  });
+
+  assert.equal(hasteModelKey, "modelId:3516");
+  assert.equal(externalModelKey, "baseModelName:3516");
+  assert.notEqual(hasteModelKey, externalModelKey);
+});
+
 test("normalizes null descriptions and uses model names as fallback keys", () => {
   const options = normalizeBaseModelOptions([
     {
@@ -61,7 +76,10 @@ test("normalizes null descriptions and uses model names as fallback keys", () =>
 
   assert.deepEqual(
     options.map((option) => option.key),
-    ["External checkpoint A", "External checkpoint B"]
+    [
+      "baseModelName:External checkpoint A",
+      "baseModelName:External checkpoint B",
+    ]
   );
   assert.equal(options[0].description, "");
   assert.equal(options[1].description, "");
@@ -70,7 +88,7 @@ test("normalizes null descriptions and uses model names as fallback keys", () =>
 test("resolves an existing checkpoint URL to its catalog key", () => {
   const cataloguedModels = [
     {
-      key: "model-1",
+      key: "modelId:model-1",
       value: {
         baseModelName: "Base model",
         checkpointFilePath: "models/base.pt",
@@ -80,7 +98,7 @@ test("resolves an existing checkpoint URL to its catalog key", () => {
 
   assert.equal(
     resolveBaseModelId(cataloguedModels, "models/base.pt"),
-    "model-1"
+    "modelId:model-1"
   );
   assert.equal(resolveBaseModelId(cataloguedModels, "models/other.pt"), "");
 });
@@ -88,13 +106,13 @@ test("resolves an existing checkpoint URL to its catalog key", () => {
 test("applies the selected model id and checkpoint in one state update", () => {
   const currentState = { name: "Training model", baseModelIdError: "Required" };
   const selectedOption = {
-    key: "model-1",
+    key: "modelId:model-1",
     checkpointFilePath: "models/base.pt",
   };
 
   assert.deepEqual(applyBaseModelSelection(currentState, selectedOption), {
     name: "Training model",
-    baseModelId: "model-1",
+    baseModelId: "modelId:model-1",
     baseModelIdError: "",
     initialWeightsUrl: "models/base.pt",
   });
