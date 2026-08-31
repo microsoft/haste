@@ -151,8 +151,7 @@ const AdminBaseModels = () => {
                           />
                         )}
                       </span>
-                    </th>                    
-                    <th className="pb-3 pe-4"></th>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>

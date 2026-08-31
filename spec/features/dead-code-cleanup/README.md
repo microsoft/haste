@@ -16,6 +16,12 @@ dialogs cannot submit anything, and remove four unnecessary package-level
   `HelpDocsPrevNext`; repository-wide searches find no consumers.
 - Remove the **New Base Model** and **New Source Type** buttons and their
   duplicate non-functional modal files.
+- Remove the Base Model **Edit/Remove** and Source Type **Edit/Remove** menu
+  items, which have no handlers. Preserve Source Type's working mobile
+  **View/Hide Info** action.
+- Remove `d3` and `public/assets/geo/world.geojson`, whose only consumer was
+  `DisasterEvents`. Keep the separate country-boundary GeoJSON used by live
+  project forms.
 - Replace the `hastegeo.core.models`, `processors`, `data_layer`, and `utils`
   package initializers with side-effect-free package markers.
 
@@ -28,7 +34,9 @@ dialogs cannot submit anything, and remove four unnecessary package-level
 ## Success Criteria
 
 - Deleted symbols have no remaining references.
-- Existing admin list and remove actions are unchanged.
+- Existing admin list, sort, and responsive Source Type info behavior are
+  unchanged; placebo create/edit/remove actions are gone.
+- `d3` is not a direct UI dependency and the orphaned public world map is gone.
 - The four Python packages import without mutating `sys.path`.
 - UI tests/build and targeted Python imports/tests pass.
 

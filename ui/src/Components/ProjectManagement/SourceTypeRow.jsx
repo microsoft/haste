@@ -39,16 +39,6 @@ const SourceTypeRow = ({ item, moreInfoVisibleId, setMoreInfoVisibleId }) => {
           }
         },
       },
-      {
-        key: "edit",
-        text: "Edit",
-        icon: <FluentIcon name="Edit" />,
-      },
-      {
-        key: "remove",
-        text: "Remove",
-        icon: <FluentIcon name="Delete" />,
-      },
     ],
   };
 
