@@ -1,5 +1,10 @@
 import React from "react";
+import PropTypes from "prop-types";
 import { Dropdown, Option, Field } from "@fluentui/react-components";
+import {
+  applyBaseModelSelection,
+  normalizeBaseModelOptions,
+} from "./BaseModelDropdownHelper";
 
 const styles = {
   container: {
@@ -57,20 +62,12 @@ const renderOption = (option) => {
 function BaseModelDropdown({
   componentState,
   setComponentState,
-  onFormChange,
-
 }) {
   const { baseModelId, baseModelIdError, cataloguedModels = [] } = componentState;
-  const options = React.useMemo(() => {
-    return cataloguedModels.map((m) => ({
-      key: m.key || "none",
-      baseModelName: m.value.baseModelName || "",
-      description: m.value.description.substring(0, 30) + "..." || "",
-      checkpointFilePath: m.value.checkpointFilePath || "",
-      eventTypes: m.value.eventTypes || [],
-      imagerySource: m.value.imagerySource || ""
-    }));
-  }, [cataloguedModels]);
+  const options = React.useMemo(
+    () => normalizeBaseModelOptions(cataloguedModels),
+    [cataloguedModels]
+  );
 
   const selectedOption = options.find(
     (o) => String(o.key) === String(baseModelId)
@@ -78,11 +75,8 @@ function BaseModelDropdown({
 
   const handleOptionSelect = (_ev, data) => {
     const picked = options.find((o) => String(o.key) === data.optionValue);
-    onFormChange(
-      picked ? picked.checkpointFilePath : "",
-      "initialWeightsUrl",
-      setComponentState,
-      componentState
+    setComponentState((currentState) =>
+      applyBaseModelSelection(currentState, picked)
     );
   };
 
@@ -105,5 +99,14 @@ function BaseModelDropdown({
     </Field>
   );
 }
+
+BaseModelDropdown.propTypes = {
+  componentState: PropTypes.shape({
+    baseModelId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    baseModelIdError: PropTypes.string,
+    cataloguedModels: PropTypes.array,
+  }).isRequired,
+  setComponentState: PropTypes.func.isRequired,
+};
 
 export default BaseModelDropdown;
