@@ -20,6 +20,7 @@ from hastegeo.core.models.stats import ProjectsSummary, StatsRequest
 from hastegeo.core.models.training import ExperimentConfig
 from hastegeo.core.processors.artifacts import ArtifactProcessor
 from hastegeo.core.processors.embedding import EmbeddingPostprocessor
+from hastegeo.core.processors.footprint_tiles import FootprintTilesPreprocessor
 from hastegeo.core.processors.imagery import ImageryPostProcessor
 from hastegeo.core.processors.inference import (
     InferencePostprocessor,
@@ -601,6 +602,100 @@ async def GetRunEmbeddingQueueMessage(msg: func.QueueMessage) -> None:
                 )
 
 
+@app.function_name(name="GetPrepareFootprintTilesQueueTrigger")
+@app.queue_trigger(
+    arg_name="msg",
+    queue_name=config.get_queue_config()["footprint_tiles_queue_name"],
+    connection="AzureWebJobsStorage",
+)
+async def GetPrepareFootprintTilesQueueMessage(
+    msg: func.QueueMessage,
+) -> None:
+    """Build an image layer's shared building-footprint vector tiles.
+
+    Message schema (identifiers only)::
+
+        {"projectId", "imageLayerId", "sourceFootprintsUrl", "force"}
+
+    Imagery prep enqueues this as soon as a layer's footprints are cached,
+    so every map that draws those buildings finds the archive already
+    built. The authoritative state is read from metadata, so a fresh
+    request and the preprocessor's own poll messages take the same path.
+    The work runs as a task in the training docker image because
+    tippecanoe ships only there.
+    """
+    logger.info(
+        "GetPrepareFootprintTilesQueueTrigger function processed a message: "
+        f'{msg.get_body().decode("utf-8")}'
+    )
+    try:
+        payload = json.loads(msg.get_body().decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Queue message must be a JSON object")
+        project_id = payload.get("projectId")
+        image_layer_id = payload.get("imageLayerId")
+        if not project_id or not image_layer_id:
+            raise ValueError(
+                "Queue message requires projectId and imageLayerId, got: "
+                f"{sorted(payload.keys())}"
+            )
+
+        try:
+            layer_record = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().IMAGELAYER.value,
+                    partition_key=project_id,
+                ).load,
+                image_layer_id,
+            )
+        except FileNotFoundError:
+            layer_record = None
+
+        if not layer_record:
+            logger.info(
+                f"Image layer {image_layer_id} not found, likely deleted, "
+                "skipping footprint tile preparation."
+            )
+            return
+
+        image_layer = ImageLayer(**layer_record)
+        if not image_layer.buildingFootprintsUrl:
+            logger.info(
+                f"Image layer {image_layer_id} has no cached building "
+                "footprints; nothing to tile."
+            )
+            return
+
+        output = await asyncio.to_thread(
+            FootprintTilesPreprocessor(image_layer).process
+        )
+
+        await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=project_id,
+            ).save,
+            image_layer_id,
+            output.dict(),
+        )
+    except ValidationError as e:
+        logger.error(
+            f"GetPrepareFootprintTilesQueueTrigger: Validation error: {e}\n"
+            f"{traceback.format_exc()}"
+        )
+    except ValueError as e:
+        logger.error(
+            "GetPrepareFootprintTilesQueueTrigger: Invalid queue message: "
+            f"{e}\n{traceback.format_exc()}"
+        )
+    except Exception as e:
+        logger.error(
+            "GetPrepareFootprintTilesQueueTrigger: Error processing queue "
+            f"message: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+
+
 @app.function_name(name="GetRunInferenceQueueTrigger")
 @app.queue_trigger(
     arg_name="msg",
@@ -1013,7 +1108,9 @@ async def GetPublishDatasetQueueMessage(msg: func.QueueMessage) -> None:
         message = PublishQueueMessage(
             **json.loads(msg.get_body().decode("utf-8"))
         )
-        await asyncio.to_thread(PublishingProcessor(config=config).run_step, message)
+        await asyncio.to_thread(
+            PublishingProcessor(config=config).run_step, message
+        )
     except Exception as error:
         logger.error(
             "PublishDatasetQueueTrigger failed with %s",

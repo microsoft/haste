@@ -100,6 +100,10 @@ class ArtifactTypes(Enum):
         - BUILDING_FOOTPRINTS: Cached Overture Maps building footprints, scoped
           to the image layer's AOI. Generated during imageryprep so the
           inference workflow can reuse the same set across multiple model runs.
+        - LAYER_FOOTPRINT_PMTILES: Geometry-only vector tiles of an image
+          layer's cached building footprints, carrying the row-index ``id``
+          and ``overture_id``. Built once per layer and shared by every
+          model trained on it, so nothing model-specific belongs in it.
         - VALID_AREA_MASK: GeoJSON FeatureCollection of the valid-data polygon
           derived from the post-event mosaic — i.e. the imagery's actual
           AOI excluding nodata. Same polygon used to bbox-filter Overture;
@@ -137,6 +141,7 @@ class ArtifactTypes(Enum):
     BUILDING_FOOTPRINTS = Template(
         "building_footprints_${projectId}_${imageLayerId}"
     )
+    LAYER_FOOTPRINT_PMTILES = Template("footprints_${imageLayerId}")
     VALID_AREA_MASK = Template("valid_area_mask_${projectId}_${imageLayerId}")
     INFERENCE_GPKG = Template("predicted_damage_${modelName}")
     VISUALIZER = Template(
@@ -146,11 +151,12 @@ class ArtifactTypes(Enum):
     TRAINING_ARTIFACTS_ZIP = Template("training_artifacts_${modelName}")
     INFERENCE_ARTIFACTS_ZIP = Template("inference_artifacts_${modelName}")
     # Building labeling workflow: per-building MOSAIKS / DINOv2 embeddings
-    # (footprints + f_* feature columns), the matching PMTiles vector tiles
-    # (geometry + id only), the binary HFTR sidecar (id -> feature vector),
-    # and the per-building predictions written by the interactive labeler.
+    # (footprints + f_* feature columns), the binary HFTR sidecar
+    # (id -> feature vector), and the per-building predictions written by
+    # the interactive labeler. The footprint vector tiles are NOT here:
+    # they belong to the image layer (LAYER_FOOTPRINT_PMTILES), shared by
+    # every model trained on it.
     BUILDING_EMBEDDINGS = Template("building_embeddings_${modelName}")
-    BUILDING_PMTILES = Template("building_pmtiles_${modelName}")
     BUILDING_FEATURES_SIDECAR = Template("building_features_${modelName}")
     BUILDING_PREDICTIONS_GPKG = Template("building_predictions_${modelName}")
 
@@ -321,18 +327,19 @@ class Config:
             "publish_queue_name": os.getenv(
                 "PUBLISH_QUEUE_NAME", "publish-queue"
             ),
+            # Layer footprint vector tiles. Runs in the training container
+            # because tippecanoe ships only in that image.
+            "footprint_tiles_queue_name": os.getenv(
+                "FOOTPRINT_TILES_QUEUE_NAME", "footprint-tiles-queue"
+            ),
         }
 
     @staticmethod
     def get_publishing_config():
         """Get publishing feature and provider configuration."""
         return {
-            "publishing_enabled": _get_bool_env(
-                "PUBLISHING_ENABLED", True
-            ),
-            "pc_provider_enabled": _get_bool_env(
-                "PC_PROVIDER_ENABLED", False
-            ),
+            "publishing_enabled": _get_bool_env("PUBLISHING_ENABLED", True),
+            "pc_provider_enabled": _get_bool_env("PC_PROVIDER_ENABLED", False),
             "max_total_bytes": _get_bounded_int_env(
                 "PUBLISH_MAX_TOTAL_BYTES", 5 * 1024**3, 1
             ),
@@ -405,6 +412,7 @@ class Config:
             EXPERIMENT_CONFIG = "experiment_config"
             IMAGERY_CONFIG = "imageryprep_config"
             EMBEDDING_CONFIG = "embedding_config"
+            FOOTPRINT_TILES_CONFIG = "footprint_tiles_config"
             PROCESSED_IMAGERY = "processed_imagery_post_event_cog"
             RAW_IMAGERY = "raw_imagery"
             PREVIEW_RAW_IMAGERY = "preview_raw_imagery"
