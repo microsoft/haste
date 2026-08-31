@@ -53,9 +53,16 @@ administrator has configured.
 | **Best for** | Keeping a durable, downloadable snapshot of a result. | Sharing results in an interoperable catalog and visualizing them on a map. |
 | **Outputs** | Downloadable assets (geopackage, footprints, processed image, valid-area mask). | STAC item with the same vector assets, plus a rendered damage layer in the Explorer. |
 
+You pick the target in the **Publish dataset** dialog; a target your administrator hasn't
+configured is shown with the reason it's unavailable.
+
+![The target publishing location dropdown showing Local and Planetary Computer](../_static/usage/publishing/publish-target-dropdown.png)
+
 ## Publish a dataset
 
 1. Open the model's **Results** menu and choose **Publish dataset…**.
+
+   ![The Publish dataset… item in a model's Results menu](../_static/usage/publishing/publish-menu-item.png)
 
    ```{admonition} Why is it disabled?
    :class: note
@@ -63,21 +70,23 @@ administrator has configured.
    geopackage exists.
    ```
 
-2. In the **Publish dataset** dialog, choose a **target**. A target that isn't configured is
-   shown with the reason it's unavailable.
-
-3. Review and complete the details:
+2. In the **Publish dataset** dialog, complete the details:
 
    - **Dataset name** — prefilled as *`<project> – <layer>`*; edit as you like.
    - **Description** — prefilled from the assessment summary.
    - **Interactive viewer URL** *(optional)* — an `https` link to an external interactive view
      of the result. On Planetary Computer it becomes the item's preview link.
    - **Source imagery citation** *(optional)* — free text, or a URL that becomes a provenance
-     link. See {ref}`Source-imagery attribution <source-imagery-attribution>`.
-   - **Source imagery** — if your image layer was built from the Open Data Catalog, the
-     source scenes are shown here automatically (you don't enter them by hand).
+     link. If your image layer was built from the Open Data Catalog, the source scenes are
+     listed and linked automatically just above this field — you don't enter them by hand. See
+     {ref}`Source-imagery attribution <source-imagery-attribution>`.
 
-4. Choose which **outputs** to include, then select **Publish**.
+3. Under **Assets to publish**, select which outputs to include — the predicted-damage
+   geopackage, building footprints, valid-area mask, and (for Local) the processed image.
+
+4. Choose the **Target publishing location**, then select **Publish**.
+
+   ![The Publish dataset dialog with details, assets, and target](../_static/usage/publishing/publish-dialog.png)
 
 Publishing runs in the background. The confirmation dialog offers **View** to jump straight to
 **Published Datasets**, where the new entry appears and updates as it progresses.
@@ -85,9 +94,14 @@ Publishing runs in the background. The confirmation dialog offers **View** to ju
 ## Manage published datasets
 
 The **Published Datasets** section lists everything you've published, with its **target**,
-**status**, and a per-row menu. Select a row to open its detail view — the assessment summary,
-source imagery, project/layer, model, publish time, assessment counts, and the published
-assets with their sizes and links.
+**status**, and a per-row menu.
+
+![The Published Datasets list with a row's action menu open](../_static/usage/publishing/published-datasets-list.png)
+
+Select a row to open its detail view — the assessment summary, source imagery, project/layer,
+model, publish time, assessment counts, and the published assets with their sizes and links.
+
+![A published dataset's detail view](../_static/usage/publishing/published-dataset-detail.png)
 
 ### Statuses
 
@@ -108,6 +122,8 @@ Owners (the publisher) and administrators can:
   citation. Editing is allowed only in a settled state (**Published**, **Failed**, or
   **Unpublish failed**); for a published Planetary Computer dataset the edit is pushed to the
   live STAC item.
+
+  ![The edit-metadata form](../_static/usage/publishing/edit-metadata.png)
 - **Retry** — re-run a **Failed** or **Unpublish failed** operation.
 - **Unpublish** — remove the published copies. For Planetary Computer this deletes the STAC
   item (and the collection once its last dataset is removed).
@@ -149,6 +165,8 @@ derived damage-assessment outputs — so publishing doesn't redistribute license
 For Planetary Computer datasets, HASTE also produces a **damage-classification layer** you can
 view on the map in the GeoCatalog **Explorer** — damaged buildings in red over undamaged
 buildings in grey.
+
+![The damage-classification layer in the Planetary Computer Explorer](../_static/usage/publishing/explorer-damage-layer.png)
 
 This layer is HASTE's own derived output (a classification raster), **not** the source
 imagery, so it carries the same license and attribution as the vector outputs and never
