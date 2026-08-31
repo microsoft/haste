@@ -14,6 +14,10 @@ from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
+from .footprint_tiles import (
+    enqueue_footprint_tiles,
+    layer_needs_footprint_tiles,
+)
 
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 IMAGERY_PREFIX = "img"
@@ -247,6 +251,16 @@ class ImageryPostProcessor:
                     job_id=self.image_data.preprocessJob.jobId,
                     task_id=self.image_data.preprocessJob.taskId,
                 )
+
+                # Tile the footprints now that they are cached, so every
+                # map that draws this layer's buildings finds the archive
+                # already built. Skipped when _update_results_from_job
+                # flipped the layer to FAILED (no usable footprints).
+                if (
+                    self.image_data.status
+                    == self.config.get_status_types().COMPLETED.value
+                ):
+                    self._enqueue_footprint_tiles()
 
             elif task_status == self.config.get_status_types().FAILED.value:
                 self.image_data.preprocessJob.status = task_status
@@ -569,6 +583,54 @@ class ImageryPostProcessor:
             filename=valid_area_mask_filename,
             imagery_type=self.config.get_artifact_types().VALID_AREA_MASK,
         )
+
+    def _enqueue_footprint_tiles(self) -> None:
+        """Queue the layer's footprint PMTiles build (best effort).
+
+        Geometry belongs to the layer, so one archive serves every model
+        trained on it. The work itself runs as a queued task in the
+        training image, the only one carrying ``tippecanoe``.
+
+        Deliberately non-fatal: the tiles are derived data. If the queue
+        is unreachable the layer is still perfectly usable, and the job
+        can be re-requested later without re-running imagery prep.
+        """
+        if not layer_needs_footprint_tiles(self.image_data):
+            self.logger.info(
+                "Not queueing footprint tiles for image layer %s "
+                "(footprints=%s, tiles=%s)",
+                self.image_data.imageLayerId,
+                bool(self.image_data.buildingFootprintsUrl),
+                bool(self.image_data.footprintPmtilesUrl),
+            )
+            return
+        try:
+            enqueue_footprint_tiles(
+                project_id=self.image_data.projectId,
+                image_layer_id=self.image_data.imageLayerId,
+                source_footprints_url=self.image_data.buildingFootprintsUrl,
+                config=self.config,
+            )
+            self.image_data.footprintTilesStatus = (
+                self.config.get_status_types().PENDING.value
+            )
+            self.image_data.footprintTilesStatusMessage = (
+                MetadataUtils.append_status_message(
+                    "", "Queued for footprint tile preparation"
+                )
+            )
+            self.logger.info(
+                "Queued footprint tiles for image layer %s",
+                self.image_data.imageLayerId,
+            )
+        except Exception as e:
+            self.logger.warning(
+                "Could not queue footprint tiles for image layer %s: %s. "
+                "Imagery preprocessing is unaffected; the tiles can be "
+                "built later without re-running it.",
+                self.image_data.imageLayerId,
+                e,
+            )
 
     def _generate_imagery_url(
         self, filename: str, imagery_type: ArtifactTypes, validate=True
