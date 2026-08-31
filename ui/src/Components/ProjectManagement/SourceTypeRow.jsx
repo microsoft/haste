@@ -24,11 +24,19 @@ const SourceTypeRow = ({ item, moreInfoVisibleId, setMoreInfoVisibleId }) => {
     setMoreInfoVisibleId: PropTypes.func.isRequired,
   };
 
+  // Breakpoint at which the responsive info row stops being needed, because
+  // the Base URL and Creation Date columns are visible in the table itself.
+  // The menu trigger below is hidden at the same breakpoint: every item in
+  // this menu is mobile-only, so leaving the trigger up on desktop would
+  // open an empty popover. Keep the two in sync if an always-visible item
+  // is ever added here.
+  const MOBILE_ONLY = "d-lg-none";
+
   const moreMenuOptions = {
     items: [
       {
         key: "info",
-        className: "d-block d-lg-none",
+        className: `d-block ${MOBILE_ONLY}`,
         text: moreInfoVisibleId === item.sourceTypeId ? "Hide Info" : "View Info",
         icon: <FluentIcon name={moreInfoVisibleId === item.sourceTypeId ? "Cancel" : "Info"} />,
         onClick: () => {
@@ -96,32 +104,34 @@ const SourceTypeRow = ({ item, moreInfoVisibleId, setMoreInfoVisibleId }) => {
           </Text>
         </td>
         <td className="custom-text-no-wrap d-flex align-items-start align-items-md-center justify-content-end">
-          <Menu positioning="below-end">
-            <MenuTrigger disableButtonEnhancement>
-              <Button
-                appearance="subtle"
-                className="no-dropdown-icon"
-                icon={<FluentIcon name="More" />}
-                title="Menu"
-                aria-label="Menu"
-              />
-            </MenuTrigger>
-            <MenuPopover>
-              <MenuList>
-                {moreMenuOptions.items.map((mi) => (
-                  <MenuItem
-                    key={mi.key}
-                    className={mi.className}
-                    icon={mi.icon}
-                    disabled={mi.disabled}
-                    onClick={mi.onClick}
-                  >
-                    {mi.text}
-                  </MenuItem>
-                ))}
-              </MenuList>
-            </MenuPopover>
-          </Menu>
+          <span className={MOBILE_ONLY}>
+            <Menu positioning="below-end">
+              <MenuTrigger disableButtonEnhancement>
+                <Button
+                  appearance="subtle"
+                  className="no-dropdown-icon"
+                  icon={<FluentIcon name="More" />}
+                  title="Menu"
+                  aria-label="Menu"
+                />
+              </MenuTrigger>
+              <MenuPopover>
+                <MenuList>
+                  {moreMenuOptions.items.map((mi) => (
+                    <MenuItem
+                      key={mi.key}
+                      className={mi.className}
+                      icon={mi.icon}
+                      disabled={mi.disabled}
+                      onClick={mi.onClick}
+                    >
+                      {mi.text}
+                    </MenuItem>
+                  ))}
+                </MenuList>
+              </MenuPopover>
+            </Menu>
+          </span>
         </td>
       </tr>
     </React.Fragment>
