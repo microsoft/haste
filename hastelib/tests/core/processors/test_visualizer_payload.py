@@ -48,7 +48,6 @@ VISUALIZER_URL = "https://acct.blob/c/hash/5557_visualizer.tif?sas=a&b=c"
 PREDICTIONS_URL = "https://acct.blob/c/hash/5557_predictions.tif?sas=a&b=c"
 GPKG_URL = "https://acct.blob/c/hash/predicted_damage_m.gpkg?sas"
 LAYER_PMTILES = "https://acct.blob/c/hash/footprints_layer.pmtiles?sas"
-MODEL_PMTILES = "https://acct.blob/c/hash/buildings_5558.pmtiles?sas"
 ATTRS_URL = "https://acct.blob/c/hash/prediction_attrs_5557.json?sas"
 
 BBOX = [-1.0, -2.0, 3.0, 4.0]
@@ -115,9 +114,6 @@ def _embedding_model(**overrides) -> Model:
         "status": PROCESSED,
         "gpkgUrl": GPKG_URL,
         "predictedBuildingCount": 1200,
-        # The embedding workflow tiles the same footprints for the
-        # labeler, so the editor/viewer reuses that archive.
-        "pmtilesUrl": MODEL_PMTILES,
         "predictionAttrsUrl": ATTRS_URL,
         "predictionTilesStatus": PROCESSED,
     }
@@ -237,15 +233,21 @@ class TestEmbeddingPayload(unittest.TestCase):
             self.assertTrue(url.startswith("GetModelArtifact?"))
             self.assertNotIn("blob", url)
 
-    def test_footprint_tiles_reuse_the_models_own_archive(self):
-        # No layer-level PMTiles at all: resolve_tiles_url still finds
-        # the embedding model's own archive, so the viewer is ready.
+    def test_footprint_tiles_come_from_the_layer(self):
+        # Footprint geometry belongs to the image layer and one archive is
+        # shared by every model on it, so a layer that has not been tiled
+        # yet is "preparing" rather than ready — an embedding model has no
+        # raster to fall back on, and an empty map is the worst answer.
         visualizer = _build(
             _embedding_model(), layer=_layer(footprintPmtilesUrl=None)
         )
 
-        self.assertTrue(visualizer.predictionsReady)
-        self.assertIsNotNone(visualizer.footprintTilesUrl)
+        self.assertFalse(visualizer.predictionsReady)
+
+        # With the layer tiled, the same model is ready.
+        ready = _build(_embedding_model(), layer=_layer())
+        self.assertTrue(ready.predictionsReady)
+        self.assertIsNotNone(ready.footprintTilesUrl)
 
     def test_embedding_flavor_disables_thresholding(self):
         visualizer = _build(

@@ -13,11 +13,9 @@ no viewer entry point.
 Both workflows *do* have vector artifacts, and they are the same two in
 both cases:
 
-* the building footprints as PMTiles — the layer's shared archive
-  (``ImageLayer.footprintPmtilesUrl``) or, for an embedding model, the
-  archive it already tiled for the labeler (``Model.pmtilesUrl``);
-  :func:`~hastegeo.core.processors.prediction_tiles.resolve_tiles_url`
-  is the seam that picks between them, and
+* the building footprints as PMTiles, the layer's shared archive
+  (``ImageLayer.footprintPmtilesUrl``), which every model trained on
+  that layer draws from, and
 * the model's columnar prediction attribute sidecar
   (``Model.predictionAttrsUrl``), keyed by the same row-index id the
   tiles carry.

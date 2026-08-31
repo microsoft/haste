@@ -265,15 +265,18 @@ def enqueue_prediction_tiles(
 
 
 def resolve_tiles_url(model: Model, image_layer: ImageLayer) -> Optional[str]:
-    """Return the PMTiles archive the editor should read, if any.
+    """Return the PMTiles archive a map should read, if any.
 
-    The embedding workflow already tiles the same footprints from the
-    same PMTiles archive, keyed on the same integer row-index ``id``
-    (see ``workflows/embed_buildings.py``), so those tiles are reused
-    rather than rebuilt. Only trained-inference models need a layer
-    level archive built for them.
+    Footprint geometry belongs to the image layer, not to a model: every
+    model trained on a layer draws the same buildings. Both workflows
+    therefore share one archive, built once when the layer's footprints
+    are cached.
+
+    ``model`` is accepted so callers can pass the pair without caring
+    which one owns the tiles.
     """
-    return model.pmtilesUrl or image_layer.footprintPmtilesUrl
+    del model
+    return image_layer.footprintPmtilesUrl
 
 
 def needs_preparation(

@@ -155,11 +155,12 @@ class ArtifactTypes(Enum):
     TRAINING_ARTIFACTS_ZIP = Template("training_artifacts_${modelName}")
     INFERENCE_ARTIFACTS_ZIP = Template("inference_artifacts_${modelName}")
     # Building labeling workflow: per-building MOSAIKS / DINOv2 embeddings
-    # (footprints + f_* feature columns), the matching PMTiles vector tiles
-    # (geometry + id only), the binary HFTR sidecar (id -> feature vector),
-    # and the per-building predictions written by the interactive labeler.
+    # (footprints + f_* feature columns), the binary HFTR sidecar
+    # (id -> feature vector), and the per-building predictions written by
+    # the interactive labeler. The footprint vector tiles are NOT here:
+    # they belong to the image layer (LAYER_FOOTPRINT_PMTILES), shared by
+    # every model trained on it.
     BUILDING_EMBEDDINGS = Template("building_embeddings_${modelName}")
-    BUILDING_PMTILES = Template("building_pmtiles_${modelName}")
     BUILDING_FEATURES_SIDECAR = Template("building_features_${modelName}")
     BUILDING_PREDICTIONS_GPKG = Template("building_predictions_${modelName}")
     # Prediction editing workflow: each save writes a NEW versioned

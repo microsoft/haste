@@ -522,7 +522,6 @@ class Model(BaseModel):
     numFeatures: Optional[int] = Field(default=None)
     embeddingJob: Optional[TrainingJob] = Field(default=None)
     embeddingsGeoJSONUrl: Optional[str] = Field(default=None)
-    pmtilesUrl: Optional[str] = Field(default=None)
     # Binary sidecar (HFTR format) carrying per-building f_* feature
     # vectors keyed by row-index id. The Interactive Labeler fetches it
     # once at session start and looks vectors up by id; the PMTiles

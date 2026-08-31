@@ -770,10 +770,11 @@ const InteractiveLabeler = () => {
     // the layer has no pre-event imagery).
     layerImageryRef.current = layerData?.imagery || null;
 
-    // Resolve the model's PMTiles URL. Models are returned by
-    // GetLayerModelsDetails; pick ours by modelId. The pmtilesUrl is
-    // populated by the embedding workflow's postprocessor.
-    let pmtilesUrl = "";
+    // The features sidecar is per model, so it still comes from
+    // GetLayerModelsDetails. The footprint tiles do not: geometry belongs
+    // to the image layer and one archive is shared by every model on it,
+    // so those are requested by kind below and 404 until the layer's
+    // tiling job has run.
     let sidecarUrl = "";
     setInitialLoad({ step: 1, loaded: null, total: null });
     try {
@@ -783,17 +784,11 @@ const InteractiveLabeler = () => {
       const model = (models || []).find(
         (m) => String(m.modelId) === String(modelId)
       );
-      pmtilesUrl = model?.pmtilesUrl || "";
       sidecarUrl = model?.featuresSidecarUrl || "";
     } catch (e) {
       console.warn("Could not fetch model URLs:", e);
     }
     signal.throwIfAborted();
-    if (!pmtilesUrl) {
-      throw new Error(
-        "No PMTiles available for this model — the embedding workflow has not produced building tiles."
-      );
-    }
     if (!sidecarUrl) {
       throw new Error(
         "No features sidecar available for this model — re-embed the layer to produce one."
@@ -806,7 +801,7 @@ const InteractiveLabeler = () => {
     // remote/mobile labelers hit a 403.
     const browserPmtilesUrl = buildUrl(
       `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
-        `&kind=pmtiles`
+        `&imageLayerId=${imageLayerId}&kind=footprint_pmtiles`
     );
     const browserSidecarUrl = buildUrl(
       `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
@@ -837,7 +832,16 @@ const InteractiveLabeler = () => {
       // (otherwise the map sits at [0, 0] zoom 3 and the user sees no tiles).
       pmtilesHeader = await pm.getHeader();
     } catch (e) {
-      console.warn("Failed to load PMTiles archive (continuing):", e);
+      // Without the footprint tiles there are no buildings to label, so an
+      // empty map is the one thing this must not silently become. The
+      // archive belongs to the image layer and is built once its footprints
+      // are cached, so the usual cause is that job not having run yet.
+      console.error("Failed to load the footprint PMTiles archive:", e);
+      throw new Error(
+        "The building footprint tiles for this image layer are not ready " +
+          "yet. They are built once per layer; if this persists, re-run " +
+          "preparation for the layer."
+      );
     }
 
     // Fetch the binary features sidecar and parse the HFTR header. The
