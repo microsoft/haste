@@ -455,7 +455,6 @@ class Model(BaseModel):
     numFeatures: Optional[int] = Field(default=None)
     embeddingJob: Optional[TrainingJob] = Field(default=None)
     embeddingsGeoJSONUrl: Optional[str] = Field(default=None)
-    pmtilesUrl: Optional[str] = Field(default=None)
     # Binary sidecar (HFTR format) carrying per-building f_* feature
     # vectors keyed by row-index id. The Interactive Labeler fetches it
     # once at session start and looks vectors up by id; the PMTiles
@@ -690,6 +689,15 @@ class ImageLayer(BaseModel):
             AOI, and writes the result to ``buildingFootprintsUrl``. The
             URL must satisfy ``validate_footprint_url`` (same allowlist
             as imagery URLs plus the configured local upload host).
+        footprintPmtilesUrl: URL to the PMTiles archive of this layer's
+            cached building footprints (geometry plus the row-index ``id``
+            and ``overture_id``). Built once per layer and shared by every
+            model trained on it. Populated by the footprint-tiles job,
+            which imagery prep kicks off as soon as the footprints are
+            cached.
+        footprintTilesJob: Job reference for that tiling task.
+        footprintTilesStatus: Status of the tiling job.
+        footprintTilesStatusMessage: Progress/error log of the tiling job.
         validAreaMaskUrl: URL to a single-feature GeoJSON FeatureCollection
             containing the valid-data polygon (EPSG:4326) derived from the
             post-event mosaic, i.e. the imagery's actual AOI excluding
@@ -772,6 +780,12 @@ class ImageLayer(BaseModel):
     # Catalog "clip to area" flow.
     clipBbox: Optional[list[float]] = Field(default=None)
     validAreaMaskUrl: Optional[str] = Field(default=None)
+    # Shared footprint vector tiles. Geometry belongs to the layer, not to
+    # any one model, so every model trained here draws the same archive.
+    footprintPmtilesUrl: Optional[str] = Field(default=None)
+    footprintTilesJob: Optional[TrainingJob] = Field(default=None)
+    footprintTilesStatus: Optional[str] = Field(default=None)
+    footprintTilesStatusMessage: Optional[str] = Field(default="")
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("Project", "projectId")
     )
