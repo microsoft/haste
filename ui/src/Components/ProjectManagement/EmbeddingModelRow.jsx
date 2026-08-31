@@ -25,6 +25,11 @@ import StatusIndicator from "../OtherComponents/StatusIndicator";
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
 import PublishDatasetModal from "../PublishDatasetModal";
+import DownloadPredictionsDialog from "../OtherComponents/DownloadPredictionsDialog";
+import {
+  buildVersionGpkgUrl,
+  hasPredictionVersionChoice,
+} from "../Visualizer/predictionVersions";
 import { fileDownload } from "../../util/file";
 import { limitTextLength } from "../../util/conversion";
 
@@ -81,6 +86,8 @@ const EmbeddingModelRow = ({
   const [showValidationReport, setShowValidationReport] = useState(false);
   const [showAssessmentReport, setShowAssessmentReport] = useState(false);
   const [showPublishDataset, setShowPublishDataset] = useState(false);
+  const [showDownloadPredictions, setShowDownloadPredictions] =
+    useState(false);
 
   const isProcessed = model.status === "Processed";
   const hasPredictions = !!model.gpkgUrl;
@@ -135,6 +142,12 @@ const EmbeddingModelRow = ({
         icon: <FluentIcon name="download" />,
         disabled: !hasPredictions,
         onClick: () => {
+          // With saved edits there is a real choice to make, and downloading
+          // the raw output silently would throw away the analyst's work.
+          if (hasPredictionVersionChoice(model.editedPredictions)) {
+            setShowDownloadPredictions(true);
+            return;
+          }
           // Stream the predictions GeoPackage through the same-origin API
           // (GetModelArtifact) rather than the raw blob URL, so it works for
           // remote labelers behind the storage firewall — matching how the
@@ -239,12 +252,33 @@ const EmbeddingModelRow = ({
 
   const reportModals = (
     <>
+      {showDownloadPredictions && (
+        <DownloadPredictionsDialog
+          versions={model.editedPredictions}
+          modelName={model.name}
+          onDownload={(version) =>
+            fileDownload(
+              buildUrl(
+                buildVersionGpkgUrl({
+                  projectId,
+                  imageLayerId,
+                  modelId: model.modelId,
+                  version,
+                })
+              ),
+              setDialog
+            )
+          }
+          onDismiss={() => setShowDownloadPredictions(false)}
+        />
+      )}
       {showValidationReport && (
         <ValidationReportModal
           projectId={projectId}
           imageLayerId={imageLayerId}
           modelId={model.modelId}
           modelName={model.name}
+          versions={model.editedPredictions}
           onDismiss={() => setShowValidationReport(false)}
         />
       )}
@@ -254,6 +288,7 @@ const EmbeddingModelRow = ({
           imageLayerId={imageLayerId}
           modelId={model.modelId}
           modelName={model.name}
+          versions={model.editedPredictions}
           onDismiss={() => setShowAssessmentReport(false)}
         />
       )}

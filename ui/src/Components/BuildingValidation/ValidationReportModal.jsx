@@ -18,6 +18,8 @@ import {
 import { FluentIcon } from "../../util/icons";
 import PropTypes from "prop-types";
 import { buildUrl } from "../../util/api";
+import PredictionVersionPicker from "../OtherComponents/PredictionVersionPicker";
+import { defaultPredictionVersion } from "../Visualizer/predictionVersions";
 
 /* ── Theme-aware design tokens (follow light/dark via Fluent) ─── */
 const tokens = {
@@ -193,18 +195,24 @@ ConfusionMatrix.propTypes = {
 };
 
 /* ── Main component ──────────────────────────────────────────── */
-const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, onDismiss }) => {
+const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, versions, onDismiss }) => {
   ValidationReportModal.propTypes = {
     projectId: PropTypes.string.isRequired,
     imageLayerId: PropTypes.string.isRequired,
     modelId: PropTypes.string.isRequired,
     modelName: PropTypes.string,
+    versions: PropTypes.array,
     onDismiss: PropTypes.func.isRequired,
   };
 
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Which predictions the report describes. Defaults to the newest saved
+  // edit, matching what the server would have picked on its own.
+  const [version, setVersion] = useState(() =>
+    defaultPredictionVersion(versions)
+  );
 
   const fetchReport = () => {
     setLoading(true);
@@ -218,7 +226,7 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
     // is a hard error.
     fetch(
       buildUrl(
-        `GetValidationReport?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}`
+        `GetValidationReport?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}&version=${version}`
       )
     )
       .then(async (response) => {
@@ -244,7 +252,7 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
 
   useEffect(() => {
     fetchReport();
-  }, [projectId, imageLayerId, modelId]);
+  }, [projectId, imageLayerId, modelId, version]);
 
   const subText = loading
     ? undefined
@@ -277,6 +285,13 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
             </div>
           </DialogTitle>
           <DialogContent>
+            <PredictionVersionPicker
+              versions={versions}
+              value={version}
+              onChange={setVersion}
+              disabled={loading}
+              label="Report on"
+            />
             {subText && (
               <Text style={{ display: "block", color: tokens.colorNeutralForeground2, marginBottom: 16 }}>
                 {subText}

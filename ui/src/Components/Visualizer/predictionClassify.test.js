@@ -129,6 +129,7 @@ import {
   VERSION_PREPARING_REASON,
   buildVersionGpkgUrl,
   buildVisualizerResultsUrl,
+  defaultPredictionVersion,
   describeReportDivergence,
   describeSavedClassNote,
   describeVersionDownload,
@@ -137,8 +138,10 @@ import {
   describeVersionSwitchDiscard,
   describeVersionSwitchFailure,
   findVersionOption,
+  hasPredictionVersionChoice,
   isVersionReady,
   normalizeVersionSelection,
+  predictionSourceOptions,
   selectedVersionText,
   shouldPollVersionSidecar,
   versionKey,
@@ -2105,4 +2108,66 @@ test("the pending-version poll is bounded", () => {
   assert.equal(shouldPollVersionSidecar({ pending: false, attempt: 0 }), false);
   assert.equal(shouldPollVersionSidecar(), false);
   assert.ok(VERSION_POLL_INTERVAL_MS >= 1000);
+});
+
+// ── Choosing which predictions to download or report on ─────────────────────
+
+test("predictionSourceOptions lists saved versions newest first, raw last", () => {
+  const options = predictionSourceOptions([
+    { version: 1, gpkgUrl: "v1.gpkg" },
+    { version: 3, gpkgUrl: "v3.gpkg" },
+    { version: 2, gpkgUrl: "v2.gpkg" },
+  ]);
+  assert.deepEqual(
+    options.map((o) => o.version),
+    [3, 2, 1, RAW_VERSION]
+  );
+  assert.equal(options[0].isNewest, true);
+  assert.match(options[0].text, /newest/);
+  assert.equal(options[3].isRaw, true);
+});
+
+test("a version with no GeoPackage is not offered", () => {
+  const options = predictionSourceOptions([
+    { version: 1, gpkgUrl: "v1.gpkg" },
+    { version: 2 },
+  ]);
+  assert.deepEqual(
+    options.map((o) => o.version),
+    [1, RAW_VERSION]
+  );
+});
+
+test("a version with no sidecar is still downloadable", () => {
+  // versionSelectorOptions disables this one because the MAP cannot colour
+  // buildings without the sidecar. A download reads the GeoPackage, so the
+  // same version has to stay selectable here.
+  const versions = [{ version: 1, gpkgUrl: "v1.gpkg" }];
+  const mapOption = versionSelectorOptions({ versions })[0];
+  assert.equal(mapOption.disabled, true);
+  assert.equal(predictionSourceOptions(versions)[0].version, 1);
+});
+
+test("reads default to the newest saved edit, else the raw output", () => {
+  assert.equal(
+    defaultPredictionVersion([
+      { version: 1, gpkgUrl: "v1.gpkg" },
+      { version: 2, gpkgUrl: "v2.gpkg" },
+    ]),
+    2
+  );
+  assert.equal(defaultPredictionVersion([]), RAW_VERSION);
+  assert.equal(defaultPredictionVersion(), RAW_VERSION);
+  // Nothing downloadable saved: raw is the newest state there is.
+  assert.equal(defaultPredictionVersion([{ version: 1 }]), RAW_VERSION);
+});
+
+test("a choice exists only once something has been saved", () => {
+  assert.equal(hasPredictionVersionChoice([]), false);
+  assert.equal(hasPredictionVersionChoice(), false);
+  assert.equal(hasPredictionVersionChoice([{ version: 1 }]), false);
+  assert.equal(
+    hasPredictionVersionChoice([{ version: 1, gpkgUrl: "v1.gpkg" }]),
+    true
+  );
 });

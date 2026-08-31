@@ -317,3 +317,73 @@ export function shouldPollVersionSidecar({
   const current = Number.isFinite(Number(attempt)) ? Number(attempt) : 0;
   return current < maxAttempts;
 }
+
+// ── Choosing which predictions to READ (download / report) ──────────────────
+//
+// Separate from versionSelectorOptions on purpose. That one is for the MAP,
+// so it disables any version whose attribute sidecar has not been backfilled
+// — without the sidecar there are no per-building classes to colour with.
+// Downloads and reports read the GeoPackage itself, where a missing sidecar
+// is irrelevant, so gating on it there would hide a perfectly good file.
+
+/**
+ * The prediction sources a model can be downloaded from or reported on:
+ * every saved version that has a GeoPackage, newest first, raw output last.
+ *
+ * Always returns at least the raw option, so callers can render the control
+ * unconditionally and use the length to decide whether a choice exists.
+ */
+export function predictionSourceOptions(versions = []) {
+  const ordered = sortVersionsDescending(versions).filter(
+    (entry) => normalizeVersionParam(entry?.version) > 0 && entry?.gpkgUrl
+  );
+  const newest = latestVersion(ordered);
+  const newestNumber = newest ? normalizeVersionParam(newest.version) : null;
+
+  const options = ordered.map((entry) => {
+    const version = normalizeVersionParam(entry.version);
+    const isNewest = version === newestNumber;
+    return {
+      key: versionKey(version),
+      version,
+      label: versionLabel(version),
+      text: isNewest
+        ? `${versionLabel(version)} · newest`
+        : versionLabel(version),
+      isNewest,
+      isRaw: false,
+    };
+  });
+
+  options.push({
+    key: versionKey(RAW_VERSION),
+    version: RAW_VERSION,
+    label: RAW_VERSION_LABEL,
+    text: RAW_VERSION_LABEL,
+    // Raw is only the newest state when nothing has ever been saved.
+    isNewest: newestNumber === null,
+    isRaw: true,
+  });
+
+  return options;
+}
+
+/**
+ * What a download or report should read unless the analyst says otherwise:
+ * the newest saved edit, else the raw output.
+ *
+ * Matches the server's own rule (`describe_prediction_source` with no
+ * version), so the default the UI shows is the one the API would have picked
+ * on its own.
+ */
+export function defaultPredictionVersion(versions = []) {
+  const newest = predictionSourceOptions(versions).find(
+    (option) => option.isNewest
+  );
+  return newest ? newest.version : RAW_VERSION;
+}
+
+/** Whether there is more than one source to choose between. */
+export function hasPredictionVersionChoice(versions = []) {
+  return predictionSourceOptions(versions).length > 1;
+}

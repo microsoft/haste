@@ -20,6 +20,12 @@ import ModelResultsStatusIndicator from "../OtherComponents/ModelResultsStatusIn
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
 import PublishDatasetModal from "../PublishDatasetModal";
+import DownloadPredictionsDialog from "../OtherComponents/DownloadPredictionsDialog";
+import { buildUrl } from "../../util/api";
+import {
+  buildVersionGpkgUrl,
+  hasPredictionVersionChoice,
+} from "../Visualizer/predictionVersions";
 
 
 // A model has usable inference outputs once at least one inference job has run
@@ -46,6 +52,8 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
   const [showValidationReport, setShowValidationReport] = useState(false);
   const [showAssessmentReport, setShowAssessmentReport] = useState(false);
   const [showPublishDataset, setShowPublishDataset] = useState(false);
+  const [showDownloadPredictions, setShowDownloadPredictions] =
+    useState(false);
 
   function evaluateViewResultsButtonState(model) {
     // Results button must be enabled if inference jobs exist and status is processed
@@ -114,6 +122,12 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
         text: "Download Geopackage (.gpkg)",
         icon: <FluentIcon name="download" />,
         onClick: () => {
+          // With saved edits there is a real choice to make, and downloading
+          // the raw output silently would throw away the analyst's work.
+          if (hasPredictionVersionChoice(model.editedPredictions)) {
+            setShowDownloadPredictions(true);
+            return;
+          }
           handleDownload(model.gpkgUrl);
         },
         disabled: model.gpkgUrl === null || model.gpkgUrl === undefined || model.gpkgUrl === "",
@@ -224,12 +238,32 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
             />
           )}
         </div>
+        {showDownloadPredictions && (
+          <DownloadPredictionsDialog
+            versions={model.editedPredictions}
+            modelName={model.name}
+            onDownload={(version) =>
+              handleDownload(
+                buildUrl(
+                  buildVersionGpkgUrl({
+                    projectId,
+                    imageLayerId,
+                    modelId: model.modelId,
+                    version,
+                  })
+                )
+              )
+            }
+            onDismiss={() => setShowDownloadPredictions(false)}
+          />
+        )}
         {showValidationReport && (
           <ValidationReportModal
             projectId={projectId}
             imageLayerId={imageLayerId}
             modelId={model.modelId}
             modelName={model.name}
+            versions={model.editedPredictions}
             onDismiss={() => setShowValidationReport(false)}
           />
         )}
@@ -239,6 +273,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
             imageLayerId={imageLayerId}
             modelId={model.modelId}
             modelName={model.name}
+            versions={model.editedPredictions}
             onDismiss={() => setShowAssessmentReport(false)}
           />
         )}
