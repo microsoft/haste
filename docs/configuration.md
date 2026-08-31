@@ -334,8 +334,16 @@ and records the operating organization as the STAC `processor` provider.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `HASTE_PUBLISH_STORAGE_ACCOUNT_URL` | — | Storage account URL the GeoCatalog ingests published assets from. Empty = reference assets in place from the primary store. |
+| `HASTE_PUBLISH_STORAGE_ACCOUNT_URL` | — | Storage account URL the GeoCatalog ingests published assets from. |
 | `HASTE_PUBLISH_BLOB_CONTAINER` | — | Blob container (on the publish storage account) HASTE copies published PC assets into. |
+
+```{admonition} The publish-store settings are an all-or-nothing pair
+:class: warning
+`HASTE_PUBLISH_STORAGE_ACCOUNT_URL` and `HASTE_PUBLISH_BLOB_CONTAINER` are used **only when
+both are set**. If either is empty, HASTE silently falls back to referencing assets **in
+place** from the primary artifact store — which a firewalled GeoCatalog cannot ingest, so
+publishing appears configured but fails at ingestion. Set both, or neither.
+```
 | `HASTE_PUBLISHING_ORGANIZATION_NAME` | — | Organization operating this deployment, recorded as the STAC `processor` provider. Empty = omit. |
 | `HASTE_PUBLISHING_ORGANIZATION_URL` | — | URL companion to `HASTE_PUBLISHING_ORGANIZATION_NAME`. |
 

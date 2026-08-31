@@ -36,6 +36,9 @@ sphinx:
   local_extensions:
     azure_functions_simple: .
   config:
+    # Generate slug anchors for h1-h3 so in-page "[text](#heading)" links (the
+    # Contents lists) resolve as cross-references instead of warning.
+    myst_heading_anchors: 3
     autodoc_default_options:
       members: true
       undoc-members: true

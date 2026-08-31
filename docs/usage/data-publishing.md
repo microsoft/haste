@@ -29,6 +29,16 @@ Results menu or a **Published Datasets** section, an administrator hasn't enable
 deployment — see {ref}`Enabling and configuring publishing <enabling-and-configuring-publishing>`.
 ```
 
+## Contents
+
+- [Before you start](#before-you-start)
+- [Choose a target](#choose-a-target)
+- [Publish a dataset](#publish-a-dataset)
+- [Manage published datasets](#manage-published-datasets)
+- [Source-imagery attribution](#source-imagery-attribution)
+- [Viewing in the Planetary Computer Explorer](#viewing-in-the-planetary-computer-explorer)
+- [Enabling and configuring publishing](#enabling-and-configuring-publishing)
+
 ## Before you start
 
 You need a **processed model result** to publish:
@@ -84,6 +94,13 @@ configured is shown with the reason it's unavailable.
 3. Under **Assets to publish**, select which outputs to include — the predicted-damage
    geopackage, building footprints, valid-area mask, and (for Local) the processed image.
 
+   ```{admonition} Planetary Computer needs the valid-area mask
+   :class: warning
+   For the **Planetary Computer** target the **valid-area mask** must stay selected — it
+   bounds the published extent, and a publish without it is rejected. Local publishing has no
+   such requirement.
+   ```
+
 4. Choose the **Target publishing location**, then select **Publish**.
 
    ![The Publish dataset dialog with details, assets, and target](../_static/usage/publishing/publish-dialog.png)
@@ -93,8 +110,11 @@ Publishing runs in the background. The confirmation dialog offers **View** to ju
 
 ## Manage published datasets
 
-The **Published Datasets** section lists everything you've published, with its **target**,
-**status**, and a per-row menu.
+The **Published Datasets** section lists **all datasets published in your HASTE deployment** —
+not just your own — each with its publisher, **target**, **status**, and a per-row menu. Use
+the search box and the **target**/**status** filters to narrow the list. Anyone with access
+can browse and inspect these datasets; only a dataset's owner or an administrator can manage
+it (see [Actions](#actions)).
 
 ![The Published Datasets list with a row's action menu open](../_static/usage/publishing/published-datasets-list.png)
 
@@ -115,9 +135,11 @@ model, publish time, assessment counts, and the published assets with their size
 
 ### Actions
 
-Owners (the publisher) and administrators can:
+Anyone with access to HASTE can **View details** for any dataset in the list — the full
+metadata, assets, and links.
 
-- **View details** — the full metadata, assets, and links.
+A dataset's **owner** (its publisher) and **administrators** can additionally:
+
 - **Edit metadata** — change the name, description, interactive viewer URL, and source-imagery
   citation. Editing is allowed only in a settled state (**Published**, **Failed**, or
   **Unpublish failed**); for a published Planetary Computer dataset the edit is pushed to the
@@ -155,8 +177,10 @@ On a Planetary Computer dataset this becomes standard STAC attribution and prove
 ```{admonition} Only registered open-data imagery is attributed
 :class: note
 Attribution is applied only for imagery from **registered open-data programs**. This is a
-licensing safeguard: HASTE never publishes the source imagery pixels themselves — only your
-derived damage-assessment outputs — so publishing doesn't redistribute licensed imagery.
+licensing safeguard for the **Planetary Computer** target: publishing there never
+redistributes the source imagery to the external catalog — only your derived
+damage-assessment outputs are sent. (**Local** publishing can include the processed image,
+but it stays inside your own HASTE storage and isn't shared to an external catalog.)
 ```
 
 (viewing-in-the-planetary-computer-explorer)=
@@ -208,15 +232,20 @@ level:
 1. **Provision a Planetary Computer Pro GeoCatalog** and note its API and Explorer URLs. See
    [Deploy a GeoCatalog resource](https://learn.microsoft.com/azure/planetary-computer/deploy-geocatalog-resource).
 
-2. **Give HASTE a publish storage container** the GeoCatalog can ingest from, and grant the
+2. **Grant the HASTE Function App identity a GeoCatalog data-plane RBAC role** on the
+   GeoCatalog resource, so it can call the STAC and ingestion APIs. This is the grant that
+   authorizes publishing itself — without it, HASTE can reach storage but cannot create
+   catalog resources. Verify the exact role against your GeoCatalog.
+
+3. **Give HASTE a publish storage container** the GeoCatalog can ingest from, and grant the
    **GeoCatalog's managed identity** read access to it (Storage Blob Data Reader). HASTE copies
    published assets into this container and points STAC hrefs at it. See
    [Manage ingestion sources](https://learn.microsoft.com/azure/planetary-computer/ingestion-source).
 
-3. **Grant the HASTE Function App identity** write access (Storage Blob Data Contributor) to the
+4. **Grant the HASTE Function App identity** write access (Storage Blob Data Contributor) to the
    publish storage account so it can stage assets.
 
-4. **For a private container**, create an ingestion source in the GeoCatalog and set
+5. **For a private container**, create an ingestion source in the GeoCatalog and set
    `HASTE_PC_INGESTION_SOURCE`. Public containers need none.
 
 Once configured, HASTE handles the rest per publish: it creates the STAC
@@ -227,6 +256,7 @@ item, uploads assets, and — when Explorer rendering is enabled — registers t
 ```{admonition} Managed identity and RBAC
 :class: tip
 Publishing to Planetary Computer relies on Azure managed identities and role assignments
-rather than keys. If a publish fails with an authorization error, check that both role grants
-above are in place. See {doc}`Secure configuration </security-configuration>`.
+rather than keys. If a publish fails with an authorization error, check that the three role
+grants above are in place — the GeoCatalog data-plane role on the HASTE identity, plus the two
+storage roles. See {doc}`Secure configuration </security-configuration>`.
 ```

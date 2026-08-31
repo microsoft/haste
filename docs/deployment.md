@@ -80,11 +80,17 @@ in the configuration guide.
 The **Local** publishing target works out of the box. Publishing to **Planetary Computer**
 depends on an **external** Microsoft Planetary Computer Pro GeoCatalog that you provision and
 own — it is not created by `azd up`. Before enabling the PC target, provision the GeoCatalog,
-give HASTE a publish storage container the GeoCatalog can ingest from, and set up the two role
-grants (the HASTE Function App identity needs **Storage Blob Data Contributor** on the publish
-store; the GeoCatalog identity needs **Storage Blob Data Reader**). The settings are documented
-under [Data publishing](configuration.md#data-publishing) in the configuration guide, and the
-end-to-end setup under [Publishing datasets](usage/data-publishing.md#enabling-and-configuring-publishing).
+give HASTE a publish storage container the GeoCatalog can ingest from, and set up the three
+role grants:
+
+- the HASTE Function App identity needs a **GeoCatalog data-plane RBAC role** on the
+  GeoCatalog resource (to call the STAC/ingestion APIs — this authorizes publishing itself);
+- the HASTE Function App identity needs **Storage Blob Data Contributor** on the publish store;
+- the GeoCatalog identity needs **Storage Blob Data Reader** on that store.
+
+The settings are documented under [Data publishing](configuration.md#data-publishing) in the
+configuration guide, and the end-to-end setup under
+[Publishing datasets](usage/data-publishing.md#enabling-and-configuring-publishing).
 
 ### Security
 
