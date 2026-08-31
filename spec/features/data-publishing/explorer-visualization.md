@@ -3,6 +3,23 @@
 Stacked on top of the data-publishing feature (`-pc`). Delivered as its own
 PR (`-pc-explorer`) whose base is `prbatero/feat/data-publishing-pc`.
 
+## Contents
+
+- [Goal](#goal)
+- [Why they don't show today](#why-they-dont-show-today)
+- [Core principle](#core-principle-visualize-our-output-never-redistribute-source-pixels)
+- [What we add](#what-we-add)
+- [Rasterization](#rasterization)
+- [Render configuration](#render-configuration)
+- [Flow (PC publish)](#flow-pc-publish)
+- [Idempotency](#idempotency-re-publish--second-dataset)
+- [Configuration (env)](#configuration-env)
+- [Scope](#scope)
+- [Non-goals (v1)](#non-goals-v1)
+- [Open decisions](#open-decisions)
+- [Testing sketch](#testing-sketch)
+- [Execution plan](#execution-plan)
+
 ## Goal
 
 Make Planetary Computer (PC) published collections **visible and explorable in

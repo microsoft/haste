@@ -53,6 +53,25 @@ class TestRasterizeDamageCog(unittest.TestCase):
                 # raster is larger than the overview threshold, so not asserted
                 # for this tiny fixture).
                 self.assertTrue(ds.profile.get("tiled", False))
+
+                # Grid is a metric UTM projection derived from the AOI...
+                self.assertTrue(ds.crs.is_projected)
+                self.assertEqual(
+                    ds.crs, _aoi_gdf().estimate_utm_crs()
+                )
+                # ...at the requested resolution...
+                self.assertAlmostEqual(ds.res[0], 1.0, places=6)
+                self.assertAlmostEqual(ds.res[1], 1.0, places=6)
+                self.assertEqual((ds.width, ds.height), (result.width, result.height))
+                # ...clipped to the AOI bounds (top-left exact; bottom-right
+                # within one pixel of ceil padding).
+                aoi_m = _aoi_gdf().to_crs(ds.crs)
+                minx, miny, maxx, maxy = aoi_m.total_bounds
+                self.assertAlmostEqual(ds.bounds.left, minx, places=3)
+                self.assertAlmostEqual(ds.bounds.top, maxy, places=3)
+                self.assertLess(abs(ds.bounds.right - maxx), ds.res[0] + 1e-6)
+                self.assertLess(abs(ds.bounds.bottom - miny), ds.res[1] + 1e-6)
+
                 band = ds.read(1)
 
             values = set(np.unique(band).tolist())
@@ -98,6 +117,21 @@ class TestRasterizeDamageCog(unittest.TestCase):
             out = os.path.join(tmp, "damage_class.tif")
             self.assertIsNone(
                 rasterize_damage_cog(empty, _aoi_gdf(), out)
+            )
+            self.assertFalse(os.path.exists(out))
+
+    def test_returns_none_without_damage_column(self) -> None:
+        # Footprints (no recognized damage column) must not produce an
+        # all-undamaged raster -- skip so nothing misleading is published.
+        footprints = gpd.GeoDataFrame(
+            {"height_m": [10, 12]},
+            geometry=[DAMAGED_BLDG, INTACT_BLDG],
+            crs="EPSG:4326",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "damage_class.tif")
+            self.assertIsNone(
+                rasterize_damage_cog(footprints, _aoi_gdf(), out)
             )
             self.assertFalse(os.path.exists(out))
 

@@ -122,7 +122,7 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             settings.get("publish_explorer_render_enabled", True)
         )
         self._damage_raster_meters = float(
-            settings.get("publish_damage_raster_meters") or 0.5
+            settings.get("publish_damage_raster_meters", 0.5)
         )
         self._damage_raster_max_pixels = int(
             settings.get("publish_damage_raster_max_pixels") or 8192
@@ -1581,6 +1581,11 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
         """
         if not self._explorer_render_enabled:
             return None
+        # The classification is derived from the predicted-damage geopackage;
+        # without it (e.g. a footprints-only publish) there is nothing to
+        # render, and reusing a previously staged COG would be misleading.
+        if source.get(ArtifactKind.GPKG) is None:
+            return None
         from .raster import (
             DAMAGE_CLASS_ASSET_TITLE,
             DAMAGE_CLASS_MEDIA_TYPE,
@@ -1742,15 +1747,15 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
     def finalize_unpublish(self, dataset: PublishedDataset) -> None:
         """Remove staging copies once an unpublish has fully completed.
 
-        With a dedicated publish container, published assets are copied under
+        Published assets and the damage-classification COG are staged under
         ``published/<datasetId>/``. GeoCatalog cleanup only removes the STAC
-        item/collection, so those staging blobs would otherwise accumulate
-        indefinitely. Best-effort: a failure here must not fail the unpublish.
+        item/collection, so those blobs would otherwise accumulate. Always
+        attempt to delete this dataset-specific prefix -- the current feature
+        flags are not reliable evidence of what was staged when the dataset was
+        published (rendering may have since been toggled, or a dedicated store
+        added/removed), and the delete is a no-op when nothing is there.
+        Best-effort: a failure here must not fail the unpublish.
         """
-        # A damage classification COG is written under the same prefix even
-        # without a dedicated publish store, so clean up when either applies.
-        if not (self._stages_to_publish or self._explorer_render_enabled):
-            return
         prefix = f"published/{dataset.datasetId}/"
         try:
             self.publish_storage.delete_prefix(prefix)

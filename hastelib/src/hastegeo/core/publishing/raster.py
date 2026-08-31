@@ -111,13 +111,15 @@ def rasterize_damage_cog(
     height = max(1, int(math.ceil((maxy - miny) / resolution)))
     transform = from_origin(minx, maxy, resolution, resolution)
 
-    # Damaged wins over undamaged on overlap: burn undamaged first, damaged last.
+    # Require a recognizable damage classification. Footprints (or any layer
+    # without a damage column) yield no mask; rendering them would publish a
+    # misleading all-undamaged layer, so skip instead.
     damaged_mask = detect_damage_mask(buildings_m)
-    geoms = list(buildings_m.geometry.values)
     if damaged_mask is None:
-        damaged_flags = [False] * len(geoms)
-    else:
-        damaged_flags = [bool(v) for v in damaged_mask]
+        return None
+    geoms = list(buildings_m.geometry.values)
+    # Damaged wins over undamaged on overlap: burn undamaged first, damaged last.
+    damaged_flags = [bool(v) for v in damaged_mask]
     damaged_count = sum(damaged_flags)
 
     shapes = [

@@ -246,6 +246,13 @@ class TestRestAdapter(unittest.TestCase):
         )
         self.assertEqual(call["json"]["id"], "most-recent")
 
+    def test_config_creates_tolerate_409_already_exists(self):
+        # A concurrent publish can race the get-then-create and receive 409;
+        # that already-exists outcome is idempotent success, not an error.
+        rest = adapter(lambda m, u: FakeResponse(409))
+        rest.create_render_option("haste-c", {"id": "damage"})
+        rest.create_mosaic("haste-c", {"id": "most-recent"})
+
     def test_replace_tile_settings_puts(self):
         client = FakeClient(lambda m, u: FakeResponse(200, payload={}))
         rest = PlanetaryComputerRestAdapter(ENDPOINT, client=client)

@@ -886,9 +886,13 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
             [f"published/{self.dataset.datasetId}/"],
         )
 
-    def test_finalize_unpublish_noop_when_nothing_staged(self) -> None:
-        # No dedicated store and Explorer rendering disabled -> nothing was
-        # written under the prefix, so finalize is a no-op.
+    def test_finalize_unpublish_cleans_prefix_even_when_render_disabled(
+        self,
+    ) -> None:
+        # The dataset may have been published while rendering was enabled and
+        # the flag flipped since, so finalize must always attempt to delete the
+        # dataset-specific prefix regardless of the current flags (the delete is
+        # a harmless no-op when nothing is there).
         provider = PlanetaryComputerPublishingProvider(
             config=self.config,
             artifact_storage=self.storage,
@@ -899,7 +903,10 @@ class TestPlanetaryComputerPublishingProvider(unittest.TestCase):
         )
         provider._explorer_render_enabled = False
         provider.finalize_unpublish(self.dataset)
-        self.assertEqual(self.storage.deleted_prefixes, [])
+        self.assertEqual(
+            self.storage.deleted_prefixes,
+            [f"published/{self.dataset.datasetId}/"],
+        )
 
     def test_damage_class_asset_injected_into_documents(self) -> None:
         publish = FakeArtifactStorage(
