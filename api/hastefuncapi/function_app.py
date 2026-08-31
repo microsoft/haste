@@ -1418,7 +1418,6 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
     """
     try:
         project_id = _require_guid_param(req, "projectId")
-        model_id = _require_short_int_id_param(req, "modelId")
     except ValueError as e:
         return _bad_request(str(e))
 
@@ -1431,30 +1430,48 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
             f"{sorted({**_MODEL_ARTIFACT_URL_FIELDS, **_LAYER_ARTIFACT_URL_FIELDS})}"
         )
 
-    try:
-        document = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=project_id,
-            ).load,
-            model_id,
-        )
-    except FileNotFoundError:
-        return func.HttpResponse("Model not found.", status_code=404)
-    except Exception as e:
-        logger.error(
-            f"GetModelArtifact model load failed: {e}\n"
-            f"{traceback.format_exc()}"
-        )
-        return func.HttpResponse("Error loading model.", status_code=500)
+    # A layer-scoped artifact belongs to the image layer, so an
+    # imageLayerId alone is enough to reach it: a standard-workflow layer
+    # may have no models at all. modelId stays accepted, and is still
+    # required for every model-scoped kind.
+    explicit_layer_id = req.params.get("imageLayerId")
+    layer_only_request = bool(
+        layer_url_field is not None
+        and explicit_layer_id
+        and not req.params.get("modelId")
+    )
+    model_id = None
+    if not layer_only_request:
+        try:
+            model_id = _require_short_int_id_param(req, "modelId")
+        except ValueError as e:
+            return _bad_request(str(e))
+
+    document = None
+    if model_id is not None:
+        try:
+            document = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().MODEL.value,
+                    partition_key=project_id,
+                ).load,
+                model_id,
+            )
+        except FileNotFoundError:
+            return func.HttpResponse("Model not found.", status_code=404)
+        except Exception as e:
+            logger.error(
+                f"GetModelArtifact model load failed: {e}\n"
+                f"{traceback.format_exc()}"
+            )
+            return func.HttpResponse("Error loading model.", status_code=500)
 
     if layer_url_field is not None:
         # Layer-scoped artifact: take an explicit imageLayerId when the
-        # caller passes one, otherwise the model's own layer — a client
-        # holding a modelId always means that model's footprints.
+        # caller passes one, otherwise the model's own layer.
         url_field = layer_url_field
         model_document = document or {}
-        image_layer_id = req.params.get("imageLayerId") or model_document.get(
+        image_layer_id = explicit_layer_id or model_document.get(
             "imageLayerId"
         )
         if not image_layer_id or not _GUID_RE.match(str(image_layer_id)):
