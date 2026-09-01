@@ -1,7 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-const TERMINAL_STATUSES = new Set(["Processed", "Failed", "Cancelled"]);
+const TERMINAL_STATUSES = new Set([
+  "Processed",
+  "Trained",
+  "Failed",
+  "Cancelled",
+]);
 
 export function collectProjectJobStates(project) {
   const jobs = new Map();
@@ -54,4 +59,11 @@ export function findJobStatusTransitions(previousJobs, currentJobs) {
   }
 
   return transitions;
+}
+
+export function hasActiveProjectJobs(jobs) {
+  if (!jobs) return false;
+  return [...jobs.values()].some(
+    (job) => job.status && !TERMINAL_STATUSES.has(job.status)
+  );
 }

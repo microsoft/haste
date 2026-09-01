@@ -21,7 +21,7 @@ import {
 } from "@fluentui/react-components";
 import { useParams } from "react-router-dom";
 import { useState, useEffect } from "react";
-import { apiGet } from "../util/api";
+import { apiGet, apiGetResponse } from "../util/api";
 import { useNavigate } from "react-router-dom";
 
 import LayerRow from "./ProjectManagement/LayerRow";
@@ -37,7 +37,9 @@ import { updateUserSettings } from "../AppHelper";
 import {
   collectProjectJobStates,
   findJobStatusTransitions,
+  hasActiveProjectJobs,
 } from "../util/jobNotifications";
+import { createSingleFlight } from "../util/singleFlight";
 
 import PropType from "prop-types";
 
@@ -64,6 +66,7 @@ const GROUP_OPTIONS = [
 ];
 
 const PAGE_SIZE_OPTIONS = [5, 8, 10, 20, 50];
+const EMPTY_LAYERS = [];
 
 /** Resolve the group bucket label for an image layer given the grouping. */
 function getLayerGroupLabel(item, mode) {
@@ -133,13 +136,11 @@ const Project = ({ setModalComponent }) => {
 
   const defaultProjectDetailsRef = useRef(null);
   const projectJobStatesRef = useRef(null);
+  const projectLoadRef = useRef(createSingleFlight());
+  const projectEtagRef = useRef(null);
+  const projectLifecycleRef = useRef(0);
+  const projectMountedRef = useRef(false);
   const { dispatchToast } = useToastController("job-completion-toaster");
-
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [appParams.userSettings.itemsPerPageLayers]);
-
   const DEFAULT_COMPONENT_STATE = {
     project: null,
     visibleModelId: imageLayerId || "-1",
@@ -148,41 +149,45 @@ const Project = ({ setModalComponent }) => {
 
   const projectCurrentTouruseRef = useRef(DEFAULT_COMPONENT_STATE.visibleModelId === "-1" ? "singleProjectGuide" : "singleProjectModelGuide");
 
-  const [moreInfoVisibleId, setMoreInfoVisibleId] = useState(null);
+  const [, setMoreInfoVisibleId] = useState(null);
   const [componentState, setComponentState] = useState(DEFAULT_COMPONENT_STATE);
   const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchData = async () => {
-      await fetchProjectDetails();
-    };
-    fetchData();
+    fetchProjectDetails(true, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageLayerId]);
+  }, [projectId, imageLayerId]);
 
   useEffect(() => {
-    const fetchData = async () => {
-      await fetchProjectDetails();
+    const lifecycle = ++projectLifecycleRef.current;
+    const projectLoad = projectLoadRef.current;
+    const initialTour = projectCurrentTouruseRef.current;
+    projectMountedRef.current = true;
+    initGuidedTourState(initialTour, appParams.guidedTourProperties);
+    initCurrentTour(initialTour);
 
-      initGuidedTourState(projectCurrentTouruseRef.current, appParams.guidedTourProperties);
-      initCurrentTour(projectCurrentTouruseRef.current);
-
-      setAppHeaderRightButtons([
-        {
-          iconName: "help",
-          title: "Help",
-          id: "helpButton",
-          onClick: () =>
-            setGuidedTourState(false, initCurrentTour, projectCurrentTouruseRef.current, appParams.guidedTourProperties),
-        },
-      ]);
-    };
-    fetchData();
+    setAppHeaderRightButtons([
+      {
+        iconName: "help",
+        title: "Help",
+        id: "helpButton",
+        onClick: () =>
+          setGuidedTourState(false, initCurrentTour, projectCurrentTouruseRef.current, appParams.guidedTourProperties),
+      },
+    ]);
 
     //On component dismount
     return () => {
+      projectMountedRef.current = false;
+      queueMicrotask(() => {
+        // StrictMode immediately advances this generation before the microtask.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        if (projectLifecycleRef.current === lifecycle) {
+          projectLoad.abort();
+        }
+      });
       initCurrentTour(null);
-      initGuidedTourState(projectCurrentTouruseRef.current, appParams.guidedTourProperties);
+      initGuidedTourState(initialTour, appParams.guidedTourProperties);
       setAppHeaderRightButtons([]);
       setModalComponent(null);
     };
@@ -198,12 +203,38 @@ const Project = ({ setModalComponent }) => {
     }
   }, [componentState.visibleModelId]);
 
-  async function fetchProjectDetails(showLoading = true) {
-    if (showLoading) {
+  async function fetchProjectDetails(
+    showLoading = true,
+    forceRefresh = showLoading
+  ) {
+    if (projectEtagRef.current?.projectId !== projectId) {
+      projectEtagRef.current = null;
+    }
+
+    const projectLoad = projectLoadRef.current;
+    if (forceRefresh && projectLoad.isRunning(projectId)) {
+      projectLoad.abort();
+    }
+    const startsRequest = !projectLoad.isRunning(projectId);
+    if (showLoading && startsRequest) {
       setIsLoading(true);
     }
-    await apiGet("GetProjectDetails?projectId=" + projectId + "&includeModels=True")
-      .then((response) => {
+    const headers = {};
+    if (forceRefresh) {
+      headers["Cache-Control"] = "no-cache";
+    }
+    if (projectEtagRef.current?.etag) {
+      headers["If-None-Match"] = projectEtagRef.current.etag;
+    }
+
+    const requestPromise = projectLoad.run(projectId, async (signal) => {
+      try {
+        const { data: response, etag, status } = await apiGetResponse(
+          "GetProjectDetails?projectId=" + projectId + "&includeModels=True",
+          { signal, headers, cache: forceRefresh ? "no-cache" : "default" }
+        );
+        if (etag) projectEtagRef.current = { projectId, etag };
+        if (status === 304) return defaultProjectDetailsRef.current;
         defaultProjectDetailsRef.current = response;
         const currentJobStates = collectProjectJobStates(response);
         const previousJobState = projectJobStatesRef.current;
@@ -250,18 +281,33 @@ const Project = ({ setModalComponent }) => {
             filter: false,
           },
         }));
-      })
-      .catch((error) => {
+        return response;
+      } catch (error) {
+        if (error.name === "AbortError") return null;
         console.error("Error fetching projects:", error);
+        return null;
+      }
+    });
+    if (showLoading && startsRequest) {
+      requestPromise.finally(() => {
+        if (!projectLoad.isRunning() && projectMountedRef.current) {
+          setIsLoading(false);
+        }
       });
-    if (showLoading) {
-      setIsLoading(false);
     }
+    return requestPromise;
   }
 
   useEffect(() => {
-    const intervalId = setInterval(async () => {
-      fetchProjectDetails(false);
+    const intervalId = setInterval(() => {
+      const jobs = projectJobStatesRef.current?.jobs;
+      if (
+        document.visibilityState === "visible" &&
+        !projectLoadRef.current.isRunning() &&
+        hasActiveProjectJobs(jobs)
+      ) {
+        fetchProjectDetails(false);
+      }
     }, 20000);
 
     return () => clearInterval(intervalId);
@@ -307,7 +353,7 @@ const Project = ({ setModalComponent }) => {
   }
 
   // Filter + sort + group the image layers (memoised so pagination is cheap).
-  const imageLayers = componentState.project?.imageLayer || [];
+  const imageLayers = componentState.project?.imageLayer || EMPTY_LAYERS;
   const processed = useMemo(() => {
     const search = searchText.toLowerCase();
     const filtered = imageLayers.filter(
@@ -332,7 +378,6 @@ const Project = ({ setModalComponent }) => {
       return String(av ?? "").localeCompare(String(bv ?? "")) * dir;
     });
     return sorted;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageLayers, searchText, sort, effectiveGroupBy]);
 
   if (!componentState.project) {
@@ -416,7 +461,7 @@ const Project = ({ setModalComponent }) => {
                           <CreateEditProjectModal
                             onClose={() => {
                               setModalComponent(null);
-                              fetchProjectDetails(false);
+                              fetchProjectDetails(false, true);
                             }}
                             projectId={projectId}
                           />
