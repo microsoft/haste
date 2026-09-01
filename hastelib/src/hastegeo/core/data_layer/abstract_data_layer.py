@@ -184,12 +184,55 @@ class AbstractDataLayer(ABC):
         """
         pass
 
-    def load_bounded(
-        self, data_type, max_records, data_format="json"
-    ):
+    def load_bounded(self, data_type, max_records, data_format="json"):
         """Load no more than ``max_records`` or fail before full materialization."""
         raise NotImplementedError(
             f"{self.__class__.__name__} does not support bounded reads"
+        )
+
+    def load_map(
+        self,
+        identifiers,
+        data_type,
+        data_format="json",
+        max_workers=None,
+    ):
+        """Load keyed records in one backend-native operation when supported."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement batch reads"
+        )
+
+    def list_identifiers(self, data_type, data_format="json"):
+        """List the identifiers of records of a type in the current partition.
+
+        Unlike :meth:`load_all_from_partition`, this returns only the keys and
+        does not download record contents — a cheap way to test existence in
+        bulk. Not abstract so existing backends keep working; concrete backends
+        that support cheap listing (blob, local filesystem) override it.
+
+        Args:
+            data_type (str): Type/category of the data to list.
+            data_format (str, optional): File format of the records. Defaults
+                to "json".
+
+        Returns:
+            List[str]: Identifiers present in the current partition.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement list_identifiers"
+        )
+
+    def get_file_remote_path(
+        self,
+        identifier=None,
+        data_type=None,
+        data_format="json",
+        extra_partition_keys=None,
+        check_exists=True,
+    ):
+        """Build a remotely accessible path when the backend supports one."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not expose remote file paths"
         )
 
     @abstractmethod
