@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import traceback
+from typing import Optional
 
 import azure.functions as func  # type: ignore
 from hastegeo.core.config import Config
@@ -27,6 +28,11 @@ from hastegeo.core.processors.inference import (
 )
 from hastegeo.core.processors.labels import LabelTaskGenerator
 from hastegeo.core.processors.metadata import MetadataProcessor
+from hastegeo.core.processors.prediction_tiles import (
+    PredictionTilesPostprocessor,
+    needs_preparation,
+    versions_needing_attrs,
+)
 from hastegeo.core.processors.publishing import PublishingProcessor
 from hastegeo.core.processors.stats import StatsPostProcessor
 from hastegeo.core.processors.train import TrainPostprocessor
@@ -601,6 +607,356 @@ async def GetRunEmbeddingQueueMessage(msg: func.QueueMessage) -> None:
                 )
 
 
+async def _save_layer_footprint_tile_state(
+    project_id: str, image_layer: ImageLayer
+) -> None:
+    """Persist only the footprint-tiling fields of an image layer.
+
+    A layer-only tiling job runs alongside (and just after) imagery
+    preprocessing, which owns the rest of the document. Re-reading the
+    layer and patching just these four fields keeps the tiling job from
+    clobbering a concurrent imagery update.
+    """
+    metadata = MetadataProcessor(
+        data_type=config.get_metadata_types().IMAGELAYER.value,
+        partition_key=project_id,
+    )
+    image_layer_id = image_layer.imageLayerId
+    latest_layer = await asyncio.to_thread(metadata.load, image_layer_id)
+    job = image_layer.footprintTilesJob
+    latest_layer.update(
+        {
+            "footprintPmtilesUrl": image_layer.footprintPmtilesUrl,
+            "footprintTilesStatus": image_layer.footprintTilesStatus,
+            "footprintTilesStatusMessage": (
+                image_layer.footprintTilesStatusMessage
+            ),
+            "footprintTilesJob": job.dict() if job else None,
+        }
+    )
+    await asyncio.to_thread(metadata.save, image_layer_id, latest_layer)
+
+
+async def _prepare_layer_footprint_tiles(
+    project_id: str, image_layer_id: str, force: bool
+) -> None:
+    """Build an image layer's shared footprint PMTiles (no model).
+
+    The layer-only half of the prep queue: imagery preprocessing asks
+    for this as soon as a layer's building footprints are cached, so the
+    prediction editor finds the tiles already built. No model document is
+    read or written — the job's state lives on the layer
+    (``footprintTilesStatus``/``footprintTilesJob``).
+    """
+    image_layer = None
+    try:
+        try:
+            layer_record = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().IMAGELAYER.value,
+                    partition_key=project_id,
+                ).load,
+                image_layer_id,
+            )
+        except FileNotFoundError:
+            layer_record = None
+
+        if not layer_record:
+            logger.info(
+                f"Image layer {image_layer_id} not found, likely deleted, "
+                "skipping footprint tile preparation."
+            )
+            return
+
+        # Metadata is authoritative: the message only routes the work.
+        image_layer = ImageLayer(**layer_record)
+        statuses = config.get_status_types()
+        if image_layer.footprintTilesStatus != statuses.IN_PROGRESS.value:
+            if not image_layer.buildingFootprintsUrl:
+                logger.info(
+                    f"Image layer {image_layer_id} has no cached building "
+                    "footprints; nothing to tile."
+                )
+                return
+            if not force and image_layer.footprintPmtilesUrl:
+                logger.info(
+                    f"Footprint tiles for image layer {image_layer_id} are "
+                    "already available; nothing to do."
+                )
+                image_layer.footprintTilesStatus = statuses.COMPLETED.value
+                await _save_layer_footprint_tile_state(project_id, image_layer)
+                return
+            image_layer.footprintTilesStatus = statuses.PENDING.value
+
+        processor = PredictionTilesPostprocessor(None, image_layer)
+        output = await asyncio.to_thread(processor.process)
+        await _save_layer_footprint_tile_state(project_id, output)
+    except Exception as e:
+        logger.error(
+            "PreparePredictionTilesQueueTrigger: Error preparing footprint "
+            f"tiles for image layer {image_layer_id}: {e}\n"
+            f"{traceback.format_exc()}",
+            stack_info=True,
+        )
+        if image_layer is not None:
+            try:
+                image_layer.footprintTilesStatus = (
+                    config.get_status_types().FAILED.value
+                )
+                image_layer.footprintTilesStatusMessage = (
+                    MetadataUtils.append_status_message(
+                        image_layer.footprintTilesStatusMessage,
+                        "Footprint tile job failed: "
+                        f"{describe_exception(e)}",
+                    )
+                )
+                await _save_layer_footprint_tile_state(project_id, image_layer)
+            except Exception as inner_e:
+                logger.error(
+                    "PreparePredictionTilesQueueTrigger: Error saving "
+                    f"failed status: {inner_e}\n{traceback.format_exc()}",
+                    stack_info=True,
+                )
+
+
+async def _prepare_model_prediction_tiles(
+    project_id: str,
+    image_layer_id: Optional[str],
+    model_id: str,
+    force: bool,
+    backfill_versions: bool = True,
+) -> None:
+    """Build a model's attribute sidecar (+ the layer's tiles if absent).
+
+    Drives the PredictionTilesPostprocessor state machine (submit ->
+    poll -> finalize) for one model. On completion the model gets its
+    attribute-sidecar URL and the image layer gets the shared footprint
+    PMTiles URL, so both documents are persisted.
+
+    With ``backfill_versions`` the run also rebuilds the sidecar of every
+    saved edited version that has none, and records each URL on its
+    ``Model.editedPredictions`` entry. Versions that already have one are
+    skipped, so this is safe to repeat.
+    """
+    model_data = None
+    try:
+        try:
+            existing_model = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().MODEL.value,
+                    partition_key=project_id,
+                ).load,
+                model_id,
+            )
+        except FileNotFoundError:
+            existing_model = None
+
+        if not existing_model:
+            logger.info(
+                f"Model {model_id} not found, likely deleted, "
+                "skipping prediction tile preparation."
+            )
+            return
+
+        # Metadata is authoritative: the message only routes the work.
+        model_data = Model(**existing_model)
+        image_layer_id = image_layer_id or model_data.imageLayerId
+        if not image_layer_id:
+            raise ValueError(
+                f"Model {model_id} has no imageLayerId; cannot locate "
+                "the building footprints to tile."
+            )
+
+        image_layer_record = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=project_id,
+            ).load,
+            image_layer_id,
+        )
+        image_layer = ImageLayer(**image_layer_record)
+        previous_pmtiles_url = image_layer.footprintPmtilesUrl
+
+        statuses = config.get_status_types()
+        if model_data.predictionTilesStatus != statuses.IN_PROGRESS.value:
+            needs_pmtiles, needs_attrs = needs_preparation(
+                model_data, image_layer
+            )
+            # A saved version with no sidecar cannot be rendered, so it
+            # is outstanding work even when the model's own artifacts
+            # are already there.
+            pending_versions = (
+                versions_needing_attrs(model_data) if backfill_versions else []
+            )
+            if (
+                not force
+                and not needs_pmtiles
+                and not needs_attrs
+                and not pending_versions
+            ):
+                logger.info(
+                    f"Prediction tiles for model {model_id} are already "
+                    "available; nothing to do."
+                )
+                model_data.predictionTilesStatus = statuses.COMPLETED.value
+                await asyncio.to_thread(
+                    MetadataProcessor(
+                        data_type=config.get_metadata_types().MODEL.value,
+                        partition_key=project_id,
+                    ).save,
+                    model_id,
+                    model_data.dict(),
+                )
+                return
+            model_data.predictionTilesStatus = statuses.PENDING.value
+
+        processor = PredictionTilesPostprocessor(
+            model_data, image_layer, backfill_versions=backfill_versions
+        )
+        output = await asyncio.to_thread(processor.process)
+
+        await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).save,
+            model_id,
+            output.dict(),
+        )
+
+        # Footprint tiles belong to the layer, not the model. Re-read the
+        # layer before writing so a concurrent imagery update isn't lost.
+        new_pmtiles_url = processor.image_layer.footprintPmtilesUrl
+        if new_pmtiles_url and new_pmtiles_url != previous_pmtiles_url:
+            latest_layer = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().IMAGELAYER.value,
+                    partition_key=project_id,
+                ).load,
+                image_layer_id,
+            )
+            latest_layer["footprintPmtilesUrl"] = new_pmtiles_url
+            await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().IMAGELAYER.value,
+                    partition_key=project_id,
+                ).save,
+                image_layer_id,
+                latest_layer,
+            )
+    except Exception as e:
+        logger.error(
+            "PreparePredictionTilesQueueTrigger: Error preparing prediction "
+            f"tiles for model {model_id}: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+        if model_data is not None:
+            try:
+                model_data.predictionTilesStatus = (
+                    config.get_status_types().FAILED.value
+                )
+                model_data.predictionTilesStatusMessage = (
+                    MetadataUtils.append_status_message(
+                        model_data.predictionTilesStatusMessage,
+                        "Prediction tile job failed: "
+                        f"{describe_exception(e)}",
+                    )
+                )
+                await asyncio.to_thread(
+                    MetadataProcessor(
+                        data_type=config.get_metadata_types().MODEL.value,
+                        partition_key=model_data.projectId,
+                    ).save,
+                    model_data.modelId,
+                    model_data.dict(),
+                )
+            except Exception as inner_e:
+                logger.error(
+                    "PreparePredictionTilesQueueTrigger: Error saving "
+                    f"failed status: {inner_e}\n{traceback.format_exc()}",
+                    stack_info=True,
+                )
+
+
+@app.function_name(name="PreparePredictionTilesQueueTrigger")
+@app.queue_trigger(
+    arg_name="msg",
+    queue_name=config.get_queue_config()["prediction_edit_prep_queue_name"],
+    connection="AzureWebJobsStorage",
+)
+async def GetPreparePredictionTilesQueueMessage(
+    msg: func.QueueMessage,
+) -> None:
+    """Build the prediction editor's footprint tiles + attribute sidecar.
+
+    Message schema (identifiers only)::
+
+        {"projectId", "imageLayerId", "modelId", "sourceGpkgUrl",
+         "sourceFootprintsUrl", "force", "backfillVersions"}
+
+    An empty/absent ``modelId`` selects **layer-only** preparation: build
+    the image layer's shared footprint PMTiles and nothing else. Imagery
+    preprocessing queues that as soon as a layer's footprints are cached
+    so the editor never has to wait for tiling. With a ``modelId`` the
+    message is **model-scoped**: build the model's attribute sidecar,
+    plus the layer's tiles when they are still missing, and (unless
+    ``backfillVersions`` is false) the sidecar of every saved edited
+    version that has none.
+
+    The authoritative job state is read from metadata, so a fresh
+    request and the postprocessor's own poll messages take the same
+    path. The work runs as a task in the training docker image because
+    tippecanoe only ships there.
+    """
+    logger.info(
+        "PreparePredictionTilesQueueTrigger function processed a message: "
+        f'{msg.get_body().decode("utf-8")}'
+    )
+    try:
+        payload = json.loads(msg.get_body().decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Queue message must be a JSON object")
+        project_id = payload.get("projectId")
+        model_id = payload.get("modelId")
+        image_layer_id = payload.get("imageLayerId")
+        force = bool(payload.get("force", False))
+        backfill_versions = bool(payload.get("backfillVersions", True))
+        if not project_id or not (model_id or image_layer_id):
+            raise ValueError(
+                "Queue message requires projectId plus modelId or "
+                f"imageLayerId, got: {sorted(payload.keys())}"
+            )
+
+        if model_id:
+            await _prepare_model_prediction_tiles(
+                project_id,
+                image_layer_id,
+                model_id,
+                force,
+                backfill_versions=backfill_versions,
+            )
+        else:
+            await _prepare_layer_footprint_tiles(
+                project_id, image_layer_id, force
+            )
+    except ValidationError as e:
+        logger.error(
+            f"PreparePredictionTilesQueueTrigger: Validation error: {e}\n"
+            f"{traceback.format_exc()}"
+        )
+    except ValueError as e:
+        logger.error(
+            "PreparePredictionTilesQueueTrigger: Invalid queue message: "
+            f"{e}\n{traceback.format_exc()}"
+        )
+    except Exception as e:
+        logger.error(
+            "PreparePredictionTilesQueueTrigger: Error processing queue "
+            f"message: {e}\n{traceback.format_exc()}",
+            stack_info=True,
+        )
+
+
 @app.function_name(name="GetRunInferenceQueueTrigger")
 @app.queue_trigger(
     arg_name="msg",
@@ -1013,7 +1369,9 @@ async def GetPublishDatasetQueueMessage(msg: func.QueueMessage) -> None:
         message = PublishQueueMessage(
             **json.loads(msg.get_body().decode("utf-8"))
         )
-        await asyncio.to_thread(PublishingProcessor(config=config).run_step, message)
+        await asyncio.to_thread(
+            PublishingProcessor(config=config).run_step, message
+        )
     except Exception as error:
         logger.error(
             "PublishDatasetQueueTrigger failed with %s",

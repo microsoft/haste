@@ -46,6 +46,7 @@ def create_queues():
         "local-zip-queue",
         "local-inference-queue",
         "local-embedding-queue",
+        "local-prediction-edit-prep-queue",
         "local-image-queue-poison",
         "local-embedding-queue-poison"
     ]

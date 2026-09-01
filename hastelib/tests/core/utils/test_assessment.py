@@ -9,6 +9,8 @@ test and would otherwise need real Overture/inference files.
 """
 
 import math
+import os
+import tempfile
 import unittest
 
 from hastegeo.core.utils.assessment import (
@@ -18,6 +20,7 @@ from hastegeo.core.utils.assessment import (
     AssessmentInputs,
     _average_precision,
     _precision_recall_curve,
+    build_assessment_inputs_from_gpkgs,
     compute_assessment_report,
 )
 
@@ -232,6 +235,123 @@ class TestComputeAssessmentReport(unittest.TestCase):
             for v in round_tripped[section].values():
                 if isinstance(v, float):
                     self.assertTrue(math.isfinite(v), f"{section} -> {v}")
+
+
+class TestEditedPredictionsAreHonoured(unittest.TestCase):
+    """An analyst's saved call must outrank the model's own score.
+
+    ``apply_edits`` rewrites ``damaged``/``edited_class`` but leaves
+    ``damage_pct_0m`` at whatever the model predicted. Reading the score
+    here reported the raw model's counts under an edited version's name.
+    """
+
+    def _write(self, directory, rows):
+        import fiona
+        from fiona.crs import CRS
+        from fiona.model import Feature, Geometry
+
+        footprints = os.path.join(directory, "footprints.gpkg")
+        predictions = os.path.join(directory, "predictions.gpkg")
+
+        def square(i):
+            return Geometry(
+                type="Polygon",
+                coordinates=[
+                    [
+                        (i, 0.0),
+                        (i + 0.0005, 0.0),
+                        (i + 0.0005, 0.0005),
+                        (i, 0.0005),
+                        (i, 0.0),
+                    ]
+                ],
+            )
+
+        with fiona.open(
+            footprints,
+            "w",
+            driver="GPKG",
+            crs=CRS.from_epsg(4326),
+            schema={"geometry": "Polygon", "properties": {"id": "str"}},
+        ) as dst:
+            for i, _ in enumerate(rows):
+                dst.write(
+                    Feature(
+                        geometry=square(float(i)),
+                        properties={"id": f"overture-{i}"},
+                    )
+                )
+
+        schema = {
+            "geometry": "Polygon",
+            "properties": {
+                "id": "int",
+                "damage_pct_0m": "float",
+                "unknown_pct": "float",
+                "edited_class": "str",
+            },
+        }
+        with fiona.open(
+            predictions,
+            "w",
+            driver="GPKG",
+            crs=CRS.from_epsg(4326),
+            schema=schema,
+        ) as dst:
+            for i, (damage, edited) in enumerate(rows):
+                dst.write(
+                    Feature(
+                        geometry=square(float(i)),
+                        properties={
+                            "id": i,
+                            "damage_pct_0m": damage,
+                            "unknown_pct": 0.0,
+                            "edited_class": edited,
+                        },
+                    )
+                )
+        return footprints, predictions
+
+    def test_edited_class_overrides_the_model_score(self):
+        # Row 0: model says undamaged, analyst says Damaged.
+        # Row 1: model says damaged, analyst says NotDamaged.
+        # Row 2: model says damaged, analyst says Unknown.
+        with tempfile.TemporaryDirectory() as tmp:
+            footprints, predictions = self._write(
+                tmp,
+                [
+                    (0.0, "Damaged"),
+                    (0.9, "NotDamaged"),
+                    (0.9, "Unknown"),
+                ],
+            )
+            inputs = build_assessment_inputs_from_gpkgs(
+                footprints, predictions
+            )
+
+        self.assertEqual(inputs.damage_fractions["overture-0"], 1.0)
+        self.assertEqual(inputs.damage_fractions["overture-1"], 0.0)
+        self.assertEqual(inputs.unknown_fractions["overture-2"], 1.0)
+
+        report = compute_assessment_report(inputs)
+        # Only row 0 counts as damaged, and row 2 leaves the known set.
+        self.assertEqual(report["predictions"]["predictedDamaged"], 1)
+        self.assertEqual(report["predictions"]["knownNonCloudy"], 2)
+        self.assertEqual(report["predictions"]["cloudy"], 1)
+
+    def test_raw_predictions_still_use_the_score(self):
+        # No edited_class column values: unchanged behaviour.
+        with tempfile.TemporaryDirectory() as tmp:
+            footprints, predictions = self._write(
+                tmp, [(0.0, ""), (0.9, ""), (0.9, "")]
+            )
+            inputs = build_assessment_inputs_from_gpkgs(
+                footprints, predictions
+            )
+
+        self.assertEqual(inputs.damage_fractions["overture-1"], 0.9)
+        report = compute_assessment_report(inputs)
+        self.assertEqual(report["predictions"]["predictedDamaged"], 2)
 
 
 if __name__ == "__main__":

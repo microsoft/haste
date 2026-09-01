@@ -14,6 +14,10 @@ from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
+from .prediction_tiles import (
+    enqueue_prediction_tiles,
+    layer_needs_footprint_tiles,
+)
 
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 IMAGERY_PREFIX = "img"
@@ -242,6 +246,16 @@ class ImageryPostProcessor:
                         self.image_data.statusMessage
                     )
 
+                # Pre-build the layer's footprint vector tiles now that
+                # the footprints exist, so the prediction editor opens
+                # instantly later. Skipped when _update_results_from_job
+                # flipped the layer to FAILED (no usable footprints).
+                if (
+                    self.image_data.status
+                    == self.config.get_status_types().COMPLETED.value
+                ):
+                    self._enqueue_footprint_tiles()
+
                 # Cleanup the task on the runner
                 self.runner.cleanup_task(
                     job_id=self.image_data.preprocessJob.jobId,
@@ -381,6 +395,50 @@ class ImageryPostProcessor:
             f"InProgress message sent to queue for image layer {self.image_data.imageLayerId}"
         )
         return self.image_data
+
+    def _enqueue_footprint_tiles(self) -> None:
+        """Queue the layer's footprint PMTiles build (best effort).
+
+        Building the tiles at layer-creation time means the prediction
+        editor never has to wait for a per-model tiling job: the archive
+        is shared by every model on the layer. The work itself still runs
+        as a queued task in the training image, which is the only one
+        carrying ``tippecanoe``.
+
+        Deliberately non-fatal: tiles are an optimisation. If the queue
+        is unreachable the layer is still perfectly usable, and the
+        editor's own preparation path (``request_preparation``) rebuilds
+        them on demand — the same path older layers take.
+        """
+        if not layer_needs_footprint_tiles(self.image_data):
+            self.logger.info(
+                "Not queueing footprint tiles for image layer %s "
+                "(footprints=%s, tiles=%s)",
+                self.image_data.imageLayerId,
+                bool(self.image_data.buildingFootprintsUrl),
+                bool(self.image_data.footprintPmtilesUrl),
+            )
+            return
+        try:
+            enqueue_prediction_tiles(
+                project_id=self.image_data.projectId,
+                image_layer_id=self.image_data.imageLayerId,
+                source_footprints_url=self.image_data.buildingFootprintsUrl,
+                config=self.config,
+            )
+            self.logger.info(
+                "Queued footprint tiles for image layer %s",
+                self.image_data.imageLayerId,
+            )
+        except Exception as e:
+            self.logger.warning(
+                "Could not queue footprint tiles for image layer %s: %s. "
+                "Imagery preprocessing is unaffected; the tiles will be "
+                "built on demand when the prediction editor first opens "
+                "this layer.",
+                self.image_data.imageLayerId,
+                e,
+            )
 
     def _read_task_output(self, filename: str) -> Optional[str]:
         """Return the text of a task output file, or ``None``.

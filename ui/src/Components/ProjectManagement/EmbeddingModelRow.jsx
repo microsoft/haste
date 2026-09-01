@@ -25,6 +25,11 @@ import StatusIndicator from "../OtherComponents/StatusIndicator";
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
 import PublishDatasetModal from "../PublishDatasetModal";
+import DownloadPredictionsDialog from "../OtherComponents/DownloadPredictionsDialog";
+import {
+  buildVersionGpkgUrl,
+  hasPredictionVersionChoice,
+} from "../Visualizer/predictionVersions";
 import { fileDownload } from "../../util/file";
 import { limitTextLength } from "../../util/conversion";
 
@@ -81,9 +86,18 @@ const EmbeddingModelRow = ({
   const [showValidationReport, setShowValidationReport] = useState(false);
   const [showAssessmentReport, setShowAssessmentReport] = useState(false);
   const [showPublishDataset, setShowPublishDataset] = useState(false);
+  const [showDownloadPredictions, setShowDownloadPredictions] =
+    useState(false);
 
   const isProcessed = model.status === "Processed";
   const hasPredictions = !!model.gpkgUrl;
+  // Viewing results opens the visualizer, which is also where predictions are
+  // reviewed and edited. `predictionsReady` is the server-derived readiness
+  // flag; models saved before it existed fall back to "a GeoPackage exists".
+  const canViewResults = model.predictionsReady ?? hasPredictions;
+  const viewResultsTooltip =
+    "Predict buildings in the Interactive Labeler before viewing results";
+
   const createdDate = model.creationDate
     ? `${model.creationDate.substring(0, 10)} ${model.creationDate.substring(
         11,
@@ -109,11 +123,31 @@ const EmbeddingModelRow = ({
   const resultsMenu = {
     items: [
       {
+        // Same destination and ordering as the standard workflow's Results
+        // menu (ModelResultsButton): View first, downloads/reports after.
+        key: "viewResults",
+        text: "View",
+        icon: <FluentIcon name="Forward" />,
+        disabled: !canViewResults,
+        tooltip: viewResultsTooltip,
+        onClick: () => {
+          navigate(
+            `/visualizer/${projectId}/${imageLayerId}/${model.modelId}`
+          );
+        },
+      },
+      {
         key: "downloadGeopackage",
         text: "Download Geopackage (.gpkg)",
         icon: <FluentIcon name="download" />,
         disabled: !hasPredictions,
         onClick: () => {
+          // With saved edits there is a real choice to make, and downloading
+          // the raw output silently would throw away the analyst's work.
+          if (hasPredictionVersionChoice(model.editedPredictions)) {
+            setShowDownloadPredictions(true);
+            return;
+          }
           // Stream the predictions GeoPackage through the same-origin API
           // (GetModelArtifact) rather than the raw blob URL, so it works for
           // remote labelers behind the storage firewall — matching how the
@@ -161,6 +195,35 @@ const EmbeddingModelRow = ({
     ],
   };
 
+  // Rendered identically by the mobile and desktop layouts below. Disabled
+  // Fluent menu items stay hoverable/focusable, so a tooltip can explain why
+  // an action isn't available yet.
+  const renderResultsMenuItems = () =>
+    resultsMenu.items.map((mi) => {
+      const menuItem = (
+        <MenuItem
+          key={mi.key}
+          icon={mi.icon}
+          disabled={mi.disabled}
+          onClick={mi.onClick}
+        >
+          {mi.text}
+        </MenuItem>
+      );
+      return mi.disabled && mi.tooltip ? (
+        <Tooltip
+          key={mi.key}
+          content={mi.tooltip}
+          relationship="description"
+          withArrow
+        >
+          {menuItem}
+        </Tooltip>
+      ) : (
+        menuItem
+      );
+    });
+
   const moreMenuOptions = {
     items: [
       {
@@ -189,12 +252,33 @@ const EmbeddingModelRow = ({
 
   const reportModals = (
     <>
+      {showDownloadPredictions && (
+        <DownloadPredictionsDialog
+          versions={model.editedPredictions}
+          modelName={model.name}
+          onDownload={(version) =>
+            fileDownload(
+              buildUrl(
+                buildVersionGpkgUrl({
+                  projectId,
+                  imageLayerId,
+                  modelId: model.modelId,
+                  version,
+                })
+              ),
+              setDialog
+            )
+          }
+          onDismiss={() => setShowDownloadPredictions(false)}
+        />
+      )}
       {showValidationReport && (
         <ValidationReportModal
           projectId={projectId}
           imageLayerId={imageLayerId}
           modelId={model.modelId}
           modelName={model.name}
+          versions={model.editedPredictions}
           onDismiss={() => setShowValidationReport(false)}
         />
       )}
@@ -204,6 +288,7 @@ const EmbeddingModelRow = ({
           imageLayerId={imageLayerId}
           modelId={model.modelId}
           modelName={model.name}
+          versions={model.editedPredictions}
           onDismiss={() => setShowAssessmentReport(false)}
         />
       )}
@@ -316,24 +401,13 @@ const EmbeddingModelRow = ({
                     appearance="primary"
                     id={"embeddingResults" + index}
                     className="dashboard-button ms-2"
-                    disabled={!hasPredictions}
+                    disabled={!(hasPredictions || canViewResults)}
                   >
                     Results
                   </Button>
                 </MenuTrigger>
                 <MenuPopover>
-                  <MenuList>
-                    {resultsMenu.items.map((mi) => (
-                      <MenuItem
-                        key={mi.key}
-                        icon={mi.icon}
-                        disabled={mi.disabled}
-                        onClick={mi.onClick}
-                      >
-                        {mi.text}
-                      </MenuItem>
-                    ))}
-                  </MenuList>
+                  <MenuList>{renderResultsMenuItems()}</MenuList>
                 </MenuPopover>
               </Menu>
             </div>
@@ -433,24 +507,13 @@ const EmbeddingModelRow = ({
               appearance="primary"
               id={"embeddingResults" + index}
               className="dashboard-button"
-              disabled={!hasPredictions}
+              disabled={!(hasPredictions || canViewResults)}
             >
               Results
             </Button>
           </MenuTrigger>
           <MenuPopover>
-            <MenuList>
-              {resultsMenu.items.map((mi) => (
-                <MenuItem
-                  key={mi.key}
-                  icon={mi.icon}
-                  disabled={mi.disabled}
-                  onClick={mi.onClick}
-                >
-                  {mi.text}
-                </MenuItem>
-              ))}
-            </MenuList>
+            <MenuList>{renderResultsMenuItems()}</MenuList>
           </MenuPopover>
         </Menu>
         <Menu positioning="below-end">

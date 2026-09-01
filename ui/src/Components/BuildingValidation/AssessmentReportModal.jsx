@@ -19,6 +19,8 @@ import { FluentIcon } from "../../util/icons";
 import PropTypes from "prop-types";
 import { apiGet } from "../../util/api";
 import { buildAssessmentSummary } from "../../util/assessmentSummary";
+import PredictionVersionPicker from "../OtherComponents/PredictionVersionPicker";
+import { defaultPredictionVersion } from "../Visualizer/predictionVersions";
 
 /* ── Theme-aware design tokens (follow light/dark via Fluent) ─── */
 const tokens = {
@@ -162,18 +164,24 @@ const AssessmentReportModal = ({
   imageLayerId,
   modelId,
   modelName,
+  versions,
   onDismiss,
 }) => {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Which predictions the assessment counts. Defaults to the newest saved
+  // edit, matching what the server would have picked on its own.
+  const [version, setVersion] = useState(() =>
+    defaultPredictionVersion(versions)
+  );
 
   const fetchReport = () => {
     setLoading(true);
     setError(null);
     setReport(null);
     apiGet(
-      `GetAssessmentReport?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}`
+      `GetAssessmentReport?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}&version=${version}`
     )
       .then((data) => {
         if (data && data.error && !data.predictions) {
@@ -191,7 +199,7 @@ const AssessmentReportModal = ({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, imageLayerId, modelId]);
+  }, [projectId, imageLayerId, modelId, version]);
 
   const preds = report?.predictions;
   const pop = report?.populationEstimate;
@@ -226,6 +234,13 @@ const AssessmentReportModal = ({
             </div>
           </DialogTitle>
           <DialogContent>
+            <PredictionVersionPicker
+              versions={versions}
+              value={version}
+              onChange={setVersion}
+              disabled={loading}
+              label="Report on"
+            />
             {!loading && !error && summarySentence && (
               <Text style={{ display: "block", color: tokens.colorNeutralForeground2, marginBottom: 16 }}>
                 {summarySentence}
@@ -387,6 +402,7 @@ AssessmentReportModal.propTypes = {
   imageLayerId: PropTypes.string.isRequired,
   modelId: PropTypes.string.isRequired,
   modelName: PropTypes.string,
+  versions: PropTypes.array,
   onDismiss: PropTypes.func.isRequired,
 };
 

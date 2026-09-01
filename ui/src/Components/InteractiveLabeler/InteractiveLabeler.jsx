@@ -34,8 +34,9 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
-import { PMTiles, Protocol } from "pmtiles";
+import { PMTiles } from "pmtiles";
 import { apiGet, apiPut, buildUrl } from "../../util/api";
+import { getPmtilesProtocol } from "../../util/pmtiles.js";
 import {
   getAzureMapsAuthOptions,
   isAzureMapsPlaceholder,
@@ -75,12 +76,12 @@ import {
 // VectorTileSource configured with `url: "pmtiles://<url>"` will route
 // through pmtiles' byte-range-aware reader. Atlas v3 exposes the Mapbox-GL
 // style `addProtocol` hook (see AZURE_MAPS_INTERACTIVE_LABELER.md §2).
-const _pmtilesProtocol = new Protocol();
-if (typeof window !== "undefined" && window.atlas) {
-  // The bound `.tile` member is what addProtocol expects. Re-registering the
-  // same scheme is idempotent in atlas.
-  window.atlas.addProtocol("pmtiles", _pmtilesProtocol.tile);
-}
+//
+// The Protocol instance is shared process-wide (util/pmtiles.js): atlas keeps
+// one handler per scheme, so a second screen registering its own instance
+// would take over every tile request and fail to resolve the archives added
+// here.
+const _pmtilesProtocol = getPmtilesProtocol();
 
 // Tippecanoe writes the buildings layer with `-l buildings`. The
 // VectorTileSource references this layer name to draw the polygons.
@@ -769,10 +770,11 @@ const InteractiveLabeler = () => {
     // the layer has no pre-event imagery).
     layerImageryRef.current = layerData?.imagery || null;
 
-    // Resolve the model's PMTiles URL. Models are returned by
-    // GetLayerModelsDetails; pick ours by modelId. The pmtilesUrl is
-    // populated by the embedding workflow's postprocessor.
-    let pmtilesUrl = "";
+    // The features sidecar is per model, so it still comes from
+    // GetLayerModelsDetails. The footprint tiles do not: geometry belongs
+    // to the image layer and one archive is shared by every model on it,
+    // so those are requested by kind below and 404 until the layer's
+    // tiling job has run.
     let sidecarUrl = "";
     setInitialLoad({ step: 1, loaded: null, total: null });
     try {
@@ -782,17 +784,11 @@ const InteractiveLabeler = () => {
       const model = (models || []).find(
         (m) => String(m.modelId) === String(modelId)
       );
-      pmtilesUrl = model?.pmtilesUrl || "";
       sidecarUrl = model?.featuresSidecarUrl || "";
     } catch (e) {
       console.warn("Could not fetch model URLs:", e);
     }
     signal.throwIfAborted();
-    if (!pmtilesUrl) {
-      throw new Error(
-        "No PMTiles available for this model — the embedding workflow has not produced building tiles."
-      );
-    }
     if (!sidecarUrl) {
       throw new Error(
         "No features sidecar available for this model — re-embed the layer to produce one."
@@ -805,7 +801,7 @@ const InteractiveLabeler = () => {
     // remote/mobile labelers hit a 403.
     const browserPmtilesUrl = buildUrl(
       `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
-        `&kind=pmtiles`
+        `&imageLayerId=${imageLayerId}&kind=footprint_pmtiles`
     );
     const browserSidecarUrl = buildUrl(
       `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
@@ -836,7 +832,16 @@ const InteractiveLabeler = () => {
       // (otherwise the map sits at [0, 0] zoom 3 and the user sees no tiles).
       pmtilesHeader = await pm.getHeader();
     } catch (e) {
-      console.warn("Failed to load PMTiles archive (continuing):", e);
+      // Without the footprint tiles there are no buildings to label, so an
+      // empty map is the one thing this must not silently become. The
+      // archive belongs to the image layer and is built once its footprints
+      // are cached, so the usual cause is that job not having run yet.
+      console.error("Failed to load the footprint PMTiles archive:", e);
+      throw new Error(
+        "The building footprint tiles for this image layer are not ready " +
+          "yet. They are built once per layer; if this persists, re-run " +
+          "preparation for the layer."
+      );
     }
 
     // Fetch the binary features sidecar and parse the HFTR header. The

@@ -1,10 +1,18 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+// Results view (Visualizer), read-only. The swipe map is always up: the
+// pre-event map is the SwipeMap PRIMARY and sits left of the divider, so
+// moving the divider left uncovers more of the post-event map.
 export const VISUALIZER_SHORTCUTS = [
   {
     keys: ["A", "S", "D"],
-    description: "Move the swipe divider left / split / right",
+    description:
+      "Move the swipe divider left / split / right — left uncovers more post-event imagery",
+  },
+  {
+    keys: ["E"],
+    description: "Enter or leave prediction edit mode",
   },
 ];
 
@@ -51,6 +59,51 @@ export const BUILDING_VALIDATION_SHORTCUTS = [
   {
     keys: ["A", "D"],
     description: "Show pre (or basemap) / post imagery",
+  },
+];
+
+// Results view, edit mode (reclassify a model's predictions and save a new
+// version). Everything the read-only view binds still works, so A/S/D and E
+// are repeated here rather than replaced.
+export const PREDICTION_EDIT_SHORTCUTS = [
+  {
+    keys: ["1", "2", "3"],
+    description:
+      "Choose the class to apply — Damaged / Not Damaged / Unknown",
+  },
+  {
+    keys: ["Enter"],
+    description: "Apply the chosen class to the selected building",
+  },
+  {
+    keys: ["←", "→"],
+    description: "Previous / next building in the current filter",
+  },
+  {
+    keys: ["Click"],
+    description: "Set a footprint to the chosen class",
+  },
+  {
+    keys: ["Ctrl", "drag"],
+    separator: " + ",
+    description: "Box-select footprints and set them all to the chosen class",
+  },
+  {
+    keys: ["Right-click"],
+    description: "Undo an edit — back to the model's class",
+  },
+  {
+    // Direction matters: the pre-event map (or the basemap) is the swipe
+    // PRIMARY and sits LEFT of the divider, so moving the divider left
+    // uncovers MORE of the post-event map and moving it right uncovers more
+    // of the pre-event pane. Both sides are editable.
+    keys: ["A", "S", "D"],
+    description:
+      "Snap the divider left / centre / right — left uncovers more post-event imagery, right more of the pre-event (or basemap) pane",
+  },
+  {
+    keys: ["E"],
+    description: "Leave edit mode",
   },
 ];
 

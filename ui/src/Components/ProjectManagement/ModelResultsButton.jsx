@@ -8,6 +8,7 @@ import {
   MenuPopover,
   MenuList,
   MenuItem,
+  Tooltip,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 import React, { useContext, useState } from "react";
@@ -19,6 +20,20 @@ import ModelResultsStatusIndicator from "../OtherComponents/ModelResultsStatusIn
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
 import PublishDatasetModal from "../PublishDatasetModal";
+import DownloadPredictionsDialog from "../OtherComponents/DownloadPredictionsDialog";
+import { buildUrl } from "../../util/api";
+import {
+  buildVersionGpkgUrl,
+  hasPredictionVersionChoice,
+} from "../Visualizer/predictionVersions";
+
+
+// A model has usable inference outputs once at least one inference job has run
+// to completion. Shared by the Results button gate and the View action's
+// client-side fallback so the two can't drift apart.
+function hasCompletedInference(model) {
+  return model.inferenceJobs.length > 0 && model.inferenceStatus === "Processed";
+}
 
 
 function formatFileSize(bytes) {
@@ -37,13 +52,12 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
   const [showValidationReport, setShowValidationReport] = useState(false);
   const [showAssessmentReport, setShowAssessmentReport] = useState(false);
   const [showPublishDataset, setShowPublishDataset] = useState(false);
+  const [showDownloadPredictions, setShowDownloadPredictions] =
+    useState(false);
 
   function evaluateViewResultsButtonState(model) {
     // Results button must be enabled if inference jobs exist and status is processed
-    if (
-      model.inferenceJobs.length > 0 &&
-      model.inferenceStatus === "Processed"
-    ) {
+    if (hasCompletedInference(model)) {
       return false;
     // If inference fails, then the button should be enabled because will allow the user to download the artifacts when they are ready.
     } else if (model.status === "Failed" && model.artifacts != null) {
@@ -78,10 +92,17 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
     ? `Download Inference Artifacts (${formatFileSize(model.artifacts.inferenceZipSize)})`
     : "Download Inference Artifacts";
 
+  // Viewing results opens the visualizer, which is also where predictions are
+  // edited. `predictionsReady` is the server-derived readiness flag; models
+  // saved before it existed fall back to the client-side inference check.
+  const canViewResults = model.predictionsReady ?? hasCompletedInference(model);
+
   const resultsMenuOptions = (model) => ({
     items: [
       {
-        disabled: model.inferenceStatus !== "Processed",
+        disabled: !canViewResults,
+        tooltip:
+          "Inference must finish before results can be viewed or edited",
         key: "viewResults",
         text: "View",
         icon: <FluentIcon name="Forward" />,
@@ -101,6 +122,12 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
         text: "Download Geopackage (.gpkg)",
         icon: <FluentIcon name="download" />,
         onClick: () => {
+          // With saved edits there is a real choice to make, and downloading
+          // the raw output silently would throw away the analyst's work.
+          if (hasPredictionVersionChoice(model.editedPredictions)) {
+            setShowDownloadPredictions(true);
+            return;
+          }
           handleDownload(model.gpkgUrl);
         },
         disabled: model.gpkgUrl === null || model.gpkgUrl === undefined || model.gpkgUrl === "",
@@ -165,23 +192,42 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
                 appearance="primary"
                 id={"singleModelResults" + index}
                 className="dashboard-button dashboard-button-light"
-                disabled={evaluateViewResultsButtonState(model)}
+                // Keep the menu reachable whenever any action inside it is
+                // available: the download/report entries use the existing
+                // inference/artifact check, View uses `predictionsReady`.
+                disabled={evaluateViewResultsButtonState(model) && !canViewResults}
               >
                 Results
               </Button>
             </MenuTrigger>
             <MenuPopover>
               <MenuList>
-                {resultsMenuOptions(model).items.map((mi) => (
-                  <MenuItem
-                    key={mi.key}
-                    icon={mi.icon}
-                    disabled={mi.disabled}
-                    onClick={mi.onClick}
-                  >
-                    {mi.text}
-                  </MenuItem>
-                ))}
+                {resultsMenuOptions(model).items.map((mi) => {
+                  const menuItem = (
+                    <MenuItem
+                      key={mi.key}
+                      icon={mi.icon}
+                      disabled={mi.disabled}
+                      onClick={mi.onClick}
+                    >
+                      {mi.text}
+                    </MenuItem>
+                  );
+                  // Disabled Fluent menu items stay hoverable/focusable, so a
+                  // tooltip can explain why the action isn't available yet.
+                  return mi.disabled && mi.tooltip ? (
+                    <Tooltip
+                      key={mi.key}
+                      content={mi.tooltip}
+                      relationship="description"
+                      withArrow
+                    >
+                      {menuItem}
+                    </Tooltip>
+                  ) : (
+                    menuItem
+                  );
+                })}
               </MenuList>
             </MenuPopover>
           </Menu>
@@ -192,12 +238,32 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
             />
           )}
         </div>
+        {showDownloadPredictions && (
+          <DownloadPredictionsDialog
+            versions={model.editedPredictions}
+            modelName={model.name}
+            onDownload={(version) =>
+              handleDownload(
+                buildUrl(
+                  buildVersionGpkgUrl({
+                    projectId,
+                    imageLayerId,
+                    modelId: model.modelId,
+                    version,
+                  })
+                )
+              )
+            }
+            onDismiss={() => setShowDownloadPredictions(false)}
+          />
+        )}
         {showValidationReport && (
           <ValidationReportModal
             projectId={projectId}
             imageLayerId={imageLayerId}
             modelId={model.modelId}
             modelName={model.name}
+            versions={model.editedPredictions}
             onDismiss={() => setShowValidationReport(false)}
           />
         )}
@@ -207,6 +273,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
             imageLayerId={imageLayerId}
             modelId={model.modelId}
             modelName={model.name}
+            versions={model.editedPredictions}
             onDismiss={() => setShowAssessmentReport(false)}
           />
         )}

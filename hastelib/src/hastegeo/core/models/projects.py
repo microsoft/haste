@@ -342,6 +342,60 @@ class ModelRequest(BaseModel):
     status: Optional[str] = Field(default=None)
 
 
+class EditedPredictionVersion(BaseModel):
+    """
+    Represents one saved revision of analyst-edited model predictions.
+
+    Every save of the prediction editor writes a NEW GeoPackage derived
+    from the model's raw prediction GeoPackage; the raw file referenced by
+    ``Model.gpkgUrl`` is never modified. Versions are append-only so an
+    analyst can always trace a published layer back to the exact edit that
+    produced it.
+
+    Args:
+        version: Monotonically increasing revision number, starting at 1
+        gpkgUrl: URL to the edited GeoPackage for this version
+        predictionAttrsUrl: URL to this version's columnar attribute
+            sidecar (``ArtifactTypes.PREDICTION_ATTRS_VERSION``). The map
+            renders from the sidecar, not the GeoPackage, so a version
+            without one cannot be drawn — it is written in the same call
+            path as the GeoPackage
+            (``prediction_edits.save_edited_version``) and backfilled by
+            the prediction-tiles job for versions saved before per-version
+            sidecars existed.
+        createdAt: ISO formatted timestamp when the version was saved
+        createdBy: Identifier of the user who saved the version
+        threshold: Damage fraction (0.0-1.0) above which a building was
+            classified as damaged when the version was derived
+        unknownThreshold: Unknown/cloud fraction (0.0-1.0) above which a
+            building was classified as unknown
+        editedCount: Number of buildings whose class was explicitly
+            overridden by the analyst in this version
+        sourceGpkgUrl: URL to the GeoPackage this version was derived from
+
+    Example:
+        ```python
+        version = EditedPredictionVersion(
+            version=1,
+            gpkgUrl="https://.../edited_predictions_model_123_v1.gpkg",
+            createdAt="2026-08-21T05:10:48Z",
+            threshold=0.1,
+            editedCount=42,
+        )
+        ```
+    """
+
+    version: int
+    gpkgUrl: str
+    createdAt: str
+    predictionAttrsUrl: Optional[str] = None
+    createdBy: Optional[str] = None
+    threshold: Optional[float] = None
+    unknownThreshold: Optional[float] = None
+    editedCount: int = 0
+    sourceGpkgUrl: Optional[str] = None
+
+
 class Model(BaseModel):
     """
     Represents a machine learning model configuration and state in the HASTE system.
@@ -386,7 +440,13 @@ class Model(BaseModel):
         currentInferenceTaskId: Current inference task identifier
         inferenceStatusMessage: Detailed inference status message
         predictedDamageLayerUrl: URL to predicted damage layer output
-        gpkgUrl: URL to GeoPackage output file with predictions
+        gpkgUrl: URL to GeoPackage output file with predictions. This is
+            the RAW model output and is never overwritten by editing.
+        editedPredictions: Append-only list of analyst-edited revisions
+            derived from ``gpkgUrl``, newest version last
+        predictedBuildingCount: Number of buildings carried by the raw
+            prediction GeoPackage
+        predictedAt: ISO formatted timestamp when predictions were written
         labelsUrl: URL to labels file used for training
         dependsOn: Dependency tuple specifying parent resource type and ID
 
@@ -440,6 +500,13 @@ class Model(BaseModel):
     inferenceStatusMessage: Optional[str] = Field(default="")
     predictedDamageLayerUrl: Optional[str] = Field(default=None)
     gpkgUrl: Optional[str] = Field(default=None)
+    # Analyst-edited revisions of gpkgUrl. Appended to by the prediction
+    # editor; gpkgUrl itself always stays the raw model output.
+    editedPredictions: Optional[List[EditedPredictionVersion]] = Field(
+        default_factory=list
+    )
+    predictedBuildingCount: Optional[int] = Field(default=None)
+    predictedAt: Optional[str] = Field(default=None)
     labelsUrl: Optional[str] = Field(default=None)
     # ── Building labeling workflow (embedding sub-row) ──────────────────
     # A Model with modelType="embedding" represents a building-embedding
@@ -455,12 +522,21 @@ class Model(BaseModel):
     numFeatures: Optional[int] = Field(default=None)
     embeddingJob: Optional[TrainingJob] = Field(default=None)
     embeddingsGeoJSONUrl: Optional[str] = Field(default=None)
-    pmtilesUrl: Optional[str] = Field(default=None)
     # Binary sidecar (HFTR format) carrying per-building f_* feature
     # vectors keyed by row-index id. The Interactive Labeler fetches it
     # once at session start and looks vectors up by id; the PMTiles
     # archive itself only carries id + overture_id (no f_* columns).
     featuresSidecarUrl: Optional[str] = Field(default=None)
+    # ── Prediction editing (footprint PMTiles + attribute sidecar) ──────
+    # The per-model columnar JSON sidecar (id -> damage/unknown/damaged)
+    # that the prediction editor fetches once per session. The matching
+    # geometry-only vector tiles live on the ImageLayer
+    # (``footprintPmtilesUrl``) because they are shared by every model
+    # trained on that layer.
+    predictionAttrsUrl: Optional[str] = Field(default=None)
+    predictionTilesJob: Optional[TrainingJob] = Field(default=None)
+    predictionTilesStatus: Optional[str] = Field(default=None)
+    predictionTilesStatusMessage: Optional[str] = Field(default="")
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("ImageLayer", "imageLayerId")
     )
@@ -695,6 +771,19 @@ class ImageLayer(BaseModel):
             post-event mosaic, i.e. the imagery's actual AOI excluding
             nodata. Populated by the imageryprep workflow; surfaced as a
             downloadable artifact in the UI.
+        footprintPmtilesUrl: URL to the PMTiles archive of this layer's
+            building footprints (geometry + Overture id only). Rendered by
+            the prediction editor, which joins prediction attributes onto
+            the tiles client-side instead of shipping a GeoJSON payload.
+        footprintTilesJob: Job reference for the layer-scoped tiling task
+            that builds ``footprintPmtilesUrl``. Kicked off automatically
+            once imagery prep caches the footprints, so the tiles already
+            exist by the time anyone opens the prediction editor.
+        footprintTilesStatus: Status of that layer-scoped tiling job.
+            Deliberately separate from ``status`` so tiling never disturbs
+            the imagery-preprocessing lifecycle — tiles are an
+            optimisation and a layer without them still works.
+        footprintTilesStatusMessage: Progress/error log of the tiling job.
         dependsOn: Dependency tuple specifying parent resource type and ID
 
     Example:
@@ -772,6 +861,16 @@ class ImageLayer(BaseModel):
     # Catalog "clip to area" flow.
     clipBbox: Optional[list[float]] = Field(default=None)
     validAreaMaskUrl: Optional[str] = Field(default=None)
+    # ── Prediction editing (shared footprint vector tiles) ──────────────
+    # Built once per layer — at layer-creation time when footprints are
+    # cached, or on demand the first time the prediction editor opens an
+    # older layer — and reused by every model trained on the layer. The
+    # tiling job runs in the training image (only tippecanoe carrier), so
+    # it carries its own status fields rather than reusing ``status``.
+    footprintPmtilesUrl: Optional[str] = Field(default=None)
+    footprintTilesJob: Optional[TrainingJob] = Field(default=None)
+    footprintTilesStatus: Optional[str] = Field(default=None)
+    footprintTilesStatusMessage: Optional[str] = Field(default="")
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("Project", "projectId")
     )

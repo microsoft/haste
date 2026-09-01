@@ -362,6 +362,7 @@ def build_assessment_inputs_from_gpkgs(
     labels: Iterable[tuple[str, str]] | None = None,
     damage_field: str = "damage_pct_0m",
     unknown_field: str = "unknown_pct",
+    edited_class_field: str = "edited_class",
 ) -> AssessmentInputs:
     """Build :class:`AssessmentInputs` from on-disk GeoPackages.
 
@@ -373,6 +374,16 @@ def build_assessment_inputs_from_gpkgs(
     ``labels`` is the validation app's ``{overture_id: {label, ...}}``
     map flattened to ``(id, label)`` pairs (or ``None`` if computing
     aggregate-only stats without any labels).
+
+    Rows carrying ``edited_class`` are read from that column instead of
+    ``damage_field``. An edited version records an analyst's final call
+    per building, and ``apply_edits`` deliberately leaves the model's
+    original ``damage_pct_0m`` score untouched — so reading the score
+    here would report the raw model's counts under an edited version's
+    name. There is no continuous score behind a human decision, so those
+    rows come through as 0.0/1.0; on an edited version the
+    precision-recall curve is therefore a single binary operating point
+    rather than a sweep.
     """
     import fiona
 
@@ -388,6 +399,15 @@ def build_assessment_inputs_from_gpkgs(
             if int_id < 0 or int_id >= len(overture_ids):
                 continue
             oid = overture_ids[int_id]
+            edited = str(props.get(edited_class_field) or "").strip()
+            if edited:
+                # The analyst's call wins over the model's score.
+                # "Unknown" is recorded as full unknown coverage, which is
+                # what excludes a building from the known population and
+                # from the damaged count.
+                damage_fractions[oid] = 1.0 if edited == "Damaged" else 0.0
+                unknown_fractions[oid] = 1.0 if edited == "Unknown" else 0.0
+                continue
             dmg = props.get(damage_field)
             if dmg is None:
                 continue

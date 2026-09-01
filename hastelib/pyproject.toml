@@ -82,6 +82,7 @@ Source = "https://github.com/microsoft/haste"
 
 [project.scripts]
 prepare-imagery = "hastegeo.workflows.prepare_imagery:main"
+prepare-prediction-tiles = "hastegeo.workflows.prepare_prediction_tiles:main"
 zip-artifacts = "hastegeo.workflows.zip_artifacts:main"
 
 [tool.hatch.version]
