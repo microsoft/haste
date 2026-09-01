@@ -7,6 +7,7 @@ parts:
       - file: usage/keyboard-shortcuts
       - file: usage/rapid-building-assessment
       - file: usage/damage-mapping
+      - file: usage/data-publishing
       - file: usage/building-blocks
         sections:
           - file: usage/projects

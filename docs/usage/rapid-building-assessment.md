@@ -148,6 +148,12 @@ From the embedding row's **Reports** menu:
 
 ![The Assessment Report](../_static/usage/interactive/assessment-report.png)
 
+## Publish the dataset
+
+If your administrator has enabled publishing, you can also **Publish dataset…** from the
+embedding row — archive the assessment as a downloadable copy or share it to a Planetary
+Computer STAC catalog. See {doc}`Publishing datasets <data-publishing>`.
+
 ## Tips
 
 - Label a **diverse** set of buildings (varied roofs, colors, damage severity) rather than
