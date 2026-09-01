@@ -88,11 +88,13 @@ def validate_wheel(
         raise ValueError(
             f"Expected wheel not found: {wheel_path}. The downloaded "
             "artifact does not contain a file matching the re-resolved "
-            f"version {expected_version!r}. This happens when a "
-            "concurrent build already published a lower RC number for "
-            "the same base version between this build and this "
-            "revalidation; re-run the build workflow to obtain a wheel "
-            "matching the currently available version."
+            f"version {expected_version!r}. This is unexpected: either "
+            "the build artifact was not uploaded correctly, or the "
+            "version re-resolved here no longer matches what the build "
+            "produced (e.g. a wheel was published for this target "
+            "version by another run after this one was built); re-run "
+            "the build workflow to obtain a wheel matching the "
+            "currently available version."
         )
     if not zipfile.is_zipfile(wheel_path):
         raise ValueError(f"Not a valid wheel ZIP file: {wheel_path}")
