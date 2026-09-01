@@ -80,6 +80,12 @@ from hastegeo.core.utils.blob import (
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
+from hastegeo.core.utils.request_fields import (
+    IMAGE_LAYER_SERVER_MANAGED_FIELDS,
+    INFERENCE_SERVER_MANAGED_FIELDS,
+    changed_server_managed_fields,
+    server_managed_fields_message,
+)
 from hastegeo.core.utils.source_types import normalize_source_type
 from hastegeo.core.utils.url_allowlist import (
     validate_clip_bbox,
@@ -1029,6 +1035,13 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         req_body = req.get_json()
+        supplied_server_fields = changed_server_managed_fields(
+            req_body, IMAGE_LAYER_SERVER_MANAGED_FIELDS
+        )
+        if not req_body.get("imageLayerId") and supplied_server_fields:
+            return _bad_request(
+                server_managed_fields_message(supplied_server_fields)
+            )
         image_data = ImageLayer(**req_body)
 
         url_error = validate_image_layer_imagery_urls(image_data)
@@ -1061,8 +1074,21 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
         except FileNotFoundError:
             existing_image_layer = None
 
+        changed_server_fields = changed_server_managed_fields(
+            req_body,
+            IMAGE_LAYER_SERVER_MANAGED_FIELDS,
+            existing=existing_image_layer,
+        )
+        if changed_server_fields:
+            return _bad_request(
+                server_managed_fields_message(changed_server_fields)
+            )
+
         if existing_image_layer:
             # This is an edit
+            for field in IMAGE_LAYER_SERVER_MANAGED_FIELDS:
+                if field in existing_image_layer:
+                    setattr(image_data, field, existing_image_layer[field])
             output = image_data
         else:
             output = await asyncio.to_thread(
@@ -1470,9 +1496,9 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
     # interactive labeler's other artifacts are fetched by range and parsed
     # in-browser, so they must NOT be forced as downloads).
     if kind == "gpkg":
-        headers[
-            "Content-Disposition"
-        ] = f'attachment; filename="building_predictions_{model_id}.gpkg"'
+        headers["Content-Disposition"] = "; ".join(
+            ["attachment", f'filename="building_predictions_{model_id}.gpkg"']
+        )
     if result.etag:
         headers["ETag"] = (
             result.etag if result.etag.startswith('"') else f'"{result.etag}"'
@@ -2458,6 +2484,13 @@ async def PutRunInferenceQueueMessage(
     )
     try:
         req_body = req.get_json()
+        changed_server_fields = changed_server_managed_fields(
+            req_body, INFERENCE_SERVER_MANAGED_FIELDS
+        )
+        if changed_server_fields:
+            return _bad_request(
+                server_managed_fields_message(changed_server_fields)
+            )
         output = Model(**req_body)
         if output.creationDate is None:
             output.creationDate = MetadataUtils.get_timestamp()
