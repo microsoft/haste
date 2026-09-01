@@ -5,6 +5,7 @@ import json
 from hastegeo.core.config import Config
 
 from ..data_layer.unified import UnifiedDataLayer
+from ..utils.perf import timed
 
 
 class MetadataProcessor:
@@ -96,9 +97,12 @@ class MetadataProcessor:
         """
         Load metadata from the backend storage.
         """
-        metadata = self.storage.load(
-            identifier=key, data_type=self.data_type, data_format=data_format
-        )
+        with timed("load"):
+            metadata = self.storage.load(
+                identifier=key,
+                data_type=self.data_type,
+                data_format=data_format,
+            )
         return metadata
 
     def load_all(self, data_format="json"):
@@ -106,9 +110,10 @@ class MetadataProcessor:
         Load all metadata from the backend storage.
         """
         metadata = []
-        metadata_list = self.storage.load_all(
-            data_type=self.data_type, data_format=data_format
-        )
+        with timed("load_all"):
+            metadata_list = self.storage.load_all(
+                data_type=self.data_type, data_format=data_format
+            )
         for each_metadata in metadata_list:
             metadata.append(each_metadata)
         return metadata
@@ -118,9 +123,10 @@ class MetadataProcessor:
         Load all metadata from the backend storage.
         """
         metadata = []
-        metadata_list = self.storage.load_all_from_partition(
-            data_type=self.data_type, data_format=data_format
-        )
+        with timed("load_all_from_partition"):
+            metadata_list = self.storage.load_all_from_partition(
+                data_type=self.data_type, data_format=data_format
+            )
         for each_metadata in metadata_list:
             metadata.append(each_metadata)
         return metadata
@@ -225,8 +231,9 @@ class MetadataProcessor:
         """
         # NOTE: This is a quick method to make the export work for Azure blob storage layer.
         # Rework needed to handle different storage types and formats properly.
-        return self.storage.get_file_remote_path(
-            identifier=key,
-            data_type=self.data_type,
-            data_format=data_format,
-        )
+        with timed("export"):
+            return self.storage.get_file_remote_path(
+                identifier=key,
+                data_type=self.data_type,
+                data_format=data_format,
+            )
