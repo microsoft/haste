@@ -4,6 +4,7 @@
 import asyncio
 import base64
 import binascii
+import hashlib
 import json
 import os
 import re
@@ -44,6 +45,7 @@ from hastegeo.core.processors.embedding import EmbeddingPreprocessor
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
 from hastegeo.core.processors.metadata import MetadataProcessor
+from hastegeo.core.processors.project_details import ProjectDetailsProcessor
 from hastegeo.core.processors.publishing import (
     PublishingDependencyError,
     PublishingDisabledError,
@@ -74,6 +76,10 @@ from hastegeo.core.publishing.source import (
     PublishingSourceResolver,
 )
 from hastegeo.core.utils import perf
+from hastegeo.core.utils.async_cache import (
+    AsyncTTLCache,
+    configured_cache_value,
+)
 from hastegeo.core.utils.blob import (
     download_blob_to_tempfile,
     parse_byte_range,
@@ -105,6 +111,17 @@ logger = Logger.get_logger(
     __name__, f"{__name__}_pid_{process_id}.log", log_dir=log_dir
 )
 app = func.FunctionApp()
+
+_PROJECT_DETAILS_CACHE_SECONDS = configured_cache_value(
+    "HASTE_PROJECTDETAILS_CACHE_SECONDS", 15, 0, 300
+)
+_PROJECT_DETAILS_CACHE_ENTRIES = configured_cache_value(
+    "HASTE_PROJECTDETAILS_CACHE_ENTRIES", 64, 1, 512
+)
+_project_details_cache = AsyncTTLCache(
+    ttl_seconds=_PROJECT_DETAILS_CACHE_SECONDS,
+    max_entries=_PROJECT_DETAILS_CACHE_ENTRIES,
+)
 
 # Development mode check - when running locally with Docker/Azurite
 # Set DEVELOPMENT_MODE=true to disable function key authentication
@@ -140,6 +157,25 @@ def _require_guid_param(req: func.HttpRequest, name: str) -> str:
     if not _GUID_RE.match(value):
         raise ValueError(f"Invalid format for parameter: {name}")
     return value
+
+
+def _etag_matches(if_none_match: str | None, etag: str) -> bool:
+    if not if_none_match:
+        return False
+    for candidate in if_none_match.split(","):
+        candidate = candidate.strip()
+        if candidate == "*" or candidate.removeprefix("W/") == etag:
+            return True
+    return False
+
+
+def _cache_refresh_requested(cache_control: str | None) -> bool:
+    if not cache_control:
+        return False
+    directives = {
+        directive.strip().lower() for directive in cache_control.split(",")
+    }
+    return "no-cache" in directives or "max-age=0" in directives
 
 
 def _require_short_int_id_param(req: func.HttpRequest, name: str) -> str:
@@ -743,111 +779,30 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
         _perf = perf.begin(_perf_on)
         _perf_wall = time.perf_counter()
 
-        project = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().PROJECT.value,
-                partition_key=project_id,
-            ).load,
-            project_id,
+        async def _load_response():
+            project = await ProjectDetailsProcessor(
+                project_id=project_id, config=config
+            ).load(include_models=include_models)
+            payload = json.dumps(project)
+            return {
+                "payload": payload,
+                "etag": '"'
+                + hashlib.sha256(payload.encode()).hexdigest()[:32]
+                + '"',
+                "layer_count": len(project["imageLayer"]),
+            }
+
+        cache_key = (project_id, include_models)
+        (
+            cached_response,
+            cache_hit,
+        ) = await _project_details_cache.get_or_create(
+            cache_key,
+            _load_response,
+            refresh=_cache_refresh_requested(req.headers.get("Cache-Control")),
         )
-        image_layers = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().IMAGELAYER.value,
-                partition_key=project_id,
-            ).load_all_from_partition
-        )
-        if include_models:
-            models = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().MODEL.value,
-                    partition_key=project_id,
-                ).load_all_from_partition
-            )
-        for image_layer in image_layers:
-            image_layer_id = image_layer["imageLayerId"]
-            if include_models:
-                match_models = [
-                    model
-                    for model in models
-                    if model["imageLayerId"] == image_layer_id
-                ]
-                match_models.sort(
-                    key=lambda x: x["creationDate"], reverse=True
-                )
-                for model in match_models:
-                    try:
-                        artifacts = await asyncio.to_thread(
-                            MetadataProcessor(
-                                data_type=config.get_metadata_types().MODEL_ARTIFACTS.value,
-                                partition_key=project_id,
-                            ).load,
-                            model["modelId"],
-                        )
-                        model["artifacts"] = artifacts
-                    except FileNotFoundError:
-                        model["artifacts"] = None
-                    try:
-                        if not model.get("labelsUrl"):
-                            # Older models may not have labelsUrl
-                            model["labelsUrl"] = await asyncio.to_thread(
-                                MetadataProcessor(
-                                    data_type=config.get_metadata_types().TRAIN_LABELS.value,
-                                    partition_key=project_id,
-                                ).export,
-                                key=model["modelId"],
-                                data_format="geojson",
-                            )
-                    except FileNotFoundError:
-                        # This is a noop until the export method is properly
-                        # implemented
-                        model["labelsUrl"] = None
-                image_layer["models"] = match_models
-                image_layer["modelCount"] = len(match_models)
-            label_projects = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().LABELS.value,
-                    partition_key=project_id,
-                ).load_all_from_partition
-            )
-            match_label_projects = next(
-                (
-                    label_project
-                    for label_project in label_projects
-                    if label_project["imageLayerId"] == image_layer_id
-                ),
-                None,
-            )
-            if match_label_projects is not None:
-                if (
-                    "labels" in match_label_projects
-                    and match_label_projects["labels"] is not None
-                ):
-                    image_layer["labelProjectCount"] = len(
-                        match_label_projects["labels"]
-                    )
-                else:
-                    image_layer["labelProjectCount"] = 0
-                if not image_layer.get("labelsUrl"):
-                    # Older image layers will not have the generated geoJSON
-                    image_layer["labelsUrl"] = None
-            try:
-                validation_data = await asyncio.to_thread(
-                    MetadataProcessor(
-                        data_type=config.get_metadata_types().VALIDATION.value,
-                        partition_key=project_id,
-                    ).load,
-                    image_layer_id,
-                )
-                labels = validation_data.get("labels") or {}
-                image_layer["validationLabelCount"] = len(labels)
-            except FileNotFoundError:
-                image_layer["validationLabelCount"] = 0
-        project["imageLayer"] = image_layers
-        project["imageLayerCount"] = len(image_layers)
-        project["imageLayer"].sort(
-            key=lambda x: x["creationDate"], reverse=True
-        )
-        _payload = json.dumps(project)
+        _payload = cached_response["payload"]
+        etag = cached_response["etag"]
         _perf_headers = perf.headers(_perf, _perf_wall)
         perf.log_summary(
             logger,
@@ -856,17 +811,31 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
             _perf_wall,
             project_id=project_id,
             include_models=include_models,
-            layers=len(image_layers),
+            layers=cached_response["layer_count"],
             payload_bytes=len(_payload),
+            cache_hit=cache_hit,
         )
+        cache_headers = {
+            "Cache-Control": (
+                f"private, max-age={_PROJECT_DETAILS_CACHE_SECONDS}"
+            ),
+            "ETag": etag,
+            "X-Haste-Cache": "HIT" if cache_hit else "MISS",
+        }
+        if _perf_headers:
+            cache_headers.update(_perf_headers)
+        if _etag_matches(req.headers.get("If-None-Match"), etag):
+            return func.HttpResponse(status_code=304, headers=cache_headers)
         return func.HttpResponse(
-            _payload, status_code=200, headers=_perf_headers or None
+            _payload, status_code=200, headers=cache_headers
         )
 
     except FileNotFoundError as e:
+        perf.end()
         logger.error(f"Project not found: {e}\n{traceback.format_exc()}")
         return func.HttpResponse("Project not found.", status_code=404)
     except Exception as e:
+        perf.end()
         logger.error(
             f"Error loading project details: {e}\n{traceback.format_exc()}"
         )
@@ -2850,6 +2819,19 @@ async def GenerateProjectStats(req: func.HttpRequest) -> func.HttpResponse:
                     partition_key=project_id,
                 ).load_all_from_partition
             )
+            # PERF (Phase 1, B5): load LABELS once per project and index by
+            # imageLayerId, instead of a full partition scan per image layer.
+            label_projects = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().LABELS.value,
+                    partition_key=project_id,
+                ).load_all_from_partition
+            )
+            labels_by_layer = {}
+            for label_project in label_projects:
+                lid = label_project.get("imageLayerId")
+                if lid is not None and lid not in labels_by_layer:
+                    labels_by_layer[lid] = label_project
             for image_layer in image_layers:
                 image_layer_id = image_layer["imageLayerId"]
                 match_models = [
@@ -2859,20 +2841,8 @@ async def GenerateProjectStats(req: func.HttpRequest) -> func.HttpResponse:
                 ]
                 image_layer["models"] = match_models
                 image_layer["modelCount"] = len(match_models)
-                label_projects = await asyncio.to_thread(
-                    MetadataProcessor(
-                        data_type=config.get_metadata_types().LABELS.value,
-                        partition_key=project_id,
-                    ).load_all_from_partition
-                )
-                match_label_projects = next(
-                    (
-                        label_project
-                        for label_project in label_projects
-                        if label_project["imageLayerId"] == image_layer_id
-                    ),
-                    None,
-                )
+                image_layer["labelProjectCount"] = 0
+                match_label_projects = labels_by_layer.get(image_layer_id)
                 if match_label_projects is not None:
                     if (
                         "labels" in match_label_projects
