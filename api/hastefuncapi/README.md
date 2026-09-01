@@ -21,10 +21,21 @@ All functions are defined in `function_app.py` as a single Azure Functions app. 
 |--------|-------|-------------|
 | GET | `GetDashboardData` | Aggregated dashboard stats: project summaries, layer info, model status, and system-wide metrics. |
 | GET | `GetProjects` | All projects with aggregated layer and model counts. |
-| GET | `GetProjectDetails` | Full project details including image layers, models, and processing status. Requires `projectId`. |
+| GET | `GetProjectDetails` | Project, layer, validation, and optional model details. Supports `ETag`/`If-None-Match`; requires `projectId`. |
 | PUT | `PutProject` | Create or update a project. Auto-generates `projectId` and `creationDate` if not provided. |
 | DELETE | `DeleteProject` | Delete a project by `projectId`. |
 | GET | `GenerateProjectStats` | Regenerates project stats from raw data — useful if stats fall out of sync. |
+
+#### Project Detail Caching
+
+`GetProjectDetails` returns `ETag`, `Cache-Control`, and `X-Haste-Cache` headers.
+Send `If-None-Match` to receive an empty `304` when the fresh cached representation is
+unchanged. Send `Cache-Control: no-cache` after a mutation to force storage refresh and
+then compare the ETag.
+
+The response cache is bounded and process-local. It deduplicates concurrent requests but
+does not provide coherence across scaled-out Function workers. Performance headers named
+`X-Haste-Data-Layer-*` count logical calls, not Azure Storage REST transactions.
 
 ### Image Layers
 

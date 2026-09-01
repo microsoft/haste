@@ -12,6 +12,7 @@ This guide documents each configuration mode. For the end-to-end workflow, see
 ## Contents
 
 - [Core settings](#core-settings)
+- [Project detail performance](#project-detail-performance)
 - [Batch (create vs. bring-your-own)](#batch-create-vs-bring-your-own)
 - [Batch image tags and pool immutability](#batch-image-tags-and-pool-immutability)
 - [hastegeo wheel pinning](#hastegeo-wheel-pinning)
@@ -37,6 +38,24 @@ This guide documents each configuration mode. For the end-to-end workflow, see
 
 Resource names are `HASTE_RESOURCE_PREFIX` + `HASTE_RANDOM_SUFFIX` based (not
 azd's `resourceToken`) so `what-if` stays clean against existing deployments.
+
+## Project detail performance
+
+The API and queue workers use the following optional runtime settings. Defaults are
+validated at process startup, so invalid values fail fast instead of creating an
+unbounded executor or cache.
+
+| Function App setting | Default | Allowed | Purpose |
+|---|---:|---:|---|
+| `HASTE_BLOB_DOWNLOAD_WORKERS` | 16 | 1–64 | Process-wide blocking Blob I/O budget. |
+| `HASTE_METADATA_LOAD_WORKERS` | 8 | 1–64 | Per-map limit within the process budget. |
+| `HASTE_ARTIFACT_DOWNLOAD_WORKERS` | 8 | 1–64 | Per-artifact limit within the process budget. |
+| `HASTE_PROJECTDETAILS_CACHE_SECONDS` | 15 | 0–300 | Process-local response freshness and HTTP `max-age`. |
+| `HASTE_PROJECTDETAILS_CACHE_ENTRIES` | 64 | 1–512 | Maximum cached project response variants per worker. |
+
+These controls have code defaults and are not yet exposed as Bicep parameters. Treat
+IaC parameterization of non-default values as a separate deployment change. Load-test
+worker-count overrides with concurrent requests before production rollout.
 
 ## Batch (create vs. bring-your-own)
 
