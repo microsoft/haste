@@ -11,6 +11,16 @@ permissions:
   actions: read
   contents: read
 
+# Serialize entire workflow runs (not just the publish-rc job) so that
+# version resolution in "prepare" always reflects the outcome of every
+# earlier run. Without this, two concurrent PR builds can both resolve
+# the same "next" RC number (e.g. rc1) before either one publishes,
+# and the second run's build artifact permanently mismatches the RC
+# number re-resolved by its "prepare" job on any retry.
+concurrency:
+  group: hastegeo-publish
+  cancel-in-progress: false
+
 jobs:
   prepare:
     if: >-

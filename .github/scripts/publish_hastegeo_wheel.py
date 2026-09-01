@@ -84,7 +84,17 @@ def validate_wheel(
             f"Wheel filename {wheel_path.name!r} does not match "
             f"{expected_name!r}"
         )
-    if not wheel_path.is_file() or not zipfile.is_zipfile(wheel_path):
+    if not wheel_path.is_file():
+        raise ValueError(
+            f"Expected wheel not found: {wheel_path}. The downloaded "
+            "artifact does not contain a file matching the re-resolved "
+            f"version {expected_version!r}. This happens when a "
+            "concurrent build already published a lower RC number for "
+            "the same base version between this build and this "
+            "revalidation; re-run the build workflow to obtain a wheel "
+            "matching the currently available version."
+        )
+    if not zipfile.is_zipfile(wheel_path):
         raise ValueError(f"Not a valid wheel ZIP file: {wheel_path}")
 
     with zipfile.ZipFile(wheel_path) as archive:
