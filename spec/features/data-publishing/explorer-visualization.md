@@ -14,6 +14,7 @@ PR (`-pc-explorer`) whose base is `prbatero/feat/data-publishing-pc`.
 - [Flow (PC publish)](#flow-pc-publish)
 - [Idempotency](#idempotency-re-publish--second-dataset)
 - [Configuration (env)](#configuration-env)
+- [Resource use](#resource-use)
 - [Scope](#scope)
 - [Non-goals (v1)](#non-goals-v1)
 - [Open decisions](#open-decisions)
@@ -135,6 +136,20 @@ Staging + cleanup reuse the `-pc` publish store and `finalize_unpublish` hook.
 | `PUBLISH_DAMAGE_RASTER_METERS` | `0.5` | target pixel size (m) |
 | `PUBLISH_DAMAGE_RASTER_MAX_PIXELS` | `8192` | per-side cap; coarsen to fit |
 | `PUBLISH_DAMAGE_RASTER_MIN_ZOOM` | `13` | render/tile `minZoom` |
+
+## Resource use
+
+- **Raster held in memory:** a `MemoryFile` GeoTIFF is copied to a COG on disk, bounded by the
+  per-side cap. At the `PUBLISH_DAMAGE_RASTER_MAX_PIXELS` ceiling (20000) that is
+  20000² × 1 B ≈ 400 MB against a 4096 MB instance at `batchSize: 1`; the `0.5` m / `8192`-px
+  defaults are far smaller.
+- **Vector-side memory is uncapped and scales with building count** — the reprojected
+  footprints plus the partitioned `shapes` pairs (references, not geometry copies). Modest at
+  realistic AOIs, but the bigger driver than the raster at very large footprint counts.
+  Revisit if the per-side cap ceiling rises or the encoding widens past single-band `uint8`.
+- Rasterization is **best-effort**: an ordinary failure skips the Explorer layer without
+  failing the publish. The one gap is resource exhaustion — an OOM-kill terminates the worker
+  rather than raising, so it can still fail the publish (the per-side cap keeps this unlikely).
 
 ## Scope
 

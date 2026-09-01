@@ -118,19 +118,24 @@ def rasterize_damage_cog(
     if damaged_mask is None:
         return None
     geoms = list(buildings_m.geometry.values)
-    # Damaged wins over undamaged on overlap: burn undamaged first, damaged last.
     damaged_flags = [bool(v) for v in damaged_mask]
-    damaged_count = sum(damaged_flags)
 
-    shapes = [
-        (geom, DAMAGED_VALUE if flag else UNDAMAGED_VALUE)
-        for flag, geom in sorted(
-            zip(damaged_flags, geoms), key=lambda pair: pair[0]
-        )
-        if geom is not None and not geom.is_empty
-    ]
+    # Partition into (geom, value) pairs, burning undamaged first so damaged
+    # wins on overlap. A two-pass partition is O(n) and avoids sorting shapely
+    # geometries (which aren't orderable) just to separate two classes.
+    undamaged_shapes = []
+    damaged_shapes = []
+    for flag, geom in zip(damaged_flags, geoms):
+        if geom is None or geom.is_empty:
+            continue
+        if flag:
+            damaged_shapes.append((geom, DAMAGED_VALUE))
+        else:
+            undamaged_shapes.append((geom, UNDAMAGED_VALUE))
+    shapes = undamaged_shapes + damaged_shapes
     if not shapes:
         return None
+    damaged_count = len(damaged_shapes)
 
     raster = rasterize(
         shapes,

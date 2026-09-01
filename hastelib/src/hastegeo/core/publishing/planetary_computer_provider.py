@@ -1576,8 +1576,11 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
 
         Returns the item asset dict (with a publish-store href), or ``None``
         when the feature is disabled or there is nothing to rasterize.
-        Best-effort: a failure never fails the publish (the collection is still
-        created, just without Explorer visualization).
+        Best-effort: an ordinary failure is caught and degrades to a publish
+        without Explorer visualization (the collection is still created). The
+        one exception is resource exhaustion — an OOM-kill terminates the
+        worker rather than raising, so it can still fail the publish; the raster
+        is bounded by the per-side pixel cap to keep that path unlikely.
         """
         if not self._explorer_render_enabled:
             return None
