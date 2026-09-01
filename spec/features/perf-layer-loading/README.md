@@ -3,7 +3,6 @@
 **Status:** in-progress
 **Author:** prbatero
 **Date:** 2026-08-03
-**Target Release:** TBD
 **Priority:** P1
 
 ## Contents
