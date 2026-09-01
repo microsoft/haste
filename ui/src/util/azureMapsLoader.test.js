@@ -141,7 +141,13 @@ test("reports a failed stylesheet URL", async () => {
     "https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.css";
   const documentRef = fakeDocument({ failOnce: failedAsset });
 
-  await assert.rejects(loadAzureMaps(documentRef), new RegExp(failedAsset));
+  await assert.rejects(loadAzureMaps(documentRef), (error) => {
+    assert.equal(
+      error.message,
+      `Unable to load Azure Maps asset: ${failedAsset}`
+    );
+    return true;
+  });
 });
 
 test("uses the global document by default", async () => {
