@@ -55,6 +55,15 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
     def _table_identifier(self):
         return self._qualified_table_identifier
 
+    @staticmethod
+    def _require_json(data_format):
+        if data_format != "json":
+            raise ValueError("PostgreSQL metadata supports only json")
+
+    @staticmethod
+    def _deserialize_json(value):
+        return value if isinstance(value, (dict, list)) else json.loads(value)
+
     def _create_table_if_not_exists(self):
         connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
         with psycopg2.connect(connection_string) as connection:
@@ -183,7 +192,8 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
     def update(self, data, identifier, data_type):
         self.save(data, identifier, data_type)
 
-    def load(self, identifier, data_type):
+    def load(self, identifier, data_type, data_format="json"):
+        self._require_json(data_format)
         partition_key = (
             self.partition_key if self.partition_key else identifier
         )
@@ -201,9 +211,10 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
                     raise FileNotFoundError(
                         f"No data found for identifier: {identifier} and data_type: {data_type}"
                     )
-                return json.loads(result[0])
+                return self._deserialize_json(result[0])
 
-    def load_all(self, data_type):
+    def load_all(self, data_type, data_format="json"):
+        self._require_json(data_format)
         connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
         with psycopg2.connect(connection_string) as connection:
             with connection.cursor() as cursor:
@@ -214,9 +225,12 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
                     (data_type,),
                 )
                 results = cursor.fetchall()
-                return [json.loads(result[0]) for result in results]
+                return [
+                    self._deserialize_json(result[0]) for result in results
+                ]
 
-    def load_all_from_partition(self, data_type):
+    def load_all_from_partition(self, data_type, data_format="json"):
+        self._require_json(data_format)
         partition_key = self.partition_key
         connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
         with psycopg2.connect(connection_string) as connection:
@@ -228,7 +242,51 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
                     (data_type, partition_key),
                 )
                 results = cursor.fetchall()
-                return [json.loads(result[0]) for result in results]
+                return [
+                    self._deserialize_json(result[0]) for result in results
+                ]
+
+    def list_identifiers(self, data_type, data_format="json"):
+        if data_format != "json":
+            return []
+        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
+        with psycopg2.connect(connection_string) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT identifier FROM {} WHERE data_type = %s AND partition_key = %s"
+                    ).format(self._table_identifier()),
+                    (data_type, self.partition_key),
+                )
+                return [result[0] for result in cursor.fetchall()]
+
+    def load_map(
+        self,
+        identifiers,
+        data_type,
+        data_format="json",
+        max_workers=None,
+    ):
+        self._require_json(data_format)
+        identifiers = list(dict.fromkeys(identifiers))
+        if not identifiers:
+            return {}
+        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
+        with psycopg2.connect(connection_string) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT identifier, data FROM {} WHERE data_type = %s AND partition_key = %s AND identifier = ANY(%s)"
+                    ).format(self._table_identifier()),
+                    (data_type, self.partition_key, identifiers),
+                )
+                records = {
+                    identifier: self._deserialize_json(data)
+                    for identifier, data in cursor.fetchall()
+                }
+        return {
+            identifier: records.get(identifier) for identifier in identifiers
+        }
 
     def load_bounded(self, data_type, max_records, data_format="json"):
         if data_format != "json" or max_records < 1:
