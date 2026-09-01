@@ -2,9 +2,9 @@
 # Licensed under the MIT License.
 """Lightweight, opt-in performance instrumentation.
 
-Counts and times backend storage round-trips for a single logical request so we
-can establish a baseline (Phase 0 of the perf-layer-loading spec) and later prove
-the O(layers x models) -> O(1) improvement.
+Counts and times logical data-layer operations for a single request. A bulk
+operation can issue multiple backend SDK requests, so these values are not
+storage transaction counts.
 
 Design notes:
 - A ``ContextVar`` holds a shared ``PerfCounter`` *object*. ``asyncio.to_thread``
@@ -26,7 +26,7 @@ _current: "contextvars.ContextVar[PerfCounter | None]" = (
 
 
 class PerfCounter:
-    """Thread-safe accumulator of storage round-trip count and duration."""
+    """Thread-safe accumulator of logical data-layer calls and duration."""
 
     def __init__(self):
         self.calls = 0
@@ -66,6 +66,21 @@ def get_counter():
 
 
 @contextmanager
+def bind(counter):
+    """Bind ``counter`` as the active counter for the current context.
+
+    Used to propagate the active counter into worker threads (e.g. a
+    ``ThreadPoolExecutor``), which — unlike ``asyncio.to_thread`` — do not copy
+    the parent context. ``counter`` may be ``None`` (tracking disabled).
+    """
+    token = _current.set(counter)
+    try:
+        yield
+    finally:
+        _current.reset(token)
+
+
+@contextmanager
 def timed(op):
     """Time an ``op`` and record it on the active counter, if any.
 
@@ -83,18 +98,23 @@ def timed(op):
 
 
 def headers(counter, wall_start):
-    """Response headers exposing round-trip count/timing for benchmarking."""
+    """Response headers exposing data-layer call timing for benchmarking."""
     if counter is None:
         return {}
     storage_ms = counter.seconds * 1000.0
     wall_ms = (time.perf_counter() - wall_start) * 1000.0
     return {
+        "X-Haste-Data-Layer-Calls": str(counter.calls),
+        "X-Haste-Data-Layer-Ms": f"{storage_ms:.1f}",
+        # Keep the original names while benchmark consumers migrate.
         "X-Haste-Storage-Calls": str(counter.calls),
         "X-Haste-Storage-Ms": f"{storage_ms:.1f}",
         "X-Haste-Wall-Ms": f"{wall_ms:.1f}",
         "Server-Timing": ", ".join(
             [
-                ";".join(["storage", "desc=storage", f"dur={storage_ms:.1f}"]),
+                ";".join(
+                    ["data-layer", "desc=data-layer", f"dur={storage_ms:.1f}"]
+                ),
                 ";".join(["wall", "desc=wall", f"dur={wall_ms:.1f}"]),
             ]
         ),
@@ -112,7 +132,7 @@ def log_summary(logger, name, counter, wall_start, **fields):
     }
     extra = " ".join(f"{k}={v}" for k, v in fields.items())
     logger.info(
-        "PERF %s %s storage_calls=%d storage_ms=%.1f wall_ms=%.1f ops=%s",
+        "PERF %s %s data_layer_calls=%d data_layer_ms=%.1f wall_ms=%.1f ops=%s",
         name,
         extra,
         counter.calls,
