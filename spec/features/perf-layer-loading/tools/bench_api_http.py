@@ -36,6 +36,11 @@ def main():
     ap.add_argument("--repeats", type=int, default=30)
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--code", default=None, help="Azure Functions key, if required")
+    ap.add_argument(
+        "--allow-cache",
+        action="store_true",
+        help="Measure warm server-cache behavior instead of forcing reloads.",
+    )
     args = ap.parse_args()
 
     qs = f"?projectId={args.project_id}&includeModels=True"
@@ -46,7 +51,9 @@ def main():
     latencies, storage_calls, storage_ms, payloads = [], [], [], []
     for i in range(args.warmup + args.repeats):
         t0 = time.perf_counter()
-        with urllib.request.urlopen(url) as resp:
+        headers = {} if args.allow_cache else {"Cache-Control": "no-cache"}
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request) as resp:
             body = resp.read()
             hdrs = resp.headers
         dt = (time.perf_counter() - t0) * 1000.0
@@ -54,10 +61,16 @@ def main():
             continue
         latencies.append(dt)
         payloads.append(len(body))
-        if hdrs.get("X-Haste-Storage-Calls"):
-            storage_calls.append(int(hdrs["X-Haste-Storage-Calls"]))
-        if hdrs.get("X-Haste-Storage-Ms"):
-            storage_ms.append(float(hdrs["X-Haste-Storage-Ms"]))
+        calls_header = hdrs.get("X-Haste-Data-Layer-Calls") or hdrs.get(
+            "X-Haste-Storage-Calls"
+        )
+        timing_header = hdrs.get("X-Haste-Data-Layer-Ms") or hdrs.get(
+            "X-Haste-Storage-Ms"
+        )
+        if calls_header:
+            storage_calls.append(int(calls_header))
+        if timing_header:
+            storage_ms.append(float(timing_header))
 
     result = {
         "project_id": args.project_id,
@@ -66,8 +79,8 @@ def main():
         "latency_p95_ms": round(_pct(latencies, 95), 1),
         "latency_max_ms": round(max(latencies), 1),
         "payload_kb": round(statistics.median(payloads) / 1024, 1),
-        "server_storage_calls": storage_calls[0] if storage_calls else None,
-        "server_storage_ms_p50": (
+        "server_data_layer_calls": storage_calls[0] if storage_calls else None,
+        "server_data_layer_ms_p50": (
             round(statistics.median(storage_ms), 1) if storage_ms else None
         ),
     }
