@@ -1,5 +1,23 @@
 # Findings: Verified Performance Bottlenecks
 
+## Contents
+
+- [Cost Model](#cost-model-why-it-scales)
+- [HTTP API](#backend--apihastefuncapifunction_apppy)
+- [Core Library](#backend--hastelibsrchastegeocore)
+- [Queue Workers](#queue--apihastefuncqueuesfunction_apppy)
+- [UI](#ui--uisrc)
+- [Measured Priority](#measured-priority-adjustments-phase-0)
+
+> **Baseline terminology:** the Phase 0 counter records logical data-layer calls, not
+> Azure REST transactions. The N+1 findings and latency measurements remain valid, but
+> one partition call can contain a listing plus many Blob downloads.
+
+> **Implementation status (2026-09-01):** B1–B5, B7, H2, and H5 are addressed on the
+> cumulative branch. B6, server-side filtering, a materialized project view, and queue
+> configuration remain open. UI single-flight, ETag handling, in-flight/visibility
+> guards, and active-job-only polling are implemented.
+
 Each finding was confirmed by reading the referenced code. Severity reflects impact
 on the reported symptom (slow layer/run loading that scales with layer count).
 
@@ -13,7 +31,7 @@ For a project with **L** image layers and an average of **M** models per layer, 
 + L × 1                (LABELS full-partition scan — once PER layer, see B1)
 + L × 1                (VALIDATION load per layer)
 + L × M × 2            (MODEL_ARTIFACTS load + TRAIN_LABELS export per model)
-= 3 + 2L + 2LM  sequential, blocking storage round-trips
+= 3 + 2L + 2LM  sequential, blocking logical data-layer calls
 ```
 
 For L=50, M=5 that is **~603 sequential round-trips**, each an `await asyncio.to_thread(...)`

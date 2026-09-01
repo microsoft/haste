@@ -59,6 +59,12 @@ def seed(project_id, layers, models, labels_per_layer, validation_per_layer,
                 "projectId": project_id,
                 "name": f"Layer {li}",
                 "creationDate": _iso(li),
+                "userId": "bench@example.com",
+                "status": "Processed",
+                "statusMessage": "",
+                "currentStep": 10,
+                "totalSteps": 10,
+                "progressPct": 100,
             },
         )
 
