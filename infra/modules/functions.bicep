@@ -97,6 +97,9 @@ param publishingEnabled bool = true
 @description('Register/expose the Planetary Computer publishing provider.')
 param pcProviderEnabled bool = false
 
+@description('Render a damage classification COG + Explorer visualization config on PC publish.')
+param publishExplorerRenderEnabled bool = true
+
 @description('MPC Pro GeoCatalog base URL (no trailing slash). Operator-provisioned.')
 param pcGeocatalogUrl string = ''
 
@@ -205,6 +208,7 @@ var appConfigSettings = [
   { name: 'PUBLISHING_ORGANIZATION_URL', value: publishingOrganizationUrl }
   { name: 'PUBLISH_STORAGE_ACCOUNT_URL', value: publishStorageAccountUrl }
   { name: 'PUBLISH_BLOB_CONTAINER', value: publishBlobContainer }
+  { name: 'PUBLISH_EXPLORER_RENDER_ENABLED', value: publishExplorerRenderEnabled ? 'true' : 'false' }
 ]
 
 module apiApp 'functionApp.bicep' = {

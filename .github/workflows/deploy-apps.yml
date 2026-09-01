@@ -118,6 +118,7 @@ jobs:
           # Each defaults to off/unset in deploy_apps.sh when absent.
           PUBLISHING_ENABLED: ${{ vars.PUBLISHING_ENABLED }}
           PC_PROVIDER_ENABLED: ${{ vars.PC_PROVIDER_ENABLED }}
+          PUBLISH_EXPLORER_RENDER_ENABLED: ${{ vars.PUBLISH_EXPLORER_RENDER_ENABLED }}
           PC_COLLECTION_PREFIX: ${{ vars.PC_COLLECTION_PREFIX }}
           PUBLISHING_ORGANIZATION_NAME: ${{ secrets.PUBLISHING_ORGANIZATION_NAME }}
           PUBLISHING_ORGANIZATION_URL: ${{ secrets.PUBLISHING_ORGANIZATION_URL }}

@@ -205,6 +205,66 @@ class TestRestAdapter(unittest.TestCase):
         self.assertNotIn("assets", put["json"])
         self.assertEqual(put["json"]["description"], "d")
 
+    def test_create_render_option_posts_to_configurations(self):
+        client = FakeClient(lambda m, u: FakeResponse(201, payload={}))
+        rest = PlanetaryComputerRestAdapter(ENDPOINT, client=client)
+        rest.create_render_option("haste-c", {"id": "damage", "type": "raster-tile"})
+        call = client.calls[-1]
+        self.assertEqual(call["method"], "POST")
+        self.assertEqual(
+            call["url"],
+            "/stac/collections/haste-c/configurations/render-options",
+        )
+        self.assertEqual(call["json"]["id"], "damage")
+
+    def test_get_render_options_unwraps_and_handles_404(self):
+        # Bare list.
+        got = adapter(
+            lambda m, u: FakeResponse(200, payload=[{"id": "damage"}])
+        ).get_render_options("c")
+        self.assertEqual(got, [{"id": "damage"}])
+        # Dict-wrapped.
+        got = adapter(
+            lambda m, u: FakeResponse(
+                200, payload={"renderOptions": [{"id": "x"}]}
+            )
+        ).get_render_options("c")
+        self.assertEqual(got, [{"id": "x"}])
+        # 404 -> empty.
+        self.assertEqual(
+            adapter(lambda m, u: FakeResponse(404)).get_render_options("c"), []
+        )
+
+    def test_create_mosaic_posts_to_configurations(self):
+        client = FakeClient(lambda m, u: FakeResponse(201, payload={}))
+        rest = PlanetaryComputerRestAdapter(ENDPOINT, client=client)
+        rest.create_mosaic("haste-c", {"id": "most-recent", "cql": []})
+        call = client.calls[-1]
+        self.assertEqual(call["method"], "POST")
+        self.assertEqual(
+            call["url"], "/stac/collections/haste-c/configurations/mosaics"
+        )
+        self.assertEqual(call["json"]["id"], "most-recent")
+
+    def test_config_creates_tolerate_409_already_exists(self):
+        # A concurrent publish can race the get-then-create and receive 409;
+        # that already-exists outcome is idempotent success, not an error.
+        rest = adapter(lambda m, u: FakeResponse(409))
+        rest.create_render_option("haste-c", {"id": "damage"})
+        rest.create_mosaic("haste-c", {"id": "most-recent"})
+
+    def test_replace_tile_settings_puts(self):
+        client = FakeClient(lambda m, u: FakeResponse(200, payload={}))
+        rest = PlanetaryComputerRestAdapter(ENDPOINT, client=client)
+        rest.replace_tile_settings("haste-c", {"minZoom": 13})
+        call = client.calls[-1]
+        self.assertEqual(call["method"], "PUT")
+        self.assertEqual(
+            call["url"],
+            "/stac/collections/haste-c/configurations/tile-settings",
+        )
+        self.assertEqual(call["json"]["minZoom"], 13)
+
     def test_start_collection_async_202_pins_operation_url(self):
         step = adapter(
             lambda m, u: FakeResponse(202, {"operation-location": OP_URL})
