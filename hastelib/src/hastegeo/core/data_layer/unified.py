@@ -3,6 +3,7 @@
 import importlib
 
 from ..utils.metadata import MetadataUtils
+from .abstract_data_layer import AbstractDataLayer
 
 
 class UnifiedDataLayer:
@@ -35,9 +36,7 @@ class UnifiedDataLayer:
 
         if storage_type in storage_class_map:
             module_name, class_name = storage_class_map[storage_type]
-            module = importlib.import_module(
-                f"{__package__}.{module_name}"
-            )
+            module = importlib.import_module(f"{__package__}.{module_name}")
             data_layer_class = getattr(module, class_name)
             self.data_layer = data_layer_class(
                 partition_key=self.partition_key, **kwargs
@@ -132,6 +131,24 @@ class UnifiedDataLayer:
             data_format=data_format,
         )
 
+    def supports_load_map(self):
+        method = type(self.data_layer).load_map
+        return method is not AbstractDataLayer.load_map
+
+    def load_map(
+        self,
+        identifiers,
+        data_type,
+        data_format="json",
+        max_workers=None,
+    ):
+        return self.data_layer.load_map(
+            identifiers=identifiers,
+            data_type=data_type,
+            data_format=data_format,
+            max_workers=max_workers,
+        )
+
     def load_page(
         self,
         data_type,
@@ -152,6 +169,11 @@ class UnifiedDataLayer:
             status=status,
             project_id=project_id,
             max_records=max_records,
+        )
+
+    def list_identifiers(self, data_type, data_format="json"):
+        return self.data_layer.list_identifiers(
+            data_type, data_format=data_format
         )
 
     def delete(self, identifier, data_type, data_format="json"):
@@ -183,12 +205,14 @@ class UnifiedDataLayer:
         data_type=None,
         data_format="json",
         extra_partition_keys=None,
+        check_exists=True,
     ):
         return self.data_layer.get_file_remote_path(
             identifier,
             data_type,
             data_format=data_format,
             extra_partition_keys=extra_partition_keys,
+            check_exists=check_exists,
         )
 
     def get_base_url(self):
