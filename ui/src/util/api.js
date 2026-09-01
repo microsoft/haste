@@ -6,11 +6,6 @@ const APIMSubscriptionKey = import.meta.env.VITE_APIM_SUBSCRIPTION_KEY;
 import { upsertUser } from "../AppHelper.js";
 import { sanitizeRedirectPath } from "./validation.js";
 
-function resolveVarConcatChar(text) {
-  if (text === "") return "";
-  return text.includes("?") ? "&" : "?";
-}
-
 export function buildUrl(endpoint) {
   const base = APIUrl + endpoint;
   if (APIMSubscriptionKey) {

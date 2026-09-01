@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { Button, Text } from "@fluentui/react-components";
+import { Text } from "@fluentui/react-components";
 
 import { useState, useEffect, useContext } from "react";
 import { apiGet } from "../util/api";
@@ -11,12 +11,9 @@ import { FluentIcon } from "../util/icons";
 
 import { AppContext } from "../AppContext";
 
-import CreateEditSourceTypeModal from "./CreateEditSourceTypeModal";
-
 const AdminSourceTypes = () => {
 
   const [componentState, setComponentState] = useState(null);
-  const [modalComponent, setModalComponent] = useState(null);
   const { setIsLoading, appParams } = useContext(AppContext);
   const [moreInfoVisibleId, setMoreInfoVisibleId] = useState(null);
   const [sort, setSort] = useState({ key: "creationDate", dir: "desc" });
@@ -106,23 +103,6 @@ const AdminSourceTypes = () => {
         <SectionHeader properties={sectionHeaderProperties} />
 
         <div className="container p-0">
-          <div className="row m-0 mt-5 p-0">
-            <div className="col-12 d-flex justify-content-startr">
-              <Button
-                appearance="primary"
-                icon={<FluentIcon name="FabricNewFolder" />}
-                onClick={() =>
-                  setModalComponent(
-                    <CreateEditSourceTypeModal
-                      onClose={() => setModalComponent(null)}
-                    />
-                  )
-                }
-              >
-                Add Source Type
-              </Button>
-            </div>
-          </div>
           <div className="row m-0 p-0 pt-5">
             <div className="col-12">
               <table className="col-12 dashboard-table">
@@ -208,7 +188,6 @@ const AdminSourceTypes = () => {
           </div>
         </div>
       </div>
-      {modalComponent}
     </>
   );
 };

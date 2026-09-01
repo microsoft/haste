@@ -28,7 +28,6 @@ const SourceTypeRow = ({ item, moreInfoVisibleId, setMoreInfoVisibleId }) => {
     items: [
       {
         key: "info",
-        className: "d-block d-lg-none",
         text: moreInfoVisibleId === item.sourceTypeId ? "Hide Info" : "View Info",
         icon: <FluentIcon name={moreInfoVisibleId === item.sourceTypeId ? "Cancel" : "Info"} />,
         onClick: () => {
@@ -38,16 +37,6 @@ const SourceTypeRow = ({ item, moreInfoVisibleId, setMoreInfoVisibleId }) => {
             setMoreInfoVisibleId(item.sourceTypeId);
           }
         },
-      },
-      {
-        key: "edit",
-        text: "Edit",
-        icon: <FluentIcon name="Edit" />,
-      },
-      {
-        key: "remove",
-        text: "Remove",
-        icon: <FluentIcon name="Delete" />,
       },
     ],
   };
@@ -105,7 +94,7 @@ const SourceTypeRow = ({ item, moreInfoVisibleId, setMoreInfoVisibleId }) => {
             {item.creationDate}
           </Text>
         </td>
-        <td className="custom-text-no-wrap d-flex align-items-start align-items-md-center justify-content-end">
+        <td className="custom-text-no-wrap d-flex align-items-start align-items-md-center justify-content-end d-xl-none">
           <Menu positioning="below-end">
             <MenuTrigger disableButtonEnhancement>
               <Button
@@ -121,9 +110,7 @@ const SourceTypeRow = ({ item, moreInfoVisibleId, setMoreInfoVisibleId }) => {
                 {moreMenuOptions.items.map((mi) => (
                   <MenuItem
                     key={mi.key}
-                    className={mi.className}
                     icon={mi.icon}
-                    disabled={mi.disabled}
                     onClick={mi.onClick}
                   >
                     {mi.text}
