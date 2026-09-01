@@ -59,6 +59,8 @@ const mockUser = {
 
   const page = await context.newPage();
   const consoleErrors = [];
+  const requestTimeline = [];
+  const trackedRequests = new WeakMap();
   page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
 
   // Mock cheap bootstrap calls (not what we measure).
@@ -74,15 +76,28 @@ const mockUser = {
 
   // Time every GetProjectDetails call (the real, expensive one).
   const gpd = [];
-  const starts = new Map();
+  const requestRecords = new WeakMap();
   page.on("request", (req) => {
-    if (req.url().includes("GetProjectDetails")) starts.set(req.url() + req.method() + Date.now(), Date.now());
+    if (!req.url().includes("GetProjectDetails")) return;
+    const record = { url: req.url(), startedAt: Date.now(), ms: null };
+    requestRecords.set(req, record);
+    gpd.push(record);
   });
   page.on("requestfinished", async (req) => {
     if (!req.url().includes("GetProjectDetails")) return;
     const t = req.timing();
-    // responseEnd is ms since request start (fetchStart); use it as duration.
-    gpd.push({ url: req.url(), ms: Math.round(t.responseEnd) });
+    const record = requestRecords.get(req);
+    if (record) {
+      record.ms = Number.isFinite(t.responseEnd)
+        ? Math.round(t.responseEnd)
+        : Date.now() - record.startedAt;
+    }
+  });
+  page.on("response", (response) => {
+    const record = requestRecords.get(response.request());
+    if (!record) return;
+    record.status = response.status();
+    record.cache = response.headers()["x-haste-cache"] ?? null;
   });
 
   const observedApiOrigins = new Set();
@@ -92,6 +107,26 @@ const mockUser = {
   });
 
   const t0 = Date.now();
+  page.on("request", (req) => {
+    const url = req.url();
+    if (
+      req.resourceType() === "document" ||
+      /\.auth\/me|GetUserById|PutUser|GetPublishingProviders/.test(url)
+    ) {
+      const record = {
+        resourceType: req.resourceType(),
+        path: new URL(url).pathname,
+        startedMs: Date.now() - t0,
+        finishedMs: null,
+      };
+      trackedRequests.set(req, record);
+      requestTimeline.push(record);
+    }
+  });
+  page.on("requestfinished", (req) => {
+    const record = trackedRequests.get(req);
+    if (record) record.finishedMs = Date.now() - t0;
+  });
   await page.goto(`${UI}/project/${PROJECT}`, { waitUntil: "commit", timeout: 60000 });
 
   // TTI: first image-layer row (seed names layers "Layer <n>").
@@ -114,23 +149,72 @@ const mockUser = {
   } catch (e) { bodyText = "<innerText failed: " + e + ">"; }
   try { await page.screenshot({ path: arg("shot", "/tmp/haste-uibench/shot.png"), fullPage: true }); } catch (e) {}
 
-  const initialGpdMs = gpd.length ? gpd[0].ms : null;
-  const gpdCountAfterLoad = gpd.length;
+  const interactiveAt = Date.now();
+  const initialCalls = gpd.filter((call) => call.startedAt <= interactiveAt);
+  const initialGpdMs = initialCalls.length ? initialCalls[0].ms : null;
+  const initialGpdStartedMs = initialCalls.length
+    ? initialCalls[0].startedAt - t0
+    : null;
+  const initialGpdFinishedMs =
+    initialGpdStartedMs !== null && initialGpdMs !== null
+      ? initialGpdStartedMs + initialGpdMs
+      : null;
+  const gpdCountAfterLoad = initialCalls.length;
 
   // Observe the 20s background poll.
   const pollStart = Date.now();
   await page.waitForTimeout(POLL_WAIT_MS);
-  const pollCalls = gpd.slice(gpdCountAfterLoad);
+  const pollCalls = gpd.filter((call) => call.startedAt >= pollStart);
 
   const result = {
     project: PROJECT,
     time_to_interactive_ms: tti,
+    initial_getprojectdetails_started_ms: initialGpdStartedMs,
     initial_getprojectdetails_ms: initialGpdMs,
+    initial_getprojectdetails_finished_ms: initialGpdFinishedMs,
+    initial_getprojectdetails_status: initialCalls[0]?.status ?? null,
+    initial_getprojectdetails_cache: initialCalls[0]?.cache ?? null,
+    render_after_project_response_ms:
+      tti !== null && initialGpdFinishedMs !== null
+        ? Math.max(0, tti - initialGpdFinishedMs)
+        : null,
     getprojectdetails_calls_during_load: gpdCountAfterLoad,
     poll_window_ms: POLL_WAIT_MS,
     poll_getprojectdetails_calls: pollCalls.length,
     poll_getprojectdetails_ms: pollCalls.map((c) => c.ms),
+    poll_getprojectdetails: pollCalls.map((call) => ({
+      ms: call.ms,
+      status: call.status ?? null,
+      cache: call.cache ?? null,
+    })),
     api_origins_observed: [...observedApiOrigins],
+    navigation_timing: await page.evaluate(() => {
+      const navigation = performance.getEntriesByType("navigation")[0];
+      return navigation
+        ? {
+            responseEnd: Math.round(navigation.responseEnd),
+            domInteractive: Math.round(navigation.domInteractive),
+            domContentLoadedEventEnd: Math.round(
+              navigation.domContentLoadedEventEnd
+            ),
+            loadEventEnd: Math.round(navigation.loadEventEnd),
+          }
+        : null;
+    }),
+    slowest_resources: await page.evaluate(() =>
+      performance
+        .getEntriesByType("resource")
+        .sort((left, right) => right.duration - left.duration)
+        .slice(0, 10)
+        .map((entry) => ({
+          path: new URL(entry.name).pathname,
+          initiatorType: entry.initiatorType,
+          startTime: Math.round(entry.startTime),
+          duration: Math.round(entry.duration),
+          transferSize: entry.transferSize,
+        }))
+    ),
+    bootstrap_requests: requestTimeline,
     row_wait_error: rowError,
     body_text_sample: bodyText,
     console_errors: consoleErrors.slice(0, 4),

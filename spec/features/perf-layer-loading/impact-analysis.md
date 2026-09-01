@@ -1,5 +1,15 @@
 # Impact Analysis: Image Layer & Model Run Loading Performance
 
+## Contents
+
+- [Scope](#scope-of-change)
+- [Azure Services](#azure-service-impact)
+- [Dependencies](#dependency-analysis)
+- [Risks](#risk-assessment)
+- [Performance](#performance-impact-measured-baseline--target)
+- [Security](#security-impact)
+- [Rollback](#rollback-assessment)
+
 ## Scope of Change
 
 | Component | Path | Type | Severity |
@@ -16,7 +26,7 @@
 
 | Service | Change | Cost Impact |
 |---|---|---|
-| Blob Storage / Cosmos | Far fewer read round-trips per `GetProjectDetails`; prefix-scoped listings | **Lower** transaction count & egress (especially with 20s poll × N clients) |
+| Blob Storage / Cosmos | Fewer repeated scans and overlapped keyed reads | Lower transaction count than baseline, but still proportional to returned Blob records |
 | Azure Functions | Lower per-request CPU/wall-time; `gather` uses more threads briefly per request | Net **lower** consumption; watch thread-pool sizing under load |
 | Queue Storage | `batchSize`>1 raises concurrency per instance | Neutral–lower; validate scale behavior |
 
@@ -41,7 +51,7 @@
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | H4 double-serialize fix breaks reads of legacy blobs | med | high | Keep tolerant read (try single, fall back to double) during transition; migrate lazily on next save |
-| `asyncio.gather` + `ThreadPoolExecutor` fan-out exhausts Functions thread pool under concurrency | med → **confirmed relevant** | med | **Phase 0 evidence:** two *concurrent* `GetProjectDetails` calls already ~2× the latency (38 s vs 21 s) — the worker contends today. Bound workers via `HASTE_METADATA_LOAD_WORKERS`, cap total in-flight, and fix the UI single-flight (U7) so fewer concurrent requests hit the API; load-test the fan-out under ≥2 concurrent requests |
+| Concurrent fan-out exhausts Functions threads | low after mitigation | med | One process-wide executor caps blocking I/O at `HASTE_BLOB_DOWNLOAD_WORKERS`; UI/API single-flight removes duplicate same-key work. Multi-request load testing remains required. |
 | `batchSize`>1 changes ordering/poison behavior | med | med | Gate behind load test; keep separate from Phase 1; revert via config |
 | Cache headers serve stale run-status to UI | low | med | Short `max-age` (≤15s); UI still change-detects; runs move to terminal states, not backwards |
 | UI context split / memo introduces render regressions | med | low | Ship incrementally; visual + interaction QA per component |
@@ -50,14 +60,15 @@
 
 Phase 0 baselines (50×5, Azurite/dev — lower bound; see [results.md](results.md)):
 
-- **API latency:** `GetProjectDetails` **20.8 s p50 / 21.8 s p95** → target **< 1.5 s**;
-  round-trips **603 → ≤ ~6 + 2 bounded fan-outs**.
+- **API latency:** `GetProjectDetails` **20.8 s p50 / 21.8 s p95** baseline;
+  hardened clean fixture **1.85 s / 2.00 s uncached** and **9.1 / 12.2 ms cached**.
+- **Logical data-layer calls:** **603 → 7**. This is not an Azure transaction count.
 - **UI time-to-interactive:** **40.3 s** (large) → target **< 2 s**. TTI is API-bound
   (~2 s render over the API call), so the backend fix drives most of this; the UI
   single-flight/poll guards remove the ~2× amplification and request pile-up.
-- **Backend load:** the 20 s poll currently re-issues the full 603-round-trip call
-  (measured 36.5 s per poll) — worse, response > interval so polls overlap. Fixing the
-  poll guard + `304` collapses idle per-open-project storage transactions dramatically.
+- **Backend load:** idle projects no longer poll; active-job polls do not overlap.
+  Fresh cache hits use zero data-layer calls. Active polls after cache expiry still read
+  storage because no materialized project version exists.
 - **Queue throughput:** higher with `batchSize`>1; training/inference lose partition scans.
 
 ## Security Impact

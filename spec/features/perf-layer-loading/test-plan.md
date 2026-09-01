@@ -1,5 +1,15 @@
 # Test Plan: Image Layer & Model Run Loading Performance
 
+## Contents
+
+- [Strategy](#strategy)
+- [Benchmark Fixture](#benchmark-fixture)
+- [Metrics](#metrics-captured-per-fixture-size)
+- [Baseline](#baseline-capture-phase-0--measured-2026-08-03)
+- [Regression Tests](#correctness--regression-tests)
+- [Load Test](#load-test-phase-3-gate)
+- [Exit Gate](#exit-gate)
+
 ## Strategy
 
 Performance work must be **measured, not asserted**. Every phase compares against the
@@ -21,8 +31,9 @@ populates the local Docker Compose storage emulator (Azurite) with these shapes.
 
 | Metric | How | Target (Large) |
 |---|---|---|
-| `GetProjectDetails` p50 / p95 latency | timed API calls (warm) | p95 < 1.5s |
-| Storage round-trip count per request | Phase 0 counter log | ≤ ~6 + 2 bounded fan-outs |
+| Uncached `GetProjectDetails` p50 / p95 | HTTP harness sends `Cache-Control: no-cache` | p95 < 1.5s |
+| Warm process-cache p50 / p95 | HTTP harness with `--allow-cache` | tracked separately |
+| Logical data-layer calls | `HASTE_PERF` headers | 7; not an Azure transaction metric |
 | Response payload size | `Content-Length` | tracked; smaller in `summary` mode |
 | UI time-to-interactive | DevTools performance trace | p95 < 2s |
 | Idle open-project network/CPU over 60s | DevTools, no data change | no full refetch; `304` on poll |
@@ -32,13 +43,13 @@ populates the local Docker Compose storage emulator (Azurite) with these shapes.
 Full detail in [results.md](results.md). Captured via `tools/phase0_baseline.py`
 (real code, real seeded data, local FS backend).
 
-| Fixture | round-trips | API p50 | API p95 | payload | **UI TTI** |
+| Fixture | logical calls | API p50 | API p95 | payload | **UI TTI** |
 |---|---|---|---|---|---|
 | Small (5×2) | **33** | 0.70 s | 0.71 s | 4.2 KB | 3.10 s |
 | Medium (20×5) | **243** | 6.18 s | 6.71 s | 33.2 KB | 12.36 s |
 | Large (50×5) | **603** | **20.77 s** | **21.78 s** | 82.8 KB | **40.27 s** |
 
-Round-trips match `3 + L·(2M+2)` exactly. Large breakdown: 301 `load`, 52
+Logical calls match `3 + L·(2M+2)` exactly. Large breakdown: 301 `load`, 52
 `load_all_from_partition` (50 redundant `LABELS` scans = B1), 250 `export` (B2).
 API latency measured via `tools/bench_api_http.py`; UI TTI via `tools/ui_bench.cjs`
 (Playwright vs the real app). TTI is API-bound (~2 s render over the API call) and the
@@ -48,23 +59,22 @@ Azurite, amd64 emulation, Vite dev mode). See [results.md](results.md).
 ## Correctness / regression tests
 
 ### Backend (`hastelib/tests/`)
-- `load_map`: returns one entry per key; `None` for missing (parity with old
-  per-key `try/except FileNotFoundError`); respects `max_workers`.
-- `load_filtered`: returns the same subset the old "load all + Python filter" produced,
-  for `imageLayerId` predicate.
-- `load_all` with prefix: identical results to prior no-prefix scan for a given
-  partition; no cross-partition leakage.
-- H4 tolerant read: correctly decodes both legacy double-encoded and new
-  single-encoded blobs.
-- `BlobServiceClient` reuse: same client instance returned for same conn-string.
+- [x] `load_map`: duplicate/missing keys, worker bounds, native query and fallback paths.
+- [x] `load_filtered`: non-empty predicates and missing-field semantics.
+- [x] Exact metadata matching and partition isolation across file/blob/list paths.
+- [x] H4 tolerant read for legacy double-encoded and current JSON.
+- [x] `BlobServiceClient` reuse by connection target.
+- [x] Shared executor aggregate cap, ordering, nesting, cancellation, and exceptions.
+- [x] Atomic artifact download, traversal rejection, and partial-file cleanup.
+- [x] Cosmos, Data Lake, PostgreSQL, Blob, and local read-contract coverage.
 
 ### API (`hastefuncapi`)
-- `GetProjectDetails` default response is **byte-for-byte equivalent** (post-sort) to
-  the pre-refactor response for Small/Medium/Large fixtures (golden-file compare).
-- `summary` mode omits `models[]` but keeps counts.
-- `includeArtifacts=false` skips artifact expansion, keeps `modelCount`.
-- `ETag` stable across identical requests; `If-None-Match` match ⇒ `304` empty body.
-- `GenerateProjectStats` parity after the B5 hoist.
+- [x] `GetProjectDetails` response assembly is byte-for-byte checked against a complete
+  expected fixture; a real local-storage test covers legacy key-only related records.
+- [ ] Deferred: `summary` mode omits `models[]` but keeps counts.
+- [ ] Deferred: `includeArtifacts=false` skips artifact expansion.
+- [x] ETag/304, weak/list matching, cache hit/miss, refresh, failure retry, and keying.
+- [x] `GenerateProjectStats` loads labels once and reports zero for unlabeled layers.
 
 ### Queue (`hastefuncqueues`)
 - Training trigger with `load_filtered` selects the same label project as before.
@@ -73,13 +83,16 @@ Azurite, amd64 emulation, Vite dev mode). See [results.md](results.md).
   path exercised at `maxDequeueCount`.
 
 ### UI (`ui`)
-- **Single-flight (U7):** initial project load issues **exactly one** `GetProjectDetails`
-  (not two) — assert via `tools/ui_bench.cjs` `getprojectdetails_calls_during_load == 1`
-  (production build) and a network spy; a superseded fetch is aborted.
-- **Poll guard (U1):** no new poll fires while a request is in flight; assert no
-  overlapping `GetProjectDetails` when response time > interval.
-- Poll receiving `304` (or byte-identical body) does **not** call `setComponentState`
-  (assert via spy/render-count).
+- [x] **Single-flight (U7):** utility covers dedupe, supersession, abort, and retry;
+  browser benchmark remains the integration proof for exactly one initial request.
+- [x] Poll guard checks visibility, in-flight state, and active jobs.
+- [x] HTTP helper handles `304` without parsing a body; component returns before state
+  update.
+- [x] Production browser: one initial call, zero terminal-project polls over 26 s.
+- [x] Active browser: one conditional poll at 20 s, returning `304` without overlap.
+- [x] Map-route smoke test: lazy loader provides `atlas`, drawing, and `SwipeMap`.
+- [x] Route splitting: main JS 1.49 MB → about 120 KB; Azure Maps CDN assets no longer block
+  non-map routes.
 - `LayerRow`/`ModelRow` memoized: unchanged props ⇒ no re-render (React Profiler).
 - Expanding a layer renders its model rows; collapsed layers render none.
 - Edit/labeling helpers issue independent GETs concurrently (`Promise.all`).
@@ -92,7 +105,25 @@ Azurite, amd64 emulation, Vite dev mode). See [results.md](results.md).
 
 ## Exit gate
 
+### Current Validation (2026-09-01)
+
+- Focused regression matrix and final suite counts are refreshed during the final
+  validation pass.
+- New performance core modules have 100% statement and branch coverage.
+- Performance-stack API suite: **50 passed**; two server-managed-field cases are
+  owned by the independent security PR. Queue suite: **6 passed**.
+  UI suite: **121 passed**; production build passes.
+- New UI utilities: 100% line, branch, and function coverage.
+- Full `hastelib` suite: **581 passed**. The stale `ArtifactProcessor.zip` test was
+  replaced with an isolated test of the current fetch delegation contract.
+- UI production build passes. Changed UI files have zero ESLint diagnostics; the
+  repository-wide lint command remains red from unrelated existing files.
+- Clean 50×5 HTTP fixture: 50 layers, 250 models/artifacts, correct validation counts;
+  uncached 1.85 s p50 / 2.00 s p95, warm-cache 9.1 ms / 12.2 ms.
+- Production project page: 2.12 s TTI, one initial request, 58 ms post-response render,
+  and zero terminal-project polls during 26 seconds. Target remains open.
+
 - [ ] Large-fixture targets met and recorded in the baseline table (before/after).
-- [ ] All correctness/parity tests green.
+- [x] Feature-specific correctness/parity tests green.
 - [ ] `docker compose up` runs the full stack with the synthetic project without error.
 - [ ] CI (secret-scan, deploy-apps) passes.

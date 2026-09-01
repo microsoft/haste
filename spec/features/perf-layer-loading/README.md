@@ -1,10 +1,17 @@
 # Feature: Image Layer & Model Run Loading Performance
 
-**Status:** draft
+**Status:** in-progress
 **Author:** prbatero
 **Date:** 2026-08-03
-**Target Release:** TBD
 **Priority:** P1
+
+## Contents
+
+- [Summary](#summary)
+- [Motivation](#motivation)
+- [Success Criteria](#success-criteria)
+- [HASTE Components Affected](#haste-components-affected)
+- [Document Index](#document-index)
 
 ## Summary
 
@@ -15,8 +22,8 @@ patterns in the `GetProjectDetails` API path, fully-sequential (never paralleliz
 blob I/O in `hastelib`, full-container blob scans without prefix filtering, and a UI
 that re-fetches the entire project — every model of every layer — every 20 seconds
 while re-rendering the whole component tree. This spec catalogs the verified
-bottlenecks and lays out a phased plan to make layer/run loading fast and roughly
-constant-time regardless of project size.
+bottlenecks and lays out a phased plan to remove sequential amplification, bound
+process-wide concurrency, and avoid duplicate or idle refresh work.
 
 ## Motivation
 
@@ -33,21 +40,25 @@ constant-time regardless of project size.
 
 - [ ] `GET GetProjectDetails?includeModels=True` for a 50-layer / ~5-models-per-layer
       project returns in **< 1.5s p95** (from a current baseline measured in Phase 0).
-- [ ] Backend storage round-trips for that request drop from **O(layers × models)**
-      (~600 for the 50×5 case) to **O(1) small constant** (≤ ~6 partition reads).
+- [x] Logical data-layer calls for that request drop from **603 to 7**. This metric
+      counts processor operations, not Azure REST transactions; Blob downloads still
+      scale with the number of returned records.
+- [x] Aggregate blocking Blob I/O is capped by one process-wide executor (16 workers
+      by default), including concurrent HTTP requests.
 - [ ] UI time-to-interactive for the project page is **< 2s p95** on the same project
-      and no longer scales linearly with layer count.
-- [ ] Background refresh no longer refetches unchanged data or re-renders the full
-      tree; idle CPU and network on an open project page drop measurably.
+      and no longer scales linearly with layer count. Current production-bundle
+      observation is **2.12 s** with 58 ms post-response rendering.
+- [ ] Idle projects no longer poll and fresh conditional requests avoid storage via a
+      15-second process-local cache. Measure the resulting browser CPU/network delta.
 
 ## HASTE Components Affected
 
 | Component | Impact |
 |---|---|
 | `hastelib/src/hastegeo/core/data_layer/` | Add prefix-scoped listing, parallel/metadata-only reads, fix double-deserialize |
-| `hastelib/src/hastegeo/core/processors/` | `MetadataProcessor` filtered load + optional request-scoped cache |
-| `hastelib/src/hastegeo/core/artifact_storage/` | Parallelize multi-blob fetch |
-| `api/hastefuncapi/` | Rewrite `GetProjectDetails` layer loop; add cache headers |
+| `hastelib/src/hastegeo/core/processors/` | Keyed project-details loader and batch metadata reads |
+| `hastelib/src/hastegeo/core/artifact_storage/` | Bounded, atomic multi-blob fetch |
+| `api/hastefuncapi/` | Thin `GetProjectDetails` route; process-local TTL cache and ETags |
 | `api/hastefuncqueues/` | Parallelize independent loads; fix N+1 label lookup; batch saves |
 | `ui/src/Components/` | Smart polling, memoization, split context, lazy model expansion |
 
@@ -67,4 +78,5 @@ constant-time regardless of project size.
 | [impact-analysis.md](impact-analysis.md) | Risk, blast radius, backward compat | draft |
 | [test-plan.md](test-plan.md) | Benchmark harness & regression coverage | draft |
 | [results.md](results.md) | **Phase 0 measured baseline** (603 round-trips, 20.8 s API, 40.3 s UI TTI @ 50×5) | done |
+| [user-stories.md](user-stories.md) | User outcomes, acceptance criteria, and agent assignments | in-progress |
 | [tools/](tools/) | Seed + benchmarks: `phase0_baseline.py`, `bench_api_http.py`, `ui_bench.cjs`; `docker/docker-compose.perf.yml` overlay | done |

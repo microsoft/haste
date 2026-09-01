@@ -1,4 +1,116 @@
-# Phase 0 Baseline — Measured Results
+# Measured Results
+
+## Contents
+
+- [Post-review Hardening](#post-review-hardening-2026-09-01)
+- [Phase 2](#phase-2--core-library-hastelib)
+- [Phase 1](#phase-1--measured-after-backend-hot-path)
+- [Phase 0](#phase-0-baseline--measured-results)
+- [Reproduction](#how-to-reproduce)
+- [Targets](#targets-to-beat-from-readmemdsuccess-criteria)
+- [Environment](#environment-notes)
+
+> **Metric correction (2026-09-01):** the `HASTE_PERF` counter measures logical
+> data-layer method calls, not Azure Storage REST transactions. A partition or keyed
+> Blob operation can issue one listing plus many GET requests. Historical `33/243/603`
+> and `7` values below are logical calls.
+
+## Post-review hardening (2026-09-01)
+
+Clean synthetic project: 50 layers, 5 models per layer, 20 label records per layer,
+10 validation labels per layer. Docker Functions + Azurite, forced-refresh requests,
+10 measured iterations after 2 warmups:
+
+| Path | Logical calls | p50 | p95 | Payload |
+|---|---:|---:|---:|---:|
+| Forced refresh (`Cache-Control: no-cache`) | 7 | **1.85 s** | **2.00 s** | 166.2 KB |
+| Fresh process-local cache (`--allow-cache`) | 0 | **9.1 ms** | **12.2 ms** | 166.2 KB |
+
+Correctness check: exactly 50 layers, 250 models, 250 non-null artifact records, and
+`validationLabelCount == 10` for every layer. The `<1.5 s` uncached p95 target remains
+open. Cache numbers are process-local and do not imply cross-instance coherence.
+
+Production UI bundle against the same API fixture:
+
+| Browser path | TTI | Initial calls | Post-response render | 26 s poll window |
+|---|---:|---:|---:|---:|
+| Terminal jobs | **2.12 s** | **1** | 58 ms | **0 calls** |
+| One active job | **2.27 s** | **1** | 69 ms | **1 call**, HTTP `304` |
+
+The original page loaded Azure Maps control/drawing scripts and styles globally. In the
+test environment those four CDN requests blocked `DOMContentLoaded` for about 14 s,
+including on the non-map project page. Route-level code splitting plus on-demand Azure
+Maps loading reduced the main JS chunk from 1.49 MB to about 120 KB and moved
+`DOMContentLoaded` to 68 ms. A map-route browser smoke test confirmed `atlas`, drawing,
+and `SwipeMap` are available after the lazy loader runs.
+
+The `<2 s` production TTI target remains open by about 120 ms on the terminal fixture;
+the uncached API call (1.93 s in that run) is now the dominant component.
+
+## Phase 2 — Core library (hastelib)
+
+**Date:** 2026-08-03 · **Branch:** `prbatero/feat/performance-improvements-phase2`
+
+Phase 2 removes data-layer waste and adds batch primitives. Delivered:
+
+- **H2 — parallel per-blob downloads** in `load_all_from_partition` / `load_all`
+  (blob layer) and `fetch_artifact` through one process-wide bounded executor.
+- **H5 — `BlobServiceClient` reuse**: a process-wide `lru_cache`d factory in
+  `utils/blob.py` (was created per call in `download_blob_to_tempfile` /
+  `read_blob_range`).
+- **Batch primitives**: `MetadataProcessor.load_map` (parallel per-key load, perf
+  counter propagated into worker threads via `perf.bind`) and `load_filtered`
+  (partition scan + in-process predicate), backed by cross-backend regression tests.
+
+**Measured (50×5, Azurite/dev):** `GetProjectDetails` correctness unchanged (50
+layers, 250 models/artifacts, counts correct); logical calls remain **7**; latency
+**~2.08 s p50 — flat vs Phase 1**.
+
+The Azurite benchmark validates the control flow, not production network performance.
+Real Azure concurrency must be tuned and measured under representative request load.
+
+**Net:** Phase 1 removed the sequential logical-call amplification; Phase 2 bounds
+aggregate concurrency and improves production I/O behavior. Underlying Blob transactions
+remain proportional to the number of records downloaded.
+
+The earlier statement that Phase 2 necessarily makes real Azure sub-second was a
+projection, not a measurement, and is superseded by the measured table above.
+
+## Phase 1 — Measured After (backend hot path)
+
+**Date:** 2026-08-03 · **Branch:** `prbatero/feat/performance-improvements-phase1`
+
+Phase 1 loads every metadata type **once per partition** and joins in memory
+(`asyncio.gather` for the independent reads), and replaces the 250 per-model
+`TRAIN_LABELS` export `exists()` round-trips with **one** blob-name listing + local
+SAS URL construction. Same measurement harnesses as Phase 0.
+
+| Fixture | Logical calls | API p50 | UI TTI | | before → after |
+|---|---|---|---|---|---|
+| small (5×2) | 33 → **7** | 0.70 → **0.20 s** | 3.10 → **2.97 s** | | |
+| medium (20×5) | 243 → **7** | 6.18 → **0.84 s** | 12.36 → **3.63 s** | | |
+| large (50×5) | 603 → **7** | 20.77 → **2.02 s** | 40.27 → **5.50 s** | | **API 10.3× · TTI 7.3×** |
+
+- **Logical calls are seven** regardless of project size. Blob REST transactions still
+  scale with the downloaded records. The seven operations are project plus
+  {imagelayer, labels, validation, model, artifacts}
+  partition reads + 1 train-labels key listing, the last six run concurrently.
+- **`X-Haste-Storage-Ms` (5.5 s) now exceeds `X-Haste-Wall-Ms` (2.0 s)** on large,
+  confirming the reads run in parallel (sum of per-call time > wall time).
+- The large poll call dropped **36.5 s → 2.05 s**.
+- Correctness verified: 50 layers, 5 models each, all 250 artifacts joined,
+  `labelProjectCount`/`validationLabelCount` correct, and the `labelsUrl` build path
+  confirmed (populates a SAS URL when a train-labels blob exists, else null).
+- The after-payload is *larger* (166 KB vs 82 KB — the seed was enriched for the UI
+  run), so the latency win is conservative.
+
+**Historical Phase 1 state:** UI TTI (5.5 s) exceeded the API call because the page
+fired `GetProjectDetails` twice and did not consume ETags. The post-review hardening
+measurements above supersede that state.
+
+---
+
+## Phase 0 Baseline — Measured Results
 
 **Date:** 2026-08-03
 **Branch:** `prbatero/feat/performance-improvements`
@@ -8,15 +120,15 @@ sequence ([function_app.py:534-638](../../../api/hastefuncapi/function_app.py#L5
 with `HASTE_PERF` instrumentation on. Models seeded **without** `labelsUrl` (worst-case
 N+1 that triggers the per-model `TRAIN_LABELS` export).
 
-## Headline metric — storage round-trips per request
+### Headline metric — logical data-layer calls per request
 
-| Fixture | Layers × Models | **Round-trips** | Payload | Formula `3 + L·(2M+2)` |
+| Fixture | Layers × Models | **Logical calls** | Payload | Formula `3 + L·(2M+2)` |
 |---|---|---|---|---|
-| small | 5 × 2 | **33** | 5.8 KB | 33 ✓ |
-| medium | 20 × 5 | **243** | 49.2 KB | 243 ✓ |
-| large | 50 × 5 | **603** | 122.4 KB | 603 ✓ |
+| small | 5 × 2 | **33** | 9.1 KB | 33 ✓ |
+| medium | 20 × 5 | **243** | 82.5 KB | 243 ✓ |
+| large | 50 × 5 | **603** | 205.8 KB | 603 ✓ |
 
-Round-trip counts match the derived cost formula exactly, confirming the replay is
+Logical-call counts match the derived formula, confirming the replay is
 faithful to the handler and that cost scales as **O(layers × models)**.
 
 ## Per-op breakdown (large, 50 × 5)
@@ -96,7 +208,7 @@ would shift the constants but not the O(layers × models) scaling or the amplifi
 ## How to reproduce
 
 ```bash
-# Headline round-trip baseline (no infra needed):
+# Headline logical-call baseline (no infra needed):
 PYTHONPATH=hastelib/src python3 \
   spec/features/perf-layer-loading/tools/phase0_baseline.py
 
@@ -112,7 +224,7 @@ python3 spec/features/perf-layer-loading/tools/bench_api_http.py \
 
 | Metric | Baseline (large, measured) | Target |
 |---|---|---|
-| Round-trips / request | **603** | ≤ ~6 + 2 bounded fan-outs |
+| Logical calls / request | **603** | 7 |
 | API p50 / p95 latency | **20.8 s / 21.8 s** (Azurite) | < 1.5 s |
 | Payload (default shape) | 82.8 KB | smaller via `summary` mode |
 
@@ -121,8 +233,8 @@ python3 spec/features/perf-layer-loading/tools/bench_api_http.py \
 - Backend: Azurite blob emulator on `localhost` (compose). Real Azure Blob per-op
   latency is higher, so these numbers are a **lower bound** on production.
 - Host: Docker Desktop on Apple Silicon; the amd64 API image runs emulated, inflating
-  the non-storage (CPU) portion somewhat. The storage-round-trip count (603) is
-  hardware-independent and is the primary target metric.
+  the non-storage (CPU) portion somewhat. Logical-call counts are hardware-independent;
+  use Azure metrics for actual transaction counts.
 - Reproduce: `docker compose -f docker/docker-compose.yml -f docker/docker-compose.perf.yml
   up -d hastefuncapi api-proxy`, seed via `seed_synthetic_project.py` inside the
   `hastefuncapi` container, then run `bench_api_http.py` from the host.
