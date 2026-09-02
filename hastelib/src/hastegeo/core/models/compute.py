@@ -637,9 +637,9 @@ class ComputeJobSpec(BaseModel):
         normalized = value.strip()
         if not normalized:
             raise ValueError("executionId must not be empty")
-        # Used verbatim to build deterministic provider job/task names
-        # (Batch task ID, AML job name, local execution directory name) —
-        # keep it to characters every provider accepts.
+        # Adapters derive provider-specific identifiers from this stable
+        # logical ID; keep path separators and whitespace out of the neutral
+        # value while allowing adapters to enforce stricter provider limits.
         if not re.match(r"^[A-Za-z0-9._-]+$", normalized):
             raise ValueError(
                 "executionId must contain only letters, digits, '.', '_' "

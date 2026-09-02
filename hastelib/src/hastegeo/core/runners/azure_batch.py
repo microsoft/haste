@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
+import hashlib
 import io
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -108,6 +110,8 @@ from .base import truncate_deterministic_id
 # translation understands their different shapes; misinterpreting them
 # here as Blob-shaped URLs would silently corrupt the container/prefix.
 _BATCH_SUPPORTED_URI_SCHEMES = frozenset({"http", "https"})
+_MAX_BATCH_TASK_ID_LENGTH = 64
+_BATCH_TASK_ID_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
 # Characters processor-generated commands may use to wrap the entire
 # command in a single quoted chain (see _export_haste_job_workdir below).
@@ -411,13 +415,33 @@ class AzureBatchRunner(BaseRunner, ComputeRunner):
         ``truncate_deterministic_id`` since ``MAX_JOB_ID_LENGTH`` is 64
         and ``executionId`` has no length limit of its own.
         """
-        return truncate_deterministic_id(
+        return self._batch_identifier(
             f"haste-{execution_id}", max_length=MAX_JOB_ID_LENGTH
+        )
+
+    @staticmethod
+    def _batch_identifier(value: str, *, max_length: int) -> str:
+        """Return a provider-valid, collision-safe Batch identifier."""
+        sanitized = _BATCH_TASK_ID_SANITIZE_RE.sub("-", value).strip("-")
+        if not sanitized:
+            sanitized = "batch"
+        normalized = sanitized.lower()
+        if normalized != value:
+            digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:10]
+            prefix_length = max_length - len(digest) - 1
+            return f"{normalized[:prefix_length]}-{digest}"
+        return truncate_deterministic_id(normalized, max_length=max_length)
+
+    @classmethod
+    def _execution_task_id(cls, execution_id: str) -> str:
+        """Map a logical execution ID to a collision-safe Batch task ID."""
+        return cls._batch_identifier(
+            execution_id, max_length=_MAX_BATCH_TASK_ID_LENGTH
         )
 
     def submit(self, spec: ComputeJobSpec) -> ComputeJobHandle:
         self.validate(spec)
-        task_id = spec.executionId
+        task_id = self._execution_task_id(spec.executionId)
         job_id = self._execution_job_id(spec.executionId)
         resource_files = _resource_files_from_inputs(spec.inputs)
         (

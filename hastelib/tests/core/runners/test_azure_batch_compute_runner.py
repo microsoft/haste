@@ -670,8 +670,10 @@ class TestSubmit(unittest.TestCase):
         handle = runner.submit(spec)
 
         self.assertLessEqual(len(handle.providerJobId), 64)
+        self.assertLessEqual(len(handle.providerTaskId), 64)
         call_kwargs = runner.batch_cluster.add_task.call_args.kwargs
         self.assertLessEqual(len(call_kwargs["job_id"]), 64)
+        self.assertLessEqual(len(call_kwargs["task_id"]), 64)
 
     def test_task_exists_reconciliation_stays_length_safe_with_long_execution_id(
         self,
@@ -686,6 +688,36 @@ class TestSubmit(unittest.TestCase):
         handle = runner.submit(spec)
 
         self.assertLessEqual(len(handle.providerJobId), 64)
+        self.assertLessEqual(len(handle.providerTaskId), 64)
+
+    def test_task_id_sanitization_is_collision_safe(self):
+        dotted = AzureBatchRunner._execution_task_id("exec.one")
+        hyphenated = AzureBatchRunner._execution_task_id("exec-one")
+
+        self.assertNotEqual(dotted, hyphenated)
+        self.assertNotIn(".", dotted)
+        self.assertLessEqual(len(dotted), 64)
+
+    def test_job_id_sanitization_is_collision_safe(self):
+        runner = _runner()
+        dotted = runner._execution_job_id("exec.one")
+        hyphenated = runner._execution_job_id("exec-one")
+
+        self.assertNotEqual(dotted, hyphenated)
+        self.assertNotIn(".", dotted)
+        self.assertLessEqual(len(dotted), 64)
+
+    def test_case_normalization_is_collision_safe(self):
+        lower_task = AzureBatchRunner._execution_task_id("exec-one")
+        upper_task = AzureBatchRunner._execution_task_id("Exec-One")
+        runner = _runner()
+        lower_job = runner._execution_job_id("exec-one")
+        upper_job = runner._execution_job_id("Exec-One")
+
+        self.assertNotEqual(lower_task, upper_task)
+        self.assertNotEqual(lower_job, upper_job)
+        self.assertEqual(lower_task, lower_task.lower())
+        self.assertEqual(upper_task, upper_task.lower())
 
     def test_first_creator_uses_capacity_aware_pool_selection(self):
         """Preserve multi-pool capacity-aware routing (v2.1.0) for the
