@@ -14,6 +14,7 @@ and ``ComputeExecutionService``'s auto-routing warning logs.
 import logging
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -147,6 +148,25 @@ class _HealthyRunner(ComputeRunner):
 
 
 class TestUnifiedRunnerLoggingSafety(unittest.TestCase):
+    @patch("hastegeo.core.runners.unified_runner.importlib.import_module")
+    def test_deprecation_warning_names_qualified_replacement(
+        self, import_module
+    ):
+        module = MagicMock()
+        module.AzureBatchRunner = MagicMock()
+        import_module.return_value = module
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            UnifiedRunner("azure_batch", config=MagicMock())
+
+        self.assertEqual(len(caught), 1)
+        self.assertIn(
+            "hastegeo.core.runners.execution_service."
+            "ComputeExecutionService, which targets",
+            str(caught[0].message),
+        )
+
     def test_add_task_never_logs_raw_resource_dict_or_signed_url(self):
         runner = UnifiedRunner.__new__(UnifiedRunner)
         runner.runner = MagicMock()

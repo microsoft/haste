@@ -31,8 +31,9 @@ class UnifiedRunner:
     def __init__(self, runner_type, config: Config = None, **kwargs):
         warnings.warn(
             "UnifiedRunner is deprecated; new compute submission should go "
-            "through hastegeo.core.runners.execution_service."
-            "ComputeExecutionService, which targets an adapter implementing "
+            "through "
+            "hastegeo.core.runners.execution_service.ComputeExecutionService, "
+            "which targets an adapter implementing "
             "ComputeRunner (see ADR-0005).",
             DeprecationWarning,
             stacklevel=2,
