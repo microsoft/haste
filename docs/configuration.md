@@ -16,6 +16,8 @@ This guide documents each configuration mode. For the end-to-end workflow, see
 - [Batch image tags and pool immutability](#batch-image-tags-and-pool-immutability)
 - [hastegeo wheel pinning](#hastegeo-wheel-pinning)
 - [Shared multi-tenant GPU pools](#shared-multi-tenant-gpu-pools)
+- [Compute backend selection (Batch, Azure Machine Learning, local)](#compute-backend-selection-batch-azure-machine-learning-local)
+- [Azure Machine Learning backend](#azure-machine-learning-backend)
 - [Email sender domain](#email-sender-domain)
 - [Front Door](#front-door)
 - [Development mode](#development-mode)
@@ -250,6 +252,112 @@ Any variable the code requires must be emitted by **both**
 [`functions.bicep`](../infra/modules/functions.bicep).
 [`check_env_drift.py`](../.github/scripts/check_env_drift.py) enforces this on
 every PR via the `Config drift` workflow.
+
+## Compute backend selection (Batch, Azure Machine Learning, local)
+
+Every compute-intensive workload (training, inference, embedding, imagery
+preprocessing, artifact packaging) runs through a backend-neutral compute
+runner that can submit to **Azure Batch**, **Azure Machine Learning**, or a
+**local** Docker adapter. See
+[`hastelib/runners`](hastelib/runners.md) for the runner architecture and
+[ADR-0005](https://github.com/microsoft/haste/blob/main/spec/architecture/decisions/0005-backend-neutral-compute-runner-and-aml-backend.md)
+for the design rationale.
+
+| Variable | Default | Values | Purpose |
+|---|---|---|---|
+| `HASTE_COMPUTE_BACKEND_DEFAULT` | `azure_batch` | `local` \| `azure_batch` \| `azure_ml` \| `auto` | Global fallback backend, wired to the `COMPUTE_BACKEND_DEFAULT` Function App setting. `azure_batch` reproduces pre-existing, Batch-only behavior exactly. |
+
+The following are optional Function App settings you set directly on `api`/
+`queues` — they are not templated in `main.bicepparam`, and every deployment
+that leaves them unset behaves exactly as it did before this feature:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `COMPUTE_BACKEND_TRAINING` / `_INFERENCE` / `_EMBEDDING` / `_IMAGERYPREP` / `_ARTIFACTS` | unset | Per-workload backend override (same values as `COMPUTE_BACKEND_DEFAULT`); falls back to the global default. |
+| `COMPUTE_AUTO_CANDIDATES_<WORKLOAD>` | unset | Comma-separated backend list `auto` may route that workload to (e.g. `azure_batch,azure_ml`). Required before `auto` can select anything for that workload. |
+| `COMPUTE_AUTO_WEIGHTS_<WORKLOAD>` | unset (equal weight) | Comma-separated positive integers, positionally aligned with `COMPUTE_AUTO_CANDIDATES_<WORKLOAD>`, weighting the deterministic rendezvous routing. |
+| `COMPUTE_FOLLOW_ON_INHERITS_BACKEND` | `true` | An automatic follow-on job (e.g. inference after training) reuses its originating job's selected backend when that backend supports the next workload. |
+| `RUNNER_TYPE` | — | Deprecated alias for `COMPUTE_BACKEND_DEFAULT`; still honored when the latter is unset. |
+
+A launch request for a model, image layer, or artifact zip may also carry an
+explicit, per-job `computeBackend` (same four values), which takes
+precedence over every setting above for that one job. The resolved backend
+and provider job handle are persisted with the job, so later status/cancel
+calls always address the correct provider even across a
+`COMPUTE_BACKEND_DEFAULT` change or a worker restart.
+
+Advanced, rarely-needed runtime overrides — each falls back, in order, to a
+per-workload variant, then to the legacy `AZURE_BATCH_*` setting it
+replaces (already emitted by every deploy path), then to a built-in
+default:
+
+| Variable | Falls back to | Purpose |
+|---|---|---|
+| `COMPUTE_IMAGE_TRAINING` / `COMPUTE_IMAGE_IMAGERYPREP` | `HASTE_TRAINING_IMAGE` / `HASTE_IMAGERYPREP_IMAGE` | Container image per image family. |
+| `COMPUTE_OUTPUT_CONTAINER_URL` | `AZURE_BATCH_OUTPUT_CONTAINER_URL` | Container every workload's output is written under. |
+| `COMPUTE_TARGETS_<WORKLOAD>` | the workload's `AZURE_BATCH_*_POOL_IDS` | Ordered candidate compute targets (Batch pool ids). Azure ML resolves its own target from `AML_COMPUTE_<WORKLOAD>` instead — see below. |
+| `COMPUTE_SHARED_MEMORY_MB` / `COMPUTE_SHARED_MEMORY_MB_<WORKLOAD>` | built-in per-workload default (32768 MB for the GPU workloads, unset for imagery prep/artifacts) | Shared-memory request a backend that honors it (Azure ML) applies. |
+| `COMPUTE_TIMEOUT_SECONDS` / `COMPUTE_TIMEOUT_SECONDS_<WORKLOAD>` | built-in per-workload default (6–24 hours) | Wall-clock budget a backend that enforces one (Azure ML) applies; Azure Batch does not apply a task timeout. |
+
+## Azure Machine Learning backend
+
+Azure Machine Learning (AML) is an additional compute backend, disabled by
+default. `HASTE_AML_MODE` mirrors the Batch `Create`/`Existing` convention,
+plus `Disabled`:
+
+| Mode | HASTE creates/mutates AML resources? | HASTE assigns AML RBAC? | Status in this release |
+|---|---|---|---|
+| `Disabled` (default) | no | no | Fully supported — `AML_MODE=Disabled` and the valid identity default are emitted, while AML resource identifiers remain empty and inert. |
+| `Existing` | no — pure reference to an operator-provided workspace, compute, environment(s), datastore, and identity | no — granting the identity HASTE runs as access to those resources is the deploying operator's responsibility, outside HASTE's IaC | **The only mode applied by this rollout.** Verified with local Bicep compilation and static template checks; this rollout performs no Azure deployment operation for the AML modules. |
+| `Create` | yes — would provision a keyless AML workspace, scale-to-zero GPU/CPU compute clusters, immutable environment versions, and an identity-based datastore | yes — would add least-privilege RBAC (AML job submit/read/cancel, ACR pull) | Compiles locally and is retained in source for a separately approved future scenario; **not applied by this rollout.** |
+
+```{admonition} No live AML validation or deployment has been performed for this feature
+:class: warning
+`Existing` mode is verified with local Bicep compilation and static template
+checks only. Neither `Existing` nor `Create` mode has been exercised against
+a live Azure Machine Learning workspace as part of this rollout.
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HASTE_AML_MODE` | `Disabled` | `Disabled` \| `Existing` \| `Create` — see table above. |
+| `HASTE_EXISTING_AML_WORKSPACE_NAME` | — | Name of the operator-provided AML workspace to reference (`Existing`). Ignored when `Create`. |
+| `HASTE_AML_WORKSPACE_RESOURCE_GROUP` | env RG | Resource group holding the existing workspace (`Existing`), or where HASTE would create one (`Create`, always the env RG regardless of this value). |
+| `HASTE_EXISTING_AML_GPU_COMPUTE_NAME` | — | Name of the operator-provided GPU compute cluster for training/inference/embedding (`Existing`). |
+| `HASTE_EXISTING_AML_CPU_COMPUTE_NAME` | — | Name of the operator-provided CPU compute cluster for imagery prep/artifact packaging (`Existing`). |
+| `HASTE_EXISTING_AML_DATASTORE_NAME` | — | Name of the operator-provided AML datastore (`Existing`). |
+| `HASTE_EXISTING_AML_TRAINING_ENVIRONMENT_REFERENCE` | — | Fully-qualified `azureml:<name>:<version>` reference to the operator-registered immutable environment version for the training image (`Existing`). |
+| `HASTE_EXISTING_AML_IMAGERYPREP_ENVIRONMENT_REFERENCE` | — | Same, for the imagery-prep image. |
+| `HASTE_AML_IDENTITY_MODE` | `user` | `user` (submit as the calling `queues` app identity) \| `managed` (submit as a specific user-assigned managed identity). In `Existing` mode, granting either identity access on the operator's AML platform is that platform's responsibility. |
+| `HASTE_AML_MANAGED_IDENTITY_RESOURCE_ID` | — | User-assigned managed identity resource id, only consulted when `HASTE_AML_IDENTITY_MODE=managed`. |
+
+`Create`-mode-only provisioning knobs (ignored unless `HASTE_AML_MODE=Create`;
+compiles locally, not applied by this rollout):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HASTE_AML_GPU_COMPUTE_VM_SIZE` | a GPU-class VM size | VM size for the GPU compute cluster HASTE would create. |
+| `HASTE_AML_GPU_COMPUTE_MAX_NODES` | `3` | Autoscale ceiling for the GPU cluster (floor is always 0 — scale-to-zero). |
+| `HASTE_AML_CPU_COMPUTE_VM_SIZE` | a general-purpose VM size | VM size for the CPU compute cluster HASTE would create. |
+| `HASTE_AML_CPU_COMPUTE_MAX_NODES` | `3` | Autoscale ceiling for the CPU cluster. |
+| `HASTE_AML_COMPUTE_IDLE_TIME` | `PT30M` | ISO 8601 idle duration before a created compute node scales back to zero. |
+| `HASTE_AML_COMPUTE_SUBNET_ID` | environment Batch compute subnet | VNet subnet resource id for compute HASTE would create. An explicit subnet is allowlisted on HASTE blob storage; when omitted, Create mode reuses the existing Batch compute subnet so local/Batch networking is unchanged and AML jobs can reach the datastore. |
+
+At runtime, `hastegeo.core.config.Config.get_aml_config()` reads these as
+plain, unprefixed Function App settings: `AML_MODE`, `AML_RESOURCE_GROUP`,
+`AML_WORKSPACE_NAME`, `AML_DATASTORE_NAME`, `AML_COMPUTE_<WORKLOAD>`,
+`AML_ENVIRONMENT_TRAINING`/`AML_ENVIRONMENT_IMAGERYPREP`, `AML_IDENTITY_MODE`,
+`AML_MANAGED_IDENTITY_ID`. `AML_SUBSCRIPTION_ID` is derived automatically from
+the deployment's own subscription — there is no corresponding `azd` variable
+to set. Two further advanced settings have no IaC-side variable at all
+(set them directly as Function App settings if you need to override the
+built-in default): `AML_EXPERIMENT_PREFIX` (default `haste`) and
+`AML_SUBMISSION_TIMEOUT_SECONDS` (default `120`, bounded `1`–`3600`).
+
+AML support depends on the optional `azure-ml` extra
+(`azure-ai-ml==1.34.1`, approved and pinned), which is imported lazily only
+when the `azure_ml` backend is actually selected — a Batch/local-only
+deployment never imports or initializes it.
 
 ## Email sender domain
 

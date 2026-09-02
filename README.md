@@ -94,10 +94,10 @@ Source for the docs lives in [`docs/`](docs/) and is built with [Jupyter Book](h
 │  Config · Models · Processors · Data Layers · Runners · Utils    │
 └──────┬───────────┬───────────┬───────────┬──────────────────────┘
        │           │           │           │
-  ┌────▼───┐  ┌───▼────┐  ┌──▼───┐  ┌───▼──────────┐
-  │ Blob   │  │ Cosmos │  │ Data │  │ Azure Batch  │
-  │ Storage│  │ DB     │  │ Lake │  │ (GPU pools)  │
-  └────────┘  └────────┘  └──────┘  └──────────────┘
+  ┌────▼───┐  ┌───▼────┐  ┌──▼───┐  ┌───▼──────────────┐
+  │ Blob   │  │ Cosmos │  │ Data │  │ Azure Batch /     │
+  │ Storage│  │ DB     │  │ Lake │  │ Azure ML / local  │
+  └────────┘  └────────┘  └──────┘  └──────────────────┘
 ```
 
 ## Components

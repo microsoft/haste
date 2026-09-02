@@ -14,6 +14,7 @@ import azure.functions as func  # type: ignore
 import requests  # type: ignore
 from hastegeo.core.config import Config
 from hastegeo.core.models.admin import AdminConfig
+from hastegeo.core.models.compute import ComputeWorkload
 from hastegeo.core.models.projects import (
     BuildingValidation,
     ImageLayer,
@@ -77,6 +78,20 @@ from hastegeo.core.utils.blob import (
     parse_byte_range,
     read_blob_range,
 )
+from hastegeo.core.utils.compute_jobs import (
+    IMAGE_LAYER_CLIENT_FORBIDDEN_CREATE_FIELDS,
+    IMAGE_LAYER_WORKFLOW_OWNED_FIELDS,
+    MODEL_EMBEDDING_RUNTIME_FIELDS,
+    MODEL_INFERENCE_CLIENT_FORBIDDEN_FIELDS,
+    MODEL_INFERENCE_RUNTIME_FIELDS,
+    MODEL_TRAINING_RUNTIME_FIELDS,
+    authoritative_job_history,
+    clear_compute_handles,
+    preserve_workflow_owned_fields,
+    restore_authoritative_fields,
+    supplied_nonempty_fields,
+)
+from hastegeo.core.utils.compute_specs import backend_rejection_message
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
@@ -1029,6 +1044,15 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         req_body = req.get_json()
+        supplied_workflow_fields = supplied_nonempty_fields(
+            req_body, IMAGE_LAYER_CLIENT_FORBIDDEN_CREATE_FIELDS
+        )
+        if supplied_workflow_fields and not req_body.get("imageLayerId"):
+            return func.HttpResponse(
+                "Workflow-owned image layer fields cannot be supplied when "
+                "creating a layer.",
+                status_code=400,
+            )
         image_data = ImageLayer(**req_body)
 
         url_error = validate_image_layer_imagery_urls(image_data)
@@ -1044,6 +1068,14 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
         clip_bbox_error = validate_clip_bbox(image_data)
         if clip_bbox_error:
             return func.HttpResponse(clip_bbox_error, status_code=400)
+
+        backend_error = backend_rejection_message(
+            image_data.computeBackend,
+            ComputeWorkload.IMAGERY_PREPARATION,
+            config=config,
+        )
+        if backend_error:
+            return func.HttpResponse(backend_error, status_code=400)
 
         if image_data.imageLayerId is None:
             image_data.imageLayerId = MetadataUtils.generate_id()
@@ -1061,10 +1093,34 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
         except FileNotFoundError:
             existing_image_layer = None
 
+        if supplied_workflow_fields and not existing_image_layer:
+            return func.HttpResponse(
+                "Workflow-owned image layer fields cannot be supplied when "
+                "creating a layer.",
+                status_code=400,
+            )
+
         if existing_image_layer:
-            # This is an edit
+            # This is an edit. Everything the imagery workflow owns — the
+            # compute submission (``preprocessJob``, including its runtime
+            # handle), the runtime status/progress, and the artifact URLs
+            # prepare-imagery produced — is restored from storage, so an
+            # edit can neither forge a handle (which would redirect
+            # polling/cancellation at another provider job) nor erase the
+            # state of a preprocessing job that is still running. Only the
+            # caller's own editable fields (name, imagery inputs, clip
+            # AOI, computeBackend, ...) are taken from the request.
+            preserve_workflow_owned_fields(
+                image_data,
+                ImageLayer(**existing_image_layer),
+                IMAGE_LAYER_WORKFLOW_OWNED_FIELDS,
+            )
             output = image_data
         else:
+            # A new layer launches a preprocessing job: its runtime
+            # handle is server-owned, so drop anything the client sent
+            # before the preprocessor records the pending job.
+            clear_compute_handles(image_data.preprocessJob)
             output = await asyncio.to_thread(
                 ImageryPreProcessor(image_data=image_data).queue_for_processing
             )
@@ -2383,7 +2439,52 @@ async def PutRunModelQueueMessage(req: func.HttpRequest) -> func.HttpResponse:
     )
     try:
         req_body = req.get_json()
+        forbidden_fields = supplied_nonempty_fields(
+            req_body, MODEL_INFERENCE_CLIENT_FORBIDDEN_FIELDS
+        )
+        if forbidden_fields:
+            return func.HttpResponse(
+                "Inference result fields are server-owned and cannot be "
+                "supplied when launching training: "
+                f"{', '.join(forbidden_fields)}.",
+                status_code=400,
+            )
         output = Model(**req_body)
+
+        backend_error = backend_rejection_message(
+            output.computeBackend, ComputeWorkload.TRAINING, config=config
+        )
+        if backend_error:
+            return func.HttpResponse(backend_error, status_code=400)
+
+        stored_model = None
+        if output.projectId and output.modelId:
+            try:
+                stored_model = Model(
+                    **(
+                        await asyncio.to_thread(
+                            MetadataProcessor(
+                                data_type=config.get_metadata_types().MODEL.value,
+                                partition_key=output.projectId,
+                            ).load,
+                            output.modelId,
+                        )
+                    )
+                )
+            except FileNotFoundError:
+                stored_model = None
+
+        # This launch owns a fresh training record, while sibling embedding
+        # and inference histories remain server-authoritative.
+        restore_authoritative_fields(
+            output, None, MODEL_TRAINING_RUNTIME_FIELDS
+        )
+        restore_authoritative_fields(
+            output, stored_model, MODEL_EMBEDDING_RUNTIME_FIELDS
+        )
+        restore_authoritative_fields(
+            output, stored_model, MODEL_INFERENCE_RUNTIME_FIELDS
+        )
 
         if output.modelId is None:
             output.modelId = MetadataUtils.generate_short_int_id()
@@ -2458,9 +2559,57 @@ async def PutRunInferenceQueueMessage(
     )
     try:
         req_body = req.get_json()
+        forbidden_fields = supplied_nonempty_fields(
+            req_body, MODEL_INFERENCE_CLIENT_FORBIDDEN_FIELDS
+        )
+        if forbidden_fields:
+            return func.HttpResponse(
+                "Inference result fields are server-owned and cannot be "
+                "supplied when launching inference: "
+                f"{', '.join(forbidden_fields)}.",
+                status_code=400,
+            )
         output = Model(**req_body)
         if output.creationDate is None:
             output.creationDate = MetadataUtils.get_timestamp()
+
+        backend_error = backend_rejection_message(
+            output.computeBackend, ComputeWorkload.INFERENCE, config=config
+        )
+        if backend_error:
+            return func.HttpResponse(backend_error, status_code=400)
+
+        # Inference job records — and the runtime compute handles on them —
+        # are written by HASTE, never by a caller: the stored history is
+        # authoritative, so a request can neither forge a handle nor drop
+        # the handle of a job HASTE already submitted. Only
+        # ``computeBackend`` is honored as client intent here; the
+        # preprocessor appends this run's own pending record.
+        stored_model = None
+        if output.projectId and output.modelId:
+            try:
+                stored_model = await asyncio.to_thread(
+                    MetadataProcessor(
+                        data_type=config.get_metadata_types().MODEL.value,
+                        partition_key=output.projectId,
+                    ).load,
+                    output.modelId,
+                )
+            except FileNotFoundError:
+                stored_model = None
+        stored_record = (
+            Model(**stored_model) if stored_model is not None else None
+        )
+        output.inferenceJobs = authoritative_job_history(
+            output.inferenceJobs,
+            stored_record.inferenceJobs if stored_record is not None else None,
+        )
+        restore_authoritative_fields(
+            output, stored_record, MODEL_TRAINING_RUNTIME_FIELDS
+        )
+        restore_authoritative_fields(
+            output, stored_record, MODEL_EMBEDDING_RUNTIME_FIELDS
+        )
 
         output = await asyncio.to_thread(
             InferencePreprocessor(output).send_to_queue
@@ -2515,6 +2664,41 @@ async def PutRunEmbeddingQueueMessage(
             return func.HttpResponse(
                 "projectId and imageLayerId are required.", status_code=400
             )
+
+        backend_error = backend_rejection_message(
+            output.computeBackend, ComputeWorkload.EMBEDDING, config=config
+        )
+        if backend_error:
+            return func.HttpResponse(backend_error, status_code=400)
+
+        stored_model = None
+        if output.projectId and output.modelId:
+            try:
+                stored_model = Model(
+                    **(
+                        await asyncio.to_thread(
+                            MetadataProcessor(
+                                data_type=config.get_metadata_types().MODEL.value,
+                                partition_key=output.projectId,
+                            ).load,
+                            output.modelId,
+                        )
+                    )
+                )
+            except FileNotFoundError:
+                stored_model = None
+
+        # This launch owns a fresh embedding record, while sibling training
+        # and inference histories remain server-authoritative.
+        restore_authoritative_fields(
+            output, None, MODEL_EMBEDDING_RUNTIME_FIELDS
+        )
+        restore_authoritative_fields(
+            output, stored_model, MODEL_TRAINING_RUNTIME_FIELDS
+        )
+        restore_authoritative_fields(
+            output, stored_model, MODEL_INFERENCE_RUNTIME_FIELDS
+        )
 
         if output.modelId is None:
             output.modelId = MetadataUtils.generate_short_int_id()
@@ -2930,6 +3114,41 @@ async def PutArtifactsZipQueueMessage(
     try:
         req_body = req.get_json()
         model_artifacts = ModelArtifacts(**req_body)
+
+        backend_error = backend_rejection_message(
+            model_artifacts.computeBackend,
+            ComputeWorkload.ARTIFACT_PACKAGING,
+            config=config,
+        )
+        if backend_error:
+            return func.HttpResponse(backend_error, status_code=400)
+
+        # Zip job records — and the runtime compute handles on them — are
+        # written by HASTE, never by a caller: the stored history is
+        # authoritative, so a request can neither forge a handle nor drop
+        # the handle of a packaging job HASTE already submitted. Only
+        # ``computeBackend`` is honored as client intent here; the
+        # preprocessor appends this run's own pending record.
+        stored_artifacts = None
+        if model_artifacts.projectId and model_artifacts.modelId:
+            try:
+                stored_artifacts = await asyncio.to_thread(
+                    MetadataProcessor(
+                        data_type=config.get_metadata_types().MODEL_ARTIFACTS.value,
+                        partition_key=model_artifacts.projectId,
+                    ).load,
+                    model_artifacts.modelId,
+                )
+            except FileNotFoundError:
+                stored_artifacts = None
+        model_artifacts.zipJobs = authoritative_job_history(
+            model_artifacts.zipJobs,
+            (
+                ModelArtifacts(**stored_artifacts).zipJobs
+                if stored_artifacts is not None
+                else None
+            ),
+        )
 
         output = await asyncio.to_thread(
             ArtifactProcessor(

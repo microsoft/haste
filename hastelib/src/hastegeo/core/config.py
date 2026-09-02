@@ -7,13 +7,149 @@ import re
 import tempfile
 from enum import Enum
 from string import Template
-from typing import NamedTuple
+from typing import Dict, NamedTuple, Optional
+
+# ``hastegeo.core.models.compute`` has no dependency back on this module —
+# see that module's docstring/``is_deployed_environment`` note — so this is
+# a safe, ordinary top-level import with no circular-import risk. This is
+# unlike the optional ``azure-ai-ml`` SDK itself, which is never imported
+# here or anywhere in this module — see ``hastegeo.core.runners.azure_ml``
+# for the lazy-import boundary that keeps a Batch/local-only deployment
+# free of it.
+from hastegeo.core.models.compute import (
+    ComputeBackend,
+    ComputeWorkload,
+    validate_environment_reference,
+)
 
 _logger = logging.getLogger(__name__)
 
 REGISTRY_SERVER_PLACEHOLDER = "<registry-name>.azurecr.io"
 
 _SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
+
+# ``COMPUTE_BACKEND_<WORKLOAD>``/``AML_COMPUTE_<WORKLOAD>``/
+# ``AML_ENVIRONMENT_<IMAGE>`` env-var suffixes, one entry per
+# ``ComputeWorkload`` (data-model.md#configuration-changes). Kept in sync
+# with the equivalent private mapping in ``runners/router.py`` — duplicated
+# rather than imported because that one is private to the router module and
+# this module must not depend on ``hastegeo.core.runners`` (the runners
+# package depends on ``config``, not the other way around).
+_COMPUTE_WORKLOAD_ENV_SUFFIX: Dict[ComputeWorkload, str] = {
+    ComputeWorkload.TRAINING: "TRAINING",
+    ComputeWorkload.INFERENCE: "INFERENCE",
+    ComputeWorkload.EMBEDDING: "EMBEDDING",
+    ComputeWorkload.IMAGERY_PREPARATION: "IMAGERYPREP",
+    ComputeWorkload.ARTIFACT_PACKAGING: "ARTIFACTS",
+}
+
+# ``AML_ENVIRONMENT_<FAMILY>`` per workload, collapsed to HASTE's two
+# container image families (design.md#workload-migration-matrix): the
+# training image (training/inference/embedding) and the imagery-prep image
+# (imagery preparation/artifact packaging). Unlike
+# ``_COMPUTE_WORKLOAD_ENV_SUFFIX``, this is intentionally *not* one setting
+# per workload — HASTE has exactly two images, so a per-workload setting
+# would just duplicate the same value three times for the training image.
+_AML_ENVIRONMENT_FAMILY_ENV: Dict[ComputeWorkload, str] = {
+    ComputeWorkload.TRAINING: "AML_ENVIRONMENT_TRAINING",
+    ComputeWorkload.INFERENCE: "AML_ENVIRONMENT_TRAINING",
+    ComputeWorkload.EMBEDDING: "AML_ENVIRONMENT_TRAINING",
+    ComputeWorkload.IMAGERY_PREPARATION: "AML_ENVIRONMENT_IMAGERYPREP",
+    ComputeWorkload.ARTIFACT_PACKAGING: "AML_ENVIRONMENT_IMAGERYPREP",
+}
+
+# HASTE's two container image families, per workload
+# (design.md#workload-migration-matrix). Used to name the neutral
+# ``COMPUTE_IMAGE_<FAMILY>`` setting and to pick the legacy
+# ``get_azure_batch_config()`` key it falls back to.
+_COMPUTE_IMAGE_FAMILY: Dict[ComputeWorkload, str] = {
+    ComputeWorkload.TRAINING: "TRAINING",
+    ComputeWorkload.INFERENCE: "TRAINING",
+    ComputeWorkload.EMBEDDING: "TRAINING",
+    ComputeWorkload.IMAGERY_PREPARATION: "IMAGERYPREP",
+    ComputeWorkload.ARTIFACT_PACKAGING: "IMAGERYPREP",
+}
+
+_COMPUTE_IMAGE_BATCH_KEY: Dict[ComputeWorkload, str] = {
+    ComputeWorkload.TRAINING: "docker_image",
+    ComputeWorkload.INFERENCE: "docker_image",
+    ComputeWorkload.EMBEDDING: "docker_image",
+    ComputeWorkload.IMAGERY_PREPARATION: "imageprep_docker_image",
+    ComputeWorkload.ARTIFACT_PACKAGING: "imageprep_docker_image",
+}
+
+# Legacy per-workload Azure Batch candidate-pool lists backing the neutral
+# ``COMPUTE_TARGETS_<WORKLOAD>`` setting. Mirrors exactly which pool list
+# each processor passed to ``UnifiedRunner`` before the compute layer
+# existed, so pool routing (batch-compute-expansion) is unchanged: model
+# workloads on the training pools, imagery preparation and artifact
+# packaging on the imagery-prep (CPU) pools.
+_COMPUTE_TARGET_BATCH_KEY: Dict[ComputeWorkload, str] = {
+    ComputeWorkload.TRAINING: "training_pool_ids",
+    ComputeWorkload.INFERENCE: "inference_pool_ids",
+    ComputeWorkload.EMBEDDING: "training_pool_ids",
+    ComputeWorkload.IMAGERY_PREPARATION: "imageryprep_pool_ids",
+    ComputeWorkload.ARTIFACT_PACKAGING: "imageryprep_pool_ids",
+}
+
+# Shared-memory default per workload. 32 GiB matches the
+# ``--shm-size=32g`` Azure Batch already passes for every task; the
+# CPU-capable workloads leave it unset so a backend that honors the
+# request (AML) is not forced to reserve GPU-sized shared memory for them.
+_COMPUTE_DEFAULT_SHARED_MEMORY_MB: Dict[ComputeWorkload, Optional[int]] = {
+    ComputeWorkload.TRAINING: 32768,
+    ComputeWorkload.INFERENCE: 32768,
+    ComputeWorkload.EMBEDDING: 32768,
+    ComputeWorkload.IMAGERY_PREPARATION: None,
+    ComputeWorkload.ARTIFACT_PACKAGING: None,
+}
+
+# Wall-clock budget per workload, used by backends that enforce one (AML).
+# Azure Batch has never applied a task timeout in HASTE, so these values
+# only widen ``ComputeJobSpec``'s 1-hour default to something realistic for
+# each workload rather than introducing a new limit on Batch.
+_COMPUTE_DEFAULT_TIMEOUT_SECONDS: Dict[ComputeWorkload, int] = {
+    ComputeWorkload.TRAINING: 24 * 3600,
+    ComputeWorkload.INFERENCE: 12 * 3600,
+    ComputeWorkload.EMBEDDING: 12 * 3600,
+    ComputeWorkload.IMAGERY_PREPARATION: 12 * 3600,
+    ComputeWorkload.ARTIFACT_PACKAGING: 6 * 3600,
+}
+
+# Advisory accelerator request. Artifact packaging (and imagery
+# preparation) must never require a GPU target
+# (design.md#workload-migration-matrix).
+_COMPUTE_DEFAULT_ACCELERATOR: Dict[ComputeWorkload, Optional[str]] = {
+    ComputeWorkload.TRAINING: "gpu",
+    ComputeWorkload.INFERENCE: "gpu",
+    ComputeWorkload.EMBEDDING: "gpu",
+    ComputeWorkload.IMAGERY_PREPARATION: None,
+    ComputeWorkload.ARTIFACT_PACKAGING: None,
+}
+
+#: Valid ``AML_MODE`` values. Mirrors the Azure Batch ``Create``/
+#: ``Existing`` IaC convention, plus ``Disabled``, but this adapter (Stage
+#: 1) never provisions, updates, or deletes an AML workspace/compute/
+#: environment/datastore for *either* enabled value — it only ever
+#: *consumes* resources named by ``AML_SUBSCRIPTION_ID``/
+#: ``AML_RESOURCE_GROUP``/``AML_WORKSPACE_NAME``/``AML_DATASTORE_NAME``/
+#: ``AML_COMPUTE_<WORKLOAD>``/``AML_ENVIRONMENT_<FAMILY>``, which must
+#: already exist regardless of ``AML_MODE``. ``Existing`` is the
+#: supported Stage-1 reference-only path; ``Create`` is accepted (parity
+#: with Batch's mode vocabulary, and reserved for a possible future IaC-
+#: side provisioning story) but is not distinguished from ``Existing`` by
+#: any code in this module or the azure_ml adapter today. ``Disabled``
+#: (default) turns the backend off entirely.
+AML_MODES = ("Disabled", "Create", "Existing")
+
+#: Valid ``AML_IDENTITY_MODE`` values, aligned with the AML IaC/security
+#: model: ``user`` (default) maps to AML's ``UserIdentityConfiguration``
+#: (the identity of the submitting principal); ``managed`` maps to
+#: ``ManagedIdentityConfiguration(resource_id=AML_MANAGED_IDENTITY_ID)``
+#: (the user-assigned managed identity attached to the AML compute/
+#: workspace by IaC). See ``hastegeo.core.runners.azure_ml`` for the
+#: mapping.
+AML_IDENTITY_MODES = ("user", "managed")
 
 
 def _get_bool_env(name, default=False):
@@ -342,12 +478,8 @@ class Config:
     def get_publishing_config():
         """Get publishing feature and provider configuration."""
         return {
-            "publishing_enabled": _get_bool_env(
-                "PUBLISHING_ENABLED", True
-            ),
-            "pc_provider_enabled": _get_bool_env(
-                "PC_PROVIDER_ENABLED", False
-            ),
+            "publishing_enabled": _get_bool_env("PUBLISHING_ENABLED", True),
+            "pc_provider_enabled": _get_bool_env("PC_PROVIDER_ENABLED", False),
             "max_total_bytes": _get_bounded_int_env(
                 "PUBLISH_MAX_TOTAL_BYTES", 5 * 1024**3, 1
             ),
@@ -683,6 +815,374 @@ class Config:
                 "ARTIFACT_BATCH_JOB_ID", imageryprep_pool_id
             ),
         }
+
+    @staticmethod
+    def get_compute_runtime_config(workload: ComputeWorkload) -> dict:
+        """Get the backend-neutral *runtime* settings a workload's
+        ``ComputeJobSpec`` builder needs (image, output root, container
+        resources, provider target candidates).
+
+        This is the one place that knows both the new, backend-neutral
+        ``COMPUTE_*`` application settings and their backward-compatible
+        ``AZURE_BATCH_*`` predecessors: processors read this method and
+        never an environment-variable name, so the same spec builder works
+        on Azure Batch, Azure Machine Learning, and local Docker
+        (design.md#workload-migration-matrix, plan.md Phase 8).
+
+        Resolution order is always: neutral ``COMPUTE_*`` setting, then the
+        legacy ``AZURE_BATCH_*`` setting it replaces (so an existing
+        deployment keeps working untouched), then a built-in default.
+
+        Args:
+            workload: The ``ComputeWorkload`` the job runs.
+
+        Returns:
+            dict:
+                - ``image``: container image reference for the workload's
+                  image family — the training image
+                  (``COMPUTE_IMAGE_TRAINING`` /
+                  ``AZURE_BATCH_DOCKER_IMAGE``) for training/inference/
+                  embedding, the imagery-prep image
+                  (``COMPUTE_IMAGE_IMAGERYPREP`` /
+                  ``AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE``) for imagery
+                  preparation/artifact packaging.
+                - ``environment_reference``: immutable Azure Machine
+                  Learning environment version for that same image family,
+                  or ``None``. Backends that do not use it (Batch, local)
+                  ignore it.
+                - ``output_container_url``: container URL every output for
+                  this workload is written under
+                  (``COMPUTE_OUTPUT_CONTAINER_URL`` /
+                  ``AZURE_BATCH_OUTPUT_CONTAINER_URL``). HASTE's
+                  ``<project-hash>/<task-id>`` prefix is appended by the
+                  caller, not here.
+                - ``target_candidates``: ordered, provider-specific
+                  compute targets the workload may run on (Azure Batch
+                  pool ids today — ``COMPUTE_TARGETS_<WORKLOAD>`` /
+                  ``AZURE_BATCH_*_POOL_IDS``). Azure ML resolves its own
+                  per-workload cluster from ``AML_COMPUTE_<WORKLOAD>``.
+                - ``shared_memory_mb``: shared-memory request
+                  (``COMPUTE_SHARED_MEMORY_MB_<WORKLOAD>`` /
+                  ``COMPUTE_SHARED_MEMORY_MB``); defaults to the 32 GiB
+                  Azure Batch already hard-codes for GPU workloads and to
+                  ``None`` for the CPU-capable ones.
+                - ``timeout_seconds``: wall-clock budget
+                  (``COMPUTE_TIMEOUT_SECONDS_<WORKLOAD>`` /
+                  ``COMPUTE_TIMEOUT_SECONDS``). Azure Batch does not apply
+                  it (parity with today's behavior); AML does.
+                - ``accelerator``: ``"gpu"`` for the model workloads,
+                  ``None`` for imagery preparation and artifact packaging
+                  so neither is pinned to a GPU target
+                  (design.md#workload-migration-matrix).
+        """
+        suffix = _COMPUTE_WORKLOAD_ENV_SUFFIX[workload]
+        batch_config = Config.get_azure_batch_config()
+        image_family = _COMPUTE_IMAGE_FAMILY[workload]
+
+        def _first_set(*values, default=None):
+            for value in values:
+                if value is not None and str(value).strip():
+                    return value
+            return default
+
+        image = _first_set(
+            os.getenv(f"COMPUTE_IMAGE_{image_family}"),
+            batch_config[_COMPUTE_IMAGE_BATCH_KEY[workload]],
+        )
+        output_container_url = _first_set(
+            os.getenv("COMPUTE_OUTPUT_CONTAINER_URL"),
+            batch_config["output_container_url"],
+        )
+        raw_targets = os.getenv(f"COMPUTE_TARGETS_{suffix}")
+        if raw_targets and raw_targets.strip():
+            target_candidates = [
+                token.strip()
+                for token in raw_targets.split(",")
+                if token.strip()
+            ]
+        else:
+            target_candidates = list(
+                batch_config[_COMPUTE_TARGET_BATCH_KEY[workload]]
+            )
+
+        shared_memory_raw = _first_set(
+            os.getenv(f"COMPUTE_SHARED_MEMORY_MB_{suffix}"),
+            os.getenv("COMPUTE_SHARED_MEMORY_MB"),
+        )
+        if shared_memory_raw is None:
+            shared_memory_mb = _COMPUTE_DEFAULT_SHARED_MEMORY_MB[workload]
+        else:
+            shared_memory_mb = int(shared_memory_raw)
+            if shared_memory_mb < 0:
+                raise ValueError(
+                    "COMPUTE_SHARED_MEMORY_MB must not be negative"
+                )
+
+        timeout_raw = _first_set(
+            os.getenv(f"COMPUTE_TIMEOUT_SECONDS_{suffix}"),
+            os.getenv("COMPUTE_TIMEOUT_SECONDS"),
+        )
+        if timeout_raw is None:
+            timeout_seconds = _COMPUTE_DEFAULT_TIMEOUT_SECONDS[workload]
+        else:
+            timeout_seconds = int(timeout_raw)
+            if timeout_seconds <= 0:
+                raise ValueError(
+                    "COMPUTE_TIMEOUT_SECONDS must be a positive number of "
+                    "seconds"
+                )
+
+        return {
+            "image": image,
+            "environment_reference": (
+                Config.get_aml_environment_reference_for_workload(workload)
+            ),
+            "output_container_url": output_container_url,
+            "target_candidates": target_candidates,
+            "shared_memory_mb": shared_memory_mb,
+            "timeout_seconds": timeout_seconds,
+            "accelerator": _COMPUTE_DEFAULT_ACCELERATOR[workload],
+        }
+
+    @staticmethod
+    def get_compute_config() -> dict:
+        """Get backend-neutral compute routing configuration.
+
+        Reads ``COMPUTE_BACKEND_DEFAULT``/``COMPUTE_BACKEND_<WORKLOAD>``
+        (data-model.md#configuration-changes) and the deprecated
+        ``RUNNER_TYPE`` alias. Unlike ``get_azure_batch_config()``, an
+        unrecognized backend name is a hard ``ValueError`` rather than a
+        silently-accepted placeholder: a misspelled backend name must never
+        resolve to a working (if wrong) default.
+
+        Per-workload ``auto`` candidate/weight configuration
+        (``COMPUTE_AUTO_CANDIDATES_<WORKLOAD>``/``COMPUTE_AUTO_WEIGHTS_
+        <WORKLOAD>``) is read directly by ``hastegeo.core.runners.router``,
+        not duplicated here.
+
+        Returns:
+            dict: ``default_backend`` (``ComputeBackend``),
+                ``backend_overrides`` (``dict[ComputeWorkload,
+                ComputeBackend]``, only workloads with an explicit
+                override), ``follow_on_inherits_backend`` (bool), and
+                ``runner_type_alias_used`` (bool, true when
+                ``COMPUTE_BACKEND_DEFAULT`` is unset and the deprecated
+                ``RUNNER_TYPE`` supplied the default instead).
+
+        Raises:
+            ValueError: ``COMPUTE_BACKEND_DEFAULT``/``RUNNER_TYPE``/any
+                ``COMPUTE_BACKEND_<WORKLOAD>`` names a backend
+                ``ComputeBackend`` does not recognize.
+        """
+
+        def _parse_backend(raw: Optional[str], *, env_name: str):
+            if raw is None or not raw.strip():
+                return None
+            try:
+                return ComputeBackend(raw.strip().lower())
+            except ValueError as exc:
+                valid = ", ".join(b.value for b in ComputeBackend)
+                raise ValueError(
+                    f"{env_name}={raw!r} is not a recognized compute "
+                    f"backend; expected one of: {valid}"
+                ) from exc
+
+        runner_type_alias = os.getenv("RUNNER_TYPE")
+        default_raw = os.getenv("COMPUTE_BACKEND_DEFAULT")
+        runner_type_alias_used = bool(runner_type_alias) and not default_raw
+        default_backend = _parse_backend(
+            default_raw, env_name="COMPUTE_BACKEND_DEFAULT"
+        ) or _parse_backend(runner_type_alias, env_name="RUNNER_TYPE")
+        if default_backend is None:
+            default_backend = ComputeBackend.AZURE_BATCH
+
+        backend_overrides: Dict[ComputeWorkload, ComputeBackend] = {}
+        for workload, suffix in _COMPUTE_WORKLOAD_ENV_SUFFIX.items():
+            env_name = f"COMPUTE_BACKEND_{suffix}"
+            backend = _parse_backend(os.getenv(env_name), env_name=env_name)
+            if backend is not None:
+                backend_overrides[workload] = backend
+
+        return {
+            "default_backend": default_backend,
+            "backend_overrides": backend_overrides,
+            "follow_on_inherits_backend": _get_bool_env(
+                "COMPUTE_FOLLOW_ON_INHERITS_BACKEND", True
+            ),
+            "runner_type_alias_used": runner_type_alias_used,
+        }
+
+    @staticmethod
+    def aml_environment_env_var_name_for_workload(
+        workload: ComputeWorkload,
+    ) -> str:
+        """Return the ``AML_ENVIRONMENT_<FAMILY>`` application-setting name
+        that resolves the immutable AML environment version for
+        ``workload``'s container image *family*.
+
+        HASTE has exactly two container images (design.md#workload-
+        migration-matrix): the training image, shared by
+        ``training``/``inference``/``embedding``, and the imagery-prep
+        image, shared by ``imagery_preparation``/``artifact_packaging``.
+        This is a fallback only — a ``ComputeJobSpec`` that already
+        carries an explicit ``container.environmentReference`` (adapter- or
+        caller-populated) takes precedence over it; see
+        ``hastegeo.core.runners.azure_ml``.
+        """
+        return _AML_ENVIRONMENT_FAMILY_ENV[workload]
+
+    @staticmethod
+    def get_aml_environment_reference_for_workload(
+        workload: ComputeWorkload,
+    ) -> Optional[str]:
+        """Return the configured immutable AML environment version for
+        ``workload``'s image family (``AML_ENVIRONMENT_TRAINING`` or
+        ``AML_ENVIRONMENT_IMAGERYPREP``), or ``None`` if unset.
+        """
+        return os.getenv(
+            Config.aml_environment_env_var_name_for_workload(workload)
+        )
+
+    @staticmethod
+    def get_aml_config() -> dict:
+        """Get Azure Machine Learning backend configuration.
+
+        Unlike ``get_azure_batch_config()``, settings are returned exactly
+        as configured (``None`` when unset) rather than filled with
+        ``<placeholder>`` defaults: AML configuration is only required when
+        ``AML_MODE != Disabled`` or a job explicitly requests ``azure_ml``
+        (data-model.md#configuration-changes), so this method never raises
+        for an all-``Disabled`` (default) deployment — required-setting
+        validation is the azure_ml adapter's responsibility
+        (``hastegeo.core.runners.azure_ml``), invoked only when that backend
+        is actually selected.
+
+        Returns:
+            dict: ``mode`` (one of ``AML_MODES``), ``subscription_id``,
+                ``resource_group``, ``workspace_name``, ``datastore_name``,
+                ``compute_by_workload`` (``dict[ComputeWorkload,
+                Optional[str]]``), ``environment_by_workload``
+                (``dict[ComputeWorkload, Optional[str]]``, collapsed to the
+                two image families — see
+                ``get_aml_environment_reference_for_workload``),
+                ``identity_mode`` (one of ``AML_IDENTITY_MODES``,
+                lowercased), ``managed_identity_id``, ``experiment_prefix``,
+                ``submission_timeout_seconds`` (int).
+
+        Raises:
+            ValueError: ``AML_MODE`` is set to something other than
+                ``Disabled``/``Create``/``Existing``. Note that
+                ``Create``/``Existing`` are not distinguished by any
+                behavior in this module or the azure_ml adapter today —
+                both require the same set of already-existing resource
+                identifiers below; ``Existing`` is the supported Stage-1
+                path.
+        """
+        mode = os.getenv("AML_MODE", "Disabled").strip()
+        if mode not in AML_MODES:
+            raise ValueError(f"AML_MODE={mode!r} must be one of {AML_MODES}")
+
+        compute_by_workload: Dict[ComputeWorkload, Optional[str]] = {
+            workload: os.getenv(f"AML_COMPUTE_{suffix}")
+            for workload, suffix in _COMPUTE_WORKLOAD_ENV_SUFFIX.items()
+        }
+        environment_by_workload: Dict[ComputeWorkload, Optional[str]] = {
+            workload: Config.get_aml_environment_reference_for_workload(
+                workload
+            )
+            for workload in ComputeWorkload
+        }
+
+        return {
+            "mode": mode,
+            "subscription_id": os.getenv("AML_SUBSCRIPTION_ID"),
+            "resource_group": os.getenv("AML_RESOURCE_GROUP"),
+            "workspace_name": os.getenv("AML_WORKSPACE_NAME"),
+            "datastore_name": os.getenv("AML_DATASTORE_NAME"),
+            "compute_by_workload": compute_by_workload,
+            "environment_by_workload": environment_by_workload,
+            "identity_mode": os.getenv("AML_IDENTITY_MODE", "user")
+            .strip()
+            .lower(),
+            "managed_identity_id": os.getenv("AML_MANAGED_IDENTITY_ID"),
+            "experiment_prefix": os.getenv("AML_EXPERIMENT_PREFIX", "haste"),
+            "submission_timeout_seconds": _get_bounded_int_env(
+                "AML_SUBMISSION_TIMEOUT_SECONDS", 120, 1, 3600
+            ),
+        }
+
+    @staticmethod
+    def validate_aml_config(
+        aml_config: dict,
+        *,
+        workload: Optional[ComputeWorkload] = None,
+        environment_reference: Optional[str] = None,
+    ) -> None:
+        """Validate deterministic AML settings without importing the SDK.
+
+        ``workload`` is supplied at API boundaries that must verify a
+        complete target and environment before queueing. The adapter omits
+        it for its base validation, then applies target overrides and
+        explicit ``container.environmentReference`` values from the spec.
+        """
+        mode = aml_config["mode"]
+        if mode not in AML_MODES:
+            raise ValueError(f"AML_MODE={mode!r} must be one of {AML_MODES}")
+        if mode == "Disabled":
+            raise ValueError(
+                "Azure Machine Learning is disabled (AML_MODE=Disabled)"
+            )
+
+        missing = [
+            env_name
+            for key, env_name in (
+                ("subscription_id", "AML_SUBSCRIPTION_ID"),
+                ("resource_group", "AML_RESOURCE_GROUP"),
+                ("workspace_name", "AML_WORKSPACE_NAME"),
+                ("datastore_name", "AML_DATASTORE_NAME"),
+            )
+            if not aml_config.get(key)
+        ]
+        identity_mode = aml_config["identity_mode"]
+        if identity_mode not in AML_IDENTITY_MODES:
+            raise ValueError(
+                f"AML_IDENTITY_MODE={identity_mode!r} must be one of "
+                f"{AML_IDENTITY_MODES}"
+            )
+        if identity_mode == "managed" and not aml_config.get(
+            "managed_identity_id"
+        ):
+            missing.append("AML_MANAGED_IDENTITY_ID")
+
+        experiment_prefix = (aml_config.get("experiment_prefix") or "").strip()
+        if not experiment_prefix or not re.fullmatch(
+            r"[A-Za-z0-9_-]+", experiment_prefix
+        ):
+            raise ValueError(
+                "AML_EXPERIMENT_PREFIX must contain only letters, digits, "
+                "'_' or '-'"
+            )
+
+        if workload is not None:
+            if not aml_config["compute_by_workload"].get(workload):
+                missing.append(
+                    f"AML_COMPUTE_{_COMPUTE_WORKLOAD_ENV_SUFFIX[workload]}"
+                )
+            resolved_environment = environment_reference or aml_config[
+                "environment_by_workload"
+            ].get(workload)
+            if not resolved_environment:
+                missing.append(
+                    Config.aml_environment_env_var_name_for_workload(workload)
+                )
+            else:
+                validate_environment_reference(resolved_environment)
+
+        if missing:
+            raise ValueError(
+                "Azure Machine Learning is not configured. Missing "
+                "application settings: " + ", ".join(missing)
+            )
 
     @staticmethod
     def get_status_types():

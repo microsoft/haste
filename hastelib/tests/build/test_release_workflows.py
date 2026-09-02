@@ -164,6 +164,117 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         )
         self.assertIn("func azure functionapp publish", deploy_script)
 
+    def test_deploy_apps_emits_every_aml_and_compute_backend_setting(self):
+        """Legacy deploy path must stay config-drift-free with hastegeo.
+
+        `hastegeo.core.config.Config.get_compute_config()` /
+        `get_aml_config()` read these settings (some with no code default);
+        both hastegeo deploy paths -- this script and
+        infra/modules/functions.bicep -- must emit all of them or
+        .github/scripts/check_env_drift.py fails. Regression-tests the
+        aml-compute-backend F7 fix: deploy_apps.sh silently omitted every
+        AML_* setting and hardcoded COMPUTE_BACKEND_DEFAULT instead of
+        honoring an override.
+        """
+        deploy_script = (
+            REPO_ROOT / ".github/scripts/deploy_apps.sh"
+        ).read_text(encoding="utf-8")
+
+        # COMPUTE_BACKEND_DEFAULT must honor an override, not hardcode the
+        # backward-compatible default inline.
+        self.assertIn(
+            'COMPUTE_BACKEND_DEFAULT="${COMPUTE_BACKEND_DEFAULT:-azure_batch}"',
+            deploy_script,
+        )
+        self.assertIn(
+            '"COMPUTE_BACKEND_DEFAULT=${COMPUTE_BACKEND_DEFAULT}"',
+            deploy_script,
+        )
+        self.assertIn(
+            'if [[ "$AML_MODE" != "Disabled" '
+            '&& -z "$AML_SUBSCRIPTION_ID" ]]; then',
+            deploy_script,
+        )
+        self.assertIn(
+            'AML_SUBSCRIPTION_ID="$SUBSCRIPTION_ID"',
+            deploy_script,
+        )
+        # RUNNER_TYPE stays as the deprecated, always-on legacy alias.
+        self.assertIn('"RUNNER_TYPE=azure_batch"', deploy_script)
+
+        aml_settings = (
+            "AML_MODE",
+            "AML_SUBSCRIPTION_ID",
+            "AML_RESOURCE_GROUP",
+            "AML_WORKSPACE_NAME",
+            "AML_DATASTORE_NAME",
+            "AML_COMPUTE_TRAINING",
+            "AML_COMPUTE_INFERENCE",
+            "AML_COMPUTE_EMBEDDING",
+            "AML_COMPUTE_IMAGERYPREP",
+            "AML_COMPUTE_ARTIFACTS",
+            "AML_ENVIRONMENT_TRAINING",
+            "AML_ENVIRONMENT_IMAGERYPREP",
+            "AML_IDENTITY_MODE",
+            "AML_MANAGED_IDENTITY_ID",
+        )
+        for name in aml_settings:
+            with self.subTest(setting=name):
+                # A safe-default variable declaration (empty or a real
+                # default, never a required/unset placeholder)...
+                self.assertRegex(
+                    deploy_script,
+                    re.compile(
+                        r"^{}=\"\$\{{{}:-[^}}]*\}}\"".format(name, name),
+                        re.MULTILINE,
+                    ),
+                    "{} has no safe-default variable declaration".format(name),
+                )
+                # ...and the setting is actually emitted to the Function App.
+                self.assertIn(
+                    '"{}=${{{}}}"'.format(name, name),
+                    deploy_script,
+                    "{} is not emitted by deploy_apps.sh".format(name),
+                )
+
+    def test_deploy_workflow_passes_compute_and_aml_environment_values(self):
+        workflow = (REPO_ROOT / ".github/workflows/deploy-apps.yml").read_text(
+            encoding="utf-8"
+        )
+
+        variable_settings = (
+            "COMPUTE_BACKEND_DEFAULT",
+            "AML_MODE",
+            "AML_IDENTITY_MODE",
+        )
+        for name in variable_settings:
+            with self.subTest(variable=name):
+                self.assertIn(
+                    "{}: ${{{{ vars.{} }}}}".format(name, name),
+                    workflow,
+                )
+
+        secret_settings = (
+            "AML_SUBSCRIPTION_ID",
+            "AML_RESOURCE_GROUP",
+            "AML_WORKSPACE_NAME",
+            "AML_DATASTORE_NAME",
+            "AML_COMPUTE_TRAINING",
+            "AML_COMPUTE_INFERENCE",
+            "AML_COMPUTE_EMBEDDING",
+            "AML_COMPUTE_IMAGERYPREP",
+            "AML_COMPUTE_ARTIFACTS",
+            "AML_ENVIRONMENT_TRAINING",
+            "AML_ENVIRONMENT_IMAGERYPREP",
+            "AML_MANAGED_IDENTITY_ID",
+        )
+        for name in secret_settings:
+            with self.subTest(secret=name):
+                self.assertIn(
+                    "{}: ${{{{ secrets.{} }}}}".format(name, name),
+                    workflow,
+                )
+
     def test_existing_docker_workflow_skips_hastelib_changes(self):
         workflow = (
             REPO_ROOT / ".github/workflows/docker-build-and-push.yml"
@@ -176,6 +287,70 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         )
         self.assertIn('"$HASTELIB_CHANGED" != "true"', workflow)
         self.assertIn("Build and Push Docker Image", workflow)
+
+    def test_functions_bicep_keeps_valid_aml_identity_when_disabled(
+        self,
+    ):
+        functions_bicep = (
+            REPO_ROOT / "infra/modules/functions.bicep"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "{ name: 'AML_IDENTITY_MODE', value: amlIdentityMode }",
+            functions_bicep,
+        )
+        self.assertNotIn(
+            "{ name: 'AML_IDENTITY_MODE', "
+            "value: amlMode == 'Disabled' ? '' : amlIdentityMode }",
+            functions_bicep,
+        )
+
+    def test_create_mode_aml_dependencies_are_identity_authorized(self):
+        workspace_bicep = (
+            REPO_ROOT / "infra/modules/amlWorkspace.bicep"
+        ).read_text(encoding="utf-8")
+        main_bicep = (REPO_ROOT / "infra/main.bicep").read_text(
+            encoding="utf-8"
+        )
+        storage_bicep = (REPO_ROOT / "infra/modules/storage.bicep").read_text(
+            encoding="utf-8"
+        )
+
+        required_role_ids = (
+            "b24988ac-6180-42a0-ab88-20f7382dd24c",
+            "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+            "69566ab7-960f-475b-8e7c-b3118f30c6bd",
+            "00482a5a-887f-4fb3-b363-3b7fe8e74483",
+        )
+        for role_id in required_role_ids:
+            with self.subTest(role_id=role_id):
+                self.assertIn(role_id, workspace_bicep)
+
+        required_assignments = (
+            "umiStorageContributor",
+            "umiStorageBlobDataContributor",
+            "umiStorageFileDataContributor",
+            "umiKeyVaultContributor",
+            "umiKeyVaultAdministrator",
+            "umiAppInsightsContributor",
+            "umiWorkspaceContributor",
+        )
+        for assignment in required_assignments:
+            with self.subTest(assignment=assignment):
+                self.assertIn(assignment, workspace_bicep)
+
+        self.assertGreaterEqual(
+            workspace_bicep.count("defaultAction: 'Deny'"), 2
+        )
+        self.assertIn(
+            "umiPrincipalId: identity.outputs.principalId", main_bicep
+        )
+        self.assertIn("subnetId: resolvedAmlComputeSubnetId", main_bicep)
+        self.assertIn(
+            "amlComputeSubnetId: resolvedAmlComputeSubnetId", main_bicep
+        )
+        self.assertIn("param amlComputeSubnetId string = ''", storage_bicep)
+        self.assertIn("id: amlComputeSubnetId", storage_bicep)
 
     def test_rc_deploy_defaults_all_artifacts_to_same_version(self):
         workflow = (REPO_ROOT / ".github/workflows/deploy-apps.yml").read_text(
