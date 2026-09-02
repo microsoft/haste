@@ -130,11 +130,7 @@ class ComputeExecutionService:
         candidates: Sequence[ComputeBackend],
         weights: Mapping[ComputeBackend, int],
     ) -> ComputeJobHandle:
-        if not candidates:
-            raise BackendConfigurationError(
-                f"'auto' requested for workload {spec.workload.value!r} but "
-                "no candidate backends are configured"
-            )
+        self._router.validate_candidates(candidates, spec.workload)
 
         remaining = list(candidates)
         last_error: Optional[Exception] = None

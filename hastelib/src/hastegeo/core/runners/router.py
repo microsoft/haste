@@ -166,6 +166,34 @@ class ComputeRouter:
     variables itself.
     """
 
+    @staticmethod
+    def validate_candidates(
+        candidates: Sequence[ComputeBackend],
+        workload: ComputeWorkload,
+    ) -> None:
+        """Reject malformed ``auto`` candidate lists before adapter access."""
+        if not candidates:
+            raise BackendConfigurationError(
+                f"no auto candidates configured for workload "
+                f"{workload.value!r}"
+            )
+        if any(candidate == ComputeBackend.AUTO for candidate in candidates):
+            raise BackendConfigurationError(
+                "'auto' cannot be a member of its own candidate list"
+            )
+
+        seen = set()
+        duplicates = []
+        for candidate in candidates:
+            if candidate in seen and candidate not in duplicates:
+                duplicates.append(candidate)
+            seen.add(candidate)
+        if duplicates:
+            names = ", ".join(candidate.value for candidate in duplicates)
+            raise BackendConfigurationError(
+                f"auto candidate list contains duplicate backends: {names}"
+            )
+
     def resolve(
         self,
         *,
@@ -181,19 +209,13 @@ class ComputeRouter:
         ranked candidate/weight summary (data-model.md's
         ``auto:<weight/candidate summary>``).
 
-        Raises ``BackendConfigurationError`` if ``candidates`` is empty or
-        contains ``auto`` itself. Raises ``CapacityUnavailableError`` if
-        every candidate is filtered out (no snapshot, wrong workload, or a
-        capacity state in ``_INELIGIBLE_STATES``).
+        Raises ``BackendConfigurationError`` if ``candidates`` is empty,
+        contains ``auto`` itself, or contains duplicate backends. Raises
+        ``CapacityUnavailableError`` if every candidate is filtered out (no
+        snapshot, wrong workload, or a capacity state in
+        ``_INELIGIBLE_STATES``).
         """
-        if not candidates:
-            raise BackendConfigurationError(
-                f"no auto candidates configured for workload {workload.value!r}"
-            )
-        if any(candidate == ComputeBackend.AUTO for candidate in candidates):
-            raise BackendConfigurationError(
-                "'auto' cannot be a member of its own candidate list"
-            )
+        self.validate_candidates(candidates, workload)
 
         eligible: List[ComputeBackend] = []
         for backend in candidates:

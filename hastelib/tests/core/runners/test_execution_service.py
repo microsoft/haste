@@ -380,6 +380,24 @@ class TestAutoSubmission(unittest.TestCase):
         from_env.assert_not_called()
         self.assertEqual(handle.selectedBackend, ComputeBackend.AZURE_ML)
 
+    def test_duplicate_candidates_fail_before_adapter_access(self):
+        batch = FakeComputeRunner(backend=ComputeBackend.AZURE_BATCH)
+        self.registry.register(ComputeBackend.AZURE_BATCH, lambda: batch)
+        spec = _spec(backend_preference=ComputeBackend.AUTO)
+
+        with self.assertRaisesRegex(
+            BackendConfigurationError, "duplicate backends: azure_batch"
+        ):
+            self.service.submit(
+                spec,
+                auto_candidates=[
+                    ComputeBackend.AZURE_BATCH,
+                    ComputeBackend.AZURE_BATCH,
+                ],
+            )
+
+        self.assertEqual(batch.calls, [])
+
     def test_auto_gathering_capacity_skips_candidate_whose_get_capacity_raises(
         self,
     ):

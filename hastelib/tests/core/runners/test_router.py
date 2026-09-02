@@ -180,6 +180,28 @@ class TestComputeRouterResolve(unittest.TestCase):
                 },
             )
 
+    def test_duplicate_candidates_raise_configuration_error(self):
+        with self.assertRaisesRegex(
+            BackendConfigurationError, "duplicate backends: azure_batch"
+        ):
+            self.router.resolve(
+                execution_id="exec-1",
+                workload=ComputeWorkload.TRAINING,
+                candidates=[
+                    ComputeBackend.AZURE_BATCH,
+                    ComputeBackend.AZURE_ML,
+                    ComputeBackend.AZURE_BATCH,
+                ],
+                capacity_by_backend={
+                    ComputeBackend.AZURE_BATCH: _snapshot(
+                        ComputeBackend.AZURE_BATCH
+                    ),
+                    ComputeBackend.AZURE_ML: _snapshot(
+                        ComputeBackend.AZURE_ML
+                    ),
+                },
+            )
+
     def test_configured_weight_can_change_selection(self):
         """A heavily weighted candidate should win far more often than an
         even split would predict, without breaking determinism per id."""
