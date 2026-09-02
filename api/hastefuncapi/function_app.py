@@ -54,6 +54,14 @@ from hastegeo.core.processors.publishing import (
     PublishingSizeLimitError,
     PublishingStateConflictError,
 )
+from hastegeo.core.processors.session import (
+    SessionAccessError,
+    SessionBootstrapProcessor,
+    bind_swa_object_id,
+    effective_application_roles,
+    find_principal_user,
+    index_unique_aad_users,
+)
 from hastegeo.core.processors.stats import StatsPreProcessor
 from hastegeo.core.processors.train import TrainPreprocessor
 from hastegeo.core.processors.uploader import FileUploader
@@ -121,6 +129,16 @@ _PROJECT_DETAILS_CACHE_ENTRIES = configured_cache_value(
 _project_details_cache = AsyncTTLCache(
     ttl_seconds=_PROJECT_DETAILS_CACHE_SECONDS,
     max_entries=_PROJECT_DETAILS_CACHE_ENTRIES,
+)
+_PUBLISHED_DATASETS_CACHE_SECONDS = configured_cache_value(
+    "HASTE_PUBLISHED_DATASETS_CACHE_SECONDS", 5, 0, 5
+)
+_PUBLISHED_DATASETS_CACHE_ENTRIES = configured_cache_value(
+    "HASTE_PUBLISHED_DATASETS_CACHE_ENTRIES", 128, 1, 512
+)
+_published_datasets_cache = AsyncTTLCache(
+    ttl_seconds=_PUBLISHED_DATASETS_CACHE_SECONDS,
+    max_entries=_PUBLISHED_DATASETS_CACHE_ENTRIES,
 )
 
 # Development mode check - when running locally with Docker/Azurite
@@ -226,32 +244,19 @@ def _decode_client_principal(req: func.HttpRequest) -> dict | None:
         return None
 
 
-def _require_roles(
+async def _require_roles(
     req: func.HttpRequest, allowed_roles: set[str]
 ) -> func.HttpResponse | None:
     """Enforce identity and role checks for privileged operations."""
     if DEVELOPMENT_MODE:
         return None
 
-    principal = _decode_client_principal(req)
-    if principal is None:
-        return func.HttpResponse(
-            "Forbidden. Missing caller identity.", status_code=403
-        )
-
-    user_id = principal.get("userId") or principal.get("userDetails")
-    if not user_id:
-        return func.HttpResponse(
-            "Forbidden. Missing caller identity.", status_code=403
-        )
-
-    raw_roles = principal.get("userRoles")
-    roles = (
-        {role.lower().strip() for role in raw_roles if isinstance(role, str)}
-        if isinstance(raw_roles, list)
-        else set()
-    )
-    if not roles.intersection({role.lower() for role in allowed_roles}):
+    caller, auth_error = await _get_active_publishing_caller(req)
+    if auth_error:
+        return auth_error
+    if not caller["roles"].intersection(
+        {role.lower() for role in allowed_roles}
+    ):
         return func.HttpResponse(
             "Forbidden. Administrator role required.", status_code=403
         )
@@ -260,7 +265,7 @@ def _require_roles(
 
 
 async def _get_active_publishing_caller(
-    req: func.HttpRequest,
+    req: func.HttpRequest, raw_users: list[dict] | None = None
 ) -> tuple[dict | None, func.HttpResponse | None]:
     """Return the trusted active HASTE caller used by publishing routes."""
     principal = _decode_client_principal(req)
@@ -282,6 +287,7 @@ async def _get_active_publishing_caller(
         )
         return {
             "id": str(caller_id).lower(),
+            "user_id": str(principal.get("userDetails") or caller_id).lower(),
             "roles": roles,
             "name": principal.get("userDetails"),
         }, None
@@ -298,47 +304,51 @@ async def _get_active_publishing_caller(
             "UNAUTHENTICATED", "Authentication is required.", 401
         )
 
-    try:
-        raw_users = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().USERS.value
-            ).load,
-            "acl",
-        )
-    except FileNotFoundError:
-        return None, _publishing_error_response(
-            "FORBIDDEN", "An active HASTE user is required.", 403
-        )
-
-    users = [User(**user) for user in raw_users]
-    active_user = next(
-        (
-            user
-            for user in users
-            if (
-                user.userId in {principal_id, user_details}
-                or user.objectId == principal_id
+    if raw_users is None:
+        try:
+            raw_users = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().USERS.value
+                ).load,
+                "acl",
             )
-            and user.status == config.get_user_statuses().ACTIVE.value
-            and not user.deleted
-        ),
-        None,
+        except FileNotFoundError:
+            return None, _publishing_error_response(
+                "FORBIDDEN", "An active HASTE user is required.", 403
+            )
+
+    active_user = find_principal_user(
+        raw_users,
+        str(principal_id or ""),
+        str(user_details or ""),
     )
-    if active_user is None:
+    if (
+        active_user is None
+        or active_user.status != config.get_user_statuses().ACTIVE.value
+        or active_user.deleted
+    ):
         return None, _publishing_error_response(
             "FORBIDDEN", "An active HASTE user is required.", 403
         )
 
-    roles = {
-        role.lower().strip()
-        for role in principal.get("userRoles", [])
-        if isinstance(role, str)
-    }
+    roles = effective_application_roles(
+        principal.get("userRoles"), active_user.userRoles
+    )
+    if not roles:
+        return None, _publishing_error_response(
+            "FORBIDDEN", "No active HASTE role is assigned.", 403
+        )
     caller_id = principal_id or user_details
     # Persist the email/login as the publisher identifier, never the display
     # name (privacy: display names are resolved from Entra at read time).
     return {
         "id": str(caller_id).lower(),
+        "user_id": str(
+            active_user.userId
+            or active_user.email
+            or user_details
+            or caller_id
+        ).lower(),
         "roles": roles,
         "name": (active_user.email or user_details),
     }, None
@@ -416,6 +426,44 @@ def _publishing_mutation_authorized(caller: dict) -> bool:
     return bool(
         caller["roles"].intersection({"contributors", "administrators"})
     )
+
+
+@app.route(
+    route="GetSessionBootstrap",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetSessionBootstrap(req: func.HttpRequest) -> func.HttpResponse:
+    principal = _decode_client_principal(req)
+    if principal is None and DEVELOPMENT_MODE:
+        principal = {
+            "userId": "development@local",
+            "userDetails": "development@local",
+            "userRoles": ["authenticated", "administrators"],
+        }
+    if principal is None:
+        return _publishing_error_response(
+            "UNAUTHENTICATED", "Authentication is required.", 401
+        )
+
+    try:
+        result = await asyncio.to_thread(
+            SessionBootstrapProcessor(
+                config=config,
+                development_mode=DEVELOPMENT_MODE,
+            ).load,
+            principal,
+        )
+        return _publishing_json_response(result.model_dump(mode="json"))
+    except SessionAccessError as error:
+        return _publishing_error_response("FORBIDDEN", str(error), 403)
+    except Exception as error:
+        logger.error(
+            f"GetSessionBootstrap failed: {error}\n{traceback.format_exc()}"
+        )
+        return _publishing_error_response(
+            "INTERNAL_ERROR", "Session bootstrap failed.", 500
+        )
 
 
 def _publishing_processor() -> PublishingProcessor:
@@ -1617,7 +1665,7 @@ async def GetAdminSettings(req: func.HttpRequest) -> func.HttpResponse:
     logger.info(
         "GetAdminSettings HTTP trigger function processed a request. To get Config data from MetadataProcessor."
     )
-    auth_error = _require_roles(req, {"administrators"})
+    auth_error = await _require_roles(req, {"administrators"})
     if auth_error:
         return auth_error
     try:
@@ -1650,7 +1698,7 @@ async def PutAdminSettings(req: func.HttpRequest) -> func.HttpResponse:
     logger.info(
         "PutAdminSettings HTTP trigger function processed a request. To save Config data to MetadataProcessor."
     )
-    auth_error = _require_roles(req, {"administrators"})
+    auth_error = await _require_roles(req, {"administrators"})
     if auth_error:
         return auth_error
     try:
@@ -1687,7 +1735,7 @@ async def GetUsers(req: func.HttpRequest) -> func.HttpResponse:
     from hastegeo.core.utils.user import UserManager
 
     logger.info("GetUsers HTTP trigger function processed a request.")
-    auth_error = _require_roles(req, {"administrators"})
+    auth_error = await _require_roles(req, {"administrators"})
     if auth_error:
         return auth_error
     # Define state transition rules
@@ -1745,15 +1793,23 @@ async def GetUsers(req: func.HttpRequest) -> func.HttpResponse:
             User(**user).dict() for user in users
         ]  # To ensure defaults are applied to legacy entries
         app_users = await asyncio.to_thread(UserManager().list_users)
-        app_users_dict = {
-            user.display_name: {"provider": user.provider, "roles": user.roles}
-            for user in app_users
-        }
+        app_users_dict = index_unique_aad_users(
+            [
+                {
+                    "login": getattr(user, "user_details", None)
+                    or getattr(user, "display_name", None),
+                    "provider": getattr(user, "provider", None),
+                    "roles": getattr(user, "roles", None) or "",
+                    "objectId": getattr(user, "user_id", None)
+                    or getattr(user, "id", None),
+                }
+                for user in app_users
+            ]
+        )
         for user in users:
-            # user = User(**user).dict()
-            app_user = app_users_dict.get(user["userId"])
+            app_user = app_users_dict.get(user["userId"].casefold())
             # Determine transition parameters
-            app_user_exists = app_user is not None
+            app_user_exists = bind_swa_object_id(user, app_user)
             roles_match = (
                 sorted(filter_roles(user["userRoles"]))
                 == sorted(filter_roles(app_user["roles"].split(",")))
@@ -1798,8 +1854,6 @@ async def GetUsers(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="PutUser", auth_level=AUTH_LEVEL, methods=["PUT"])
 async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
-    from hastegeo.core.utils.user import InvitationManager
-
     logger.info("PutUser HTTP trigger function processed a request.")
     try:
         req_body = req.get_json()
@@ -1813,6 +1867,9 @@ async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
         is_admin = DEVELOPMENT_MODE
         if not DEVELOPMENT_MODE:
             principal = _decode_client_principal(req)
+            caller, auth_error = await _get_active_publishing_caller(req)
+            if auth_error:
+                return auth_error
             caller_email = (
                 (principal or {}).get("userDetails")
                 or (principal or {}).get("userId")
@@ -1822,15 +1879,13 @@ async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
                 return func.HttpResponse(
                     "Forbidden. Missing caller identity.", status_code=403
                 )
-            raw_roles = (principal or {}).get("userRoles")
-            caller_roles = (
-                {r.lower().strip() for r in raw_roles if isinstance(r, str)}
-                if isinstance(raw_roles, list)
-                else set()
-            )
-            is_admin = "administrators" in caller_roles
-            target_email = (input.email or input.userId or "").lower()
-            is_self = bool(target_email) and caller_email == target_email
+            is_admin = "administrators" in caller["roles"]
+            target_identifiers = {
+                value.lower() for value in (input.userId, input.email) if value
+            }
+            is_self = bool(target_identifiers) and target_identifiers == {
+                caller_email
+            }
             if not is_admin and not (action == "update" and is_self):
                 return func.HttpResponse(
                     "Forbidden. Administrator role required.",
@@ -1853,6 +1908,8 @@ async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
         async def send_invitation(
             email: str, roles: list[str], delete_existing: bool = False
         ) -> None:
+            from hastegeo.core.utils.user import InvitationManager
+
             invites = await asyncio.to_thread(
                 InvitationManager(
                     email, roles, delete_existing=delete_existing
@@ -1875,6 +1932,25 @@ async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
             None,
         )
         user_exists = user_index is not None
+
+        if not is_admin:
+            if not user_exists:
+                return func.HttpResponse(
+                    "Forbidden. Existing active user required.",
+                    status_code=403,
+                )
+            existing_self = users[user_index]
+            active_status = config.get_user_statuses().ACTIVE.value
+            if (
+                existing_self.deleted
+                or existing_self.status != active_status
+                or (existing_self.userId or "").lower() != caller_email
+                or (existing_self.email or "").lower() != caller_email
+            ):
+                return func.HttpResponse(
+                    "Forbidden. Existing active user required.",
+                    status_code=403,
+                )
 
         if not user_exists:
             # Create new user
@@ -1995,7 +2071,7 @@ async def DeleteUser(req: func.HttpRequest) -> func.HttpResponse:
     from hastegeo.core.utils.user import UserManager
 
     logger.info("DeleteUser HTTP trigger function processed a request.")
-    auth_error = _require_roles(req, {"administrators"})
+    auth_error = await _require_roles(req, {"administrators"})
     if auth_error:
         return auth_error
     try:
@@ -2046,20 +2122,33 @@ async def DeleteUser(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="GetUserById", auth_level=AUTH_LEVEL, methods=["GET"])
 async def GetUserById(req: func.HttpRequest) -> func.HttpResponse:
-    from hastegeo.core.utils.user import UserManager
-
     logger.info("GetUser HTTP trigger function processed a request.")
     try:
-        user_id = req.params.get("userId")
-        users = await asyncio.to_thread(
+        user_id = _require_email_param(req, "userId")
+        raw_users = await asyncio.to_thread(
             MetadataProcessor(
                 data_type=config.get_metadata_types().USERS.value
             ).load,
             "acl",
         )
-        users = [User(**user) for user in users]
+        if not DEVELOPMENT_MODE:
+            caller, auth_error = await _get_active_publishing_caller(
+                req, raw_users=raw_users
+            )
+            if auth_error:
+                return auth_error
+            is_self = caller["user_id"] == user_id.casefold()
+            if not is_self and "administrators" not in caller["roles"]:
+                return func.HttpResponse("Forbidden.", status_code=403)
+
+        users = [User(**user) for user in raw_users]
         existing_user = next(
-            (user for user in users if user.userId == user_id), None
+            (
+                user
+                for user in users
+                if user.userId and user.userId.casefold() == user_id.casefold()
+            ),
+            None,
         )
 
         # In development mode, auto-create user if not found
@@ -2098,6 +2187,8 @@ async def GetUserById(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(
                 json.dumps(existing_user.dict()), status_code=200
             )
+
+        from hastegeo.core.utils.user import UserManager
 
         app_user = await asyncio.to_thread(
             UserManager().find_user_by_email, user_id
@@ -2174,6 +2265,8 @@ async def GetUserById(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps(existing_user.dict()), status_code=200
         )
 
+    except ValueError as e:
+        return _bad_request(str(e))
     except FileNotFoundError as e:
         logger.error(f"User not found: {e}\n{traceback.format_exc()}")
         return func.HttpResponse("User not found.", status_code=404)
@@ -4656,28 +4749,75 @@ async def GetPublishedDatasets(req: func.HttpRequest) -> func.HttpResponse:
             if req.params.get("status")
             else None
         )
-        records, total_count = await asyncio.to_thread(
-            PublishingRepository(config=config).list_page,
-            page=page,
-            page_size=page_size,
-            project_id=project_id,
-            target=target,
-            status=status,
-            search=search,
-            sort_key=req.params.get("sortKey", "publishedDate"),
-            sort_direction=req.params.get("sortDirection", "desc"),
-        )
-        return _publishing_json_response(
-            {
-                "publishedDatasets": [
-                    record.model_dump(mode="json") for record in records
-                ],
-                "pagination": {
-                    "page": page,
-                    "pageSize": page_size,
-                    "totalCount": total_count,
-                },
+        sort_key = req.params.get("sortKey", "publishedDate")
+        sort_direction = req.params.get("sortDirection", "desc")
+
+        async def load_response() -> dict:
+            records, total_count = await asyncio.to_thread(
+                PublishingRepository(config=config).list_page,
+                page=page,
+                page_size=page_size,
+                project_id=project_id,
+                target=target,
+                status=status,
+                search=search,
+                sort_key=sort_key,
+                sort_direction=sort_direction,
+            )
+            payload = json.dumps(
+                {
+                    "publishedDatasets": [
+                        record.model_dump(mode="json") for record in records
+                    ],
+                    "pagination": {
+                        "page": page,
+                        "pageSize": page_size,
+                        "totalCount": total_count,
+                    },
+                }
+            )
+            return {
+                "payload": payload,
+                "etag": '"'
+                + hashlib.sha256(payload.encode()).hexdigest()[:32]
+                + '"',
             }
+
+        cache_key = (
+            str(caller["id"]).lower(),
+            page,
+            page_size,
+            project_id or "",
+            target.value if target else "",
+            status.value if status else "",
+            search.lower(),
+            sort_key,
+            sort_direction,
+        )
+        (
+            cached_response,
+            cache_hit,
+        ) = await _published_datasets_cache.get_or_create(
+            cache_key,
+            load_response,
+            refresh=_cache_refresh_requested(req.headers.get("Cache-Control")),
+        )
+        headers = {
+            "Cache-Control": (
+                f"private, max-age={_PUBLISHED_DATASETS_CACHE_SECONDS}"
+            ),
+            "ETag": cached_response["etag"],
+            "X-Haste-Cache": "HIT" if cache_hit else "MISS",
+        }
+        if _etag_matches(
+            req.headers.get("If-None-Match"), cached_response["etag"]
+        ):
+            return func.HttpResponse(status_code=304, headers=headers)
+        return func.HttpResponse(
+            cached_response["payload"],
+            status_code=200,
+            mimetype="application/json",
+            headers=headers,
         )
     except Exception as error:
         return _publishing_exception_response(error)
@@ -4759,6 +4899,7 @@ async def PutPublishDatasetQueueMessage(
                 prepared,
                 assessment_summary,
             )
+        await _published_datasets_cache.invalidate()
         return _publishing_json_response(
             {"publishedDataset": record.model_dump(mode="json")}, 202
         )
@@ -4790,6 +4931,7 @@ async def PutRetryPublishedDatasetQueueMessage(
             caller["id"],
             "administrators" in caller["roles"],
         )
+        await _published_datasets_cache.invalidate()
         return _publishing_json_response(
             {"publishedDataset": record.model_dump(mode="json")}, 202
         )
@@ -4830,6 +4972,7 @@ async def PutUpdatePublishedDataset(
             "administrators" in caller["roles"],
             fields,
         )
+        await _published_datasets_cache.invalidate()
         return _publishing_json_response(
             {"publishedDataset": record.model_dump(mode="json")}, 200
         )
@@ -4856,6 +4999,7 @@ async def DeletePublishedDataset(req: func.HttpRequest) -> func.HttpResponse:
             caller["id"],
             "administrators" in caller["roles"],
         )
+        await _published_datasets_cache.invalidate()
         return _publishing_json_response(
             {"publishedDataset": record.model_dump(mode="json")}, 202
         )
@@ -4888,6 +5032,7 @@ async def ForceRemovePublishedDataset(
             caller["id"],
             "administrators" in caller["roles"],
         )
+        await _published_datasets_cache.invalidate()
         return _publishing_json_response(
             {"publishedDataset": record.model_dump(mode="json")}, 200
         )

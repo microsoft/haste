@@ -89,12 +89,28 @@ These endpoints use `FUNCTION`-level auth regardless of development mode (intend
 
 | Method | Route | Description |
 |--------|-------|-------------|
+| GET | `GetSessionBootstrap` | Trusted current-user, role, settings, and publishing capabilities for one-call application startup. Accepts no caller identity parameters. |
 | GET | `GetUsers` | All users. Requires `administrators` role. |
 | GET | `GetUserById` | Single user by `userId`. |
 | PUT | `PutUser` | Create or update a user. Handles invitations, reinvitations, role assignment, and reactivation. |
 | DELETE | `DeleteUser` | Delete a user by `userId` (email). Requires `administrators` role. |
 | GET | `GetAdminSettings` | All admin settings. Requires `administrators` role. |
 | PUT | `PutAdminSettings` | Update admin settings. Requires `administrators` role. |
+
+#### Session Bootstrap
+
+`GetSessionBootstrap` resolves identity from the SWA client-principal header,
+loads current HASTE ACL state, and returns user and publishing configuration in
+one response. Stable active sessions are read-only; inactive, pending, and
+deleted accounts receive no application roles.
+
+### Published Datasets
+
+`GetPublishedDatasets` returns `ETag`, `Cache-Control`, and `X-Haste-Cache`
+headers. Send `If-None-Match` to receive an empty `304` for an unchanged fresh
+representation. The bounded process-local cache expires within five seconds,
+deduplicates concurrent identical reads, and is invalidated after publishing
+mutations.
 
 ### Utilities
 
