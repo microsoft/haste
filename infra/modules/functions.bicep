@@ -98,15 +98,15 @@ param useSas bool = false
 @description('Runner auto-creates/resizes its pool. False for pre-created autoscale pools.')
 param managePools bool = true
 
-// --- AML backend (Disabled by default, no behavior change for Batch/local- -
-// only deployments). Existing (the default enablement path) wires
+// --- AML backend (Disabled by default; no behavior change for Batch/local-only
+// deployments). Existing (the default enablement path) wires
 // pre-existing, platform-owned identifiers straight through as Function App
 // settings; this module never deploys anything for that mode. Create
-// (explicit, later opt-in, main.bicep only) instead feeds this same set of
-// params with the names/references HASTE itself provisions — either way,
-// this module only ever emits app settings, never a resource. -------------
+// (explicit, later opt-in through main.bicep) feeds this same parameter set
+// with names and references HASTE provisions. This module only emits app
+// settings; it never deploys AML resources. --------------------------------
 
-@description('AML wiring mode: Disabled (no AML settings emitted), Existing (the default enablement path — wire pre-existing, platform-owned identifiers through), or Create (explicit, later opt-in — HASTE provisions its own AML stack in main.bicep and feeds the resulting names/references through here).')
+@description('AML wiring mode: Disabled (AML is inert), Existing (wire pre-existing, platform-owned identifiers through), or Create (HASTE provisions its own AML stack in main.bicep and passes the resulting names and references through here).')
 @allowed([
   'Disabled'
   'Existing'
@@ -253,12 +253,10 @@ var appConfigSettings = [
   // AML backend (ADR-0005). Disabled by default: resource identifiers below
   // are empty, while identity mode retains its safe "user" default so later
   // enablement cannot expose an invalid empty AML_IDENTITY_MODE.
-  // In the default Existing enablement path every non-empty value here is a
-  // pre-existing, platform-owned identifier the operator supplied (main.bicep's
-  // existingAml* parameters) and HASTE creates/registers/mutates nothing; in
-  // the explicit, later Create opt-in the same settings instead carry the
-  // names/references HASTE just provisioned in main.bicep — see
-  // data-model.md#configuration-changes.
+  // In Existing mode, every non-empty resource identifier is operator
+  // supplied, and HASTE creates, registers, or mutates no AML resource. In
+  // Create mode, the same settings carry names and references provisioned by
+  // main.bicep. See spec/features/aml-compute-backend/data-model.md.
   { name: 'AML_MODE', value: amlMode }
   { name: 'AML_SUBSCRIPTION_ID', value: amlMode == 'Disabled' ? '' : subscription().subscriptionId }
   { name: 'AML_RESOURCE_GROUP', value: amlResourceGroup }
@@ -382,11 +380,9 @@ module queueApp 'functionApp.bicep' = {
 // Used by roles.bicep to grant the SWA invitation role to the API app's
 // system-assigned identity.
 output apiSystemPrincipalId string = apiApp.outputs.systemPrincipalId
-// Used by main.bicep to grant AML RBAC (amlRole.bicep) to the queue app
-// identity when amlMode == Create. Titiler never submits/polls compute and
-// hastefuncapi does not talk to AML directly today, so neither gets this
-// grant (least privilege) — only the queue app's principal id is exported
-// for this purpose.
+// Used by main.bicep to grant Create-mode AML RBAC through amlRole.bicep.
+// Titiler never submits or polls compute, and hastefuncapi does not call AML
+// directly, so only the queue app's principal ID is exported.
 output queueSystemPrincipalId string = queueApp.outputs.systemPrincipalId
 output apiName string = apiApp.outputs.name
 output titilerName string = titilerApp.outputs.name

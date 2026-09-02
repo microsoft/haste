@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "4668204879977222660"
+      "templateHash": "11149320663027295232"
     }
   },
   "parameters": {
@@ -1626,7 +1626,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.45.15.27210",
-              "templateHash": "16247302089486409978"
+              "templateHash": "2901699925845646178"
             }
           },
           "parameters": {
@@ -1820,7 +1820,7 @@
                 "Create"
               ],
               "metadata": {
-                "description": "AML wiring mode: Disabled (no AML settings emitted), Existing (the default enablement path — wire pre-existing, platform-owned identifiers through), or Create (explicit, later opt-in — HASTE provisions its own AML stack in main.bicep and feeds the resulting names/references through here)."
+                "description": "AML wiring mode: Disabled (AML is inert), Existing (wire pre-existing, platform-owned identifiers through), or Create (HASTE provisions its own AML stack in main.bicep and passes the resulting names and references through here)."
               }
             },
             "amlWorkspaceName": {
