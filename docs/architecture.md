@@ -34,10 +34,10 @@ HASTE follows a microservices architecture built on Azure cloud services. This p
 │  Runners · Utils · Workflows                                          │
 └──────┬───────────┬───────────┬───────────┬───────────┬──────────────┘
        │           │           │           │           │
-  ┌────▼───┐  ┌───▼────┐  ┌──▼───┐  ┌────▼─────┐  ┌───▼──────────┐
-  │ Blob   │  │ Cosmos │  │ Data │  │ Postgres │  │ Azure Batch  │
-  │ Storage│  │ DB     │  │ Lake │  │          │  │ (GPU pools)  │
-  └────────┘  └────────┘  └──────┘  └──────────┘  └──────────────┘
+  ┌────▼───┐  ┌───▼────┐  ┌──▼───┐  ┌────▼─────┐  ┌───▼──────────────┐
+  │ Blob   │  │ Cosmos │  │ Data │  │ Postgres │  │ Azure Batch /     │
+  │ Storage│  │ DB     │  │ Lake │  │          │  │ Azure ML / local  │
+  └────────┘  └────────┘  └──────┘  └──────────┘  └──────────────────┘
 ```
 
 ## Components
@@ -99,13 +99,36 @@ The Function Apps install it from a blob-hosted wheel (`hastegeo-…-py3-none-an
 development installs it editable with `-e hastelib/`. It contains:
 
 - **`hastegeo.core.config`** — environment-aware `Config` plus the `StorageType` and `ArtifactTypes` enums
-- **`hastegeo.core.models`** — Pydantic models for projects, users, training, admin, stats, uploader, and visualizer
+- **`hastegeo.core.models`** — Pydantic models for projects, users, training, admin, stats, uploader, visualizer, and the backend-neutral compute contracts (`hastegeo.core.models.compute`)
 - **`hastegeo.core.processors`** — business logic for imagery, training, inference, embedding, labels, stats, artifacts, metadata, and uploads
 - **`hastegeo.core.data_layer`** — metadata backends (local filesystem, Azure Blob, Cosmos DB, Data Lake, PostgreSQL) behind a `UnifiedDataLayer` dispatcher
 - **`hastegeo.core.artifact_storage`** — artifact backends (local filesystem, Azure Blob) behind a `UnifiedArtifactStorage` dispatcher
-- **`hastegeo.core.runners`** — task execution via `LocalRunner` (Docker) and `AzureBatchRunner` (GPU pools), behind a `UnifiedRunner` dispatcher
+- **`hastegeo.core.runners`** — backend-neutral compute submission via `ComputeExecutionService`, dispatching to `AzureBatchRunner`, `AzureMLRunner`, or `LocalRunner` adapters (see [Compute backends](#compute-backends) below and [`hastelib/runners`](hastelib/runners.md))
 - **`hastegeo.core.utils`** — shared utilities: logging, queues, downloads, imagery, footprints, AOI, assessment, GDAL security, URL allow-listing, TensorBoard parsing, and metadata
 - **`hastegeo.workflows`** — CLI entry points for imagery preparation (`prepare-imagery`), artifact zipping (`zip-artifacts`), and building embedding
+
+### Compute Backends
+
+Every compute-intensive workload (training, inference, embedding, imagery
+preprocessing, artifact packaging) is submitted through a backend-neutral
+`ComputeRunner` contract instead of talking to a specific provider directly.
+Three adapters implement it today:
+
+| Backend | Adapter | Notes |
+|---|---|---|
+| Azure Batch | `AzureBatchRunner` | The default; GPU-enabled task execution on Azure Batch pools |
+| Azure Machine Learning | `AzureMLRunner` | Submits AML command jobs; disabled by default, opt-in per deployment or per job |
+| Local Docker | `LocalRunner` | Backs the Docker Compose dev stack |
+
+Each job can request a backend explicitly (`azure_batch` / `azure_ml` /
+`local`) or `auto`, which routes deterministically across whichever
+backends a deployment has configured as candidates. The resolved backend
+and provider job handle are persisted with the job, so status/cancel calls
+keep addressing the right provider across restarts and configuration
+changes. Full detail: [`hastelib/runners`](hastelib/runners.md),
+[Configuration Guide § Compute backend selection](configuration.md#compute-backend-selection-batch-azure-machine-learning-local),
+and
+[ADR-0005](https://github.com/microsoft/haste/blob/main/spec/architecture/decisions/0005-backend-neutral-compute-runner-and-aml-backend.md).
 
 ### UI — React Single-Page Application
 
