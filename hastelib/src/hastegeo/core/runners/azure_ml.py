@@ -28,13 +28,10 @@ scope. Submitted command jobs and their (retained) run history are the
 only AML objects this module ever writes.
 """
 
-import glob
+import hashlib
 import importlib
-import os
 import re
 import shlex
-import shutil
-import tempfile
 import threading
 from typing import Dict, Iterable, List, Optional, Tuple, Union
 
@@ -47,7 +44,7 @@ from azure.core.exceptions import (
 )
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import ContainerClient
-from hastegeo.core.config import AML_IDENTITY_MODES, AML_MODES, Config
+from hastegeo.core.config import Config
 from hastegeo.core.models.compute import (
     TERMINAL_JOB_STATES,
     AzureMlProviderDetail,
@@ -82,7 +79,9 @@ from hastegeo.core.utils.metadata import MetadataUtils
 from .base import (
     ComputeRunner,
     require_single_output_destination,
+    require_supported_uri_schemes,
     split_destination_uri,
+    truncate_deterministic_id,
 )
 
 # --------------------------------------------------------------------------
@@ -136,20 +135,32 @@ _BOOTSTRAP_EXIT_CODE_VAR = "HASTE_INNER_EXIT_CODE"
 _BOOTSTRAP_STDOUT_FILE = "stdout.txt"
 _BOOTSTRAP_STDERR_FILE = "stderr.txt"
 
-#: Bound on the SDK-download fallback read in ``read_output`` (never an
-#: unbounded read of provider-managed storage — design.md#security).
-_MAX_FALLBACK_READ_BYTES = 10 * 1024 * 1024  # 10 MiB
-
 #: Max length of a derived AML job name — well under any documented AML
 #: asset-name limit, chosen defensively rather than to the exact limit.
 _MAX_JOB_NAME_LENGTH = 200
 
 _JOB_NAME_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_-]+")
+_AML_OUTPUT_SUPPORTED_URI_SCHEMES = frozenset({"http", "https"})
 
 #: Sentinel distinguishing "blob not found at this candidate path" (keep
 #: searching) from an actual (possibly falsy-looking, though never in
 #: practice) blob read result in ``_try_read_blob``.
 _BLOB_NOT_FOUND = object()
+
+
+def _bounded_aml_name(value: str) -> str:
+    """Return a lowercase, collision-safe AML asset or job name."""
+    sanitized = _JOB_NAME_SANITIZE_RE.sub("-", value).strip("-") or "haste"
+    normalized = sanitized.lower()
+    if normalized != value:
+        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:10]
+        suffix = f"-{digest}"
+        prefix_length = _MAX_JOB_NAME_LENGTH - len(suffix)
+        return f"{normalized[:prefix_length]}{suffix}"
+    return truncate_deterministic_id(
+        normalized, max_length=_MAX_JOB_NAME_LENGTH
+    )
+
 
 # AML job status strings (public values as documented for
 # ``azure.ai.ml.entities.Job.status``; not imported from the SDK's own
@@ -191,8 +202,7 @@ class UnmappedAmlJobStatusError(ComputeError):
 
 
 class AmbiguousOutputMatchError(ComputeError):
-    """A non-exact ``read_output`` lookup matched more than one blob (or,
-    via the SDK-download fallback, more than one downloaded file).
+    """A non-exact ``read_output`` lookup matched more than one blob.
 
     Raised when ``relative_path`` is not found at the exact expected
     location and a bounded listing/search under the job's own output
@@ -210,13 +220,9 @@ def _select_unique_match(
 ) -> Optional[str]:
     """Resolve a list of non-exact match candidates to a single result.
 
-    Shared by every non-exact matching strategy in both
-    ``AzureMLRunner._read_output_from_durable_storage`` (blob names) and
-    ``AzureMLRunner._read_output_via_sdk_fallback`` (local downloaded file
-    paths), so "zero matches" and "more than one match" are handled
-    identically regardless of which strategy — nested-suffix, basename-
-    prefix, or (for the SDK fallback) exact-then-prefix glob — produced
-    the candidate list. Returns ``None`` for zero matches (not yet
+    Shared by the durable output's nested-suffix and basename-prefix
+    matching strategies so "zero matches" and "more than one match" are
+    handled identically. Returns ``None`` for zero matches (not yet
     available); raises ``AmbiguousOutputMatchError`` for more than one.
     """
     if not matches:
@@ -369,48 +375,10 @@ class AzureMLRunner(ComputeRunner):
     # -- configuration resolution ---------------------------------------
 
     def _validate_config(self) -> None:
-        mode = self.aml_config["mode"]
-        if mode not in AML_MODES:
-            raise BackendConfigurationError(
-                f"AML_MODE={mode!r} must be one of {AML_MODES}"
-            )
-        if mode == "Disabled":
-            raise BackendConfigurationError(
-                "Azure Machine Learning is disabled (AML_MODE=Disabled); "
-                "set AML_MODE to 'Create' or 'Existing' to select the "
-                "azure_ml compute backend — this adapter does not "
-                "distinguish between them and does not provision "
-                "resources for either: the workspace/compute/"
-                "environment/datastore named below must already exist"
-            )
-        missing = [
-            env_name
-            for key, env_name in (
-                ("subscription_id", "AML_SUBSCRIPTION_ID"),
-                ("resource_group", "AML_RESOURCE_GROUP"),
-                ("workspace_name", "AML_WORKSPACE_NAME"),
-                ("datastore_name", "AML_DATASTORE_NAME"),
-            )
-            if not self.aml_config.get(key)
-        ]
-        if missing:
-            raise BackendConfigurationError(
-                "Azure Machine Learning is not configured. Missing "
-                "application settings: " + ", ".join(missing)
-            )
-        identity_mode = self.aml_config["identity_mode"]
-        if identity_mode not in AML_IDENTITY_MODES:
-            raise BackendConfigurationError(
-                f"AML_IDENTITY_MODE={identity_mode!r} must be one of "
-                f"{AML_IDENTITY_MODES}"
-            )
-        if identity_mode == "managed" and not self.aml_config.get(
-            "managed_identity_id"
-        ):
-            raise BackendConfigurationError(
-                "AML_IDENTITY_MODE=managed requires AML_MANAGED_IDENTITY_ID "
-                "to be set"
-            )
+        try:
+            Config.validate_aml_config(self.aml_config)
+        except ValueError as exc:
+            raise BackendConfigurationError(str(exc)) from exc
 
     def _compute_for_workload(
         self, workload: ComputeWorkload, target_override: Optional[str] = None
@@ -459,13 +427,11 @@ class AzureMLRunner(ComputeRunner):
 
     def _job_name_for(self, execution_id: str) -> str:
         prefix = self.aml_config["experiment_prefix"]
-        sanitized = _JOB_NAME_SANITIZE_RE.sub("-", execution_id)
-        name = f"{prefix}-{sanitized}".lower()
-        return name[:_MAX_JOB_NAME_LENGTH]
+        return _bounded_aml_name(f"{prefix}-{execution_id}")
 
     def _experiment_name_for(self, workload: ComputeWorkload) -> str:
         prefix = self.aml_config["experiment_prefix"]
-        return f"{prefix}-{workload.value}"
+        return _bounded_aml_name(f"{prefix}-{workload.value}")
 
     def _identity(self):
         identity_mode = self.aml_config["identity_mode"]
@@ -493,6 +459,15 @@ class AzureMLRunner(ComputeRunner):
 
     def validate(self, spec: ComputeJobSpec) -> None:
         self._validate_config()
+        try:
+            require_supported_uri_schemes(
+                inputs=[],
+                outputs=spec.outputs,
+                allowed_schemes=_AML_OUTPUT_SUPPORTED_URI_SCHEMES,
+                backend_name="Azure Machine Learning",
+            )
+        except ValueError as exc:
+            raise BackendConfigurationError(str(exc)) from exc
         try:
             require_single_output_destination(spec.outputs)
         except ValueError as exc:
@@ -794,11 +769,7 @@ class AzureMLRunner(ComputeRunner):
         durable = self._read_output_from_durable_storage(
             handle, relative_path, as_chunks=as_chunks
         )
-        if durable is not None:
-            return durable
-        return self._read_output_via_sdk_fallback(
-            handle, relative_path, as_chunks=as_chunks
-        )
+        return durable
 
     def _read_output_from_durable_storage(
         self, handle: ComputeJobHandle, relative_path: str, *, as_chunks: bool
@@ -825,11 +796,13 @@ class AzureMLRunner(ComputeRunner):
            <host>.<pid>.<n>`` against a caller-supplied
            ``events.out.tfevents``).
 
-        Returns ``None`` if no strategy finds anything (not yet
-        available — the SDK-download fallback covers the still-running
-        case). Any strategy finding more than one candidate raises
-        ``AmbiguousOutputMatchError`` rather than arbitrarily picking one
-        — multiple matches are never silently resolved.
+        Returns ``None`` if no strategy finds anything (normally a live
+        output that has not been written yet). Any strategy finding more
+        than one candidate raises ``AmbiguousOutputMatchError`` rather than
+        arbitrarily picking one — multiple matches are never silently
+        resolved. Provider/transport failures raise
+        ``OutputNotAvailableError``; this method never downloads the whole
+        named AML output to answer a single-file read.
         """
         container_url, _container_name, prefix = split_destination_uri(
             handle.outputUri
@@ -860,14 +833,10 @@ class AzureMLRunner(ComputeRunner):
             ServiceRequestError,
             ServiceResponseError,
         ) as exc:
-            self.logger.warning(
-                "listing %r under job prefix %r failed (%s); trying the "
-                "SDK download fallback",
-                relative_path,
-                prefix,
-                _sanitize_error_text(exc),
-            )
-            return None
+            raise OutputNotAvailableError(
+                f"Azure Machine Learning could not list output "
+                f"{relative_path!r}: {_sanitize_error_text(exc)}"
+            ) from exc
 
         match = _select_unique_match(
             matches,
@@ -886,10 +855,8 @@ class AzureMLRunner(ComputeRunner):
         """Read one blob, or ``_BLOB_NOT_FOUND``/``None``.
 
         ``_BLOB_NOT_FOUND`` (not a definitive answer) tells the caller it
-        may still try another candidate location; ``None`` means a
-        transient read failure — give up on durable storage entirely for
-        this call and let the SDK-download fallback take over, same as
-        before this method existed.
+        may still try another candidate location. Transport/provider
+        failures are explicit and never trigger a whole-output download.
         """
         try:
             downloader = container_client.get_blob_client(
@@ -902,13 +869,10 @@ class AzureMLRunner(ComputeRunner):
             ServiceRequestError,
             ServiceResponseError,
         ) as exc:
-            self.logger.warning(
-                "durable blob read failed for %s (%s); trying the SDK "
-                "download fallback",
-                blob_name,
-                _sanitize_error_text(exc),
-            )
-            return None
+            raise OutputNotAvailableError(
+                f"Azure Machine Learning could not read output blob "
+                f"{blob_name!r}: {_sanitize_error_text(exc)}"
+            ) from exc
         if as_chunks:
             return downloader.chunks()
         return downloader.readall().decode("utf-8")
@@ -962,82 +926,6 @@ class AzureMLRunner(ComputeRunner):
             if blob_basename.startswith(requested_basename):
                 matches.append(blob.name)
         return matches
-
-    def _read_output_via_sdk_fallback(
-        self, handle: ComputeJobHandle, relative_path: str, *, as_chunks: bool
-    ) -> Optional[Union[str, Iterable[bytes]]]:
-        client = self._get_client()
-        (JobException,) = _lazy_import(
-            "azure.ai.ml.exceptions", "JobException"
-        )
-        tmp_dir = tempfile.mkdtemp(prefix="haste-aml-output-")
-        try:
-            try:
-                client.jobs.download(
-                    name=handle.providerJobId,
-                    download_path=tmp_dir,
-                    output_name=_OUTPUT_NAME,
-                )
-            except JobException:
-                # Documented ``download()`` behavior: raised when the job
-                # is not yet in a terminal state — its output is not
-                # downloadable yet, a normal/expected condition (not a
-                # failure), same as a not-yet-written live progress file.
-                self.logger.info(
-                    "Azure Machine Learning job %s is not yet in a "
-                    "terminal state; output is not downloadable yet",
-                    handle.providerJobId,
-                )
-                return None
-            except ResourceNotFoundError as exc:
-                raise JobNotFoundError(
-                    f"Azure Machine Learning job {handle.providerJobId} "
-                    "not found"
-                ) from exc
-            except (
-                HttpResponseError,
-                ServiceRequestError,
-                ServiceResponseError,
-            ) as exc:
-                raise OutputNotAvailableError(
-                    "Azure Machine Learning output download failed for "
-                    f"job {handle.providerJobId}: "
-                    f"{_sanitize_error_text(exc)}"
-                ) from exc
-
-            # Exact match first, then a basename-prefix match (e.g. a
-            # TensorBoard ``events.out.tfevents.<ts>.<host>.<pid>.<n>``
-            # file against a caller-supplied ``events.out.tfevents``) —
-            # mirroring the durable-storage matching strategy above.
-            exact_matches = glob.glob(
-                os.path.join(tmp_dir, "**", relative_path), recursive=True
-            )
-            candidates = exact_matches or glob.glob(
-                os.path.join(tmp_dir, "**", relative_path + "*"),
-                recursive=True,
-            )
-            match = _select_unique_match(
-                candidates,
-                context=(
-                    "the downloaded output for job "
-                    f"{handle.providerJobId!r}"
-                ),
-                relative_path=relative_path,
-            )
-            if match is None:
-                return None
-            with open(match, "rb") as file_obj:
-                data = file_obj.read(_MAX_FALLBACK_READ_BYTES + 1)
-            if len(data) > _MAX_FALLBACK_READ_BYTES:
-                raise OutputNotAvailableError(
-                    f"{relative_path!r} exceeds the bounded fallback read "
-                    "size"
-                )
-            if as_chunks:
-                return iter([data])
-            return data.decode("utf-8")
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def cancel(self, handle: ComputeJobHandle) -> None:
         try:
@@ -1108,9 +996,11 @@ class AzureMLRunner(ComputeRunner):
         self, workload: ComputeWorkload, resources: ComputeResources
     ) -> CapacitySnapshot:
         try:
+            self._validate_config()
             compute_name = self._compute_for_workload(
                 workload, resources.targetOverride
             )
+            client = self._get_client()
         except BackendConfigurationError as exc:
             return CapacitySnapshot(
                 backend=ComputeBackend.AZURE_ML,
@@ -1118,8 +1008,16 @@ class AzureMLRunner(ComputeRunner):
                 state=CapacityState.UNAVAILABLE,
                 detail=str(exc),
             )
-
-        client = self._get_client()
+        except (TypeError, ValueError) as exc:
+            return CapacitySnapshot(
+                backend=ComputeBackend.AZURE_ML,
+                workload=workload,
+                state=CapacityState.UNAVAILABLE,
+                detail=(
+                    "Azure Machine Learning client configuration failed: "
+                    f"{_sanitize_error_text(exc)}"
+                ),
+            )
         try:
             compute = client.compute.get(compute_name)
         except ResourceNotFoundError:

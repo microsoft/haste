@@ -341,6 +341,23 @@ class TestValidate(unittest.TestCase):
         with self.assertRaises(BackendConfigurationError):
             runner.validate(spec)
 
+    def test_rejects_non_blob_output_scheme(self):
+        runner = _runner()
+        spec = _spec(
+            outputs=[
+                ComputeOutput(
+                    name="outputs",
+                    sourceRelativePattern="outputs/**/*",
+                    destinationUri="s3://bucket/job-output/",
+                )
+            ]
+        )
+
+        with self.assertRaisesRegex(
+            BackendConfigurationError, "output URI scheme 's3'"
+        ):
+            runner.validate(spec)
+
     def test_raises_when_no_compute_configured_for_workload(self):
         runner = _runner(
             compute_by_workload={
@@ -399,9 +416,9 @@ class TestJobNaming(unittest.TestCase):
     def test_job_name_uses_experiment_prefix_and_sanitizes_execution_id(self):
         runner = _runner(experiment_prefix="haste")
         name = runner._job_name_for("exec.1_ABC-2")
-        # '.' is not in the allowed job-name character set, so it is
-        # replaced with '-'; everything else is lowercased unchanged.
-        self.assertEqual(name, "haste-exec-1_abc-2")
+        # Provider normalization adds a digest whenever it changes the
+        # logical value, preserving collision safety.
+        self.assertTrue(name.startswith("haste-exec-1_abc-2-"))
         self.assertNotIn(".", name)
 
     def test_job_name_sanitizes_disallowed_characters(self):
@@ -415,12 +432,39 @@ class TestJobNaming(unittest.TestCase):
         name = runner._job_name_for("x" * 500)
         self.assertLessEqual(len(name), 200)
 
+    def test_long_job_names_with_common_prefix_do_not_collide(self):
+        runner = _runner(experiment_prefix="haste")
+        first = runner._job_name_for(("x" * 500) + "a")
+        second = runner._job_name_for(("x" * 500) + "b")
+
+        self.assertNotEqual(first, second)
+        self.assertLessEqual(len(first), 200)
+        self.assertLessEqual(len(second), 200)
+
+    def test_case_normalization_does_not_collapse_job_names(self):
+        runner = _runner(experiment_prefix="haste")
+        lower = runner._job_name_for("exec-one")
+        upper = runner._job_name_for("Exec-One")
+
+        self.assertNotEqual(lower, upper)
+        self.assertEqual(lower, lower.lower())
+        self.assertEqual(upper, upper.lower())
+
     def test_experiment_name_includes_workload(self):
         runner = _runner(experiment_prefix="haste")
         self.assertEqual(
             runner._experiment_name_for(ComputeWorkload.TRAINING),
             "haste-training",
         )
+
+    def test_long_experiment_prefix_preserves_workload_identity(self):
+        runner = _runner(experiment_prefix="x" * 500)
+        training = runner._experiment_name_for(ComputeWorkload.TRAINING)
+        inference = runner._experiment_name_for(ComputeWorkload.INFERENCE)
+
+        self.assertNotEqual(training, inference)
+        self.assertLessEqual(len(training), 200)
+        self.assertLessEqual(len(inference), 200)
 
 
 class TestIdentity(unittest.TestCase):
@@ -1935,197 +1979,38 @@ class TestReadOutput(unittest.TestCase):
         result = runner.read_output(_handle(), "progress.log", as_chunks=True)
         self.assertEqual(list(result), [b"a", b"b"])
 
-    def test_falls_back_to_sdk_download_when_blob_not_found(self):
+    def test_missing_blob_returns_none_without_downloading_named_output(self):
         self._patch_container_client(
             download_blob_side_effect=ResourceNotFoundError("missing")
         )
         client = MagicMock()
-
-        def _download(name, download_path, output_name):
-            import os
-
-            with open(os.path.join(download_path, "progress.log"), "w") as f:
-                f.write("from-sdk")
-
-        client.jobs.download.side_effect = _download
-        runner = _runner(client=client)
-
-        result = runner.read_output(_handle(), "progress.log")
-        self.assertEqual(result, "from-sdk")
-
-    def test_returns_none_when_neither_source_has_the_file(self):
-        self._patch_container_client(
-            download_blob_side_effect=ResourceNotFoundError("missing")
-        )
-        client = MagicMock()
-        client.jobs.download.return_value = None
         runner = _runner(client=client)
 
         self.assertIsNone(runner.read_output(_handle(), "missing.log"))
+        client.jobs.download.assert_not_called()
 
-    def test_falls_back_when_durable_read_has_other_error(self):
+    def test_blob_read_failure_is_explicit_without_named_output_download(self):
         self._patch_container_client(
             download_blob_side_effect=_http_error(500)
         )
         client = MagicMock()
-        client.jobs.download.return_value = None
-        runner = _runner(client=client)
-
-        self.assertIsNone(runner.read_output(_handle(), "missing.log"))
-
-    def test_sdk_fallback_not_found_raises_job_not_found_error(self):
-        self._patch_container_client(
-            download_blob_side_effect=ResourceNotFoundError("missing")
-        )
-        client = MagicMock()
-        client.jobs.download.side_effect = ResourceNotFoundError("no job")
-        runner = _runner(client=client)
-
-        with self.assertRaises(JobNotFoundError):
-            runner.read_output(_handle(), "progress.log")
-
-    def test_sdk_fallback_other_error_raises_output_not_available(self):
-        self._patch_container_client(
-            download_blob_side_effect=ResourceNotFoundError("missing")
-        )
-        client = MagicMock()
-        client.jobs.download.side_effect = _http_error(500)
         runner = _runner(client=client)
 
         with self.assertRaises(OutputNotAvailableError):
             runner.read_output(_handle(), "progress.log")
+        client.jobs.download.assert_not_called()
 
-    def test_sdk_fallback_treats_job_not_yet_terminal_as_not_available(self):
-        from azure.ai.ml.exceptions import JobException
-
-        self._patch_container_client(
+    def test_listing_failure_is_explicit_without_named_output_download(self):
+        _, container_client = self._patch_container_client(
             download_blob_side_effect=ResourceNotFoundError("missing")
         )
+        container_client.list_blobs.side_effect = _http_error(500)
         client = MagicMock()
-        client.jobs.download.side_effect = JobException(
-            message="This job is in state Running. Download is allowed "
-            "only in states ['Completed', 'Failed', 'Canceled']",
-            no_personal_data_message="job not terminal",
-        )
-        runner = _runner(client=client)
-
-        # Not-yet-downloadable is a normal condition, not an error.
-        self.assertIsNone(runner.read_output(_handle(), "progress.log"))
-
-    def test_sdk_fallback_bounds_read_size(self):
-        self._patch_container_client(
-            download_blob_side_effect=ResourceNotFoundError("missing")
-        )
-        client = MagicMock()
-
-        def _download(name, download_path, output_name):
-            import os
-
-            from hastegeo.core.runners.azure_ml import _MAX_FALLBACK_READ_BYTES
-
-            with open(os.path.join(download_path, "big.log"), "wb") as f:
-                f.write(b"x" * (_MAX_FALLBACK_READ_BYTES + 10))
-
-        client.jobs.download.side_effect = _download
         runner = _runner(client=client)
 
         with self.assertRaises(OutputNotAvailableError):
-            runner.read_output(_handle(), "big.log")
-
-    def test_sdk_fallback_matches_a_tensorboard_style_basename_prefix(self):
-        # The SDK-download fallback's glob must support the same
-        # basename-prefix matching as the durable-storage path (a
-        # TensorBoard ``events.out.tfevents.<ts>.<host>.<pid>.<n>`` file
-        # downloaded locally against a caller-supplied
-        # ``events.out.tfevents``).
-        self._patch_container_client(
-            download_blob_side_effect=ResourceNotFoundError("missing")
-        )
-        client = MagicMock()
-
-        def _download(name, download_path, output_name):
-            fname = "events.out.tfevents.1700000000.myhost.12345.0"
-            with open(os.path.join(download_path, fname), "w") as f:
-                f.write("tfevents-from-sdk")
-
-        client.jobs.download.side_effect = _download
-        runner = _runner(client=client)
-
-        result = runner.read_output(_handle(), "events.out.tfevents")
-        self.assertEqual(result, "tfevents-from-sdk")
-
-    def test_sdk_fallback_matches_basename_prefix_at_nested_depth(self):
-        # Same as above, but the downloaded file lands at a realistic,
-        # arbitrarily-nested TensorBoard run path — the recursive glob
-        # fallback must not be constrained to the download root's own
-        # depth.
-        self._patch_container_client(
-            download_blob_side_effect=ResourceNotFoundError("missing")
-        )
-        client = MagicMock()
-
-        def _download(name, download_path, output_name):
-            nested_dir = os.path.join(
-                download_path, "logs", "model_abc123", "version_0"
-            )
-            os.makedirs(nested_dir)
-            fname = "events.out.tfevents.1700000000.myhost.12345.0"
-            with open(os.path.join(nested_dir, fname), "w") as f:
-                f.write("nested-tfevents-from-sdk")
-
-        client.jobs.download.side_effect = _download
-        runner = _runner(client=client)
-
-        result = runner.read_output(_handle(), "events.out.tfevents")
-        self.assertEqual(result, "nested-tfevents-from-sdk")
-
-    def test_sdk_fallback_prefers_exact_match_over_prefix_match(self):
-        self._patch_container_client(
-            download_blob_side_effect=ResourceNotFoundError("missing")
-        )
-        client = MagicMock()
-
-        def _download(name, download_path, output_name):
-            # Both an exact match and a longer-prefixed name exist —
-            # the exact match must win, not raise ambiguity.
-            with open(
-                os.path.join(download_path, "events.out.tfevents"), "w"
-            ) as f:
-                f.write("exact")
-            with open(
-                os.path.join(
-                    download_path,
-                    "events.out.tfevents.1700000000.myhost.1.0",
-                ),
-                "w",
-            ) as f:
-                f.write("prefixed")
-
-        client.jobs.download.side_effect = _download
-        runner = _runner(client=client)
-
-        result = runner.read_output(_handle(), "events.out.tfevents")
-        self.assertEqual(result, "exact")
-
-    def test_sdk_fallback_raises_ambiguous_error_for_multiple_prefix_matches(
-        self,
-    ):
-        self._patch_container_client(
-            download_blob_side_effect=ResourceNotFoundError("missing")
-        )
-        client = MagicMock()
-
-        def _download(name, download_path, output_name):
-            for suffix in ("1700000000.myhost.1.0", "1700000100.myhost.2.0"):
-                fname = f"events.out.tfevents.{suffix}"
-                with open(os.path.join(download_path, fname), "w") as f:
-                    f.write("data")
-
-        client.jobs.download.side_effect = _download
-        runner = _runner(client=client)
-
-        with self.assertRaises(AmbiguousOutputMatchError):
-            runner.read_output(_handle(), "events.out.tfevents")
+            runner.read_output(_handle(), "progress.log")
+        client.jobs.download.assert_not_called()
 
     # -- nested-match behavior (Batch get-file-by-match parity) --------
 
@@ -2163,7 +2048,6 @@ class TestReadOutput(unittest.TestCase):
             download_blob_side_effect=ResourceNotFoundError("missing")
         )
         client = MagicMock()
-        client.jobs.download.return_value = None
         runner = _runner(client=client)
 
         runner.read_output(_handle(), "manifest.json")
@@ -2174,6 +2058,7 @@ class TestReadOutput(unittest.TestCase):
         for call in container_client.list_blobs.call_args_list:
             self.assertEqual(call.kwargs, {"name_starts_with": "proj/task-1/"})
         self.assertGreaterEqual(container_client.list_blobs.call_count, 1)
+        client.jobs.download.assert_not_called()
 
     def test_raises_ambiguous_error_when_multiple_nested_matches(self):
         _blob_client, container_client = self._patch_container_client(
@@ -2188,38 +2073,8 @@ class TestReadOutput(unittest.TestCase):
 
         with self.assertRaises(AmbiguousOutputMatchError):
             runner.read_output(_handle(), "manifest.json")
-        # An ambiguous durable-storage match is a definitive failure —
-        # never silently masked by trying the SDK fallback instead.
+        # An ambiguous durable-storage match is a definitive failure.
         client.jobs.download.assert_not_called()
-
-    def test_nested_match_falls_back_to_sdk_when_listing_fails(self):
-        with patch(
-            "hastegeo.core.runners.azure_ml.ContainerClient"
-        ) as mock_cls:
-            container_client = MagicMock()
-            mock_cls.from_container_url.return_value = container_client
-            blob_client = MagicMock()
-            blob_client.download_blob.side_effect = ResourceNotFoundError(
-                "missing"
-            )
-            container_client.get_blob_client.return_value = blob_client
-            container_client.list_blobs.side_effect = _http_error(500)
-
-            client = MagicMock()
-
-            def _download(name, download_path, output_name):
-                import os
-
-                with open(
-                    os.path.join(download_path, "manifest.json"), "w"
-                ) as f:
-                    f.write("from-sdk")
-
-            client.jobs.download.side_effect = _download
-            runner = _runner(client=client)
-
-            result = runner.read_output(_handle(), "manifest.json")
-        self.assertEqual(result, "from-sdk")
 
     # -- basename-prefix match (TensorBoard event-file parity) ----------
 
@@ -2491,6 +2346,40 @@ class TestFinalize(unittest.TestCase):
 
 
 class TestGetCapacity(unittest.TestCase):
+    def test_disabled_config_is_unavailable_without_client_access(self):
+        client = MagicMock()
+        runner = _runner(client=client, mode="Disabled")
+
+        snapshot = runner.get_capacity(
+            ComputeWorkload.TRAINING, ComputeResources()
+        )
+
+        self.assertEqual(snapshot.state, CapacityState.UNAVAILABLE)
+        client.compute.get.assert_not_called()
+
+    def test_missing_base_config_is_unavailable_without_client_access(self):
+        client = MagicMock()
+        runner = _runner(client=client, subscription_id=None)
+
+        snapshot = runner.get_capacity(
+            ComputeWorkload.TRAINING, ComputeResources()
+        )
+
+        self.assertEqual(snapshot.state, CapacityState.UNAVAILABLE)
+        self.assertIn("AML_SUBSCRIPTION_ID", snapshot.detail)
+        client.compute.get.assert_not_called()
+
+    def test_client_configuration_error_is_unavailable(self):
+        runner = _runner(client=None)
+        runner._get_client = MagicMock(side_effect=ValueError("bad client"))
+
+        snapshot = runner.get_capacity(
+            ComputeWorkload.TRAINING, ComputeResources()
+        )
+
+        self.assertEqual(snapshot.state, CapacityState.UNAVAILABLE)
+        self.assertIn("client configuration failed", snapshot.detail)
+
     def test_unavailable_when_no_compute_configured(self):
         runner = _runner(
             compute_by_workload={
