@@ -180,8 +180,8 @@ commands while keeping already-published images working.
 |---|---|---|---|---|
 | Add correlated logs, provider tags, and metrics per [design.md](design.md#observability) | `backend-dev` | Phases 1-10 | — | in-progress — log-safety correlation fields (`executionId`/backend/profile/provider IDs/routing reason) landed; full submissions/completions/failures/duration metrics not yet added |
 | Run unit, contract, integration, security, and end-to-end tests per [test-plan.md](test-plan.md) | `backend-dev` | — | all | in-progress — unit/contract/model-compatibility/API/queue tests landed; live AML smoke, GPU smoke, and end-to-end parity tests not yet run (no live AML deployment performed) |
-| Validate all test results and acceptance criteria against the spec | `backend-validation` | above | all | in-progress |
-| Update `docs/architecture.md`, `docs/configuration.md`, `spec/architecture/overview.md`, `docs/hastelib/runners.md` | `backend-dev` | — | — | in-progress — drafted; not yet finalized/rebuilt (`docs-deploy.yml`) |
+| Validate all test results and acceptance criteria against the spec | `backend-validation` | above | all | in-progress — local unit/contract/API/queue/container/IaC validation and pre-landing review feedback are complete; authorized live AML/Batch parity and rollout checks remain |
+| Update `docs/architecture.md`, `docs/configuration.md`, `spec/architecture/overview.md`, `docs/hastelib/runners.md` | `backend-dev` | — | — | done — public documentation, deployment settings, and Disabled/Existing/Create behavior are synchronized with the implementation |
 | Execute staged rollout per [rollout.md](rollout.md) | `backend-dev` | above | all | not-started — no live deployment performed |
 | Rollback exercise (disable AML/`auto`, confirm existing handles keep working) | `backend-dev` | — | US-004, US-005 | not-started |
 
@@ -200,7 +200,7 @@ commands while keeping already-published images working.
 | All processors migrated | done | Phase 8 merged; `rg` checks clean |
 | Per-job backend selection wired | done | Phase 9 merged; API/queue tests landed |
 | AML IaC ready for review | done | Phase 10 complete; `Existing` is locally verified as reference-only, while `Create` compiles but remains unapplied |
-| Release | in progress | Phase 11 (observability, full test suite/live validation, docs, staged rollout) not yet complete |
+| Release | in progress | Local implementation, documentation, CI, and pre-landing review gates are complete; live AML validation and staged rollout remain |
 
 ## Agent Summary
 
