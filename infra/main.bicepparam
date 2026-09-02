@@ -61,7 +61,8 @@ param amlGpuComputeMaxNodes = int(readEnvironmentVariable('HASTE_AML_GPU_COMPUTE
 param amlCpuComputeVmSize = readEnvironmentVariable('HASTE_AML_CPU_COMPUTE_VM_SIZE', 'Standard_D4s_v5')
 param amlCpuComputeMaxNodes = int(readEnvironmentVariable('HASTE_AML_CPU_COMPUTE_MAX_NODES', '3'))
 param amlComputeIdleTime = readEnvironmentVariable('HASTE_AML_COMPUTE_IDLE_TIME', 'PT30M')
-// Empty => no VNet injection (current default/public-compute behavior).
+// Empty => Create mode reuses the environment Batch compute subnet, which is
+// already Storage-service-endpoint-enabled and allowlisted on HASTE storage.
 param amlComputeSubnetId = readEnvironmentVariable('HASTE_AML_COMPUTE_SUBNET_ID', '')
 // Default job-execution identity mode: 'user' (submit as the calling
 // hastefuncqueues principal) or 'managed' (submit as a specific

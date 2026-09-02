@@ -351,12 +351,17 @@ full `AML_*` setting set; neither path performs a live deployment as part of
 this rollout.
 
 - `amlWorkspace.bicep` — `Create` provisions a keyless
-  (system/user-assigned identity only) AML workspace with diagnostic
-  settings; `Existing` emits no resource and only wires application settings
-  that reference an operator-provided workspace.
+  user-assigned-identity AML workspace with deny-by-default dependency
+  firewalls and the workspace identity's required resource-scoped RBAC on
+  its bookkeeping storage, Key Vault, Application Insights, and workspace;
+  `Existing` emits no resource or role assignment and only wires application
+  settings that reference an operator-provided workspace.
 - `amlCompute.bicep` — `Create` provisions scale-to-zero GPU/CPU compute
-  clusters with bounded `maxInstanceCount`, one cluster per workload tier;
-  `Existing` references operator-provided compute target names only.
+  clusters with bounded `maxInstanceCount`, one cluster per workload tier.
+  Created compute is VNet-injected into the configured subnet; when no AML
+  subnet override is supplied, Create mode reuses the environment Batch
+  compute subnet already allowed through HASTE storage. `Existing`
+  references operator-provided compute target names only.
 - `amlEnvironment.bicep` — `Create` registers immutable AML environment
   versions pointing at the same container image tag/digest Batch uses,
   creating a new version only when the bound image reference changes;

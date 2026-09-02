@@ -61,12 +61,12 @@ BATCH_MANAGE_POOLS="${BATCH_MANAGE_POOLS:-true}"
 # default azure_batch reproduces the current Batch-only behavior exactly.
 COMPUTE_BACKEND_DEFAULT="${COMPUTE_BACKEND_DEFAULT:-azure_batch}"
 # AML backend (aml-compute-backend, ADR-0005). Mirrors the AML_* app settings
-# in infra/modules/functions.bicep. Defaults reproduce "no AML settings" for
-# Batch/local-only deployments — AML_MODE=Disabled, identity mode at its safe
-# "user" default, and every resource identifier empty/unset. Set the
-# corresponding GitHub Environment variables to wire an existing,
-# platform-owned AML workspace (amlMode == Existing is the supported
-# enablement path; see docs/configuration.md).
+# in infra/modules/functions.bicep. Defaults emit an inert configuration for
+# Batch/local-only deployments: AML_MODE=Disabled, identity mode at its safe
+# "user" default, and every resource identifier empty. Set the corresponding
+# GitHub Environment values to wire an existing, operator-managed AML
+# workspace (amlMode == Existing is the supported enablement path; see
+# docs/configuration.md).
 AML_MODE="${AML_MODE:-Disabled}"
 AML_SUBSCRIPTION_ID="${AML_SUBSCRIPTION_ID:-}"
 if [[ "$AML_MODE" != "Disabled" && -z "$AML_SUBSCRIPTION_ID" ]]; then

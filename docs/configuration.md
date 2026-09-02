@@ -307,7 +307,7 @@ plus `Disabled`:
 
 | Mode | HASTE creates/mutates AML resources? | HASTE assigns AML RBAC? | Status in this release |
 |---|---|---|---|
-| `Disabled` (default) | no | no | Fully supported — no AML app settings are emitted. |
+| `Disabled` (default) | no | no | Fully supported — `AML_MODE=Disabled` and the valid identity default are emitted, while AML resource identifiers remain empty and inert. |
 | `Existing` | no — pure reference to an operator-provided workspace, compute, environment(s), datastore, and identity | no — granting the identity HASTE runs as access to those resources is the deploying operator's responsibility, outside HASTE's IaC | **The only mode applied by this rollout.** Verified with local Bicep compilation and static template checks; this rollout performs no Azure deployment operation for the AML modules. |
 | `Create` | yes — would provision a keyless AML workspace, scale-to-zero GPU/CPU compute clusters, immutable environment versions, and an identity-based datastore | yes — would add least-privilege RBAC (AML job submit/read/cancel, ACR pull) | Compiles locally and is retained in source for a separately approved future scenario; **not applied by this rollout.** |
 
@@ -341,7 +341,7 @@ compiles locally, not applied by this rollout):
 | `HASTE_AML_CPU_COMPUTE_VM_SIZE` | a general-purpose VM size | VM size for the CPU compute cluster HASTE would create. |
 | `HASTE_AML_CPU_COMPUTE_MAX_NODES` | `3` | Autoscale ceiling for the CPU cluster. |
 | `HASTE_AML_COMPUTE_IDLE_TIME` | `PT30M` | ISO 8601 idle duration before a created compute node scales back to zero. |
-| `HASTE_AML_COMPUTE_SUBNET_ID` | — | VNet subnet resource id for VNet-injected compute HASTE would create. Empty preserves public-compute behavior. |
+| `HASTE_AML_COMPUTE_SUBNET_ID` | environment Batch compute subnet | VNet subnet resource id for compute HASTE would create. An explicit subnet is allowlisted on HASTE blob storage; when omitted, Create mode reuses the existing Batch compute subnet so local/Batch networking is unchanged and AML jobs can reach the datastore. |
 
 At runtime, `hastegeo.core.config.Config.get_aml_config()` reads these as
 plain, unprefixed Function App settings: `AML_MODE`, `AML_RESOURCE_GROUP`,

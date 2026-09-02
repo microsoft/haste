@@ -158,7 +158,7 @@ param amlCpuComputeMaxNodes int = 3
 @description('Idle time (ISO 8601 duration) before an AML compute node scales back to zero. Only applies to clusters HASTE creates (amlMode == Create).')
 param amlComputeIdleTime string = 'PT30M'
 
-@description('VNet subnet resource id for VNet-injected AML compute HASTE creates (amlMode == Create only, both GPU and CPU clusters). Empty preserves public-compute behavior (no VNet injection) — see design.md Open Questions on AML tenant/network placement, which is not yet resolved.')
+@description('VNet subnet resource id for AML compute HASTE creates (amlMode == Create only, both GPU and CPU clusters). Empty reuses the environment Batch compute subnet, which already has the Storage service endpoint and HASTE storage access required by AML jobs.')
 param amlComputeSubnetId string = ''
 
 @description('Immutable AML environment version HASTE registers for the training image when amlMode == Create. Defaults to the image tag so bumping the tag registers a new version rather than mutating one. Unused when amlMode != Create.')
@@ -291,9 +291,9 @@ var createdBatchPoolName = '${resourcePrefix}-haste-${randomSuffix}-pool'
 var wireAcr = !empty(sharedAcrName)
 
 // AML resolution — mirrors the Batch account Create/Existing resolution
-// above. amlMode == 'Disabled' means no AML app settings are emitted at all
-// (guarded by deployAml). `createAmlWorkspace` (amlMode == 'Create') is the
-// ONLY condition that gates AML resource-module deployment below — the
+// above. amlMode == 'Disabled' emits inert app settings with empty resource
+// identifiers. `createAmlWorkspace` (amlMode == 'Create') is the ONLY
+// condition that gates AML resource-module deployment below — the
 // default/first-enabled 'Existing' path resolves purely to the operator-
 // supplied existingAml* parameter values, with zero HASTE-managed resource.
 var deployAml = amlMode != 'Disabled'
@@ -311,6 +311,16 @@ var createdAmlWorkspaceName = '${resourcePrefix}-haste-${randomSuffix}-aml'
 var amlGpuComputeName = '${resourcePrefix}${randomSuffix}gpu'
 var amlCpuComputeName = '${resourcePrefix}${randomSuffix}cpu'
 var amlDatastoreName = 'hastedata'
+var defaultAmlComputeSubnetId = resourceId(
+  subscription().subscriptionId,
+  rgName,
+  'Microsoft.Network/virtualNetworks/subnets',
+  vnetName,
+  batchPoolSubnetName
+)
+var resolvedAmlComputeSubnetId = createAmlWorkspace
+  ? (empty(amlComputeSubnetId) ? defaultAmlComputeSubnetId : amlComputeSubnetId)
+  : ''
 // Deterministic (name, version) so the fully-qualified reference is knowable
 // without depending on the amlEnvironment module's output — same
 // environment names used in the amlEnvironment module calls below. Only
@@ -405,6 +415,7 @@ module storage 'modules/storage.bicep' = {
     functionsSubnetName: functionsSubnetName
     batchSubnetName: batchPoolSubnetName
     sharedBatchSubnetId: sharedBatchSubnetId
+    amlComputeSubnetId: resolvedAmlComputeSubnetId
     tags: tags
   }
   dependsOn: [
@@ -634,6 +645,7 @@ module amlWorkspace 'modules/amlWorkspace.bicep' = if (createAmlWorkspace) {
     appInsightsName: amlAppInsightsName
     logAnalyticsId: monitoring.outputs.logAnalyticsId
     umiResourceId: identity.outputs.resourceId
+    umiPrincipalId: identity.outputs.principalId
     tags: tags
   }
 }
@@ -651,7 +663,7 @@ module amlGpuCompute 'modules/amlCompute.bicep' = if (createAmlWorkspace) {
     maxNodes: amlGpuComputeMaxNodes
     scaleDownIdleTime: amlComputeIdleTime
     umiResourceId: identity.outputs.resourceId
-    subnetId: amlComputeSubnetId
+    subnetId: resolvedAmlComputeSubnetId
   }
   dependsOn: [
     amlWorkspace
@@ -670,7 +682,7 @@ module amlCpuCompute 'modules/amlCompute.bicep' = if (createAmlWorkspace) {
     maxNodes: amlCpuComputeMaxNodes
     scaleDownIdleTime: amlComputeIdleTime
     umiResourceId: identity.outputs.resourceId
-    subnetId: amlComputeSubnetId
+    subnetId: resolvedAmlComputeSubnetId
   }
   dependsOn: [
     amlWorkspace

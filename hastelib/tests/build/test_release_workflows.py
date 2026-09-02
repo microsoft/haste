@@ -237,6 +237,44 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
                     "{} is not emitted by deploy_apps.sh".format(name),
                 )
 
+    def test_deploy_workflow_passes_compute_and_aml_environment_values(self):
+        workflow = (REPO_ROOT / ".github/workflows/deploy-apps.yml").read_text(
+            encoding="utf-8"
+        )
+
+        variable_settings = (
+            "COMPUTE_BACKEND_DEFAULT",
+            "AML_MODE",
+            "AML_IDENTITY_MODE",
+        )
+        for name in variable_settings:
+            with self.subTest(variable=name):
+                self.assertIn(
+                    "{}: ${{{{ vars.{} }}}}".format(name, name),
+                    workflow,
+                )
+
+        secret_settings = (
+            "AML_SUBSCRIPTION_ID",
+            "AML_RESOURCE_GROUP",
+            "AML_WORKSPACE_NAME",
+            "AML_DATASTORE_NAME",
+            "AML_COMPUTE_TRAINING",
+            "AML_COMPUTE_INFERENCE",
+            "AML_COMPUTE_EMBEDDING",
+            "AML_COMPUTE_IMAGERYPREP",
+            "AML_COMPUTE_ARTIFACTS",
+            "AML_ENVIRONMENT_TRAINING",
+            "AML_ENVIRONMENT_IMAGERYPREP",
+            "AML_MANAGED_IDENTITY_ID",
+        )
+        for name in secret_settings:
+            with self.subTest(secret=name):
+                self.assertIn(
+                    "{}: ${{{{ secrets.{} }}}}".format(name, name),
+                    workflow,
+                )
+
     def test_existing_docker_workflow_skips_hastelib_changes(self):
         workflow = (
             REPO_ROOT / ".github/workflows/docker-build-and-push.yml"
@@ -266,6 +304,53 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             "value: amlMode == 'Disabled' ? '' : amlIdentityMode }",
             functions_bicep,
         )
+
+    def test_create_mode_aml_dependencies_are_identity_authorized(self):
+        workspace_bicep = (
+            REPO_ROOT / "infra/modules/amlWorkspace.bicep"
+        ).read_text(encoding="utf-8")
+        main_bicep = (REPO_ROOT / "infra/main.bicep").read_text(
+            encoding="utf-8"
+        )
+        storage_bicep = (REPO_ROOT / "infra/modules/storage.bicep").read_text(
+            encoding="utf-8"
+        )
+
+        required_role_ids = (
+            "b24988ac-6180-42a0-ab88-20f7382dd24c",
+            "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+            "69566ab7-960f-475b-8e7c-b3118f30c6bd",
+            "00482a5a-887f-4fb3-b363-3b7fe8e74483",
+        )
+        for role_id in required_role_ids:
+            with self.subTest(role_id=role_id):
+                self.assertIn(role_id, workspace_bicep)
+
+        required_assignments = (
+            "umiStorageContributor",
+            "umiStorageBlobDataContributor",
+            "umiStorageFileDataContributor",
+            "umiKeyVaultContributor",
+            "umiKeyVaultAdministrator",
+            "umiAppInsightsContributor",
+            "umiWorkspaceContributor",
+        )
+        for assignment in required_assignments:
+            with self.subTest(assignment=assignment):
+                self.assertIn(assignment, workspace_bicep)
+
+        self.assertGreaterEqual(
+            workspace_bicep.count("defaultAction: 'Deny'"), 2
+        )
+        self.assertIn(
+            "umiPrincipalId: identity.outputs.principalId", main_bicep
+        )
+        self.assertIn("subnetId: resolvedAmlComputeSubnetId", main_bicep)
+        self.assertIn(
+            "amlComputeSubnetId: resolvedAmlComputeSubnetId", main_bicep
+        )
+        self.assertIn("param amlComputeSubnetId string = ''", storage_bicep)
+        self.assertIn("id: amlComputeSubnetId", storage_bicep)
 
     def test_rc_deploy_defaults_all_artifacts_to_same_version(self):
         workflow = (REPO_ROOT / ".github/workflows/deploy-apps.yml").read_text(
