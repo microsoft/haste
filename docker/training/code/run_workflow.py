@@ -14,6 +14,19 @@ from datetime import datetime, timezone
 import yaml
 
 
+def _resolve_job_workdir() -> str:
+    """Resolve the canonical task working directory.
+
+    ``HASTE_JOB_WORKDIR`` is the provider-neutral canonical variable. Falls
+    back to the legacy Azure Batch ``AZ_BATCH_TASK_WORKING_DIR`` for adapters
+    and already-published images that only set the legacy name, then to "."
+    if neither is set (matches prior behavior).
+    """
+    return os.environ.get(
+        "HASTE_JOB_WORKDIR", os.environ.get("AZ_BATCH_TASK_WORKING_DIR", ".")
+    )
+
+
 def run_subprocess(command, step_name):
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
@@ -104,7 +117,7 @@ def main():
         # steps were removed when imageryprep started caching them.
         log_progress("Using cached building footprints")
         downloaded_footprints_fn = os.path.join(
-            os.environ.get("AZ_BATCH_TASK_WORKING_DIR", "."),
+            _resolve_job_workdir(),
             "inputs",
             "building_footprints.gpkg",
         )
@@ -203,7 +216,7 @@ def main():
 def log_progress(message):
     """Write progress steps and messages to a file"""
     # Create a directory for logs if it doesn't exist
-    log_dir = os.path.join(os.getenv("AZ_BATCH_TASK_WORKING_DIR", "."), "logs")
+    log_dir = os.path.join(_resolve_job_workdir(), "logs")
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, "workflow_progress.log")
 

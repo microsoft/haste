@@ -49,8 +49,16 @@ EXIT_CODE=$?
 # queue-worker process (different UID) can upload them to blob storage.
 # PyTorch Lightning may write checkpoint files with restrictive permissions
 # before chmod-ing them, creating a brief window where they're unreadable.
-if [ -n "${AZ_BATCH_TASK_WORKING_DIR:-}" ]; then
-    chmod -R o+rX "$AZ_BATCH_TASK_WORKING_DIR" 2>/dev/null || true
+#
+# HASTE_JOB_WORKDIR is the provider-neutral canonical working-directory
+# variable; AZ_BATCH_TASK_WORKING_DIR is the legacy Azure Batch alias, kept
+# for already-published images and not-yet-migrated adapters. This entrypoint
+# runs in a separate process from the `bash -c "$FULL_COMMAND"` subshell
+# above, so it cannot see exports made inside that subshell (e.g. by
+# set_dirs.sh) and must resolve directly from its own environment.
+JOB_WORKDIR="${HASTE_JOB_WORKDIR:-${AZ_BATCH_TASK_WORKING_DIR:-}}"
+if [ -n "$JOB_WORKDIR" ]; then
+    chmod -R o+rX "$JOB_WORKDIR" 2>/dev/null || true
 fi
 
 exit $EXIT_CODE
