@@ -386,12 +386,11 @@ mean the `AML_*` application settings are absent.** The Function App
 settings module (`functions.bicep`) unconditionally emits every `AML_*`
 key (`AML_MODE`, `AML_SUBSCRIPTION_ID`, `AML_WORKSPACE_NAME`,
 `AML_IDENTITY_MODE`, and the rest) on every deployment, regardless of
-`amlMode`; when `Disabled` those values are simply inert/empty (e.g.
-`AML_MODE=Disabled`, `AML_IDENTITY_MODE=''`) rather than the keys being
-omitted from the settings collection. `hastegeo.core.config.Config` treats
-an inert/empty value identically to an unset one — AML settings are only
-required/validated when `AML_MODE != Disabled` or a job explicitly requests
-`azure_ml`.
+`amlMode`; when `Disabled` those values are simply inert (for example,
+`AML_MODE=Disabled`, resource identifiers empty, and
+`AML_IDENTITY_MODE=user`) rather than the keys being omitted from the
+settings collection. AML settings are only required and validated when
+`AML_MODE != Disabled` or a job explicitly requests `azure_ml`.
 
 All three modes are verified with local Bicep compilation and static
 template checks; this rollout performs no Azure deployment operation

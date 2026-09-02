@@ -190,6 +190,15 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             '"COMPUTE_BACKEND_DEFAULT=${COMPUTE_BACKEND_DEFAULT}"',
             deploy_script,
         )
+        self.assertIn(
+            'if [[ "$AML_MODE" != "Disabled" '
+            '&& -z "$AML_SUBSCRIPTION_ID" ]]; then',
+            deploy_script,
+        )
+        self.assertIn(
+            'AML_SUBSCRIPTION_ID="$SUBSCRIPTION_ID"',
+            deploy_script,
+        )
         # RUNNER_TYPE stays as the deprecated, always-on legacy alias.
         self.assertIn('"RUNNER_TYPE=azure_batch"', deploy_script)
 

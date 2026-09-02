@@ -62,13 +62,16 @@ BATCH_MANAGE_POOLS="${BATCH_MANAGE_POOLS:-true}"
 COMPUTE_BACKEND_DEFAULT="${COMPUTE_BACKEND_DEFAULT:-azure_batch}"
 # AML backend (aml-compute-backend, ADR-0005). Mirrors the AML_* app settings
 # in infra/modules/functions.bicep. Defaults reproduce "no AML settings" for
-# Batch/local-only deployments — AML_MODE=Disabled and every other value
-# empty/unset, identical to hastegeo.core.config.Config.get_aml_config()'s
-# own defaults. Set the corresponding GitHub Environment variables to wire an
-# existing, platform-owned AML workspace (amlMode == Existing is the
-# supported enablement path; see docs/configuration.md).
+# Batch/local-only deployments — AML_MODE=Disabled, identity mode at its safe
+# "user" default, and every resource identifier empty/unset. Set the
+# corresponding GitHub Environment variables to wire an existing,
+# platform-owned AML workspace (amlMode == Existing is the supported
+# enablement path; see docs/configuration.md).
 AML_MODE="${AML_MODE:-Disabled}"
 AML_SUBSCRIPTION_ID="${AML_SUBSCRIPTION_ID:-}"
+if [[ "$AML_MODE" != "Disabled" && -z "$AML_SUBSCRIPTION_ID" ]]; then
+    AML_SUBSCRIPTION_ID="$SUBSCRIPTION_ID"
+fi
 AML_RESOURCE_GROUP="${AML_RESOURCE_GROUP:-}"
 AML_WORKSPACE_NAME="${AML_WORKSPACE_NAME:-}"
 AML_DATASTORE_NAME="${AML_DATASTORE_NAME:-}"
