@@ -2445,7 +2445,7 @@ async def PutRunModelQueueMessage(req: func.HttpRequest) -> func.HttpResponse:
         if forbidden_fields:
             return func.HttpResponse(
                 "Inference result fields are server-owned and cannot be "
-                "supplied when launching inference.",
+                "supplied when launching training.",
                 status_code=400,
             )
         output = Model(**req_body)
@@ -2558,6 +2558,15 @@ async def PutRunInferenceQueueMessage(
     )
     try:
         req_body = req.get_json()
+        forbidden_fields = supplied_nonempty_fields(
+            req_body, MODEL_INFERENCE_CLIENT_FORBIDDEN_FIELDS
+        )
+        if forbidden_fields:
+            return func.HttpResponse(
+                "Inference result fields are server-owned and cannot be "
+                "supplied when launching inference.",
+                status_code=400,
+            )
         output = Model(**req_body)
         if output.creationDate is None:
             output.creationDate = MetadataUtils.get_timestamp()

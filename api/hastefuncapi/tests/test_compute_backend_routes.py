@@ -194,6 +194,19 @@ class TrainingRouteTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.pre.assert_not_called()
 
+    async def test_client_inference_results_are_rejected_for_training(self):
+        response = await function_app.PutRunModelQueueMessage(
+            make_request(
+                self._body(gpkgUrl="https://storage.example/forged.gpkg")
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(
+            "launching training", response.get_body().decode("utf-8")
+        )
+        self.pre.assert_not_called()
+
     async def test_azure_ml_rejected_when_disabled(self):
         with patch.dict(os.environ, {"AML_MODE": "Disabled"}, clear=False):
             response = await function_app.PutRunModelQueueMessage(
@@ -341,6 +354,19 @@ class InferenceRouteTestCase(unittest.IsolatedAsyncioTestCase):
             make_request(self._body())
         )
         self.assertEqual(response.status_code, 200)
+
+    async def test_client_inference_results_are_rejected_for_inference(self):
+        response = await function_app.PutRunInferenceQueueMessage(
+            make_request(
+                self._body(gpkgUrl="https://storage.example/forged.gpkg")
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(
+            "launching inference", response.get_body().decode("utf-8")
+        )
+        self.pre.assert_not_called()
 
     async def test_azure_ml_rejected_when_disabled(self):
         with patch.dict(os.environ, {"AML_MODE": "Disabled"}, clear=False):
