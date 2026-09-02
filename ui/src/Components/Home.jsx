@@ -1,6 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { Button, Text, Tooltip } from "@fluentui/react-components";
+import {
+  Button,
+  MessageBar,
+  MessageBarBody,
+  Text,
+  Tooltip,
+} from "@fluentui/react-components";
 import OpenProject from "./Home/OpenProject";
 import OngoingJobs from "./Home/OngoingJobs";
 import { useState, useEffect, useContext } from "react";
@@ -13,6 +19,7 @@ import { FluentIcon } from "../util/icons";
 import PropTypes from "prop-types";
 import { formatProjectDate } from "./ProjectManagement/projectStatus";
 import CreateEditProjectModal from "./CreateEditProjectModal";
+import { loadHomeData } from "./Home/loadHomeData";
 
 const StatCard = ({ icon, value, label, onClick }) => (
   <div
@@ -84,14 +91,15 @@ EmptyWidgetPlaceholder.propTypes = {
   message: PropTypes.string.isRequired,
 };
 
-
 const Home = () => {
   const navigate = useNavigate();
-  const { setIsLoading, initCurrentTour, setAppHeaderRightButtons, appParams, setAppParams } =
+  const { setIsLoading, initCurrentTour, setAppHeaderRightButtons, appParams } =
     useContext(AppContext);
   const [dashboardData, setDashboardData] = useState(null);
   const [catalog, setCatalog] = useState([]);
   const [modalComponent, setModalComponent] = useState(null);
+  const [nowMs] = useState(Date.now);
+  const [loadError, setLoadError] = useState(false);
 
   const openCreateProjectModal = () => {
     setModalComponent(
@@ -99,26 +107,30 @@ const Home = () => {
     );
   };
 
-  useEffect(() => {
-    const fetchProjects = async () => {
-      setIsLoading(true);
-      try {
-        const response = await apiGet("GetDashboardData");
-        setDashboardData(response);
-        
-      } catch (error) {
-        console.error("Error fetching projects:", error);
+  const fetchProjects = async () => {
+    setIsLoading(true);
+    try {
+      const result = await loadHomeData(apiGet);
+      if (result.dashboardError) {
+        console.error("Error fetching projects:", result.dashboardError);
+        setLoadError(true);
+      } else {
+        setDashboardData(result.dashboardData);
+        setLoadError(false);
       }
-      try {
-        const catalogResponse = await apiGet("GetModelCatalog");
-        setCatalog(catalogResponse?.modelCatalog || []);
-      } catch (error) {
-        // Catalog is supplementary; ignore if unavailable.
-        console.warn("Model catalog unavailable for dashboard:", error);
+      if (result.catalogError) {
+        console.warn(
+          "Model catalog unavailable for dashboard:",
+          result.catalogError
+        );
       }
+      setCatalog(result.catalog);
+    } finally {
       setIsLoading(false);
-    };
+    }
+  };
 
+  useEffect(() => {
     initCurrentTour("dashboardGuide");
     setAppHeaderRightButtons([
       {
@@ -148,7 +160,18 @@ const Home = () => {
   }, []);
 
   if (!dashboardData) {
-    return <> </>;
+    return loadError ? (
+      <div className="p-4 w-100">
+        <MessageBar intent="error">
+          <MessageBarBody>
+            Dashboard data could not be loaded.
+          </MessageBarBody>
+        </MessageBar>
+        <Button className="mt-3" appearance="primary" onClick={fetchProjects}>
+          Retry
+        </Button>
+      </div>
+    ) : null;
   }
 
   const projects = dashboardData.projects || [];
@@ -172,7 +195,6 @@ const Home = () => {
     .filter(Boolean)
     .sort();
 
-  const nowMs = Date.now();
   const newLast30 = projects.filter((project) => {
     const created = Date.parse(project.creationDate);
     return !Number.isNaN(created) && nowMs - created <= 30 * 86400000;

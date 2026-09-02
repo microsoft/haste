@@ -289,6 +289,14 @@ body {
   overflow: hidden;
 }
 
+.route-loading {
+  display: flex;
+  min-height: 240px;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
 .app-sidebar-backdrop {
   display: none;
 }

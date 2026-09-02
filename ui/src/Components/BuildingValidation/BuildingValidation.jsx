@@ -13,6 +13,7 @@ import {
   DEFAULT_VALIDATION_SAMPLE,
   resolveSampleSize,
 } from "./validationConfig.js";
+import { loadValidationMapData } from "./loadValidationMapData.js";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
 import { shouldIgnoreShortcut } from "../keyboardShortcuts.js";
 import "../../assets/css/labels.css";
@@ -53,13 +54,32 @@ const useStyles = makeStyles({
 // Filter values used by the right-panel dropdown and the map dim logic.
 // 'all' means no filter; 'unlabeled' means buildings with no label set yet;
 // the three class names match the values stored on labels[id].label.
-export const FILTER_VALUES = ["all", "unlabeled", "Damaged", "NotDamaged", "Unknown"];
+const FILTER_VALUES = ["all", "unlabeled", "Damaged", "NotDamaged", "Unknown"];
 
 function buildingMatchesFilter(feature, labels, filter) {
   if (filter === "all") return true;
   const lbl = labels[feature.properties?.id]?.label;
   if (filter === "unlabeled") return !lbl;
   return lbl === filter;
+}
+
+function extractCentroid(feature) {
+  try {
+    const geom = feature.geometry;
+    if (!geom) return null;
+    const coords =
+      geom.type === "Polygon"
+        ? geom.coordinates[0]
+        : geom.type === "MultiPolygon"
+        ? geom.coordinates[0][0]
+        : null;
+    if (!coords || coords.length === 0) return null;
+    const lng = coords.reduce((sum, coord) => sum + coord[0], 0) / coords.length;
+    const lat = coords.reduce((sum, coord) => sum + coord[1], 0) / coords.length;
+    return [lng, lat];
+  } catch {
+    return null;
+  }
 }
 
 const BuildingValidation = () => {
@@ -111,6 +131,8 @@ const BuildingValidation = () => {
   // document on load and changed through the settings modal.
   const [sampleSize, setSampleSize] = useState(DEFAULT_VALIDATION_SAMPLE);
   const [configOpen, setConfigOpen] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [initAttempt, setInitAttempt] = useState(0);
 
   // Post-event is only genuinely showable once that layer exists. Without
   // this, the toggle defaults to "post" on a layer that has no post-event
@@ -167,8 +189,13 @@ const BuildingValidation = () => {
       if (!window.atlas) return;
       setIsLoading(true, "Loading Building Validation");
       try {
+        // eslint-disable-next-line react-hooks/immutability
         await createMap();
         setIsMapReady(true);
+        setLoadError(false);
+      } catch (error) {
+        console.error("Failed to initialize building validation:", error);
+        setLoadError(true);
       } finally {
         setIsLoading(false);
       }
@@ -184,7 +211,7 @@ const BuildingValidation = () => {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [initAttempt]);
 
   async function fetchFootprints(size) {
     return apiGet(
@@ -221,28 +248,18 @@ const BuildingValidation = () => {
   }
 
   async function createMap() {
-    // Load imagery tile URLs (reuse labeling tool endpoint); may not exist if no labels yet
-    let layerData = null;
-    try {
-      layerData = await apiGet(
-        `GetLayerLabelingToolData?projectId=${projectId}&imageLayerId=${imageLayerId}`
-      );
-    } catch {
-      // No label project yet — imagery won't be shown, validation still works
-    }
-
-    // Load any existing validation labels. This comes first because it also
-    // carries the layer's configured sample size, which decides how many
-    // footprints to ask for below.
-    const validationData = await apiGet(
-      `GetBuildingValidation?projectId=${projectId}&imageLayerId=${imageLayerId}`
-    );
-    const configuredSample = resolveSampleSize(validationData);
+    const {
+      layerData,
+      validationData,
+      footprintsGeoJSON,
+      sampleSize: configuredSample,
+    } = await loadValidationMapData({
+      get: apiGet,
+      projectId,
+      imageLayerId,
+      resolveSampleSize,
+    });
     setSampleSize(configuredSample);
-
-    // Load building footprints as GeoJSON — a deterministic sample of the
-    // configured size.
-    const footprintsGeoJSON = await fetchFootprints(configuredSample);
 
     const existingLabels = validationData?.labels || {};
     setLabels(existingLabels);
@@ -414,7 +431,6 @@ const BuildingValidation = () => {
         mapRef.current.setCamera({ center: coords, zoom: 18, duration: 500 });
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [labels, selectedIndex, features, filter, isDatasourceReady]);
 
   // When the filter changes such that the current selection no longer
@@ -423,29 +439,10 @@ const BuildingValidation = () => {
   useEffect(() => {
     if (filteredIndices.length === 0) return;
     if (!filteredIndices.includes(selectedIndex)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedIndex(filteredIndices[0]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter]);
-
-  function extractCentroid(feature) {
-    try {
-      const geom = feature.geometry;
-      if (!geom) return null;
-      const coords =
-        geom.type === "Polygon"
-          ? geom.coordinates[0]
-          : geom.type === "MultiPolygon"
-          ? geom.coordinates[0][0]
-          : null;
-      if (!coords || coords.length === 0) return null;
-      const lng = coords.reduce((s, c) => s + c[0], 0) / coords.length;
-      const lat = coords.reduce((s, c) => s + c[1], 0) / coords.length;
-      return [lng, lat];
-    } catch {
-      return null;
-    }
-  }
+  }, [filteredIndices, selectedIndex]);
 
   // Web-Mercator slippy-tile math. Returns {x, y, z} for the tile that
   // contains the given lng/lat at zoom z. Matches the {z}/{x}/{y} URL
@@ -649,7 +646,7 @@ const BuildingValidation = () => {
       setDialog("Saved", "Validation labels saved successfully.", [
         { type: "primary", key: "close", text: "Close", onClick: () => setDialog() },
       ]);
-    } catch (e) {
+    } catch {
       setDialog("Error", "Failed to save validation labels.", [
         { type: "primary", key: "close", text: "Close", onClick: () => setDialog() },
       ]);
@@ -685,7 +682,10 @@ const BuildingValidation = () => {
   const labeledCount = Object.keys(labels).length;
 
   return (
-    <div className={`${styles.root} building-validation-page`}>
+    <div
+      className={`${styles.root} building-validation-page`}
+      data-map-ready={isDatasourceReady ? "true" : "false"}
+    >
       {/* Back button — shares the Interactive Labeler navigation surface. */}
       <div className="labeling-tool-surface labeling-navigation-controls">
         <Button
@@ -721,6 +721,22 @@ const BuildingValidation = () => {
 
       {/* Map container */}
       <div ref={mapContainerRef} id="validationMap" style={{ flexGrow: 1 }} />
+
+      {loadError && (
+        <div className={styles.emptyState} role="alert">
+          <p>Building validation could not be loaded.</p>
+          <Button
+            appearance="primary"
+            onClick={() => {
+              setLoadError(false);
+              setIsMapReady(false);
+              setInitAttempt((value) => value + 1);
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
 
       {/* Right panel */}
       {isMapReady && features.length > 0 && (

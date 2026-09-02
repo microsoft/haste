@@ -7,37 +7,32 @@ import Loading from "./OtherComponents/Loading";
 import PropType from "prop-types";
 
 import { AppContext } from "../AppContext";
-import { loadAzureMaps } from "../util/azureMapsLoader";
-
-const loadMapRoute = (importRoute) => () =>
-  loadAzureMaps().then(() => importRoute());
+import { createMapRoute, RouteLoading } from "./MapRoute";
 
 const AdminLabelingTool = lazy(() => import("./AdminLabelingTool"));
 const AdminSourceTypes = lazy(() => import("./AdminSourceTypes"));
 const AdminUsers = lazy(() => import("./AdminUsers"));
-const BuildingValidation = lazy(
-  loadMapRoute(() => import("./BuildingValidation/BuildingValidation"))
+const BuildingValidation = createMapRoute(
+  () => import("./BuildingValidation/BuildingValidation")
 );
 const CreateEditImageLayerForm = lazy(
-  loadMapRoute(() => import("./CreateEditImageLayerForm"))
+  () => import("./CreateEditImageLayerForm")
 );
 const Error404 = lazy(() => import("./Error404"));
 const HelpDocs = lazy(() => import("./HelpDocs"));
 const Home = lazy(() => import("./Home"));
 const ImageLayer = lazy(() => import("./ImageLayer"));
-const InteractiveLabeler = lazy(
-  loadMapRoute(() => import("./InteractiveLabeler/InteractiveLabeler"))
+const InteractiveLabeler = createMapRoute(
+  () => import("./InteractiveLabeler/InteractiveLabeler")
 );
-const LabelingTool = lazy(
-  loadMapRoute(() => import("./LabelingTool/LabelingTool"))
+const LabelingTool = createMapRoute(
+  () => import("./LabelingTool/LabelingTool")
 );
 const ModelCatalog = lazy(() => import("./ModelCatalog"));
 const Project = lazy(() => import("./Project"));
 const Projects = lazy(() => import("./Projects"));
 const PublishedDatasets = lazy(() => import("./PublishedDatasets"));
-const Visualizer = lazy(
-  loadMapRoute(() => import("./Visualizer/Visualizer"))
-);
+const Visualizer = createMapRoute(() => import("./Visualizer/Visualizer"));
 
 const AppBody = ({ setModalComponent }) => {
   const { appParams } = useContext(AppContext);
@@ -47,7 +42,7 @@ const AppBody = ({ setModalComponent }) => {
   return (
     <div className="app-body-shell d-flex flex-grow-1 justify-content-center">
       {appParams.isLoading && <Loading />}
-      {routesReady && <Suspense fallback={<Loading />}><Routes>
+      {routesReady && <Suspense fallback={<RouteLoading />}><Routes>
         {appParams.userRoles !== null && appParams.publishingEnabled && (
           <Route path="/published-datasets" element={<PublishedDatasets />} />
         )}

@@ -22,10 +22,6 @@ import { splitShape } from "./SplitShape.jsx";
 import "../../assets/css/drawingToolbar.css";
 
 const LabelingTool = ({ setModalComponent }) => {
-  LabelingTool.propTypes = {
-    setModalComponent: PropType.func.isRequired,
-  };
-
   const { projectId, imageLayerId } = useParams();
 
   const {
@@ -56,6 +52,7 @@ const LabelingTool = ({ setModalComponent }) => {
     const initializeMap = async () => {
       if (window.atlas) {
         setIsLoading(true);
+        // eslint-disable-next-line react-hooks/immutability
         await createMap();
         setIsMapReady(true);
         setIsLoading(false);
@@ -81,7 +78,7 @@ const LabelingTool = ({ setModalComponent }) => {
     updateDrawingLayerStyles(drawingManager, primaryClassesRef.current);
 
     // Handler: drawingchanged
-    const handleDrawingChanged = (e) => {
+    const handleDrawingChanged = () => {
       const mode = drawingManager.getOptions().mode;
       if (mode === "draw-polygon") {
         createShape(drawingManager, selectedPrimaryClass, setDrawingCount);
@@ -90,7 +87,7 @@ const LabelingTool = ({ setModalComponent }) => {
     };
 
     // Handler: drawingmodechanged
-    const handleDrawingModeChanged = (e) => {
+    const handleDrawingModeChanged = () => {
       setTimeout(() => {
         const mode = drawingManager.getOptions().mode;
         if (mode !== "edit-geometry") {
@@ -111,7 +108,7 @@ const LabelingTool = ({ setModalComponent }) => {
     };
 
     // Handler: drawingerased
-    const handleDrawingErased = (e) => {
+    const handleDrawingErased = () => {
       setDrawingCount(drawingManager.source.shapes.length);
       setHasUnsavedChanges(true);
       setTimeout(() => {
@@ -151,6 +148,7 @@ const LabelingTool = ({ setModalComponent }) => {
       mapRef.current.events.remove("drawingcomplete", drawingManager, handleDrawingComplete);
     };
   }, [
+    appParams.guidedTourProperties,
     mapRef,
     drawingManager,
     selectedPrimaryClass
@@ -281,6 +279,9 @@ const LabelingTool = ({ setModalComponent }) => {
         ref={mapRef}
         id="map"
         className="labeling-tool-page d-flex flex-grow-1 p-0 m-0"
+        data-map-ready={
+          isMapReady && drawingManager !== null ? "true" : "false"
+        }
       >
         {isMapReady && drawingManager !== null ? (
 
@@ -328,6 +329,10 @@ const LabelingTool = ({ setModalComponent }) => {
       </div>
     </>
   );
+};
+
+LabelingTool.propTypes = {
+  setModalComponent: PropType.func.isRequired,
 };
 
 export default LabelingTool;

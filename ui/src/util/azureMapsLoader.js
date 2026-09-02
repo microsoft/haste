@@ -73,15 +73,24 @@ export function loadAzureMaps(documentRef = document) {
   loadPromise = Promise.all([
     loadStylesheet(documentRef, MAP_CONTROL_CSS),
     loadStylesheet(documentRef, DRAWING_CSS),
+    loadScript(documentRef, MAP_CONTROL_JS),
   ])
-    .then(() => loadScript(documentRef, MAP_CONTROL_JS))
-    .then(() => loadScript(documentRef, DRAWING_JS))
-    .then(() => loadScript(documentRef, SWIPE_JS))
+    .then(() =>
+      Promise.all([
+        loadScript(documentRef, DRAWING_JS),
+        loadScript(documentRef, SWIPE_JS),
+      ])
+    )
     .catch((error) => {
       loadPromise = null;
       throw error;
     });
   return loadPromise;
+}
+
+export function loadMapRoute(importRoute, loadMaps = loadAzureMaps) {
+  return () =>
+    Promise.all([loadMaps(), importRoute()]).then(([, route]) => route);
 }
 
 export function resetAzureMapsLoaderForTests() {
