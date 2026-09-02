@@ -7,3 +7,6 @@
 5ca8ae6adb13dc7e8ef6bd3dfe5b4f8528847a22:docker/README.md:generic-api-key:259
 5ca8ae6adb13dc7e8ef6bd3dfe5b4f8528847a22:docker/README.md:generic-api-key:367
 5ca8ae6adb13dc7e8ef6bd3dfe5b4f8528847a22:hastelib/pyproject.toml:generic-api-key:94
+# Synthetic credential-shape fixtures used by TestLooksLikeCredential.
+f8659a041950b22b7b8b0735a97910a423feea7e:hastelib/tests/core/models/test_compute.py:generic-api-key:217
+f8659a041950b22b7b8b0735a97910a423feea7e:hastelib/tests/core/models/test_compute.py:jwt:232
