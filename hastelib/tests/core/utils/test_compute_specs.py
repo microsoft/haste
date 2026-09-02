@@ -284,7 +284,20 @@ class TestBackendRequestValidation(unittest.TestCase):
         self.assertIn("azure_ml", message)
 
     def test_azure_ml_accepted_when_enabled(self):
-        with patch.dict("os.environ", {"AML_MODE": "Existing"}, clear=False):
+        with patch.dict(
+            "os.environ",
+            {
+                "AML_MODE": "Existing",
+                "AML_SUBSCRIPTION_ID": "subscription",
+                "AML_RESOURCE_GROUP": "resource-group",
+                "AML_WORKSPACE_NAME": "workspace",
+                "AML_DATASTORE_NAME": "datastore",
+                "AML_COMPUTE_TRAINING": "gpu-cluster",
+                "AML_ENVIRONMENT_TRAINING": "azureml:training:1",
+                "AML_IDENTITY_MODE": "user",
+            },
+            clear=True,
+        ):
             self.assertIsNone(
                 validate_backend_request(
                     ComputeBackend.AZURE_ML,
@@ -421,6 +434,87 @@ class TestBackendRejectionMessage(unittest.TestCase):
             )
         self.assertIsNotNone(message)
         self.assertIn("my-gpu-cluster", message)
+
+    def test_explicit_aml_requires_complete_workload_configuration(self):
+        configured = {
+            "AML_MODE": "Existing",
+            "AML_SUBSCRIPTION_ID": "subscription",
+            "AML_RESOURCE_GROUP": "resource-group",
+            "AML_WORKSPACE_NAME": "workspace",
+            "AML_DATASTORE_NAME": "datastore",
+            "AML_COMPUTE_TRAINING": "gpu-cluster",
+            "AML_ENVIRONMENT_TRAINING": "azureml:training:1",
+            "AML_IDENTITY_MODE": "user",
+        }
+        required = (
+            "AML_MODE",
+            "AML_SUBSCRIPTION_ID",
+            "AML_RESOURCE_GROUP",
+            "AML_WORKSPACE_NAME",
+            "AML_DATASTORE_NAME",
+            "AML_COMPUTE_TRAINING",
+            "AML_ENVIRONMENT_TRAINING",
+        )
+
+        for missing in required:
+            with self.subTest(missing=missing):
+                incomplete = dict(configured)
+                incomplete.pop(missing)
+                with patch.dict("os.environ", incomplete, clear=True):
+                    message = backend_rejection_message(
+                        ComputeBackend.AZURE_ML,
+                        ComputeWorkload.TRAINING,
+                        config=Config(),
+                    )
+                self.assertIsNotNone(message)
+                self.assertIn(missing, message)
+
+    def test_explicit_aml_requires_managed_identity_id(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "AML_MODE": "Existing",
+                "AML_SUBSCRIPTION_ID": "subscription",
+                "AML_RESOURCE_GROUP": "resource-group",
+                "AML_WORKSPACE_NAME": "workspace",
+                "AML_DATASTORE_NAME": "datastore",
+                "AML_COMPUTE_TRAINING": "gpu-cluster",
+                "AML_ENVIRONMENT_TRAINING": "azureml:training:1",
+                "AML_IDENTITY_MODE": "managed",
+            },
+            clear=True,
+        ):
+            message = backend_rejection_message(
+                ComputeBackend.AZURE_ML,
+                ComputeWorkload.TRAINING,
+                config=Config(),
+            )
+
+        self.assertIsNotNone(message)
+        self.assertIn("AML_MANAGED_IDENTITY_ID", message)
+
+    def test_explicit_aml_accepts_complete_workload_configuration(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "AML_MODE": "Existing",
+                "AML_SUBSCRIPTION_ID": "subscription",
+                "AML_RESOURCE_GROUP": "resource-group",
+                "AML_WORKSPACE_NAME": "workspace",
+                "AML_DATASTORE_NAME": "datastore",
+                "AML_COMPUTE_TRAINING": "gpu-cluster",
+                "AML_ENVIRONMENT_TRAINING": "azureml:training:1",
+                "AML_IDENTITY_MODE": "user",
+            },
+            clear=True,
+        ):
+            message = backend_rejection_message(
+                ComputeBackend.AZURE_ML,
+                ComputeWorkload.TRAINING,
+                config=Config(),
+            )
+
+        self.assertIsNone(message)
 
 
 class TestRecordHelpers(unittest.TestCase):

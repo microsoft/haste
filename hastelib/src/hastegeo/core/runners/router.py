@@ -194,6 +194,33 @@ class ComputeRouter:
                 f"auto candidate list contains duplicate backends: {names}"
             )
 
+    @staticmethod
+    def validate_weights(
+        candidates: Sequence[ComputeBackend],
+        weights: Optional[Mapping[ComputeBackend, int]],
+    ) -> None:
+        """Reject invalid programmatic weights before adapter access."""
+        if weights is None:
+            return
+        unknown = [backend for backend in weights if backend not in candidates]
+        if unknown:
+            names = ", ".join(
+                getattr(backend, "value", str(backend)) for backend in unknown
+            )
+            raise BackendConfigurationError(
+                f"auto weights include non-candidate backends: {names}"
+            )
+        for backend, weight in weights.items():
+            if (
+                isinstance(weight, bool)
+                or not isinstance(weight, int)
+                or weight <= 0
+            ):
+                name = getattr(backend, "value", str(backend))
+                raise BackendConfigurationError(
+                    f"auto weight for {name!r} must be a positive integer"
+                )
+
     def resolve(
         self,
         *,
@@ -216,6 +243,7 @@ class ComputeRouter:
         ``_INELIGIBLE_STATES``).
         """
         self.validate_candidates(candidates, workload)
+        self.validate_weights(candidates, weights)
 
         eligible: List[ComputeBackend] = []
         for backend in candidates:

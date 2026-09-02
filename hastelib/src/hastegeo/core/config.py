@@ -16,7 +16,11 @@ from typing import Dict, NamedTuple, Optional
 # here or anywhere in this module — see ``hastegeo.core.runners.azure_ml``
 # for the lazy-import boundary that keeps a Batch/local-only deployment
 # free of it.
-from hastegeo.core.models.compute import ComputeBackend, ComputeWorkload
+from hastegeo.core.models.compute import (
+    ComputeBackend,
+    ComputeWorkload,
+    validate_environment_reference,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -1106,6 +1110,79 @@ class Config:
                 "AML_SUBMISSION_TIMEOUT_SECONDS", 120, 1, 3600
             ),
         }
+
+    @staticmethod
+    def validate_aml_config(
+        aml_config: dict,
+        *,
+        workload: Optional[ComputeWorkload] = None,
+        environment_reference: Optional[str] = None,
+    ) -> None:
+        """Validate deterministic AML settings without importing the SDK.
+
+        ``workload`` is supplied at API boundaries that must verify a
+        complete target and environment before queueing. The adapter omits
+        it for its base validation, then applies target overrides and
+        explicit ``container.environmentReference`` values from the spec.
+        """
+        mode = aml_config["mode"]
+        if mode not in AML_MODES:
+            raise ValueError(f"AML_MODE={mode!r} must be one of {AML_MODES}")
+        if mode == "Disabled":
+            raise ValueError(
+                "Azure Machine Learning is disabled (AML_MODE=Disabled)"
+            )
+
+        missing = [
+            env_name
+            for key, env_name in (
+                ("subscription_id", "AML_SUBSCRIPTION_ID"),
+                ("resource_group", "AML_RESOURCE_GROUP"),
+                ("workspace_name", "AML_WORKSPACE_NAME"),
+                ("datastore_name", "AML_DATASTORE_NAME"),
+            )
+            if not aml_config.get(key)
+        ]
+        identity_mode = aml_config["identity_mode"]
+        if identity_mode not in AML_IDENTITY_MODES:
+            raise ValueError(
+                f"AML_IDENTITY_MODE={identity_mode!r} must be one of "
+                f"{AML_IDENTITY_MODES}"
+            )
+        if identity_mode == "managed" and not aml_config.get(
+            "managed_identity_id"
+        ):
+            missing.append("AML_MANAGED_IDENTITY_ID")
+
+        experiment_prefix = (aml_config.get("experiment_prefix") or "").strip()
+        if not experiment_prefix or not re.fullmatch(
+            r"[A-Za-z0-9_-]+", experiment_prefix
+        ):
+            raise ValueError(
+                "AML_EXPERIMENT_PREFIX must contain only letters, digits, "
+                "'_' or '-'"
+            )
+
+        if workload is not None:
+            if not aml_config["compute_by_workload"].get(workload):
+                missing.append(
+                    f"AML_COMPUTE_{_COMPUTE_WORKLOAD_ENV_SUFFIX[workload]}"
+                )
+            resolved_environment = environment_reference or aml_config[
+                "environment_by_workload"
+            ].get(workload)
+            if not resolved_environment:
+                missing.append(
+                    Config.aml_environment_env_var_name_for_workload(workload)
+                )
+            else:
+                validate_environment_reference(resolved_environment)
+
+        if missing:
+            raise ValueError(
+                "Azure Machine Learning is not configured. Missing "
+                "application settings: " + ", ".join(missing)
+            )
 
     @staticmethod
     def get_status_types():

@@ -202,6 +202,55 @@ class TestComputeRouterResolve(unittest.TestCase):
                 },
             )
 
+    def test_non_positive_programmatic_weight_is_rejected(self):
+        capacity = {
+            ComputeBackend.AZURE_BATCH: _snapshot(ComputeBackend.AZURE_BATCH)
+        }
+        for weight in (0, -1):
+            with self.subTest(weight=weight):
+                with self.assertRaisesRegex(
+                    BackendConfigurationError, "positive integer"
+                ):
+                    self.router.resolve(
+                        execution_id="exec-1",
+                        workload=ComputeWorkload.TRAINING,
+                        candidates=[ComputeBackend.AZURE_BATCH],
+                        capacity_by_backend=capacity,
+                        weights={ComputeBackend.AZURE_BATCH: weight},
+                    )
+
+    def test_non_integer_programmatic_weight_is_rejected(self):
+        with self.assertRaisesRegex(
+            BackendConfigurationError, "positive integer"
+        ):
+            self.router.resolve(
+                execution_id="exec-1",
+                workload=ComputeWorkload.TRAINING,
+                candidates=[ComputeBackend.AZURE_BATCH],
+                capacity_by_backend={
+                    ComputeBackend.AZURE_BATCH: _snapshot(
+                        ComputeBackend.AZURE_BATCH
+                    )
+                },
+                weights={ComputeBackend.AZURE_BATCH: True},
+            )
+
+    def test_weight_for_non_candidate_backend_is_rejected(self):
+        with self.assertRaisesRegex(
+            BackendConfigurationError, "non-candidate backends: azure_ml"
+        ):
+            self.router.resolve(
+                execution_id="exec-1",
+                workload=ComputeWorkload.TRAINING,
+                candidates=[ComputeBackend.AZURE_BATCH],
+                capacity_by_backend={
+                    ComputeBackend.AZURE_BATCH: _snapshot(
+                        ComputeBackend.AZURE_BATCH
+                    )
+                },
+                weights={ComputeBackend.AZURE_ML: 1},
+            )
+
     def test_configured_weight_can_change_selection(self):
         """A heavily weighted candidate should win far more often than an
         even split would predict, without breaking determinism per id."""

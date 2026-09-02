@@ -325,10 +325,14 @@ def validate_backend_request(
         return None
     config = config or Config()
     if requested == ComputeBackend.AZURE_ML:
-        if config.get_aml_config()["mode"] == "Disabled":
+        try:
+            Config.validate_aml_config(
+                config.get_aml_config(), workload=workload
+            )
+        except ValueError as exc:
             return (
-                "computeBackend 'azure_ml' is not enabled in this "
-                "deployment."
+                "computeBackend 'azure_ml' is not configured for this "
+                f"workload: {exc}"
             )
     if requested == ComputeBackend.AUTO:
         # Imported lazily: this is the only place the API layer needs the

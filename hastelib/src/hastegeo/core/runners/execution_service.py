@@ -131,6 +131,7 @@ class ComputeExecutionService:
         weights: Mapping[ComputeBackend, int],
     ) -> ComputeJobHandle:
         self._router.validate_candidates(candidates, spec.workload)
+        self._router.validate_weights(candidates, weights)
 
         remaining = list(candidates)
         last_error: Optional[Exception] = None
@@ -152,7 +153,11 @@ class ComputeExecutionService:
                     workload=spec.workload,
                     candidates=remaining,
                     capacity_by_backend=snapshots,
-                    weights=weights,
+                    weights={
+                        backend: weight
+                        for backend, weight in weights.items()
+                        if backend in remaining
+                    },
                 )
             except CapacityUnavailableError as exc:
                 # The router itself found every remaining candidate
