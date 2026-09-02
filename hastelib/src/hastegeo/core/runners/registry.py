@@ -57,6 +57,8 @@ class RunnerRegistry:
         self.config = config or Config()
         self._factories: Dict[Tuple[ComputeBackend, str], RunnerFactory] = {}
         self._instances: Dict[Tuple[ComputeBackend, str], ComputeRunner] = {}
+        self._factory_versions: Dict[Tuple[ComputeBackend, str], int] = {}
+        self._generation = 0
         self._lock = threading.Lock()
         self._logger = Logger.get_logger(__name__)
 
@@ -79,6 +81,9 @@ class RunnerRegistry:
         key = (backend, profile)
         with self._lock:
             self._factories[key] = factory
+            self._factory_versions[key] = (
+                self._factory_versions.get(key, 0) + 1
+            )
             self._instances.pop(key, None)
 
     def get(
@@ -106,13 +111,18 @@ class RunnerRegistry:
                 "requesting an adapter"
             )
         key = (backend, profile)
-        with self._lock:
-            cached = self._instances.get(key)
-            if cached is not None:
-                return cached
-            factory = self._factories.get(key) or self._default_factory(
-                backend
-            )
+        while True:
+            with self._lock:
+                cached = self._instances.get(key)
+                if cached is not None:
+                    return cached
+                factory = self._factories.get(key) or self._default_factory(
+                    backend
+                )
+                version = (
+                    self._generation,
+                    self._factory_versions.get(key, 0),
+                )
             # A factory (explicitly registered, or the default lazy
             # import/construct closure below) can fail for reasons
             # outside our control — e.g. LocalRunner's __init__ eagerly
@@ -124,19 +134,44 @@ class RunnerRegistry:
             # `from exc` otherwise.
             try:
                 instance = factory()
-            except BackendConfigurationError:
-                raise
             except Exception as exc:
+                with self._lock:
+                    current_version = (
+                        self._generation,
+                        self._factory_versions.get(key, 0),
+                    )
+                if current_version != version:
+                    continue
+                if isinstance(exc, BackendConfigurationError):
+                    raise
                 raise BackendConfigurationError(
                     f"backend {backend.value!r} adapter could not be "
                     f"constructed: {exc}"
                 ) from exc
             if not isinstance(instance, ComputeRunner):
+                with self._lock:
+                    current_version = (
+                        self._generation,
+                        self._factory_versions.get(key, 0),
+                    )
+                if current_version != version:
+                    continue
                 raise BackendConfigurationError(
                     f"adapter for backend {backend.value!r} does not "
                     "implement the ComputeRunner contract"
                 )
-            self._instances[key] = instance
+
+            with self._lock:
+                cached = self._instances.get(key)
+                if cached is not None:
+                    return cached
+                current_version = (
+                    self._generation,
+                    self._factory_versions.get(key, 0),
+                )
+                if current_version != version:
+                    continue
+                self._instances[key] = instance
             self._logger.info(
                 "RunnerRegistry: constructed adapter backend=%s profile=%s "
                 "class=%s",
@@ -183,5 +218,7 @@ class RunnerRegistry:
         fake adapters.
         """
         with self._lock:
+            self._generation += 1
             self._factories.clear()
+            self._factory_versions.clear()
             self._instances.clear()

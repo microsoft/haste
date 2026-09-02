@@ -5,6 +5,7 @@
 profile, lazy default-import fallback, no faked adapter migrations).
 """
 
+import threading
 import unittest
 
 from hastegeo.core.models.compute import (
@@ -217,6 +218,110 @@ class TestRunnerRegistryRegisterAndGet(unittest.TestCase):
         self.registry.register(ComputeBackend.LOCAL, RaisingConstructorRunner)
         with self.assertRaises(BackendConfigurationError):
             self.registry.get(ComputeBackend.LOCAL)
+
+    def test_factory_can_resolve_another_backend_without_deadlock(self):
+        dependency = FakeComputeRunner(backend=ComputeBackend.AZURE_ML)
+        self.registry.register(ComputeBackend.AZURE_ML, lambda: dependency)
+        result = []
+        errors = []
+
+        def local_factory():
+            self.assertIs(
+                self.registry.get(ComputeBackend.AZURE_ML), dependency
+            )
+            return FakeComputeRunner(backend=ComputeBackend.LOCAL)
+
+        def get_local():
+            try:
+                result.append(self.registry.get(ComputeBackend.LOCAL))
+            except Exception as exc:
+                errors.append(exc)
+
+        self.registry.register(ComputeBackend.LOCAL, local_factory)
+        worker = threading.Thread(target=get_local, daemon=True)
+        worker.start()
+        worker.join(timeout=1)
+
+        self.assertFalse(worker.is_alive(), "adapter construction deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(len(result), 1)
+
+    def test_slow_factory_does_not_block_unrelated_backend(self):
+        local_started = threading.Event()
+        release_local = threading.Event()
+        local_result = []
+        aml_result = []
+
+        def slow_local_factory():
+            local_started.set()
+            release_local.wait(timeout=2)
+            return FakeComputeRunner(backend=ComputeBackend.LOCAL)
+
+        self.registry.register(ComputeBackend.LOCAL, slow_local_factory)
+        self.registry.register(
+            ComputeBackend.AZURE_ML,
+            lambda: FakeComputeRunner(backend=ComputeBackend.AZURE_ML),
+        )
+
+        local_worker = threading.Thread(
+            target=lambda: local_result.append(
+                self.registry.get(ComputeBackend.LOCAL)
+            ),
+            daemon=True,
+        )
+        aml_worker = threading.Thread(
+            target=lambda: aml_result.append(
+                self.registry.get(ComputeBackend.AZURE_ML)
+            ),
+            daemon=True,
+        )
+        local_worker.start()
+        self.assertTrue(local_started.wait(timeout=1))
+        aml_worker.start()
+        aml_worker.join(timeout=1)
+        aml_was_blocked = aml_worker.is_alive()
+        release_local.set()
+        local_worker.join(timeout=1)
+        aml_worker.join(timeout=1)
+
+        self.assertFalse(
+            aml_was_blocked,
+            "unrelated adapter constructions were serialized",
+        )
+        self.assertEqual(len(local_result), 1)
+        self.assertEqual(len(aml_result), 1)
+
+    def test_factory_replacement_during_construction_discards_stale_instance(
+        self,
+    ):
+        construction_started = threading.Event()
+        release_construction = threading.Event()
+        old = FakeComputeRunner(backend=ComputeBackend.LOCAL)
+        new = FakeComputeRunner(backend=ComputeBackend.LOCAL)
+        result = []
+
+        def slow_old_factory():
+            construction_started.set()
+            release_construction.wait(timeout=2)
+            return old
+
+        self.registry.register(ComputeBackend.LOCAL, slow_old_factory)
+        worker = threading.Thread(
+            target=lambda: result.append(
+                self.registry.get(ComputeBackend.LOCAL)
+            ),
+            daemon=True,
+        )
+        worker.start()
+        self.assertTrue(construction_started.wait(timeout=1))
+
+        self.registry.register(ComputeBackend.LOCAL, lambda: new)
+        release_construction.set()
+        worker.join(timeout=1)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(result, [new])
+        self.assertIs(self.registry.get(ComputeBackend.LOCAL), new)
 
     def test_clear_drops_registrations_and_falls_back_to_default(self):
         # azure_ml is now implemented (plan.md Phase 7), so after clearing
