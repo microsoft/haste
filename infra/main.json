@@ -5,8 +5,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.46.1.21595",
-      "templateHash": "13625383512199682620"
+      "version": "0.45.15.27210",
+      "templateHash": "14900611402748323702"
     }
   },
   "parameters": {
@@ -143,6 +143,154 @@
         "description": "Imageryprep container image (tag included)."
       }
     },
+    "computeBackendDefault": {
+      "type": "string",
+      "defaultValue": "azure_batch",
+      "allowedValues": [
+        "local",
+        "azure_batch",
+        "azure_ml",
+        "auto"
+      ],
+      "metadata": {
+        "description": "Global fallback compute backend read by hastegeo.core.config.get_compute_config(). Backward-compatible default keeps existing Batch-only behavior; RUNNER_TYPE remains a supported legacy alias when this is unset."
+      }
+    },
+    "amlMode": {
+      "type": "string",
+      "defaultValue": "Disabled",
+      "allowedValues": [
+        "Disabled",
+        "Existing",
+        "Create"
+      ],
+      "metadata": {
+        "description": "AML resource ownership mode. Disabled = no AML app settings emitted. Existing (the default enablement path) = wire pre-existing, platform-owned identifiers into Function App settings; HASTE creates/mutates nothing. Create (explicit, later opt-in) = HASTE also provisions its own workspace, compute clusters, environment versions, and datastore registration."
+      }
+    },
+    "existingAmlWorkspaceName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the existing AML workspace to reference when amlMode == Existing. Ignored when amlMode == Create (HASTE computes its own workspace name then). HASTE never creates, modifies, or manages this workspace in Existing mode."
+      }
+    },
+    "amlWorkspaceResourceGroup": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Resource group holding the existing AML workspace (amlMode == Existing) or where HASTE creates one (amlMode == Create, always the env RG regardless of this value — mirrors batchAccountMode == Create always using the env RG). Empty => env RG."
+      }
+    },
+    "existingAmlGpuComputeName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the existing AML GPU compute cluster (training/inference/embedding) when amlMode == Existing, already provisioned and owned by the existing AML platform. Ignored when amlMode == Create (HASTE computes and creates its own cluster name then). Empty when amlMode == Disabled."
+      }
+    },
+    "existingAmlCpuComputeName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the existing AML CPU compute cluster (imagery prep/artifact packaging) when amlMode == Existing, already provisioned and owned by the existing AML platform. Ignored when amlMode == Create. Empty when amlMode == Disabled."
+      }
+    },
+    "existingAmlDatastoreName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the existing AML datastore when amlMode == Existing, already registered by the existing AML platform. Ignored when amlMode == Create (HASTE registers its own datastore then). Empty when amlMode == Disabled."
+      }
+    },
+    "existingAmlTrainingEnvironmentReference": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Fully-qualified reference (azureml:<name>:<version>) of the existing, already-registered immutable AML environment version for the training image, when amlMode == Existing. Ignored when amlMode == Create (HASTE registers its own environment version then)."
+      }
+    },
+    "existingAmlImageryprepEnvironmentReference": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Fully-qualified reference (azureml:<name>:<version>) of the existing, already-registered immutable AML environment version for the imageryprep image, when amlMode == Existing. Ignored when amlMode == Create."
+      }
+    },
+    "amlGpuComputeVmSize": {
+      "type": "string",
+      "defaultValue": "Standard_NC40ads_H100_v5",
+      "metadata": {
+        "description": "VM size for the AML GPU compute cluster HASTE creates when amlMode == Create. Mirrors the Batch GPU pool tier. Unused when amlMode != Create."
+      }
+    },
+    "amlGpuComputeMaxNodes": {
+      "type": "int",
+      "defaultValue": 3,
+      "metadata": {
+        "description": "Max nodes for the AML GPU compute cluster autoscale when amlMode == Create (min is always 0 — scale-to-zero). Unused when amlMode != Create."
+      }
+    },
+    "amlCpuComputeVmSize": {
+      "type": "string",
+      "defaultValue": "Standard_D4s_v5",
+      "metadata": {
+        "description": "VM size for the AML CPU compute cluster HASTE creates when amlMode == Create (imagery prep/artifact packaging). Unused when amlMode != Create."
+      }
+    },
+    "amlCpuComputeMaxNodes": {
+      "type": "int",
+      "defaultValue": 3,
+      "metadata": {
+        "description": "Max nodes for the AML CPU compute cluster autoscale when amlMode == Create (min is always 0 — scale-to-zero). Unused when amlMode != Create."
+      }
+    },
+    "amlComputeIdleTime": {
+      "type": "string",
+      "defaultValue": "PT30M",
+      "metadata": {
+        "description": "Idle time (ISO 8601 duration) before an AML compute node scales back to zero. Only applies to clusters HASTE creates (amlMode == Create)."
+      }
+    },
+    "amlComputeSubnetId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "VNet subnet resource id for VNet-injected AML compute HASTE creates (amlMode == Create only, both GPU and CPU clusters). Empty preserves public-compute behavior (no VNet injection) — see design.md Open Questions on AML tenant/network placement, which is not yet resolved."
+      }
+    },
+    "amlTrainingEnvironmentVersion": {
+      "type": "string",
+      "defaultValue": "[split(parameters('trainingImage'), ':')[1]]",
+      "metadata": {
+        "description": "Immutable AML environment version HASTE registers for the training image when amlMode == Create. Defaults to the image tag so bumping the tag registers a new version rather than mutating one. Unused when amlMode != Create."
+      }
+    },
+    "amlImageryprepEnvironmentVersion": {
+      "type": "string",
+      "defaultValue": "[split(parameters('imageryprepImage'), ':')[1]]",
+      "metadata": {
+        "description": "Immutable AML environment version HASTE registers for the imageryprep image when amlMode == Create. Defaults to the image tag. Unused when amlMode != Create."
+      }
+    },
+    "amlIdentityMode": {
+      "type": "string",
+      "defaultValue": "user",
+      "allowedValues": [
+        "user",
+        "managed"
+      ],
+      "metadata": {
+        "description": "Default job-execution identity mode surfaced to the AML adapter as AML_IDENTITY_MODE: \"user\" submits AML jobs using the calling principal (hastefuncqueues) own identity — the security default, since that identity already holds the storage RBAC granted in storage.bicep/functionApp.bicep, needing no additional AML-specific grant. \"managed\" submits jobs using a specific user-assigned managed identity instead (see amlManagedIdentityResourceId). In Existing mode, granting that identity access on the existing AML platform (workspace RBAC, datastore/storage access, ACR pull) is a prerequisite owned by that platform — this IaC only emits the setting, it does not grant any AML permission. In Create mode, the equivalent HASTE-managed grant is amlRole.bicep (queue app only)."
+      }
+    },
+    "amlManagedIdentityResourceId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "User-assigned managed identity resource id to submit AML jobs as when amlIdentityMode == \"managed\". Empty (with amlIdentityMode == \"managed\") defaults to the shared env UMI. Ignored when amlIdentityMode == \"user\". In Existing mode, the existing AML platform must already grant this identity whatever access it needs — this parameter only names it, it grants nothing there."
+      }
+    },
     "emailSenderDomainType": {
       "type": "string",
       "defaultValue": "AzureManaged",
@@ -222,6 +370,13 @@
       "defaultValue": false,
       "metadata": {
         "description": "Register/expose the Planetary Computer publishing provider."
+      }
+    },
+    "publishExplorerRenderEnabled": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Render a damage classification COG + Explorer visualization config on PC publish."
       }
     },
     "pcGeocatalogUrl": {
@@ -320,7 +475,25 @@
     "resolvedBatchAccountName": "[if(variables('createBatchAccount'), variables('createdBatchAccountName'), parameters('existingBatchAccountName'))]",
     "batchAccountRg": "[if(variables('createBatchAccount'), variables('rgName'), variables('resolvedSharedRg'))]",
     "createdBatchPoolName": "[format('{0}-haste-{1}-pool', parameters('resourcePrefix'), parameters('randomSuffix'))]",
-    "wireAcr": "[not(empty(parameters('sharedAcrName')))]"
+    "wireAcr": "[not(empty(parameters('sharedAcrName')))]",
+    "deployAml": "[not(equals(parameters('amlMode'), 'Disabled'))]",
+    "createAmlWorkspace": "[equals(parameters('amlMode'), 'Create')]",
+    "resolvedAmlWorkspaceRg": "[if(variables('createAmlWorkspace'), variables('rgName'), if(empty(parameters('amlWorkspaceResourceGroup')), variables('rgName'), parameters('amlWorkspaceResourceGroup')))]",
+    "createdAmlWorkspaceName": "[format('{0}-haste-{1}-aml', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "amlGpuComputeName": "[format('{0}{1}gpu', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "amlCpuComputeName": "[format('{0}{1}cpu', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "amlDatastoreName": "hastedata",
+    "amlTrainingEnvironmentReference": "[format('azureml:training:{0}', parameters('amlTrainingEnvironmentVersion'))]",
+    "amlImageryprepEnvironmentReference": "[format('azureml:imageryprep:{0}', parameters('amlImageryprepEnvironmentVersion'))]",
+    "amlStorageAccountName": "[format('{0}haste{1}amlsa', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "amlKeyVaultName": "[format('{0}-haste-{1}-aml-kv', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "amlAppInsightsName": "[format('{0}-haste-{1}-aml-ai', parameters('resourcePrefix'), parameters('randomSuffix'))]",
+    "resolvedAmlWorkspaceName": "[if(variables('createAmlWorkspace'), variables('createdAmlWorkspaceName'), parameters('existingAmlWorkspaceName'))]",
+    "resolvedAmlGpuComputeName": "[if(variables('createAmlWorkspace'), variables('amlGpuComputeName'), parameters('existingAmlGpuComputeName'))]",
+    "resolvedAmlCpuComputeName": "[if(variables('createAmlWorkspace'), variables('amlCpuComputeName'), parameters('existingAmlCpuComputeName'))]",
+    "resolvedAmlDatastoreName": "[if(variables('createAmlWorkspace'), variables('amlDatastoreName'), parameters('existingAmlDatastoreName'))]",
+    "resolvedAmlTrainingEnvironmentReference": "[if(variables('createAmlWorkspace'), variables('amlTrainingEnvironmentReference'), parameters('existingAmlTrainingEnvironmentReference'))]",
+    "resolvedAmlImageryprepEnvironmentReference": "[if(variables('createAmlWorkspace'), variables('amlImageryprepEnvironmentReference'), parameters('existingAmlImageryprepEnvironmentReference'))]"
   },
   "resources": {
     "rg": {
@@ -364,8 +537,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "11064455677118594323"
+              "version": "0.45.15.27210",
+              "templateHash": "6467876281697702392"
             }
           },
           "parameters": {
@@ -447,8 +620,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "4809665072443009441"
+              "version": "0.45.15.27210",
+              "templateHash": "12082330447741191629"
             }
           },
           "parameters": {
@@ -541,8 +714,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "18111911747360907655"
+              "version": "0.45.15.27210",
+              "templateHash": "5477339931418214373"
             }
           },
           "parameters": {
@@ -756,8 +929,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "5742332482666125630"
+              "version": "0.45.15.27210",
+              "templateHash": "15711586232981596113"
             }
           },
           "parameters": {
@@ -1007,8 +1180,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "15694273866306326963"
+              "version": "0.45.15.27210",
+              "templateHash": "11423466976742084469"
             }
           },
           "parameters": {
@@ -1160,8 +1333,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "8822775095973828812"
+              "version": "0.45.15.27210",
+              "templateHash": "2129528397301155805"
             }
           },
           "parameters": {
@@ -1374,6 +1547,9 @@
           "developmentMode": {
             "value": "[parameters('developmentMode')]"
           },
+          "computeBackendDefault": {
+            "value": "[parameters('computeBackendDefault')]"
+          },
           "trainingPoolIds": {
             "value": "[parameters('trainingPoolIds')]"
           },
@@ -1394,6 +1570,9 @@
           },
           "pcProviderEnabled": {
             "value": "[parameters('pcProviderEnabled')]"
+          },
+          "publishExplorerRenderEnabled": {
+            "value": "[parameters('publishExplorerRenderEnabled')]"
           },
           "pcGeocatalogUrl": {
             "value": "[parameters('pcGeocatalogUrl')]"
@@ -1422,6 +1601,20 @@
           "publishBlobContainer": {
             "value": "[parameters('publishBlobContainer')]"
           },
+          "amlMode": {
+            "value": "[parameters('amlMode')]"
+          },
+          "amlWorkspaceName": "[if(variables('deployAml'), createObject('value', variables('resolvedAmlWorkspaceName')), createObject('value', ''))]",
+          "amlResourceGroup": "[if(variables('deployAml'), createObject('value', variables('resolvedAmlWorkspaceRg')), createObject('value', ''))]",
+          "amlDatastoreName": "[if(variables('deployAml'), createObject('value', variables('resolvedAmlDatastoreName')), createObject('value', ''))]",
+          "amlGpuComputeName": "[if(variables('deployAml'), createObject('value', variables('resolvedAmlGpuComputeName')), createObject('value', ''))]",
+          "amlCpuComputeName": "[if(variables('deployAml'), createObject('value', variables('resolvedAmlCpuComputeName')), createObject('value', ''))]",
+          "amlTrainingEnvironmentReference": "[if(variables('deployAml'), createObject('value', variables('resolvedAmlTrainingEnvironmentReference')), createObject('value', ''))]",
+          "amlImageryprepEnvironmentReference": "[if(variables('deployAml'), createObject('value', variables('resolvedAmlImageryprepEnvironmentReference')), createObject('value', ''))]",
+          "amlIdentityMode": {
+            "value": "[parameters('amlIdentityMode')]"
+          },
+          "amlManagedIdentityId": "[if(and(variables('deployAml'), equals(parameters('amlIdentityMode'), 'managed')), if(empty(parameters('amlManagedIdentityResourceId')), createObject('value', reference('identity').outputs.resourceId.value), createObject('value', parameters('amlManagedIdentityResourceId'))), createObject('value', ''))]",
           "tags": {
             "value": "[parameters('tags')]"
           }
@@ -1432,8 +1625,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "15205294015023622587"
+              "version": "0.45.15.27210",
+              "templateHash": "252935340471012145"
             }
           },
           "parameters": {
@@ -1570,6 +1763,19 @@
                 "description": "Dev-only: auto-provision any authenticated user as admin and drop function-key auth (anonymous). Must be false for production."
               }
             },
+            "computeBackendDefault": {
+              "type": "string",
+              "defaultValue": "azure_batch",
+              "allowedValues": [
+                "local",
+                "azure_batch",
+                "azure_ml",
+                "auto"
+              ],
+              "metadata": {
+                "description": "Global fallback compute backend read by hastegeo.core.config.get_compute_config(). Backward-compatible default azure_batch reproduces the current Batch-only behavior; RUNNER_TYPE below remains the deprecated legacy alias the code falls back to when this is unset."
+              }
+            },
             "trainingPoolIds": {
               "type": "string",
               "defaultValue": "",
@@ -1605,6 +1811,85 @@
                 "description": "Runner auto-creates/resizes its pool. False for pre-created autoscale pools."
               }
             },
+            "amlMode": {
+              "type": "string",
+              "defaultValue": "Disabled",
+              "allowedValues": [
+                "Disabled",
+                "Existing",
+                "Create"
+              ],
+              "metadata": {
+                "description": "AML wiring mode: Disabled (no AML settings emitted), Existing (the default enablement path — wire pre-existing, platform-owned identifiers through), or Create (explicit, later opt-in — HASTE provisions its own AML stack in main.bicep and feeds the resulting names/references through here)."
+              }
+            },
+            "amlWorkspaceName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Resolved AML workspace name — either the existing, platform-owned workspace (amlMode == Existing) or the one HASTE just created (amlMode == Create). Empty when amlMode == Disabled."
+              }
+            },
+            "amlResourceGroup": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Resource group holding the resolved AML workspace. Empty when amlMode == Disabled. Informational only."
+              }
+            },
+            "amlDatastoreName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Resolved AML datastore name — existing (Existing mode) or just-registered by HASTE (Create mode). Empty when amlMode == Disabled."
+              }
+            },
+            "amlGpuComputeName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Resolved AML GPU compute cluster name (training/inference/embedding) — existing (Existing mode) or just-created by HASTE (Create mode). Empty when amlMode == Disabled."
+              }
+            },
+            "amlCpuComputeName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Resolved AML CPU compute cluster name (imagery prep/artifact packaging) — existing (Existing mode) or just-created by HASTE (Create mode). Empty when amlMode == Disabled."
+              }
+            },
+            "amlTrainingEnvironmentReference": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Fully-qualified reference (azureml:<name>:<version>) to the resolved environment version for the training image — existing (Existing mode) or just-registered by HASTE (Create mode). Empty when amlMode == Disabled."
+              }
+            },
+            "amlImageryprepEnvironmentReference": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Fully-qualified reference (azureml:<name>:<version>) to the resolved environment version for the imageryprep image — existing (Existing mode) or just-registered by HASTE (Create mode). Empty when amlMode == Disabled."
+              }
+            },
+            "amlIdentityMode": {
+              "type": "string",
+              "defaultValue": "user",
+              "allowedValues": [
+                "user",
+                "managed"
+              ],
+              "metadata": {
+                "description": "Default AML job-execution identity mode (\"user\" or \"managed\"), surfaced as AML_IDENTITY_MODE for the hastegeo AML adapter. Neutral pass-through — this module does not implement AML job submission and grants no AML permission; any RBAC the chosen identity needs is a prerequisite owned by the existing AML platform."
+              }
+            },
+            "amlManagedIdentityId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "User-assigned managed identity resource id to submit AML jobs as when amlIdentityMode == managed. Empty when amlIdentityMode == user or amlMode == Disabled."
+              }
+            },
             "publishingEnabled": {
               "type": "bool",
               "defaultValue": true,
@@ -1617,6 +1902,13 @@
               "defaultValue": false,
               "metadata": {
                 "description": "Register/expose the Planetary Computer publishing provider."
+              }
+            },
+            "publishExplorerRenderEnabled": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Render a damage classification COG + Explorer visualization config on PC publish."
               }
             },
             "pcGeocatalogUrl": {
@@ -1732,7 +2024,7 @@
                     "value": "[parameters('logAnalyticsId')]"
                   },
                   "appSettings": {
-                    "value": "[concat(createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', '/data'), createObject('name', 'DATA_PATH', 'value', '/data'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer'))), createArray(createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionApiName'), 0, min(32, length(parameters('functionApiName'))))))))]"
+                    "value": "[concat(createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'COMPUTE_BACKEND_DEFAULT', 'value', parameters('computeBackendDefault')), createObject('name', 'TEMP_DATA_PATH', 'value', '/data'), createObject('name', 'DATA_PATH', 'value', '/data'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'AML_MODE', 'value', parameters('amlMode')), createObject('name', 'AML_SUBSCRIPTION_ID', 'value', if(equals(parameters('amlMode'), 'Disabled'), '', subscription().subscriptionId)), createObject('name', 'AML_RESOURCE_GROUP', 'value', parameters('amlResourceGroup')), createObject('name', 'AML_WORKSPACE_NAME', 'value', parameters('amlWorkspaceName')), createObject('name', 'AML_DATASTORE_NAME', 'value', parameters('amlDatastoreName')), createObject('name', 'AML_COMPUTE_TRAINING', 'value', parameters('amlGpuComputeName')), createObject('name', 'AML_COMPUTE_INFERENCE', 'value', parameters('amlGpuComputeName')), createObject('name', 'AML_COMPUTE_EMBEDDING', 'value', parameters('amlGpuComputeName')), createObject('name', 'AML_COMPUTE_IMAGERYPREP', 'value', parameters('amlCpuComputeName')), createObject('name', 'AML_COMPUTE_ARTIFACTS', 'value', parameters('amlCpuComputeName')), createObject('name', 'AML_ENVIRONMENT_TRAINING', 'value', parameters('amlTrainingEnvironmentReference')), createObject('name', 'AML_ENVIRONMENT_IMAGERYPREP', 'value', parameters('amlImageryprepEnvironmentReference')), createObject('name', 'AML_IDENTITY_MODE', 'value', if(equals(parameters('amlMode'), 'Disabled'), '', parameters('amlIdentityMode'))), createObject('name', 'AML_MANAGED_IDENTITY_ID', 'value', parameters('amlManagedIdentityId')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer')), createObject('name', 'PUBLISH_EXPLORER_RENDER_ENABLED', 'value', if(parameters('publishExplorerRenderEnabled'), 'true', 'false'))), createArray(createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionApiName'), 0, min(32, length(parameters('functionApiName'))))))))]"
                   },
                   "tags": {
                     "value": "[parameters('tags')]"
@@ -1744,8 +2036,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.46.1.21595",
-                      "templateHash": "3022688711020356921"
+                      "version": "0.45.15.27210",
+                      "templateHash": "11828726585656867764"
                     }
                   },
                   "parameters": {
@@ -2042,8 +2334,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.46.1.21595",
-                      "templateHash": "3022688711020356921"
+                      "version": "0.45.15.27210",
+                      "templateHash": "11828726585656867764"
                     }
                   },
                   "parameters": {
@@ -2334,7 +2626,7 @@
                     "value": "[parameters('logAnalyticsId')]"
                   },
                   "appSettings": {
-                    "value": "[concat(createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', '/data'), createObject('name', 'DATA_PATH', 'value', '/data'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer'))), createArray(createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionQueueName'), 0, min(32, length(parameters('functionQueueName'))))))))]"
+                    "value": "[concat(createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'COMPUTE_BACKEND_DEFAULT', 'value', parameters('computeBackendDefault')), createObject('name', 'TEMP_DATA_PATH', 'value', '/data'), createObject('name', 'DATA_PATH', 'value', '/data'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'AML_MODE', 'value', parameters('amlMode')), createObject('name', 'AML_SUBSCRIPTION_ID', 'value', if(equals(parameters('amlMode'), 'Disabled'), '', subscription().subscriptionId)), createObject('name', 'AML_RESOURCE_GROUP', 'value', parameters('amlResourceGroup')), createObject('name', 'AML_WORKSPACE_NAME', 'value', parameters('amlWorkspaceName')), createObject('name', 'AML_DATASTORE_NAME', 'value', parameters('amlDatastoreName')), createObject('name', 'AML_COMPUTE_TRAINING', 'value', parameters('amlGpuComputeName')), createObject('name', 'AML_COMPUTE_INFERENCE', 'value', parameters('amlGpuComputeName')), createObject('name', 'AML_COMPUTE_EMBEDDING', 'value', parameters('amlGpuComputeName')), createObject('name', 'AML_COMPUTE_IMAGERYPREP', 'value', parameters('amlCpuComputeName')), createObject('name', 'AML_COMPUTE_ARTIFACTS', 'value', parameters('amlCpuComputeName')), createObject('name', 'AML_ENVIRONMENT_TRAINING', 'value', parameters('amlTrainingEnvironmentReference')), createObject('name', 'AML_ENVIRONMENT_IMAGERYPREP', 'value', parameters('amlImageryprepEnvironmentReference')), createObject('name', 'AML_IDENTITY_MODE', 'value', if(equals(parameters('amlMode'), 'Disabled'), '', parameters('amlIdentityMode'))), createObject('name', 'AML_MANAGED_IDENTITY_ID', 'value', parameters('amlManagedIdentityId')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer')), createObject('name', 'PUBLISH_EXPLORER_RENDER_ENABLED', 'value', if(parameters('publishExplorerRenderEnabled'), 'true', 'false'))), createArray(createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionQueueName'), 0, min(32, length(parameters('functionQueueName'))))))))]"
                   },
                   "tags": {
                     "value": "[parameters('tags')]"
@@ -2346,8 +2638,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.46.1.21595",
-                      "templateHash": "3022688711020356921"
+                      "version": "0.45.15.27210",
+                      "templateHash": "11828726585656867764"
                     }
                   },
                   "parameters": {
@@ -2603,6 +2895,10 @@
               "type": "string",
               "value": "[reference(resourceId('Microsoft.Resources/deployments', 'fn-api'), '2025-04-01').outputs.systemPrincipalId.value]"
             },
+            "queueSystemPrincipalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'fn-queue'), '2025-04-01').outputs.systemPrincipalId.value]"
+            },
             "apiName": {
               "type": "string",
               "value": "[reference(resourceId('Microsoft.Resources/deployments', 'fn-api'), '2025-04-01').outputs.name.value]"
@@ -2662,8 +2958,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "5532319181004507698"
+              "version": "0.45.15.27210",
+              "templateHash": "7962398216361329093"
             }
           },
           "parameters": {
@@ -2795,8 +3091,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "583350182862945455"
+              "version": "0.45.15.27210",
+              "templateHash": "13617399659586966284"
             }
           },
           "parameters": {
@@ -2881,7 +3177,7 @@
               "name": "[format('{0}/{1}/{2}', parameters('apimName'), parameters('functionApiName'), 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\n  <inbound>\n    <base />\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__BID__', parameters('functionApiName'))]"
+                "value": "[replace('<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__BID__', parameters('functionApiName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionApiName'))]",
@@ -2930,7 +3226,7 @@
               "name": "[format('{0}/{1}/{2}', parameters('apimName'), parameters('functionTitilerName'), 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\n  <inbound>\n    <base />\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__BID__', parameters('functionTitilerName'))]"
+                "value": "[replace('<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__BID__', parameters('functionTitilerName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionTitilerName'))]",
@@ -3033,7 +3329,7 @@
               "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'hastestorageapi', 'get-artifacts', 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\n  <inbound>\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"modelDir\"]+ \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\n      <set-method>GET</set-method>\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\n        <value>2019-07-07</value>\n      </set-header>\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\n    </send-request>\n    <return-response response-variable-name=\"blobdata\" />\n    <base />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__SA__', parameters('storageAccountName'))]"
+                "value": "[replace('<policies>\r\n  <inbound>\r\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\r\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"modelDir\"]+ \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\r\n      <set-method>GET</set-method>\r\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\r\n        <value>2019-07-07</value>\r\n      </set-header>\r\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\r\n    </send-request>\r\n    <return-response response-variable-name=\"blobdata\" />\r\n    <base />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__SA__', parameters('storageAccountName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'hastestorageapi', 'get-artifacts')]"
@@ -3075,7 +3371,7 @@
               "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'hastestorageapi', 'get-project-artifacts', 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\n  <inbound>\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\n      <set-method>GET</set-method>\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\n        <value>2019-07-07</value>\n      </set-header>\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\n    </send-request>\n    <return-response response-variable-name=\"blobdata\" />\n    <base />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__SA__', parameters('storageAccountName'))]"
+                "value": "[replace('<policies>\r\n  <inbound>\r\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\r\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\r\n      <set-method>GET</set-method>\r\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\r\n        <value>2019-07-07</value>\r\n      </set-header>\r\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\r\n    </send-request>\r\n    <return-response response-variable-name=\"blobdata\" />\r\n    <base />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__SA__', parameters('storageAccountName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'hastestorageapi', 'get-project-artifacts')]"
@@ -3123,8 +3419,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "10920303468385780104"
+              "version": "0.45.15.27210",
+              "templateHash": "9657019973743175212"
             }
           },
           "parameters": {
@@ -3263,8 +3559,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "6727294718729000805"
+              "version": "0.45.15.27210",
+              "templateHash": "16042433164648747777"
             }
           },
           "parameters": {
@@ -3362,8 +3658,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "17197306363257697796"
+              "version": "0.45.15.27210",
+              "templateHash": "13664756888266805551"
             }
           },
           "parameters": {
@@ -3519,8 +3815,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "10615611227258247138"
+              "version": "0.45.15.27210",
+              "templateHash": "17391401701000584075"
             }
           },
           "parameters": {
@@ -3559,6 +3855,871 @@
         "identity"
       ]
     },
+    "amlWorkspace": {
+      "condition": "[variables('createAmlWorkspace')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "amlWorkspace",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "workspaceName": {
+            "value": "[variables('createdAmlWorkspaceName')]"
+          },
+          "storageAccountName": {
+            "value": "[variables('amlStorageAccountName')]"
+          },
+          "keyVaultName": {
+            "value": "[variables('amlKeyVaultName')]"
+          },
+          "appInsightsName": {
+            "value": "[variables('amlAppInsightsName')]"
+          },
+          "logAnalyticsId": {
+            "value": "[reference('monitoring').outputs.logAnalyticsId.value]"
+          },
+          "umiResourceId": {
+            "value": "[reference('identity').outputs.resourceId.value]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.45.15.27210",
+              "templateHash": "9192351519168403294"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "workspaceName": {
+              "type": "string",
+              "metadata": {
+                "description": "AML workspace name."
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Dependent storage account name (workspace bookkeeping only, not the HASTE datastore)."
+              }
+            },
+            "keyVaultName": {
+              "type": "string",
+              "metadata": {
+                "description": "Dependent Key Vault name (required by the workspace resource type; RBAC-authorized, no HASTE secrets stored here)."
+              }
+            },
+            "appInsightsName": {
+              "type": "string",
+              "metadata": {
+                "description": "Dependent Application Insights name."
+              }
+            },
+            "logAnalyticsId": {
+              "type": "string",
+              "metadata": {
+                "description": "Log Analytics workspace resource id to link Application Insights to."
+              }
+            },
+            "umiResourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "User-assigned managed identity resource id — used as the workspace identity (keyless; no standing workspace secrets)."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2023-05-01",
+              "name": "[parameters('storageAccountName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "kind": "StorageV2",
+              "properties": {
+                "accessTier": "Hot",
+                "allowSharedKeyAccess": false,
+                "minimumTlsVersion": "TLS1_2",
+                "supportsHttpsTrafficOnly": true
+              }
+            },
+            {
+              "type": "Microsoft.KeyVault/vaults",
+              "apiVersion": "2023-07-01",
+              "name": "[parameters('keyVaultName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "sku": {
+                  "family": "A",
+                  "name": "standard"
+                },
+                "tenantId": "[subscription().tenantId]",
+                "enableRbacAuthorization": true,
+                "accessPolicies": [],
+                "publicNetworkAccess": "Enabled",
+                "enableSoftDelete": true,
+                "softDeleteRetentionInDays": 7
+              }
+            },
+            {
+              "type": "Microsoft.Insights/components",
+              "apiVersion": "2020-02-02",
+              "name": "[parameters('appInsightsName')]",
+              "location": "[parameters('location')]",
+              "kind": "web",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "Application_Type": "web",
+                "WorkspaceResourceId": "[parameters('logAnalyticsId')]"
+              }
+            },
+            {
+              "type": "Microsoft.MachineLearningServices/workspaces",
+              "apiVersion": "2025-06-01",
+              "name": "[parameters('workspaceName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', parameters('umiResourceId'))]": {}
+                }
+              },
+              "properties": {
+                "friendlyName": "[parameters('workspaceName')]",
+                "storageAccount": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                "keyVault": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+                "applicationInsights": "[resourceId('Microsoft.Insights/components', parameters('appInsightsName'))]",
+                "primaryUserAssignedIdentity": "[parameters('umiResourceId')]",
+                "systemDatastoresAuthMode": "identity",
+                "hbiWorkspace": false,
+                "v1LegacyMode": false,
+                "publicNetworkAccess": "Enabled"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Insights/components', parameters('appInsightsName'))]",
+                "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "id": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.MachineLearningServices/workspaces', parameters('workspaceName'))]"
+            },
+            "name": {
+              "type": "string",
+              "value": "[parameters('workspaceName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "identity",
+        "monitoring",
+        "rg"
+      ]
+    },
+    "amlGpuCompute": {
+      "condition": "[variables('createAmlWorkspace')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "amlGpuCompute",
+      "resourceGroup": "[variables('resolvedAmlWorkspaceRg')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "workspaceName": {
+            "value": "[variables('createdAmlWorkspaceName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "computeName": {
+            "value": "[variables('amlGpuComputeName')]"
+          },
+          "vmSize": {
+            "value": "[parameters('amlGpuComputeVmSize')]"
+          },
+          "maxNodes": {
+            "value": "[parameters('amlGpuComputeMaxNodes')]"
+          },
+          "scaleDownIdleTime": {
+            "value": "[parameters('amlComputeIdleTime')]"
+          },
+          "umiResourceId": {
+            "value": "[reference('identity').outputs.resourceId.value]"
+          },
+          "subnetId": {
+            "value": "[parameters('amlComputeSubnetId')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.45.15.27210",
+              "templateHash": "6188264566072628138"
+            }
+          },
+          "parameters": {
+            "workspaceName": {
+              "type": "string",
+              "metadata": {
+                "description": "Resolved AML workspace name (existing or just-created)."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region (must match the workspace region)."
+              }
+            },
+            "computeName": {
+              "type": "string",
+              "maxLength": 24,
+              "metadata": {
+                "description": "Compute cluster name. Kept short: AmlCompute names are capped at 24 characters by the service."
+              }
+            },
+            "vmSize": {
+              "type": "string",
+              "metadata": {
+                "description": "VM size for this cluster (e.g. an H100 SKU for GPU, a general-purpose SKU for CPU)."
+              }
+            },
+            "minNodes": {
+              "type": "int",
+              "defaultValue": 0,
+              "metadata": {
+                "description": "Autoscale floor. 0 = scale-to-zero when idle."
+              }
+            },
+            "maxNodes": {
+              "type": "int",
+              "metadata": {
+                "description": "Autoscale cap."
+              }
+            },
+            "scaleDownIdleTime": {
+              "type": "string",
+              "defaultValue": "PT30M",
+              "metadata": {
+                "description": "Idle time (ISO 8601 duration) before an unused node scales back to zero."
+              }
+            },
+            "umiResourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "User-assigned managed identity resource id attached to the compute cluster resource itself — used for control-plane operations such as resolving/pulling the registered environment image from a private ACR. This is independent of AML_IDENTITY_MODE, which controls the per-job data-access identity a submitted job runs as (see amlDatastore.bicep and main.bicep); it does not imply every job uses this identity."
+              }
+            },
+            "subnetId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "VNet subnet resource id for VNet-injected compute. Empty => no VNet injection (public compute) — main.bicep wires this from its amlComputeSubnetId parameter for both the GPU and CPU clusters; empty preserves the current public-compute default. See design.md Open Questions on final AML tenant/network placement."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.MachineLearningServices/workspaces/computes",
+              "apiVersion": "2025-06-01",
+              "name": "[format('{0}/{1}', parameters('workspaceName'), parameters('computeName'))]",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', parameters('umiResourceId'))]": {}
+                }
+              },
+              "properties": {
+                "computeType": "AmlCompute",
+                "properties": "[shallowMerge(createArray(createObject('vmSize', parameters('vmSize'), 'remoteLoginPortPublicAccess', 'Disabled', 'enableNodePublicIp', empty(parameters('subnetId'))), if(empty(parameters('subnetId')), createObject(), createObject('subnet', createObject('id', parameters('subnetId')))), createObject('scaleSettings', createObject('minNodeCount', parameters('minNodes'), 'maxNodeCount', parameters('maxNodes'), 'nodeIdleTimeBeforeScaleDown', parameters('scaleDownIdleTime')))))]"
+              }
+            }
+          ],
+          "outputs": {
+            "name": {
+              "type": "string",
+              "value": "[parameters('computeName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "amlWorkspace",
+        "identity"
+      ]
+    },
+    "amlCpuCompute": {
+      "condition": "[variables('createAmlWorkspace')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "amlCpuCompute",
+      "resourceGroup": "[variables('resolvedAmlWorkspaceRg')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "workspaceName": {
+            "value": "[variables('createdAmlWorkspaceName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "computeName": {
+            "value": "[variables('amlCpuComputeName')]"
+          },
+          "vmSize": {
+            "value": "[parameters('amlCpuComputeVmSize')]"
+          },
+          "maxNodes": {
+            "value": "[parameters('amlCpuComputeMaxNodes')]"
+          },
+          "scaleDownIdleTime": {
+            "value": "[parameters('amlComputeIdleTime')]"
+          },
+          "umiResourceId": {
+            "value": "[reference('identity').outputs.resourceId.value]"
+          },
+          "subnetId": {
+            "value": "[parameters('amlComputeSubnetId')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.45.15.27210",
+              "templateHash": "6188264566072628138"
+            }
+          },
+          "parameters": {
+            "workspaceName": {
+              "type": "string",
+              "metadata": {
+                "description": "Resolved AML workspace name (existing or just-created)."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region (must match the workspace region)."
+              }
+            },
+            "computeName": {
+              "type": "string",
+              "maxLength": 24,
+              "metadata": {
+                "description": "Compute cluster name. Kept short: AmlCompute names are capped at 24 characters by the service."
+              }
+            },
+            "vmSize": {
+              "type": "string",
+              "metadata": {
+                "description": "VM size for this cluster (e.g. an H100 SKU for GPU, a general-purpose SKU for CPU)."
+              }
+            },
+            "minNodes": {
+              "type": "int",
+              "defaultValue": 0,
+              "metadata": {
+                "description": "Autoscale floor. 0 = scale-to-zero when idle."
+              }
+            },
+            "maxNodes": {
+              "type": "int",
+              "metadata": {
+                "description": "Autoscale cap."
+              }
+            },
+            "scaleDownIdleTime": {
+              "type": "string",
+              "defaultValue": "PT30M",
+              "metadata": {
+                "description": "Idle time (ISO 8601 duration) before an unused node scales back to zero."
+              }
+            },
+            "umiResourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "User-assigned managed identity resource id attached to the compute cluster resource itself — used for control-plane operations such as resolving/pulling the registered environment image from a private ACR. This is independent of AML_IDENTITY_MODE, which controls the per-job data-access identity a submitted job runs as (see amlDatastore.bicep and main.bicep); it does not imply every job uses this identity."
+              }
+            },
+            "subnetId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "VNet subnet resource id for VNet-injected compute. Empty => no VNet injection (public compute) — main.bicep wires this from its amlComputeSubnetId parameter for both the GPU and CPU clusters; empty preserves the current public-compute default. See design.md Open Questions on final AML tenant/network placement."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.MachineLearningServices/workspaces/computes",
+              "apiVersion": "2025-06-01",
+              "name": "[format('{0}/{1}', parameters('workspaceName'), parameters('computeName'))]",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', parameters('umiResourceId'))]": {}
+                }
+              },
+              "properties": {
+                "computeType": "AmlCompute",
+                "properties": "[shallowMerge(createArray(createObject('vmSize', parameters('vmSize'), 'remoteLoginPortPublicAccess', 'Disabled', 'enableNodePublicIp', empty(parameters('subnetId'))), if(empty(parameters('subnetId')), createObject(), createObject('subnet', createObject('id', parameters('subnetId')))), createObject('scaleSettings', createObject('minNodeCount', parameters('minNodes'), 'maxNodeCount', parameters('maxNodes'), 'nodeIdleTimeBeforeScaleDown', parameters('scaleDownIdleTime')))))]"
+              }
+            }
+          ],
+          "outputs": {
+            "name": {
+              "type": "string",
+              "value": "[parameters('computeName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "amlWorkspace",
+        "identity"
+      ]
+    },
+    "amlTrainingEnvironment": {
+      "condition": "[variables('createAmlWorkspace')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "amlTrainingEnvironment",
+      "resourceGroup": "[variables('resolvedAmlWorkspaceRg')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "workspaceName": {
+            "value": "[variables('createdAmlWorkspaceName')]"
+          },
+          "environmentName": {
+            "value": "training"
+          },
+          "environmentVersion": {
+            "value": "[parameters('amlTrainingEnvironmentVersion')]"
+          },
+          "image": "[if(variables('wireAcr'), createObject('value', format('{0}.azurecr.io/{1}', parameters('sharedAcrName'), parameters('trainingImage'))), createObject('value', parameters('trainingImage')))]",
+          "environmentDescription": {
+            "value": "HASTE training image (training/inference/embedding workloads)."
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.45.15.27210",
+              "templateHash": "15459328797544979618"
+            }
+          },
+          "parameters": {
+            "workspaceName": {
+              "type": "string",
+              "metadata": {
+                "description": "Resolved AML workspace name (existing or just-created)."
+              }
+            },
+            "environmentName": {
+              "type": "string",
+              "metadata": {
+                "description": "Environment name (one per HASTE image, e.g. \"training\", \"imageryprep\")."
+              }
+            },
+            "environmentVersion": {
+              "type": "string",
+              "metadata": {
+                "description": "Immutable environment version. Defaults to the bound image tag so a new image build always registers a new version instead of mutating one."
+              }
+            },
+            "image": {
+              "type": "string",
+              "metadata": {
+                "description": "Full container image reference the environment resolves to (e.g. \"myacr.azurecr.io/hastetraining:1.4.1\"). Prefer an ACR digest reference where available."
+              }
+            },
+            "environmentDescription": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Human-readable description."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.MachineLearningServices/workspaces/environments",
+              "apiVersion": "2025-06-01",
+              "name": "[format('{0}/{1}', parameters('workspaceName'), parameters('environmentName'))]",
+              "properties": {}
+            },
+            {
+              "type": "Microsoft.MachineLearningServices/workspaces/environments/versions",
+              "apiVersion": "2025-06-01",
+              "name": "[format('{0}/{1}/{2}', parameters('workspaceName'), parameters('environmentName'), parameters('environmentVersion'))]",
+              "properties": {
+                "description": "[parameters('environmentDescription')]",
+                "image": "[parameters('image')]",
+                "osType": "Linux"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.MachineLearningServices/workspaces/environments', parameters('workspaceName'), parameters('environmentName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "name": {
+              "type": "string",
+              "value": "[parameters('environmentName')]"
+            },
+            "version": {
+              "type": "string",
+              "value": "[parameters('environmentVersion')]"
+            },
+            "reference": {
+              "type": "string",
+              "value": "[format('azureml:{0}:{1}', parameters('environmentName'), parameters('environmentVersion'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "amlWorkspace"
+      ]
+    },
+    "amlImageryprepEnvironment": {
+      "condition": "[variables('createAmlWorkspace')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "amlImageryprepEnvironment",
+      "resourceGroup": "[variables('resolvedAmlWorkspaceRg')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "workspaceName": {
+            "value": "[variables('createdAmlWorkspaceName')]"
+          },
+          "environmentName": {
+            "value": "imageryprep"
+          },
+          "environmentVersion": {
+            "value": "[parameters('amlImageryprepEnvironmentVersion')]"
+          },
+          "image": "[if(variables('wireAcr'), createObject('value', format('{0}.azurecr.io/{1}', parameters('sharedAcrName'), parameters('imageryprepImage'))), createObject('value', parameters('imageryprepImage')))]",
+          "environmentDescription": {
+            "value": "HASTE imageryprep image (imagery preparation/artifact packaging workloads)."
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.45.15.27210",
+              "templateHash": "15459328797544979618"
+            }
+          },
+          "parameters": {
+            "workspaceName": {
+              "type": "string",
+              "metadata": {
+                "description": "Resolved AML workspace name (existing or just-created)."
+              }
+            },
+            "environmentName": {
+              "type": "string",
+              "metadata": {
+                "description": "Environment name (one per HASTE image, e.g. \"training\", \"imageryprep\")."
+              }
+            },
+            "environmentVersion": {
+              "type": "string",
+              "metadata": {
+                "description": "Immutable environment version. Defaults to the bound image tag so a new image build always registers a new version instead of mutating one."
+              }
+            },
+            "image": {
+              "type": "string",
+              "metadata": {
+                "description": "Full container image reference the environment resolves to (e.g. \"myacr.azurecr.io/hastetraining:1.4.1\"). Prefer an ACR digest reference where available."
+              }
+            },
+            "environmentDescription": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Human-readable description."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.MachineLearningServices/workspaces/environments",
+              "apiVersion": "2025-06-01",
+              "name": "[format('{0}/{1}', parameters('workspaceName'), parameters('environmentName'))]",
+              "properties": {}
+            },
+            {
+              "type": "Microsoft.MachineLearningServices/workspaces/environments/versions",
+              "apiVersion": "2025-06-01",
+              "name": "[format('{0}/{1}/{2}', parameters('workspaceName'), parameters('environmentName'), parameters('environmentVersion'))]",
+              "properties": {
+                "description": "[parameters('environmentDescription')]",
+                "image": "[parameters('image')]",
+                "osType": "Linux"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.MachineLearningServices/workspaces/environments', parameters('workspaceName'), parameters('environmentName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "name": {
+              "type": "string",
+              "value": "[parameters('environmentName')]"
+            },
+            "version": {
+              "type": "string",
+              "value": "[parameters('environmentVersion')]"
+            },
+            "reference": {
+              "type": "string",
+              "value": "[format('azureml:{0}:{1}', parameters('environmentName'), parameters('environmentVersion'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "amlWorkspace"
+      ]
+    },
+    "amlDatastore": {
+      "condition": "[variables('createAmlWorkspace')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "amlDatastore",
+      "resourceGroup": "[variables('resolvedAmlWorkspaceRg')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "workspaceName": {
+            "value": "[variables('createdAmlWorkspaceName')]"
+          },
+          "datastoreName": {
+            "value": "[variables('amlDatastoreName')]"
+          },
+          "storageAccountName": {
+            "value": "[variables('storageAccountName')]"
+          },
+          "containerName": {
+            "value": "data"
+          },
+          "storageResourceGroup": {
+            "value": "[variables('rgName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.45.15.27210",
+              "templateHash": "11321373199836198617"
+            }
+          },
+          "parameters": {
+            "workspaceName": {
+              "type": "string",
+              "metadata": {
+                "description": "Resolved AML workspace name (existing or just-created)."
+              }
+            },
+            "datastoreName": {
+              "type": "string",
+              "metadata": {
+                "description": "Datastore name."
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "HASTE storage account name (existing)."
+              }
+            },
+            "containerName": {
+              "type": "string",
+              "defaultValue": "data",
+              "metadata": {
+                "description": "Blob container to register (the existing HASTE \"data\" container)."
+              }
+            },
+            "storageResourceGroup": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource group holding the HASTE storage account."
+              }
+            },
+            "storageSubscriptionId": {
+              "type": "string",
+              "defaultValue": "[subscription().subscriptionId]",
+              "metadata": {
+                "description": "Subscription id holding the HASTE storage account."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.MachineLearningServices/workspaces/datastores",
+              "apiVersion": "2025-06-01",
+              "name": "[format('{0}/{1}', parameters('workspaceName'), parameters('datastoreName'))]",
+              "properties": {
+                "datastoreType": "AzureBlob",
+                "accountName": "[parameters('storageAccountName')]",
+                "containerName": "[parameters('containerName')]",
+                "resourceGroup": "[parameters('storageResourceGroup')]",
+                "subscriptionId": "[parameters('storageSubscriptionId')]",
+                "credentials": {
+                  "credentialsType": "None"
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "name": {
+              "type": "string",
+              "value": "[parameters('datastoreName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "amlWorkspace",
+        "storage"
+      ]
+    },
+    "amlRoleQueue": {
+      "condition": "[variables('createAmlWorkspace')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "amlRoleQueue",
+      "resourceGroup": "[variables('resolvedAmlWorkspaceRg')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "amlWorkspaceName": {
+            "value": "[variables('createdAmlWorkspaceName')]"
+          },
+          "principalId": {
+            "value": "[reference('functions').outputs.queueSystemPrincipalId.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.45.15.27210",
+              "templateHash": "4230735645277812605"
+            }
+          },
+          "parameters": {
+            "amlWorkspaceName": {
+              "type": "string",
+              "metadata": {
+                "description": "Resolved AML workspace name (existing or just-created)."
+              }
+            },
+            "principalId": {
+              "type": "string",
+              "metadata": {
+                "description": "System-assigned principal id of the Function App identity to grant AML access to."
+              }
+            }
+          },
+          "variables": {
+            "amlDataScientistRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'f6c7c914-8db3-469d-8ca1-694a8f32e121')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.MachineLearningServices/workspaces', parameters('amlWorkspaceName'))]",
+              "name": "[guid(resourceId('Microsoft.MachineLearningServices/workspaces', parameters('amlWorkspaceName')), parameters('principalId'), 'amlDataScientist')]",
+              "properties": {
+                "roleDefinitionId": "[variables('amlDataScientistRoleId')]",
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "amlWorkspace",
+        "functions"
+      ]
+    },
     "frontDoor": {
       "condition": "[parameters('enableFrontDoor')]",
       "type": "Microsoft.Resources/deployments",
@@ -3587,8 +4748,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "17045354249437602171"
+              "version": "0.45.15.27210",
+              "templateHash": "3909520050142538177"
             }
           },
           "parameters": {
@@ -3816,6 +4977,18 @@
     "BATCH_POOL_NAME": {
       "type": "string",
       "value": "[if(equals(parameters('batchPoolMode'), 'Create'), variables('createdBatchPoolName'), parameters('existingBatchPoolId'))]"
+    },
+    "AML_MODE": {
+      "type": "string",
+      "value": "[parameters('amlMode')]"
+    },
+    "AML_WORKSPACE_NAME": {
+      "type": "string",
+      "value": "[if(variables('deployAml'), variables('resolvedAmlWorkspaceName'), '')]"
+    },
+    "AML_RESOURCE_GROUP": {
+      "type": "string",
+      "value": "[if(variables('deployAml'), variables('resolvedAmlWorkspaceRg'), '')]"
     },
     "ACS_CONNECTION_STRING": {
       "type": "securestring",

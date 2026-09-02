@@ -72,6 +72,15 @@ param batchAccountKey string
 @description('Dev-only: auto-provision any authenticated user as admin and drop function-key auth (anonymous). Must be false for production.')
 param developmentMode bool = false
 
+@description('Global fallback compute backend read by hastegeo.core.config.get_compute_config(). Backward-compatible default azure_batch reproduces the current Batch-only behavior; RUNNER_TYPE below remains the deprecated legacy alias the code falls back to when this is unset.')
+@allowed([
+  'local'
+  'azure_batch'
+  'azure_ml'
+  'auto'
+])
+param computeBackendDefault string = 'azure_batch'
+
 // --- v2.1.0 capacity-aware routing + per-job SAS -----------------------------
 
 @description('Ordered candidate training pool ids (comma-separated). Empty => single training pool.')
@@ -88,6 +97,53 @@ param useSas bool = false
 
 @description('Runner auto-creates/resizes its pool. False for pre-created autoscale pools.')
 param managePools bool = true
+
+// --- AML backend (Disabled by default, no behavior change for Batch/local- -
+// only deployments). Existing (the default enablement path) wires
+// pre-existing, platform-owned identifiers straight through as Function App
+// settings; this module never deploys anything for that mode. Create
+// (explicit, later opt-in, main.bicep only) instead feeds this same set of
+// params with the names/references HASTE itself provisions — either way,
+// this module only ever emits app settings, never a resource. -------------
+
+@description('AML wiring mode: Disabled (no AML settings emitted), Existing (the default enablement path — wire pre-existing, platform-owned identifiers through), or Create (explicit, later opt-in — HASTE provisions its own AML stack in main.bicep and feeds the resulting names/references through here).')
+@allowed([
+  'Disabled'
+  'Existing'
+  'Create'
+])
+param amlMode string = 'Disabled'
+
+@description('Resolved AML workspace name — either the existing, platform-owned workspace (amlMode == Existing) or the one HASTE just created (amlMode == Create). Empty when amlMode == Disabled.')
+param amlWorkspaceName string = ''
+
+@description('Resource group holding the resolved AML workspace. Empty when amlMode == Disabled. Informational only.')
+param amlResourceGroup string = ''
+
+@description('Resolved AML datastore name — existing (Existing mode) or just-registered by HASTE (Create mode). Empty when amlMode == Disabled.')
+param amlDatastoreName string = ''
+
+@description('Resolved AML GPU compute cluster name (training/inference/embedding) — existing (Existing mode) or just-created by HASTE (Create mode). Empty when amlMode == Disabled.')
+param amlGpuComputeName string = ''
+
+@description('Resolved AML CPU compute cluster name (imagery prep/artifact packaging) — existing (Existing mode) or just-created by HASTE (Create mode). Empty when amlMode == Disabled.')
+param amlCpuComputeName string = ''
+
+@description('Fully-qualified reference (azureml:<name>:<version>) to the resolved environment version for the training image — existing (Existing mode) or just-registered by HASTE (Create mode). Empty when amlMode == Disabled.')
+param amlTrainingEnvironmentReference string = ''
+
+@description('Fully-qualified reference (azureml:<name>:<version>) to the resolved environment version for the imageryprep image — existing (Existing mode) or just-registered by HASTE (Create mode). Empty when amlMode == Disabled.')
+param amlImageryprepEnvironmentReference string = ''
+
+@description('Default AML job-execution identity mode ("user" or "managed"), surfaced as AML_IDENTITY_MODE for the hastegeo AML adapter. Neutral pass-through — this module does not implement AML job submission and grants no AML permission; any RBAC the chosen identity needs is a prerequisite owned by the existing AML platform.')
+@allowed([
+  'user'
+  'managed'
+])
+param amlIdentityMode string = 'user'
+
+@description('User-assigned managed identity resource id to submit AML jobs as when amlIdentityMode == managed. Empty when amlIdentityMode == user or amlMode == Disabled.')
+param amlManagedIdentityId string = ''
 
 // --- data publishing ---------------------------------------------------------
 
@@ -155,6 +211,11 @@ var appConfigSettings = [
   { name: 'METADATA_STORAGE_TYPE', value: 'blob' }
   { name: 'ARTIFACT_STORAGE_TYPE', value: 'blob' }
   { name: 'RUNNER_TYPE', value: 'azure_batch' }
+  // Backend-neutral compute routing default (hastegeo.core.config.
+  // get_compute_config). RUNNER_TYPE above remains the deprecated fallback
+  // alias the code still honors when this is unset; both default to
+  // azure_batch so existing Batch-only deployments are unaffected.
+  { name: 'COMPUTE_BACKEND_DEFAULT', value: computeBackendDefault }
   { name: 'TEMP_DATA_PATH', value: '/data' }
   { name: 'DATA_PATH', value: '/data' }
   { name: 'TITILER_ENDPOINT', value: '/api/titiler/' }
@@ -189,6 +250,38 @@ var appConfigSettings = [
   { name: 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', value: imageryprepPoolIds }
   { name: 'AZURE_BATCH_USE_SAS', value: useSas ? 'true' : 'false' }
   { name: 'AZURE_BATCH_MANAGE_POOLS', value: managePools ? 'true' : 'false' }
+  // AML backend (ADR-0005). Disabled by default: every value below is
+  // empty, identical to "no AML settings" for Batch/local-only deployments.
+  // In the default Existing enablement path every non-empty value here is a
+  // pre-existing, platform-owned identifier the operator supplied (main.bicep's
+  // existingAml* parameters) and HASTE creates/registers/mutates nothing; in
+  // the explicit, later Create opt-in the same settings instead carry the
+  // names/references HASTE just provisioned in main.bicep — see
+  // data-model.md#configuration-changes.
+  { name: 'AML_MODE', value: amlMode }
+  { name: 'AML_SUBSCRIPTION_ID', value: amlMode == 'Disabled' ? '' : subscription().subscriptionId }
+  { name: 'AML_RESOURCE_GROUP', value: amlResourceGroup }
+  { name: 'AML_WORKSPACE_NAME', value: amlWorkspaceName }
+  { name: 'AML_DATASTORE_NAME', value: amlDatastoreName }
+  { name: 'AML_COMPUTE_TRAINING', value: amlGpuComputeName }
+  { name: 'AML_COMPUTE_INFERENCE', value: amlGpuComputeName }
+  { name: 'AML_COMPUTE_EMBEDDING', value: amlGpuComputeName }
+  { name: 'AML_COMPUTE_IMAGERYPREP', value: amlCpuComputeName }
+  { name: 'AML_COMPUTE_ARTIFACTS', value: amlCpuComputeName }
+  { name: 'AML_ENVIRONMENT_TRAINING', value: amlTrainingEnvironmentReference }
+  { name: 'AML_ENVIRONMENT_IMAGERYPREP', value: amlImageryprepEnvironmentReference }
+  // Neutral/configurable — NOT hardcoded to a specific identity semantic.
+  // Default 'user': jobs submit as the calling principal (hastefuncqueues),
+  // which already holds Storage Blob Data Owner on the HASTE storage account
+  // (storage.bicep/functionApp.bicep), needing no AML-specific grant. Only
+  // populate AML_MANAGED_IDENTITY_ID when 'managed' is selected. In Existing
+  // mode, whatever access the chosen identity needs on the existing AML
+  // platform (workspace RBAC, datastore/storage access, ACR pull) is a
+  // prerequisite owned by that platform — this is IaC-side plumbing only, it
+  // grants nothing there. In Create mode, the equivalent HASTE-managed grant
+  // is amlRole.bicep (queue app only).
+  { name: 'AML_IDENTITY_MODE', value: amlMode == 'Disabled' ? '' : amlIdentityMode }
+  { name: 'AML_MANAGED_IDENTITY_ID', value: amlManagedIdentityId }
   // Data publishing feature flag (Local target). The queue + publishing-locks
   // container are auto-created at runtime. Other Local knobs
   // (PUBLISH_MAX_TOTAL_BYTES, PUBLISHED_DOWNLOAD_SAS_MINUTES,
@@ -288,6 +381,12 @@ module queueApp 'functionApp.bicep' = {
 // Used by roles.bicep to grant the SWA invitation role to the API app's
 // system-assigned identity.
 output apiSystemPrincipalId string = apiApp.outputs.systemPrincipalId
+// Used by main.bicep to grant AML RBAC (amlRole.bicep) to the queue app
+// identity when amlMode == Create. Titiler never submits/polls compute and
+// hastefuncapi does not talk to AML directly today, so neither gets this
+// grant (least privilege) — only the queue app's principal id is exported
+// for this purpose.
+output queueSystemPrincipalId string = queueApp.outputs.systemPrincipalId
 output apiName string = apiApp.outputs.name
 output titilerName string = titilerApp.outputs.name
 output queueName string = queueApp.outputs.name
