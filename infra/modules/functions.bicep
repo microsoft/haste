@@ -250,8 +250,9 @@ var appConfigSettings = [
   { name: 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', value: imageryprepPoolIds }
   { name: 'AZURE_BATCH_USE_SAS', value: useSas ? 'true' : 'false' }
   { name: 'AZURE_BATCH_MANAGE_POOLS', value: managePools ? 'true' : 'false' }
-  // AML backend (ADR-0005). Disabled by default: every value below is
-  // empty, identical to "no AML settings" for Batch/local-only deployments.
+  // AML backend (ADR-0005). Disabled by default: resource identifiers below
+  // are empty, while identity mode retains its safe "user" default so later
+  // enablement cannot expose an invalid empty AML_IDENTITY_MODE.
   // In the default Existing enablement path every non-empty value here is a
   // pre-existing, platform-owned identifier the operator supplied (main.bicep's
   // existingAml* parameters) and HASTE creates/registers/mutates nothing; in
@@ -280,7 +281,7 @@ var appConfigSettings = [
   // prerequisite owned by that platform — this is IaC-side plumbing only, it
   // grants nothing there. In Create mode, the equivalent HASTE-managed grant
   // is amlRole.bicep (queue app only).
-  { name: 'AML_IDENTITY_MODE', value: amlMode == 'Disabled' ? '' : amlIdentityMode }
+  { name: 'AML_IDENTITY_MODE', value: amlIdentityMode }
   { name: 'AML_MANAGED_IDENTITY_ID', value: amlManagedIdentityId }
   // Data publishing feature flag (Local target). The queue + publishing-locks
   // container are auto-created at runtime. Other Local knobs

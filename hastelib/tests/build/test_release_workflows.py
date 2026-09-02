@@ -241,6 +241,23 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn('"$HASTELIB_CHANGED" != "true"', workflow)
         self.assertIn("Build and Push Docker Image", workflow)
 
+    def test_functions_bicep_keeps_valid_aml_identity_when_disabled(
+        self,
+    ):
+        functions_bicep = (
+            REPO_ROOT / "infra/modules/functions.bicep"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "{ name: 'AML_IDENTITY_MODE', value: amlIdentityMode }",
+            functions_bicep,
+        )
+        self.assertNotIn(
+            "{ name: 'AML_IDENTITY_MODE', "
+            "value: amlMode == 'Disabled' ? '' : amlIdentityMode }",
+            functions_bicep,
+        )
+
     def test_rc_deploy_defaults_all_artifacts_to_same_version(self):
         workflow = (REPO_ROOT / ".github/workflows/deploy-apps.yml").read_text(
             encoding="utf-8"
