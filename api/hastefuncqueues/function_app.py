@@ -30,6 +30,11 @@ from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.processors.publishing import PublishingProcessor
 from hastegeo.core.processors.stats import StatsPostProcessor
 from hastegeo.core.processors.train import TrainPostprocessor
+from hastegeo.core.utils.compute_jobs import selected_backend_of
+from hastegeo.core.utils.compute_specs import (
+    backend_name,
+    follow_on_backend_for_record,
+)
 from hastegeo.core.utils.data import convert_json_to_geojson
 from hastegeo.core.utils.errors import describe_exception
 from hastegeo.core.utils.logs import Logger
@@ -100,10 +105,19 @@ async def GetProcessImageLayerQueueMessage(msg: func.QueueMessage) -> None:
         6. Handle errors with appropriate retry logic
     """
     logger.info(
-        f'GetProcessImageLayerQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
+        "GetProcessImageLayerQueueTrigger received a message (id=%s)",
+        msg.id,
     )
     try:
         image_data = ImageLayer(**json.loads(msg.get_body().decode("utf-8")))
+        logger.info(
+            "GetProcessImageLayerQueueTrigger: project=%s imageLayer=%s "
+            "status=%s backend=%s",
+            image_data.projectId,
+            image_data.imageLayerId,
+            image_data.status,
+            backend_name(image_data.computeBackend),
+        )
         try:
             # This check is to ensure deleted layer does not get recreated here
             existing_image_layer = await asyncio.to_thread(
@@ -198,7 +212,11 @@ async def GetProcessImageLayerQueueMessage(msg: func.QueueMessage) -> None:
                 output.dict(),
             )
         logger.info(
-            f'GetProcessImageLayerQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
+            "GetProcessImageLayerQueueTrigger processed image layer %s "
+            "(project=%s, status=%s)",
+            output.imageLayerId,
+            output.projectId,
+            output.status,
         )
     except Exception as e:
         if isinstance(e, ValueError):
@@ -314,10 +332,19 @@ async def GetCreateModelRunQueueMessage(msg: func.QueueMessage) -> None:
         7. Update model status and store results
     """
     logger.info(
-        f'GetCreateModelRunQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
+        "GetCreateModelRunQueueTrigger received a message (id=%s)", msg.id
     )
     try:
         model_data = Model(**json.loads(msg.get_body().decode("utf-8")))
+        logger.info(
+            "GetCreateModelRunQueueTrigger: model=%s project=%s status=%s "
+            "requestedBackend=%s selectedBackend=%s",
+            model_data.modelId,
+            model_data.projectId,
+            model_data.status,
+            backend_name(model_data.computeBackend),
+            selected_backend_of(model_data.trainingJob),
+        )
         try:
             # This check is to ensure deleted model does not get recreated
             existing_model = await asyncio.to_thread(
@@ -401,7 +428,12 @@ async def GetCreateModelRunQueueMessage(msg: func.QueueMessage) -> None:
             output.dict(),
         )
         logger.info(
-            f'GetCreateModelRunQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
+            "GetCreateModelRunQueueTrigger processed model %s "
+            "(project=%s, status=%s, backend=%s)",
+            model_data.modelId,
+            model_data.projectId,
+            output.status,
+            selected_backend_of(output.trainingJob),
         )
     except ValidationError as e:
         logger.error(
@@ -451,6 +483,12 @@ async def GetCreateModelRunQueueMessage(msg: func.QueueMessage) -> None:
                 modelId=model_data.modelId,
                 projectId=model_data.projectId,
                 imageLayerId=model_data.imageLayerId,
+                # Automatic follow-on: inherit the backend the originating
+                # training job ran on when that policy is enabled, so the
+                # packaging job lands on the same provider.
+                computeBackend=follow_on_backend_for_record(
+                    output, config=config
+                ),
             )
             artifact_output = await asyncio.to_thread(
                 ArtifactProcessor(
@@ -482,6 +520,12 @@ async def GetCreateModelRunQueueMessage(msg: func.QueueMessage) -> None:
         and output.autoRunInference
     ):
         try:
+            # Automatic follow-on inherits the training job's backend when
+            # that policy is enabled; ``output.computeBackend`` already
+            # carries the selected backend from submission.
+            output.computeBackend = follow_on_backend_for_record(
+                output, config=config
+            )
             output = await asyncio.to_thread(
                 InferencePreprocessor(output).send_to_queue
             )
@@ -517,12 +561,20 @@ async def GetRunEmbeddingQueueMessage(msg: func.QueueMessage) -> None:
     zip/inference follow-on. Re-enqueues itself while in progress.
     """
     logger.info(
-        "GetRunEmbeddingQueueTrigger function processed a message: "
-        f'{msg.get_body().decode("utf-8")}'
+        "GetRunEmbeddingQueueTrigger received a message (id=%s)", msg.id
     )
     model_data = None
     try:
         model_data = Model(**json.loads(msg.get_body().decode("utf-8")))
+        logger.info(
+            "GetRunEmbeddingQueueTrigger: model=%s project=%s status=%s "
+            "requestedBackend=%s selectedBackend=%s",
+            model_data.modelId,
+            model_data.projectId,
+            model_data.status,
+            backend_name(model_data.computeBackend),
+            selected_backend_of(model_data.embeddingJob),
+        )
         try:
             existing_model = await asyncio.to_thread(
                 MetadataProcessor(
@@ -664,10 +716,19 @@ async def GetRunInferenceQueueMessage(msg: func.QueueMessage) -> None:
         7. Update inference status and store results metadata
     """
     logger.info(
-        f'GetRunInferenceQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
+        "GetRunInferenceQueueTrigger received a message (id=%s)", msg.id
     )
     try:
         model_data = Model(**json.loads(msg.get_body().decode("utf-8")))
+        logger.info(
+            "GetRunInferenceQueueTrigger: model=%s project=%s "
+            "inferenceStatus=%s currentTask=%s requestedBackend=%s",
+            model_data.modelId,
+            model_data.projectId,
+            model_data.inferenceStatus,
+            model_data.currentInferenceTaskId,
+            backend_name(model_data.computeBackend),
+        )
         try:
             # This check is to ensure deleted model does not get recreated here
             existing_model = await asyncio.to_thread(
@@ -737,7 +798,11 @@ async def GetRunInferenceQueueMessage(msg: func.QueueMessage) -> None:
             output.dict(),
         )
         logger.info(
-            f'GetRunInferenceQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
+            "GetRunInferenceQueueTrigger processed model %s "
+            "(project=%s, inferenceStatus=%s)",
+            output.modelId,
+            output.projectId,
+            output.inferenceStatus,
         )
     except ValueError as e:
         logger.error(
@@ -795,12 +860,21 @@ async def GetRunInferenceQueueMessage(msg: func.QueueMessage) -> None:
                     ).load,
                     model_data.modelId,
                 )
+                # ``load`` returns the stored dict; the artifact processor
+                # works on the typed record (and now records a pending
+                # ZipJob on it before queueing).
+                model_artifacts = ModelArtifacts(**model_artifacts)
             except FileNotFoundError:
                 model_artifacts = ModelArtifacts(
                     modelId=model_data.modelId,
                     projectId=model_data.projectId,
                     imageLayerId=model_data.imageLayerId,
                 )
+            # Automatic follow-on: package artifacts on the backend the
+            # inference job ran on when that policy is enabled.
+            model_artifacts.computeBackend = follow_on_backend_for_record(
+                output, config=config
+            )
             artifact_output = await asyncio.to_thread(
                 ArtifactProcessor(
                     partition_key=model_artifacts.projectId,
@@ -873,12 +947,15 @@ async def UpdateStatsMessage(msg: func.QueueMessage) -> None:
     connection="AzureWebJobsStorage",
 )
 async def ImagePoisonQueueHandler(msg: func.QueueMessage) -> None:
-    logger.info(
-        f'ImagePoisonQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
-    )
+    logger.info("ImagePoisonQueueTrigger received a message (id=%s)", msg.id)
     try:
         poisoned_image_layer = ImageLayer(
             **json.loads(msg.get_body().decode("utf-8"))
+        )
+        logger.info(
+            "ImagePoisonQueueTrigger: project=%s imageLayer=%s",
+            poisoned_image_layer.projectId,
+            poisoned_image_layer.imageLayerId,
         )
         try:
             # This check is to ensure deleted layer does not get recreated here
@@ -922,12 +999,19 @@ async def ImagePoisonQueueHandler(msg: func.QueueMessage) -> None:
     connection="AzureWebJobsStorage",
 )
 async def GetArtifactsZipQueueMessage(msg: func.QueueMessage) -> None:
-    logger.info(
-        f'ArtifactsZipQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
-    )
+    logger.info("ArtifactsZipQueueTrigger received a message (id=%s)", msg.id)
     try:
         model_artifacts = ModelArtifacts(
             **json.loads(msg.get_body().decode("utf-8"))
+        )
+        logger.info(
+            "ArtifactsZipQueueTrigger: model=%s project=%s zipStatus=%s "
+            "currentZipJob=%s requestedBackend=%s",
+            model_artifacts.modelId,
+            model_artifacts.projectId,
+            model_artifacts.zipStatus,
+            model_artifacts.currentZipJobUid,
+            backend_name(model_artifacts.computeBackend),
         )
         try:
             # This check is to ensure artifacts don't get recreated for deleted models
@@ -969,7 +1053,11 @@ async def GetArtifactsZipQueueMessage(msg: func.QueueMessage) -> None:
             output.dict(),
         )
         logger.info(
-            f'ArtifactsZipQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
+            "ArtifactsZipQueueTrigger processed model %s "
+            "(project=%s, zipStatus=%s)",
+            output.modelId,
+            output.projectId,
+            output.zipStatus,
         )
     except ValueError as e:
         logger.error(
@@ -1013,7 +1101,9 @@ async def GetPublishDatasetQueueMessage(msg: func.QueueMessage) -> None:
         message = PublishQueueMessage(
             **json.loads(msg.get_body().decode("utf-8"))
         )
-        await asyncio.to_thread(PublishingProcessor(config=config).run_step, message)
+        await asyncio.to_thread(
+            PublishingProcessor(config=config).run_step, message
+        )
     except Exception as error:
         logger.error(
             "PublishDatasetQueueTrigger failed with %s",
