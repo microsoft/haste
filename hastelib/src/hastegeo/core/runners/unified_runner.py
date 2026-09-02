@@ -32,7 +32,7 @@ class UnifiedRunner:
         warnings.warn(
             "UnifiedRunner is deprecated; new compute submission should go "
             "through hastegeo.core.runners.execution_service."
-            "ComputeExecutionService once the target adapter implements "
+            "ComputeExecutionService, which targets an adapter implementing "
             "ComputeRunner (see ADR-0005).",
             DeprecationWarning,
             stacklevel=2,
