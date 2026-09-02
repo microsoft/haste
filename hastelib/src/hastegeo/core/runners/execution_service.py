@@ -99,10 +99,14 @@ class ComputeExecutionService:
                 routing_reason="explicit",
             )
 
-        candidates = list(
-            auto_candidates or candidates_from_env(spec.workload) or []
-        )
-        weights = dict(auto_weights or weights_from_env(spec.workload) or {})
+        if auto_candidates is None:
+            candidates = list(candidates_from_env(spec.workload) or [])
+        else:
+            candidates = list(auto_candidates)
+        if auto_weights is None:
+            weights = dict(weights_from_env(spec.workload) or {})
+        else:
+            weights = dict(auto_weights)
         return self._submit_auto(spec, profile, candidates, weights)
 
     def _submit_explicit(

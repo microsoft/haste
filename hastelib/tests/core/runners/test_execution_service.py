@@ -9,6 +9,7 @@ See spec/features/aml-compute-backend/test-plan.md UT-009, UT-012..UT-015.
 
 import os
 import unittest
+from unittest.mock import patch
 
 from hastegeo.core.models.compute import (
     AzureMlProviderDetail,
@@ -348,6 +349,36 @@ class TestAutoSubmission(unittest.TestCase):
             self.assertEqual(handle.selectedBackend, ComputeBackend.AZURE_ML)
         finally:
             os.environ.pop("COMPUTE_AUTO_CANDIDATES_TRAINING", None)
+
+    def test_explicit_empty_candidates_do_not_fall_back_to_environment(self):
+        spec = _spec(backend_preference=ComputeBackend.AUTO)
+
+        with patch(
+            "hastegeo.core.runners.execution_service.candidates_from_env",
+            return_value=[ComputeBackend.AZURE_ML],
+        ) as from_env:
+            with self.assertRaises(BackendConfigurationError):
+                self.service.submit(spec, auto_candidates=[])
+
+        from_env.assert_not_called()
+
+    def test_explicit_empty_weights_do_not_fall_back_to_environment(self):
+        aml = FakeComputeRunner(backend=ComputeBackend.AZURE_ML)
+        self.registry.register(ComputeBackend.AZURE_ML, lambda: aml)
+        spec = _spec(backend_preference=ComputeBackend.AUTO)
+
+        with patch(
+            "hastegeo.core.runners.execution_service.weights_from_env",
+            return_value={ComputeBackend.AZURE_ML: 100},
+        ) as from_env:
+            handle = self.service.submit(
+                spec,
+                auto_candidates=[ComputeBackend.AZURE_ML],
+                auto_weights={},
+            )
+
+        from_env.assert_not_called()
+        self.assertEqual(handle.selectedBackend, ComputeBackend.AZURE_ML)
 
     def test_auto_gathering_capacity_skips_candidate_whose_get_capacity_raises(
         self,
