@@ -61,6 +61,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+azure-ml = [
+  "azure-ai-ml==1.34.1",
+]
+
 # Planetary Computer publishing target. Installed only where the PC provider is
 # enabled; uses a vendored REST GeoCatalog client (no azure-planetarycomputer SDK).
 planetary-computer = [
@@ -98,6 +102,9 @@ check = "mypy --install-types --non-interactive {args:src/hastegeo tests}"
 [tool.hatch.envs.test]
 environment-file = "dev_env.yml"
 type = "conda"
+features = [
+  "azure-ml",
+]
 dependencies = [
   "coverage-enable-subprocess==1.0",
   "coverage[toml]~=7.4",

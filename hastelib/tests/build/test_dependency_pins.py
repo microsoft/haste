@@ -21,6 +21,7 @@ import json
 import re
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -47,6 +48,7 @@ DOCKERFILES = (
 )
 
 PYPROJECT = "hastelib/pyproject.toml"
+AZURE_ML_PIN = "azure-ai-ml==1.34.1"
 
 # GDAL @ https://.../GDAL-3.9.2-cp311-cp311-manylinux...whl
 _GDAL_WHEEL_RE = re.compile(
@@ -135,6 +137,37 @@ class GdalPinConsistencyTests(unittest.TestCase):
                 )
 
         self.assertEqual([], mismatches)
+
+
+class AzureMlDependencyTests(unittest.TestCase):
+    def test_sdk_is_pinned_in_optional_extra_and_test_environment(self):
+        pyproject = tomllib.loads(_read(PYPROJECT))
+
+        self.assertEqual(
+            [AZURE_ML_PIN],
+            pyproject["project"]["optional-dependencies"]["azure-ml"],
+        )
+        self.assertIn(
+            "azure-ml",
+            pyproject["tool"]["hatch"]["envs"]["test"]["features"],
+        )
+
+    def test_sdk_is_installed_only_in_the_submitting_function_app(self):
+        self.assertIn(
+            AZURE_ML_PIN,
+            _read("api/hastefuncqueues/requirements.txt").splitlines(),
+        )
+        self.assertNotIn(
+            AZURE_ML_PIN,
+            _read("api/hastefuncapi/requirements.txt").splitlines(),
+        )
+        self.assertNotIn(
+            AZURE_ML_PIN,
+            _read("docker/imageryprep/requirements.txt").splitlines(),
+        )
+
+    def test_sdk_is_available_in_the_developer_environment(self):
+        self.assertIn(AZURE_ML_PIN, _read("env.yml"))
 
 
 def _write(directory, name, payload):
