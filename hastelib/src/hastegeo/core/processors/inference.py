@@ -2,28 +2,140 @@
 # Licensed under the MIT License.
 import json
 import os
-from typing import NamedTuple
-
-from hastegeo.core.runners.unified_runner import UnifiedRunner
+from typing import Dict, NamedTuple, Optional
 
 from ..config import Config
 from ..data_layer.unified import UnifiedDataLayer
+from ..models.compute import (
+    LEGACY_SYNTHESIZED_ROUTING_REASON,
+    ComputeBackend,
+    ComputeJobHandle,
+    ComputeJobSpec,
+    ComputeWorkload,
+    OutputNotAvailableError,
+)
 from ..models.projects import ImageLayer, InferenceJob, Model
 from ..models.training import ExperimentConfig, Inference
+from ..utils.compute_jobs import resolve_compute_job_handle
+from ..utils.compute_specs import (
+    CONTAINER_CONFIG_WORKDIR_TOKEN,
+    JOB_WORKDIR,
+    build_execution_service,
+    compute_profile,
+    container_ref,
+    container_resources,
+    file_input,
+    follow_on_backend,
+    handle_log_fields,
+    map_state_to_status,
+    new_task_id,
+    output_prefix,
+    output_uri,
+    resolve_backend_preference,
+    spec_tags,
+    workspace_output,
+)
 from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
 
-# Do not prefix with '$' here. This string will be replaced
-# at runtime with the generated working directory for the task
-BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
+# Placeholder the training image substitutes inside the generated
+# experiment config (see ``compute_specs``); the command itself uses the
+# canonical ``$HASTE_JOB_WORKDIR`` reference every backend exports.
+CONFIG_WORKDIR = CONTAINER_CONFIG_WORKDIR_TOKEN
 INFERENCE_PREFIX = "inf"
+INFERENCE_WORKLOAD = ComputeWorkload.INFERENCE
+
+
+def build_inference_job_spec(
+    *,
+    model: Model,
+    execution_id: str,
+    input_files: Dict[str, dict],
+    config: Config,
+    gdal_translate_params: str,
+    backend=None,
+) -> ComputeJobSpec:
+    """Build the backend-neutral spec for one inference submission.
+
+    Mirrors the pre-migration Azure Batch submission exactly: same
+    training image, same ``run_workflow.py --step inference`` command,
+    same ``inference/`` output pattern under HASTE's
+    ``<project-hash>/<task-id>`` prefix — so ``predictedDamageLayerUrl``/
+    ``gpkgUrl`` keep resolving to the same blobs. ``logs/`` is declared
+    alongside it because ``run_workflow.py`` writes
+    ``logs/workflow_progress.log`` there: without that declaration a
+    backend with a static output layout (Azure ML) never binds the
+    directory to durable storage, so the progress the processor streams
+    into the user-visible status — and the failure detail it reads
+    afterwards — is lost. Both outputs are mounted live (they are read
+    while the job is still running) and share the one destination prefix.
+    """
+    runtime = config.get_compute_runtime_config(INFERENCE_WORKLOAD)
+    config_path = input_files["config"]["file_path"]
+    command = (
+        f'"cd /app '
+        f"&& source scripts/set_dirs.sh {JOB_WORKDIR}/{config_path} "
+        f"&& python scripts/print_gpu_info.py "
+        f"&& python run_workflow.py --config {JOB_WORKDIR}/{config_path} "
+        f"--step inference"
+        '"'
+    )
+    prefix = output_prefix(model.projectId, execution_id)
+    return ComputeJobSpec(
+        executionId=execution_id,
+        workload=INFERENCE_WORKLOAD,
+        backendPreference=resolve_backend_preference(
+            requested=backend,
+            workload=INFERENCE_WORKLOAD,
+            config=config,
+        ),
+        container=container_ref(runtime),
+        command=command,
+        inputs=[
+            file_input(entry["http_url"], entry["file_path"])
+            for entry in input_files.values()
+        ],
+        outputs=[
+            workspace_output(
+                name="inference",
+                pattern="inference/**/*",
+                container_url=runtime["output_container_url"],
+                prefix=prefix,
+                live=True,
+            ),
+            workspace_output(
+                name="logs",
+                # run_workflow.py's log_progress() writes
+                # logs/workflow_progress.log; read live for progress and
+                # after completion for failure detail.
+                pattern="logs/*.*",
+                container_url=runtime["output_container_url"],
+                prefix=prefix,
+                live=True,
+            ),
+        ],
+        environment={"GDAL_TRANSLATE_PARAMS": gdal_translate_params},
+        resources=container_resources(runtime),
+        timeoutSeconds=runtime["timeout_seconds"],
+        tags=spec_tags(
+            workload=INFERENCE_WORKLOAD,
+            project_id=model.projectId,
+            task_id=execution_id,
+            image_layer_id=model.imageLayerId,
+            model_id=model.modelId,
+        ),
+    )
 
 
 class BaseInferenceProcessor:
     def __init__(
-        self, model: Model, image_layer: ImageLayer, config: Config = None
+        self,
+        model: Model,
+        image_layer: ImageLayer,
+        config: Config = None,
+        execution_service=None,
     ):
         if config is None:
             config = Config()
@@ -41,13 +153,11 @@ class BaseInferenceProcessor:
             f"temp{MetadataUtils.generate_short_int_id()}",
         )
         self.logger = Logger.get_logger(__name__)
-        self.runner = UnifiedRunner(
-            runner_type=config.runner_type,
-            config=self.config,
-            pool_id=self.config.get_azure_batch_config()["training_pool_id"],
-            candidate_pool_ids=self.config.get_azure_batch_config()[
-                "inference_pool_ids"
-            ],
+        # Injectable so tests can drive the processor with fake adapters.
+        self.execution_service = (
+            execution_service
+            if execution_service is not None
+            else build_execution_service(self.config)
         )
 
 
@@ -63,7 +173,22 @@ class InferencePreprocessor:
         self.model_data = model
         self.config = config
 
-    def send_to_queue(self):
+    def send_to_queue(self, status=None):
+        if status == self.config.get_status_types().CANCELLED.value:
+            # Cancellation path: no new job record, just ask the queue
+            # worker to cancel the inference currently in flight.
+            self.model_data.inferenceStatus = status
+            self.queue_client.put_message(
+                json.dumps(self.model_data.dict()), visibility_timeout=1
+            )
+            self.model_data.inferenceStatusMessage = (
+                MetadataUtils.append_status_message(
+                    self.model_data.inferenceStatusMessage,
+                    "Cancelling inference",
+                )
+            )
+            return self.model_data
+
         self.model_data.inferenceStatus = (
             self.config.get_status_types().PENDING.value
         )
@@ -77,6 +202,20 @@ class InferencePreprocessor:
                 self.model_data.inferenceStatusMessage, "Queued for inference"
             )
         )
+        # Mint the task/execution id before queueing and record it on a
+        # pending InferenceJob, so the postprocessor reuses it and a
+        # duplicate delivery cannot start a second provider job.
+        task_id = new_task_id(INFERENCE_PREFIX)
+        self.model_data.inferenceJobs.append(
+            InferenceJob(
+                taskId=task_id,
+                modelId=self.model_data.modelId,
+                projectId=self.model_data.projectId,
+                status=self.config.get_status_types().PENDING.value,
+                creationDate=MetadataUtils.get_timestamp(),
+            )
+        )
+        self.model_data.currentInferenceTaskId = task_id
         self.queue_client.put_message(json.dumps(self.model_data.dict()))
         return self.model_data
 
@@ -99,8 +238,9 @@ class InferencePostprocessor(BaseInferenceProcessor):
         image_layer: ImageLayer = None,
         experiment_config: ExperimentConfig = None,
         config: Config = None,
+        execution_service=None,
     ):
-        super().__init__(model, image_layer, config)
+        super().__init__(model, image_layer, config, execution_service)
         self.model_data = model
         self.image_layer = image_layer
         self.experiment_config = experiment_config
@@ -110,6 +250,53 @@ class InferencePostprocessor(BaseInferenceProcessor):
             self.config.queue_config["inference_queue_name"],
             self.config.queue_config["queue_account_url"],
         )
+
+    # -- compute handle plumbing --------------------------------------
+
+    def _current_job_index(self) -> Optional[int]:
+        """Index of the inference job this message is about, or ``None``."""
+        for idx, inference_job in enumerate(self.model_data.inferenceJobs):
+            if inference_job.taskId == self.model_data.currentInferenceTaskId:
+                return idx
+        return None
+
+    def _pending_task_id(self) -> str:
+        """Return the task id this run submits under, preferring the one
+        the preprocessor already recorded (so retries reuse it)."""
+        if self.model_data.currentInferenceTaskId:
+            return self.model_data.currentInferenceTaskId
+        return new_task_id(INFERENCE_PREFIX)
+
+    def _inference_output_uri(self, task_id: str) -> str:
+        runtime = self.config.get_compute_runtime_config(INFERENCE_WORKLOAD)
+        return output_uri(
+            runtime["output_container_url"],
+            output_prefix(self.model_data.projectId, task_id),
+        )
+
+    def _compute_handle(self, job: InferenceJob) -> Optional[ComputeJobHandle]:
+        """Persisted handle, or one synthesized from a legacy
+        ``jobId``/``taskId`` pair plus this job's real output URI."""
+        return resolve_compute_job_handle(
+            job,
+            output_uri=(
+                self._inference_output_uri(job.taskId) if job.taskId else None
+            ),
+        )
+
+    def _read_job_output(
+        self, handle: ComputeJobHandle, filename: str
+    ) -> Optional[str]:
+        try:
+            return self.execution_service.read_output(handle, filename)
+        except OutputNotAvailableError as exc:
+            self.logger.info(
+                "Output %s is not available yet for task %s: %s",
+                filename,
+                handle.executionId,
+                exc,
+            )
+            return None
 
     def process(self):
         self.logger.info(
@@ -145,17 +332,23 @@ class InferencePostprocessor(BaseInferenceProcessor):
                 ):
                     break
 
-            task_status = self.runner.get_task_status(
-                inference_job.jobId, inference_job.taskId
+            handle = self._compute_handle(inference_job)
+            if handle is None:
+                raise ValueError(
+                    "Inference job "
+                    f"{self.model_data.currentInferenceTaskId} for model "
+                    f"{self.model_data.modelId} has no compute submission "
+                    "to poll"
+                )
+            task_status = map_state_to_status(
+                self.execution_service.get_status(handle), self.config
             )
 
             self.logger.info(
                 f"Task status for model {self.model_data.modelId} is {task_status}"
             )
 
-            logs = self._get_inference_logs(
-                inference_job.jobId, inference_job.taskId
-            )
+            logs = self._get_inference_logs(handle)
             if logs:
                 for log in logs:
                     if (
@@ -177,7 +370,10 @@ class InferencePostprocessor(BaseInferenceProcessor):
                     idx
                 ].completedDate = MetadataUtils.get_timestamp()
 
-                self.model_data.inferenceOutputPath = f"{MetadataUtils.hash_string(self.model_data.projectId)}/{self.model_data.inferenceJobs[idx].taskId}"
+                self.model_data.inferenceOutputPath = output_prefix(
+                    self.model_data.projectId,
+                    self.model_data.inferenceJobs[idx].taskId,
+                )
 
                 # Add artifact Urls only for successful inference
                 identifier = self.config.get_artifact_types().VISUALIZER.value.substitute(
@@ -185,8 +381,25 @@ class InferencePostprocessor(BaseInferenceProcessor):
                     imageLayerId=self.model_data.imageLayerId,
                 )
 
-                # Local runner stores files in inference/ subfolder, remote doesn't
-                if self.config.runner_type == "local":
+                # The local Docker backend stores files in an inference/
+                # subfolder, the remote backends don't. Keyed off the
+                # backend that actually ran *this* job (from its persisted
+                # handle), not the process-wide default, so a mixed-backend
+                # deployment resolves each job's URLs correctly. A job
+                # submitted before the compute layer existed has no
+                # recorded backend (its handle is synthesized as Batch),
+                # so for that case only, fall back to the deployment's
+                # configured runner type — preserving the pre-migration
+                # behavior for jobs already in flight during an upgrade.
+                ran_locally = (
+                    handle.selectedBackend == ComputeBackend.LOCAL
+                    or (
+                        handle.routingReason
+                        == LEGACY_SYNTHESIZED_ROUTING_REASON
+                        and self.config.runner_type == "local"
+                    )
+                )
+                if ran_locally:
                     extra_keys = [
                         f"{self.model_data.inferenceJobs[idx].taskId}",
                         "inference",
@@ -217,24 +430,25 @@ class InferencePostprocessor(BaseInferenceProcessor):
                 self.model_data.inferenceJobs[
                     idx
                 ].logs = self.model_data.inferenceStatusMessage
-                # Cleanup the task on the runner
-                self.runner.cleanup_task(
-                    job_id=self.model_data.inferenceJobs[idx].jobId,
-                    task_id=self.model_data.inferenceJobs[idx].taskId,
-                )
+                # Release the execution's temporary resources
+                self.execution_service.finalize(handle)
 
-            elif task_status == self.config.get_status_types().FAILED.value:
+            elif task_status in (
+                self.config.get_status_types().FAILED.value,
+                self.config.get_status_types().CANCELLED.value,
+            ):
                 self.model_data.inferenceStatus = task_status
                 self.model_data.inferenceJobs[idx].status = task_status
                 self.model_data.inferenceJobs[
                     idx
                 ].completedDate = MetadataUtils.get_timestamp()
-                self.model_data.inferenceOutputPath = f"{MetadataUtils.hash_string(self.model_data.projectId)}/{self.model_data.inferenceJobs[idx].taskId}"
-
-                # Retrieve stderr from the batch task for additional error context
-                stderr_detail = self._get_task_stderr(
-                    inference_job.jobId, inference_job.taskId
+                self.model_data.inferenceOutputPath = output_prefix(
+                    self.model_data.projectId,
+                    self.model_data.inferenceJobs[idx].taskId,
                 )
+
+                # Retrieve stderr from the job for additional error context
+                stderr_detail = self._get_task_stderr(handle)
                 failure_message = "Inference job failed"
                 if stderr_detail:
                     failure_message += f"\n{stderr_detail}"
@@ -245,11 +459,8 @@ class InferencePostprocessor(BaseInferenceProcessor):
                 self.model_data.inferenceJobs[
                     idx
                 ].logs = self.model_data.inferenceStatusMessage
-                # Cleanup the task on the runner
-                self.runner.cleanup_task(
-                    job_id=self.model_data.inferenceJobs[idx].jobId,
-                    task_id=self.model_data.inferenceJobs[idx].taskId,
-                )
+                # Release the execution's temporary resources
+                self.execution_service.finalize(handle)
             else:
                 self.model_data.inferenceStatus = task_status
                 self.model_data.inferenceJobs[idx].status = task_status
@@ -273,55 +484,59 @@ class InferencePostprocessor(BaseInferenceProcessor):
             )
             # Prepare the input files and experiment config for the inference task
             inference_input_files = self._create_inference_config()
-            # Multiple inference outputs are stored, but the visualizer imagery is set to the last completed job
-            command = (
-                f'"cd /app '
-                f'&& source scripts/set_dirs.sh ${BATCH_JOB_WORKDIR}/{inference_input_files["config"]["file_path"]} '
-                f"&& python scripts/print_gpu_info.py "
-                f'&& python run_workflow.py --config ${BATCH_JOB_WORKDIR}/{inference_input_files["config"]["file_path"]} --step inference'
-                '"'
+            # Multiple inference outputs are stored, but the visualizer
+            # imagery is set to the last completed job.
+            task_id = self._pending_task_id()
+            spec = build_inference_job_spec(
+                model=self.model_data,
+                execution_id=task_id,
+                input_files=inference_input_files,
+                config=self.config,
+                gdal_translate_params=self.config.gdal_translate_params,
+                backend=self.model_data.computeBackend,
             )
-            job_id = self.config.get_azure_batch_config()[
-                "inference_batch_job_id"
-            ]
-            # Trim job_id to 64 characters to comply with Azure Batch limits
-            job_id = job_id[:64]
-            task_id = f"{INFERENCE_PREFIX}-{MetadataUtils.generate_id()}"
-            inference_output_prefix = f"{MetadataUtils.hash_string(self.model_data.projectId)}/{task_id}"
-
-            job_id, task_id = self.runner.add_task(
-                job_id=job_id,
-                task_id=task_id,
-                output_prefix=inference_output_prefix,
-                resource_files_for_upload=inference_input_files,
-                file_pattern=f"${BATCH_JOB_WORKDIR}/inference/**/*",
-                command=command,
-                env_vars={
-                    "GDAL_TRANSLATE_PARAMS": self.config.gdal_translate_params,
-                },
-                image_name=self.config.get_azure_batch_config()[
-                    "docker_image"
-                ],
+            handle = self.execution_service.submit(
+                spec, profile=compute_profile(INFERENCE_WORKLOAD)
             )
             self.logger.info(
-                f"Completed add task {task_id} to job id {job_id} for model inference {self.model_data.modelId}"
+                "Inference submitted for model %s: %s",
+                self.model_data.modelId,
+                handle_log_fields(handle),
             )
-            self.model_data.inferenceJobs.append(
-                InferenceJob(
-                    jobId=job_id,
-                    taskId=task_id,
-                    modelId=self.model_data.modelId,
-                    projectId=self.model_data.projectId,
-                    status=self.config.get_status_types().IN_PROGRESS.value,
-                    creationDate=MetadataUtils.get_timestamp(),
+            submitted_job = InferenceJob(
+                jobId=handle.providerJobId,
+                taskId=handle.providerTaskId or handle.executionId,
+                modelId=self.model_data.modelId,
+                projectId=self.model_data.projectId,
+                status=self.config.get_status_types().IN_PROGRESS.value,
+                creationDate=MetadataUtils.get_timestamp(),
+                computeJob=handle,
+            )
+            pending_idx = self._current_job_index()
+            if pending_idx is not None:
+                # Replace the pending record created by the preprocessor
+                # instead of appending a second entry for the same run.
+                submitted_job.creationDate = (
+                    self.model_data.inferenceJobs[pending_idx].creationDate
+                    or submitted_job.creationDate
                 )
+                self.model_data.inferenceJobs[pending_idx] = submitted_job
+            else:
+                self.model_data.inferenceJobs.append(submitted_job)
+            self.model_data.currentInferenceTaskId = submitted_job.taskId
+            # Persist the backend that ran this job so the automatic
+            # artifact-packaging follow-on inherits it.
+            inherited = follow_on_backend(
+                handle.selectedBackend, config=self.config
             )
-            self.model_data.currentInferenceTaskId = task_id
+            if inherited is not None:
+                self.model_data.computeBackend = inherited
             self.model_data.inferenceStatus = (
                 self.config.get_status_types().IN_PROGRESS.value
             )
             self._update_inference_progress(
-                f"Inference submitted with task id {task_id}", step=0
+                f"Inference submitted with task id {submitted_job.taskId}",
+                step=0,
             )
             self.queue_client.put_message(json.dumps(self.model_data.dict()))
             self.logger.info(
@@ -366,7 +581,7 @@ class InferencePostprocessor(BaseInferenceProcessor):
         )
         # NOTE: SAS token is not needed if using Managed Identity but this is very blob specific
         #  - so these may need to be methods in the data layer classes
-        # if SAS token is included then batch job fails to download the blob with an InvalidAuthenticationInfo error
+        # if SAS token is included then the compute job fails to download the blob with an InvalidAuthenticationInfo error
         # NOTE: One cleaner way to build inference resource files could be to make the bda code responsible for
         # downloading the files, and this download runs on the batch container.
         plain_url_pattern = r"(.*)\?+"
@@ -419,7 +634,7 @@ class InferencePostprocessor(BaseInferenceProcessor):
         # Create inference configuration using pydantic model for consistency
         inference_config = Inference(
             batch_size=1,
-            checkpoint_fn=f"{BATCH_JOB_WORKDIR}/inputs/checkpoint/{checkpoint_version}",
+            checkpoint_fn=f"{CONFIG_WORKDIR}/inputs/checkpoint/{checkpoint_version}",
             gpu_id=0,
             output_subdir="inference",
             padding=64,
@@ -447,10 +662,8 @@ class InferencePostprocessor(BaseInferenceProcessor):
         }
         return inference_input_files
 
-    def _get_inference_logs(self, job_id: str, task_id: str):
-        content = self.runner.get_filecontent_from_task(
-            job_id, task_id, "workflow_progress.log"
-        )
+    def _get_inference_logs(self, handle: ComputeJobHandle):
+        content = self._read_job_output(handle, "workflow_progress.log")
         if content is None:
             return None
         logs = []
@@ -470,17 +683,16 @@ class InferencePostprocessor(BaseInferenceProcessor):
             raise
         return logs
 
-    def _get_task_stderr(self, job_id: str, task_id: str) -> str:
-        """Log stderr from a failed batch task server-side for admin diagnostics.
+    def _get_task_stderr(self, handle: ComputeJobHandle) -> str:
+        """Log stderr from a failed job server-side for admin diagnostics.
 
         Raw stderr can contain stack traces, file paths, and other internal details
         that must not reach end users. This method always returns an empty string;
         the content is recorded only via the server-side logger.
         """
+        task_id = handle.providerTaskId or handle.executionId
         try:
-            stderr_content = self.runner.get_filecontent_from_task(
-                job_id, task_id, "stderr.txt"
-            )
+            stderr_content = self._read_job_output(handle, "stderr.txt")
             if stderr_content and stderr_content.strip():
                 self.logger.error(
                     f"Inference task {task_id} stderr (server-side only): "
@@ -529,25 +741,38 @@ class InferencePostprocessor(BaseInferenceProcessor):
         return self.model_data
 
     def _cancel_inference(self):
-        for idx, inference_job in enumerate(self.model_data.inferenceJobs):
-            if inference_job.taskId == self.model_data.currentInferenceTaskId:
-                break
-        self.model_data.inferenceJobs[
-            idx
-        ].status = self.config.get_status_types().CANCELLED.value
-        self.model_data.inferenceJobs[
-            idx
-        ].completedDate = MetadataUtils.get_timestamp()
-        try:
-            self.runner.cancel_task(
-                job_id=self.model_data.inferenceJobs[idx].jobId,
-                task_id=self.model_data.inferenceJobs[idx].taskId,
-            )
+        idx = self._current_job_index()
+        if idx is None:
             self.logger.info(
-                f"Inference task {self.model_data.inferenceJobs[idx].taskId} cancelled successfully for model {self.model_data.modelId}"
+                "No inference job matching %s for model %s; nothing to "
+                "cancel.",
+                self.model_data.currentInferenceTaskId,
+                self.model_data.modelId,
+            )
+            return
+        job = self.model_data.inferenceJobs[idx]
+        job.status = self.config.get_status_types().CANCELLED.value
+        job.completedDate = MetadataUtils.get_timestamp()
+        handle = self._compute_handle(job)
+        if handle is None:
+            # Cancelled before submission: the pending record above is
+            # all there is to update.
+            self.logger.info(
+                "Inference job %s for model %s was cancelled before "
+                "submission; no provider job to cancel.",
+                job.taskId,
+                self.model_data.modelId,
+            )
+            return
+        try:
+            self.execution_service.cancel(handle)
+            self.logger.info(
+                "Inference cancellation requested for model %s: %s",
+                self.model_data.modelId,
+                handle_log_fields(handle),
             )
         except Exception as e:
             self.logger.error(
-                f"Error cancelling inference job {self.model_data.inferenceJobs[idx].jobId} for model {self.model_data.modelId}: {e}",
+                f"Error cancelling inference job {job.jobId} for model {self.model_data.modelId}: {e}",
                 stack_info=True,
             )

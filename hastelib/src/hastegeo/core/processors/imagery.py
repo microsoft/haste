@@ -2,21 +2,112 @@
 # Licensed under the MIT License.
 import json
 import os
-from typing import NamedTuple, Optional
-
-from hastegeo.core.runners.unified_runner import UnifiedRunner
+from typing import Dict, NamedTuple, Optional
 
 from ..config import ArtifactTypes, Config
 from ..data_layer.unified import UnifiedDataLayer
+from ..models.compute import (
+    ComputeJobHandle,
+    ComputeJobSpec,
+    ComputeWorkload,
+    OutputNotAvailableError,
+)
 from ..models.projects import ImageLayer, ImageryPreprocessJob
 from ..utils.blob import fetch_url_text
+from ..utils.compute_jobs import resolve_compute_job_handle
+from ..utils.compute_specs import (
+    JOB_WORKDIR,
+    build_execution_service,
+    compute_profile,
+    container_ref,
+    container_resources,
+    file_input,
+    follow_on_backend,
+    handle_log_fields,
+    map_state_to_status,
+    new_task_id,
+    output_prefix,
+    output_uri,
+    resolve_backend_preference,
+    spec_tags,
+    workspace_output,
+)
 from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
 
-BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 IMAGERY_PREFIX = "img"
+IMAGERY_WORKLOAD = ComputeWorkload.IMAGERY_PREPARATION
+
+
+def build_imagery_job_spec(
+    *,
+    image_layer: ImageLayer,
+    execution_id: str,
+    input_files: Dict[str, dict],
+    config: Config,
+    backend=None,
+) -> ComputeJobSpec:
+    """Build the backend-neutral spec for one imagery-preparation job.
+
+    Same imagery-prep image and ``prepare-imagery`` invocation as before.
+    Both output directories the pre-migration Azure Batch task uploaded
+    are preserved: ``outputs/`` (COGs, previews, footprints, manifests)
+    and ``logs/`` (the friendly progress log, which must survive node
+    loss). Mounted live so the status dialog can follow the progress log
+    while the job runs.
+    """
+    runtime = config.get_compute_runtime_config(IMAGERY_WORKLOAD)
+    config_path = input_files["config"]["file_path"]
+    command = (
+        f'"mkdir -p {JOB_WORKDIR} '
+        f"&& cd {JOB_WORKDIR} "
+        f"&& prepare-imagery --config {JOB_WORKDIR}/{config_path}"
+        '"'
+    )
+    prefix = output_prefix(image_layer.projectId, execution_id)
+    return ComputeJobSpec(
+        executionId=execution_id,
+        workload=IMAGERY_WORKLOAD,
+        backendPreference=resolve_backend_preference(
+            requested=backend,
+            workload=IMAGERY_WORKLOAD,
+            config=config,
+        ),
+        container=container_ref(runtime),
+        command=command,
+        inputs=[
+            file_input(entry["http_url"], entry["file_path"])
+            for entry in input_files.values()
+        ],
+        outputs=[
+            workspace_output(
+                name="outputs",
+                pattern="outputs/*.*",
+                container_url=runtime["output_container_url"],
+                prefix=prefix,
+                live=True,
+            ),
+            workspace_output(
+                name="logs",
+                # Progress log, so it survives the node being deallocated
+                # or preempted once the task completes.
+                pattern="logs/*.*",
+                container_url=runtime["output_container_url"],
+                prefix=prefix,
+                live=True,
+            ),
+        ],
+        resources=container_resources(runtime),
+        timeoutSeconds=runtime["timeout_seconds"],
+        tags=spec_tags(
+            workload=IMAGERY_WORKLOAD,
+            project_id=image_layer.projectId,
+            task_id=execution_id,
+            image_layer_id=image_layer.imageLayerId,
+        ),
+    )
 
 
 class ImageryLogRecord(NamedTuple):
@@ -148,6 +239,16 @@ class ImageryPreProcessor:
         self.image_data.currentStep = 0
         self.image_data.totalSteps = 4
         self.image_data.progressPct = 0.0
+        # Stable task/execution id minted before queueing and recorded on
+        # a pending ImageryPreprocessJob; the postprocessor reuses it, so
+        # a duplicate queue delivery cannot start a second provider job.
+        self.image_data.preprocessJob = ImageryPreprocessJob(
+            taskId=new_task_id(IMAGERY_PREFIX),
+            imageLayerId=self.image_data.imageLayerId,
+            projectId=self.image_data.projectId,
+            status=self.config.get_status_types().PENDING.value,
+            creationDate=MetadataUtils.get_timestamp(),
+        )
         self.image_data.statusMessage = MetadataUtils.append_status_message(
             self.image_data.statusMessage, "Queued for processing"
         )
@@ -159,7 +260,12 @@ class ImageryPreProcessor:
 
 
 class ImageryPostProcessor:
-    def __init__(self, image_data: ImageLayer, config: Config = None):
+    def __init__(
+        self,
+        image_data: ImageLayer,
+        config: Config = None,
+        execution_service=None,
+    ):
         if not isinstance(image_data, ImageLayer):
             raise ValueError(f"{self.__class__.__name__}: Invalid image data.")
         if config is None:
@@ -178,19 +284,53 @@ class ImageryPostProcessor:
         self.logger = Logger.get_logger(__name__)
         self.config = config
         self.process_id = MetadataUtils.generate_short_int_id()
-        self.runner = UnifiedRunner(
-            runner_type=config.runner_type,
-            config=self.config,
-            pool_id=self.config.get_azure_batch_config()["imageprep_pool_id"],
-            candidate_pool_ids=self.config.get_azure_batch_config()[
-                "imageryprep_pool_ids"
-            ],
+        # Injectable so tests can drive the processor with fake adapters.
+        self.execution_service = (
+            execution_service
+            if execution_service is not None
+            else build_execution_service(self.config)
         )
         self.queue = AzureQueueHandler(
             config.queue_config["queue_connection_string"],
             config.queue_config["image_queue_name"],
             config.queue_config["queue_account_url"],
         )
+
+    # -- compute handle plumbing --------------------------------------
+
+    def _pending_task_id(self) -> str:
+        job = self.image_data.preprocessJob
+        if job is not None and job.taskId:
+            return job.taskId
+        return new_task_id(IMAGERY_PREFIX)
+
+    def _imagery_output_uri(self, task_id: str) -> str:
+        runtime = self.config.get_compute_runtime_config(IMAGERY_WORKLOAD)
+        return output_uri(
+            runtime["output_container_url"],
+            output_prefix(self.image_data.projectId, task_id),
+        )
+
+    def _compute_handle(self) -> Optional[ComputeJobHandle]:
+        job = self.image_data.preprocessJob
+        if job is None:
+            return None
+        return resolve_compute_job_handle(
+            job,
+            output_uri=(
+                self._imagery_output_uri(job.taskId) if job.taskId else None
+            ),
+        )
+
+    def _require_handle(self) -> ComputeJobHandle:
+        handle = self._compute_handle()
+        if handle is None:
+            raise ValueError(
+                "Image layer "
+                f"{self.image_data.imageLayerId} has no compute submission "
+                "to poll"
+            )
+        return handle
 
     def process(self):
         self.logger.info(
@@ -212,9 +352,9 @@ class ImageryPostProcessor:
             self.image_data.status
             == self.config.get_status_types().IN_PROGRESS.value
         ):
-            task_status = self.runner.get_task_status(
-                job_id=self.image_data.preprocessJob.jobId,
-                task_id=self.image_data.preprocessJob.taskId,
+            handle = self._require_handle()
+            task_status = map_state_to_status(
+                self.execution_service.get_status(handle), self.config
             )
 
             self.logger.info(
@@ -227,10 +367,11 @@ class ImageryPostProcessor:
                 self.image_data.preprocessJob.completedDate = (
                     MetadataUtils.get_timestamp()
                 )
-                # Add imageryPath only for successful training - may not be needed
+                # Record the imagery output path only once the
+                # preprocessing job has succeeded - may not be needed
                 self.image_data.imageryPath = f"{MetadataUtils.hash_string(self.image_data.projectId)}/imagery_{self.image_data.preprocessJob.taskId}"
-                self._update_results_from_job()
-                logs = self._get_image_preprocess_logs()
+                self._update_results_from_job(handle)
+                logs = self._get_image_preprocess_logs(handle)
                 if logs:
                     for log in logs:
                         if log.message not in self.image_data.statusMessage:
@@ -242,19 +383,19 @@ class ImageryPostProcessor:
                         self.image_data.statusMessage
                     )
 
-                # Cleanup the task on the runner
-                self.runner.cleanup_task(
-                    job_id=self.image_data.preprocessJob.jobId,
-                    task_id=self.image_data.preprocessJob.taskId,
-                )
+                # Release the execution's temporary resources
+                self.execution_service.finalize(handle)
 
-            elif task_status == self.config.get_status_types().FAILED.value:
+            elif task_status in (
+                self.config.get_status_types().FAILED.value,
+                self.config.get_status_types().CANCELLED.value,
+            ):
                 self.image_data.preprocessJob.status = task_status
                 self.image_data.preprocessJob.completedDate = (
                     MetadataUtils.get_timestamp()
                 )
                 self.image_data.status = task_status
-                logs = self._get_image_preprocess_logs()
+                logs = self._get_image_preprocess_logs(handle)
                 if logs:
                     for log in logs:
                         if log.message not in self.image_data.statusMessage:
@@ -268,11 +409,8 @@ class ImageryPostProcessor:
                 self.image_data.preprocessJob.logs = (
                     self.image_data.statusMessage
                 )
-                # Cleanup the task on the runner
-                self.runner.cleanup_task(
-                    job_id=self.image_data.preprocessJob.jobId,
-                    task_id=self.image_data.preprocessJob.taskId,
-                )
+                # Release the execution's temporary resources
+                self.execution_service.finalize(handle)
             else:
                 self.image_data.status = task_status
                 self.image_data.preprocessJob.status = task_status
@@ -325,56 +463,50 @@ class ImageryPostProcessor:
         }
 
         self.logger.info(
-            f"Adding task for preprocessing image layer id: {self.image_data.imageLayerId}"
+            f"Submitting preprocessing job for image layer id: {self.image_data.imageLayerId}"
         )
-        command = (
-            f'"mkdir -p ${BATCH_JOB_WORKDIR} '
-            f"&& cd ${BATCH_JOB_WORKDIR} "
-            f'&& prepare-imagery --config ${BATCH_JOB_WORKDIR}/{imagery_input_files["config"]["file_path"]}'
-            '"'
+        task_id = self._pending_task_id()
+        spec = build_imagery_job_spec(
+            image_layer=self.image_data,
+            execution_id=task_id,
+            input_files=imagery_input_files,
+            config=self.config,
+            backend=self.image_data.computeBackend,
         )
-        job_id = self.config.get_azure_batch_config()[
-            "imageryprep_batch_job_id"
-        ]
-        # Trim job_id to 64 characters to comply with Azure Batch limits
-        job_id = job_id[:64]
-        task_id = f"{IMAGERY_PREFIX}-{MetadataUtils.generate_id()}"
-        imagery_output_prefix = (
-            f"{MetadataUtils.hash_string(self.image_data.projectId)}/{task_id}"
-        )
-        job_id, task_id = self.runner.add_task(
-            job_id=job_id,
-            task_id=task_id,
-            output_prefix=imagery_output_prefix,
-            resource_files_for_upload=imagery_input_files,
-            file_pattern=[
-                f"${BATCH_JOB_WORKDIR}/outputs/*.*",
-                # Progress log, so it survives the node being deallocated or
-                # preempted once the task completes.
-                f"${BATCH_JOB_WORKDIR}/logs/*.*",
-            ],
-            command=command,
-            # TODO: maybe this needs to be encapsulated in the batch runner and not be part of the processor
-            image_name=self.config.get_azure_batch_config()[
-                "imageprep_docker_image"
-            ],
+        handle = self.execution_service.submit(
+            spec, profile=compute_profile(IMAGERY_WORKLOAD)
         )
         self.logger.info(
-            f"Completed add task {task_id} to job id {job_id} for preprocessing image layer {self.image_data.imageLayerId}"
+            "Imagery preprocessing submitted for image layer %s: %s",
+            self.image_data.imageLayerId,
+            handle_log_fields(handle),
         )
+        pending_job = self.image_data.preprocessJob
         self.image_data.preprocessJob = ImageryPreprocessJob(
-            jobId=job_id,
-            taskId=task_id,
+            jobId=handle.providerJobId,
+            taskId=handle.providerTaskId or handle.executionId,
             imageLayerId=self.image_data.imageLayerId,
             projectId=self.image_data.projectId,
             status=self.config.get_status_types().IN_PROGRESS.value,
-            creationDate=MetadataUtils.get_timestamp(),
+            creationDate=(
+                pending_job.creationDate
+                if pending_job is not None and pending_job.creationDate
+                else MetadataUtils.get_timestamp()
+            ),
+            computeJob=handle,
         )
+        inherited = follow_on_backend(
+            handle.selectedBackend, config=self.config
+        )
+        if inherited is not None:
+            self.image_data.computeBackend = inherited
         self.image_data.status = (
             self.config.get_status_types().IN_PROGRESS.value
         )
         self._update_imagery_progress(
-            f"Image preprocessing submitted with task id {task_id}", step=0
+            f"Image preprocessing submitted with task id "
+            f"{self.image_data.preprocessJob.taskId}",
+            step=0,
         )
         self.queue.put_message(json.dumps(self.image_data.dict()))
         self.logger.info(
@@ -382,26 +514,34 @@ class ImageryPostProcessor:
         )
         return self.image_data
 
-    def _read_task_output(self, filename: str) -> Optional[str]:
-        """Return the text of a task output file, or ``None``.
+    def _read_task_output(
+        self, handle: ComputeJobHandle, filename: str
+    ) -> Optional[str]:
+        """Return the text of a job output file, or ``None``.
 
-        Reads the copy on the compute node first, then falls back to the copy
-        Azure Batch uploaded to blob storage on task completion. The node-local
-        copy disappears as soon as the node is deallocated or preempted — which
-        on autoscale pools happens the moment the task completes — so the blob
+        Reads the copy the compute backend still has first, then falls back to
+        the copy uploaded to blob storage on completion. The node-local copy
+        disappears as soon as the node is deallocated or preempted — which on
+        autoscale pools happens the moment the task completes — so the blob
         copy is often the only one left by the time we look.
         """
-        content = self.runner.get_filecontent_from_task(
-            job_id=self.image_data.preprocessJob.jobId,
-            task_id=self.image_data.preprocessJob.taskId,
-            filename=filename,
-        )
+        try:
+            content = self.execution_service.read_output(handle, filename)
+        except OutputNotAvailableError as exc:
+            self.logger.info(
+                "Output %s is not available from the compute backend for "
+                "task %s: %s",
+                filename,
+                handle.executionId,
+                exc,
+            )
+            content = None
         if content:
             return content
 
-        task_id = self.image_data.preprocessJob.taskId
+        task_id = handle.providerTaskId or handle.executionId
         self.logger.info(
-            "%s not available from the node for task %s; "
+            "%s not available from the compute backend for task %s; "
             "falling back to the uploaded copy in storage.",
             filename,
             task_id,
@@ -425,16 +565,17 @@ class ImageryPostProcessor:
             return None
         if not content:
             self.logger.warning(
-                "%s for task %s is not available from the node or storage.",
+                "%s for task %s is not available from the compute backend "
+                "or storage.",
                 filename,
                 task_id,
             )
         return content
 
-    def _get_image_preprocess_logs(self):
+    def _get_image_preprocess_logs(self, handle: ComputeJobHandle):
         # Best-effort: the progress log is a nicety for the status dialog, so a
         # node that went away must not fail an otherwise successful layer.
-        content = self._read_task_output("imagery_friendly.log")
+        content = self._read_task_output(handle, "imagery_friendly.log")
         logs = []
         if content:
             try:
@@ -468,11 +609,11 @@ class ImageryPostProcessor:
             self.image_data.statusMessage, message, timestamp=timestamp
         )
 
-    def _update_results_from_job(self):
+    def _update_results_from_job(self, handle: ComputeJobHandle):
         """
         Update the image layer object with imagery processing results from the processed manifest file
         """
-        content = self._read_task_output("imagery_manifest.json")
+        content = self._read_task_output(handle, "imagery_manifest.json")
         if not content:
             raise FileNotFoundError(
                 f"Processed manifest file not found for image layer id: {self.image_data.imageLayerId}"

@@ -13,19 +13,117 @@ the model so the interactive labeler can load them.
 
 import json
 import os
+from typing import Dict, Optional
 
 from ..config import ArtifactTypes, Config
 from ..data_layer.unified import UnifiedDataLayer
+from ..models.compute import (
+    ComputeJobHandle,
+    ComputeJobSpec,
+    ComputeWorkload,
+    OutputNotAvailableError,
+)
 from ..models.projects import ImageLayer, Model, TrainingJob
-from ..runners.unified_runner import UnifiedRunner
+from ..utils.compute_jobs import resolve_compute_job_handle
+from ..utils.compute_specs import (
+    JOB_WORKDIR,
+    build_execution_service,
+    compute_profile,
+    container_ref,
+    container_resources,
+    file_input,
+    follow_on_backend,
+    handle_log_fields,
+    map_state_to_status,
+    new_task_id,
+    output_prefix,
+    output_uri,
+    resolve_backend_preference,
+    spec_tags,
+    workspace_output,
+)
 from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
 
-# Do not prefix with '$'. Replaced at runtime with the task working directory.
-BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 EMBEDDING_PREFIX = "emb"
+EMBEDDING_WORKLOAD = ComputeWorkload.EMBEDDING
+
+
+def build_embedding_job_spec(
+    *,
+    model: Model,
+    execution_id: str,
+    input_files: Dict[str, dict],
+    config: Config,
+    backend=None,
+) -> ComputeJobSpec:
+    """Build the backend-neutral spec for one building-embedding job.
+
+    Same training image and ``embed-buildings`` invocation as before, and
+    the same ``outputs/*.*`` artifacts under HASTE's
+    ``<project-hash>/<task-id>`` prefix, so the embeddings GeoJSON,
+    PMTiles and feature-sidecar URLs are unchanged. ``logs/`` is declared
+    alongside them because ``embed_buildings`` writes
+    ``logs/embedding_friendly.log`` there: without that declaration a
+    backend with a static output layout (Azure ML) never binds the
+    directory to durable storage, so the friendly progress the processor
+    surfaces in the status message is lost. Both outputs are mounted live
+    (the log is read while the job runs) and share the one destination
+    prefix.
+    """
+    runtime = config.get_compute_runtime_config(EMBEDDING_WORKLOAD)
+    config_path = input_files["config"]["file_path"]
+    command = (
+        f'"mkdir -p {JOB_WORKDIR} '
+        f"&& cd {JOB_WORKDIR} "
+        f"&& embed-buildings --config {JOB_WORKDIR}/{config_path}"
+        '"'
+    )
+    prefix = output_prefix(model.projectId, execution_id)
+    return ComputeJobSpec(
+        executionId=execution_id,
+        workload=EMBEDDING_WORKLOAD,
+        backendPreference=resolve_backend_preference(
+            requested=backend,
+            workload=EMBEDDING_WORKLOAD,
+            config=config,
+        ),
+        container=container_ref(runtime),
+        command=command,
+        inputs=[
+            file_input(entry["http_url"], entry["file_path"])
+            for entry in input_files.values()
+        ],
+        outputs=[
+            workspace_output(
+                name="outputs",
+                pattern="outputs/*.*",
+                container_url=runtime["output_container_url"],
+                prefix=prefix,
+                live=True,
+            ),
+            workspace_output(
+                name="logs",
+                # embed_buildings writes logs/embedding_friendly.log;
+                # read live so the status message follows the run.
+                pattern="logs/*.*",
+                container_url=runtime["output_container_url"],
+                prefix=prefix,
+                live=True,
+            ),
+        ],
+        resources=container_resources(runtime),
+        timeoutSeconds=runtime["timeout_seconds"],
+        tags=spec_tags(
+            workload=EMBEDDING_WORKLOAD,
+            project_id=model.projectId,
+            task_id=execution_id,
+            image_layer_id=model.imageLayerId,
+            model_id=model.modelId,
+        ),
+    )
 
 
 class EmbeddingPreprocessor:
@@ -46,6 +144,16 @@ class EmbeddingPreprocessor:
         self.model_data.progressPct = 0.0
         # 3 friendly steps: submit -> embedding -> tiling/finalize.
         self.model_data.totalSteps = 3
+        # Stable task/execution id minted before queueing; the
+        # postprocessor reuses it so a duplicate delivery cannot create a
+        # second provider job.
+        self.model_data.embeddingJob = TrainingJob(
+            taskId=new_task_id(EMBEDDING_PREFIX),
+            modelId=self.model_data.modelId,
+            projectId=self.model_data.projectId,
+            status=self.config.get_status_types().PENDING.value,
+            creationDate=MetadataUtils.get_timestamp(),
+        )
         self.queue_client.put_message(json.dumps(self.model_data.dict()))
         self.model_data.statusMessage = MetadataUtils.append_status_message(
             self.model_data.statusMessage, "Queued for embedding"
@@ -59,6 +167,7 @@ class EmbeddingPostprocessor:
         model: Model,
         image_layer: ImageLayer = None,
         config: Config = None,
+        execution_service=None,
     ):
         if config is None:
             config = Config()
@@ -71,19 +180,67 @@ class EmbeddingPostprocessor:
             **config.storage_config,
         )
         self.logger = Logger.get_logger(__name__)
-        self.runner = UnifiedRunner(
-            runner_type=config.runner_type,
-            config=self.config,
-            pool_id=self.config.get_azure_batch_config()["training_pool_id"],
-            candidate_pool_ids=self.config.get_azure_batch_config()[
-                "training_pool_ids"
-            ],
+        # Injectable so tests can drive the processor with fake adapters.
+        self.execution_service = (
+            execution_service
+            if execution_service is not None
+            else build_execution_service(self.config)
         )
         self.queue_client = AzureQueueHandler(
             config.queue_config["queue_connection_string"],
             config.queue_config["embedding_queue_name"],
             config.queue_config["queue_account_url"],
         )
+
+    # -- compute handle plumbing --------------------------------------
+
+    def _pending_task_id(self) -> str:
+        job = self.model_data.embeddingJob
+        if job is not None and job.taskId:
+            return job.taskId
+        return new_task_id(EMBEDDING_PREFIX)
+
+    def _embedding_output_uri(self, task_id: str) -> str:
+        runtime = self.config.get_compute_runtime_config(EMBEDDING_WORKLOAD)
+        return output_uri(
+            runtime["output_container_url"],
+            output_prefix(self.model_data.projectId, task_id),
+        )
+
+    def _compute_handle(self) -> Optional[ComputeJobHandle]:
+        job = self.model_data.embeddingJob
+        if job is None:
+            return None
+        return resolve_compute_job_handle(
+            job,
+            output_uri=(
+                self._embedding_output_uri(job.taskId) if job.taskId else None
+            ),
+        )
+
+    def _require_handle(self) -> ComputeJobHandle:
+        handle = self._compute_handle()
+        if handle is None:
+            raise ValueError(
+                "Embedding job for model "
+                f"{self.model_data.modelId} has no compute submission to "
+                "poll"
+            )
+        return handle
+
+    def _read_job_output(
+        self, handle: ComputeJobHandle, filename: str
+    ) -> Optional[str]:
+        try:
+            return self.execution_service.read_output(handle, filename)
+        except OutputNotAvailableError as exc:
+            self.logger.info(
+                "Output %s is not available yet for task %s: %s",
+                filename,
+                handle.executionId,
+                exc,
+            )
+            return None
 
     def process(self):
         self.logger.info(
@@ -102,9 +259,9 @@ class EmbeddingPostprocessor:
             self.model_data.status
             == self.config.get_status_types().IN_PROGRESS.value
         ):
-            task_status = self.runner.get_task_status(
-                job_id=self.model_data.embeddingJob.jobId,
-                task_id=self.model_data.embeddingJob.taskId,
+            handle = self._require_handle()
+            task_status = map_state_to_status(
+                self.execution_service.get_status(handle), self.config
             )
             self.logger.info(
                 f"Task status for embedding model "
@@ -117,31 +274,28 @@ class EmbeddingPostprocessor:
                 self.model_data.embeddingJob.completedDate = (
                     MetadataUtils.get_timestamp()
                 )
-                self._update_results_from_job()
-                for log in self._get_friendly_logs():
+                self._update_results_from_job(handle)
+                for log in self._get_friendly_logs(handle):
                     if log[1] not in self.model_data.statusMessage:
                         self._update_progress(log[1], timestamp=log[0])
-                self.runner.cleanup_task(
-                    job_id=self.model_data.embeddingJob.jobId,
-                    task_id=self.model_data.embeddingJob.taskId,
-                )
+                self.execution_service.finalize(handle)
 
-            elif task_status == self.config.get_status_types().FAILED.value:
+            elif task_status in (
+                self.config.get_status_types().FAILED.value,
+                self.config.get_status_types().CANCELLED.value,
+            ):
                 self.model_data.status = task_status
                 self.model_data.embeddingJob.status = task_status
                 self.model_data.embeddingJob.completedDate = (
                     MetadataUtils.get_timestamp()
                 )
-                for log in self._get_friendly_logs():
+                for log in self._get_friendly_logs(handle):
                     if log[1] not in self.model_data.statusMessage:
                         self._update_progress(log[1], timestamp=log[0])
                 self._update_progress(
                     "Embedding job failed", step=self.model_data.currentStep
                 )
-                self.runner.cleanup_task(
-                    job_id=self.model_data.embeddingJob.jobId,
-                    task_id=self.model_data.embeddingJob.taskId,
-                )
+                self.execution_service.finalize(handle)
             else:
                 self.model_data.status = task_status
                 self.model_data.embeddingJob.status = task_status
@@ -154,45 +308,48 @@ class EmbeddingPostprocessor:
     def _execute_embedding(self):
         try:
             input_files = self._create_embedding_config()
-            command = (
-                f'"mkdir -p ${BATCH_JOB_WORKDIR} '
-                f"&& cd ${BATCH_JOB_WORKDIR} "
-                f"&& embed-buildings --config "
-                f'${BATCH_JOB_WORKDIR}/{input_files["config"]["file_path"]}'
-                '"'
+            task_id = self._pending_task_id()
+            spec = build_embedding_job_spec(
+                model=self.model_data,
+                execution_id=task_id,
+                input_files=input_files,
+                config=self.config,
+                backend=self.model_data.computeBackend,
             )
-            job_id = self.config.get_azure_batch_config()[
-                "training_batch_job_id"
-            ][:64]
-            task_id = f"{EMBEDDING_PREFIX}-{MetadataUtils.generate_id()}"
-            output_prefix = (
-                f"{MetadataUtils.hash_string(self.model_data.projectId)}"
-                f"/{task_id}"
+            handle = self.execution_service.submit(
+                spec, profile=compute_profile(EMBEDDING_WORKLOAD)
             )
-            job_id, task_id = self.runner.add_task(
-                job_id=job_id,
-                task_id=task_id,
-                output_prefix=output_prefix,
-                resource_files_for_upload=input_files,
-                file_pattern=f"${BATCH_JOB_WORKDIR}/outputs/*.*",
-                command=command,
-                image_name=self.config.get_azure_batch_config()[
-                    "docker_image"
-                ],
+            self.logger.info(
+                "Embedding submitted for model %s: %s",
+                self.model_data.modelId,
+                handle_log_fields(handle),
             )
+            pending_job = self.model_data.embeddingJob
             self.model_data.embeddingJob = TrainingJob(
-                jobId=job_id,
-                taskId=task_id,
+                jobId=handle.providerJobId,
+                taskId=handle.providerTaskId or handle.executionId,
                 modelId=self.model_data.modelId,
                 projectId=self.model_data.projectId,
                 status=self.config.get_status_types().IN_PROGRESS.value,
-                creationDate=MetadataUtils.get_timestamp(),
+                creationDate=(
+                    pending_job.creationDate
+                    if pending_job is not None and pending_job.creationDate
+                    else MetadataUtils.get_timestamp()
+                ),
+                computeJob=handle,
             )
+            inherited = follow_on_backend(
+                handle.selectedBackend, config=self.config
+            )
+            if inherited is not None:
+                self.model_data.computeBackend = inherited
             self.model_data.status = (
                 self.config.get_status_types().IN_PROGRESS.value
             )
             self._update_progress(
-                f"Embedding submitted with task id {task_id}", step=1
+                f"Embedding submitted with task id "
+                f"{self.model_data.embeddingJob.taskId}",
+                step=1,
             )
             self.queue_client.put_message(json.dumps(self.model_data.dict()))
         except Exception as e:
@@ -254,7 +411,7 @@ class EmbeddingPostprocessor:
             "model_id": self.model_data.modelId,
             "output_dir": "outputs",
             # Relative to the task working dir: the command cd's into
-            # $AZ_BATCH_TASK_WORKING_DIR before running embed-buildings, whose
+            # $HASTE_JOB_WORKDIR before running embed-buildings, whose
             # WORKDIR defaults to ".". No env-var substitution step needed.
             "files": {
                 "imagery": imagery_fn,
@@ -302,12 +459,8 @@ class EmbeddingPostprocessor:
         }
         return input_files
 
-    def _update_results_from_job(self):
-        content = self.runner.get_filecontent_from_task(
-            job_id=self.model_data.embeddingJob.jobId,
-            task_id=self.model_data.embeddingJob.taskId,
-            filename="embedding_manifest.json",
-        )
+    def _update_results_from_job(self, handle: ComputeJobHandle):
+        content = self._read_job_output(handle, "embedding_manifest.json")
         if not content:
             raise FileNotFoundError(
                 f"Embedding manifest not found for model "
@@ -338,12 +491,8 @@ class EmbeddingPostprocessor:
             data_format=os.path.splitext(filename)[1].strip("."),
         )
 
-    def _get_friendly_logs(self):
-        content = self.runner.get_filecontent_from_task(
-            job_id=self.model_data.embeddingJob.jobId,
-            task_id=self.model_data.embeddingJob.taskId,
-            filename="embedding_friendly.log",
-        )
+    def _get_friendly_logs(self, handle: ComputeJobHandle):
+        content = self._read_job_output(handle, "embedding_friendly.log")
         logs = []
         if content:
             for record in content.splitlines():
