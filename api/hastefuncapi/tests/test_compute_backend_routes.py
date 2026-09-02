@@ -205,6 +205,7 @@ class TrainingRouteTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             "launching training", response.get_body().decode("utf-8")
         )
+        self.assertIn("gpkgUrl", response.get_body().decode("utf-8"))
         self.pre.assert_not_called()
 
     async def test_azure_ml_rejected_when_disabled(self):
@@ -366,6 +367,7 @@ class InferenceRouteTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             "launching inference", response.get_body().decode("utf-8")
         )
+        self.assertIn("gpkgUrl", response.get_body().decode("utf-8"))
         self.pre.assert_not_called()
 
     async def test_azure_ml_rejected_when_disabled(self):

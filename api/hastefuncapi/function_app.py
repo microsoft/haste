@@ -2445,7 +2445,8 @@ async def PutRunModelQueueMessage(req: func.HttpRequest) -> func.HttpResponse:
         if forbidden_fields:
             return func.HttpResponse(
                 "Inference result fields are server-owned and cannot be "
-                "supplied when launching training.",
+                "supplied when launching training: "
+                f"{', '.join(forbidden_fields)}.",
                 status_code=400,
             )
         output = Model(**req_body)
@@ -2564,7 +2565,8 @@ async def PutRunInferenceQueueMessage(
         if forbidden_fields:
             return func.HttpResponse(
                 "Inference result fields are server-owned and cannot be "
-                "supplied when launching inference.",
+                "supplied when launching inference: "
+                f"{', '.join(forbidden_fields)}.",
                 status_code=400,
             )
         output = Model(**req_body)
