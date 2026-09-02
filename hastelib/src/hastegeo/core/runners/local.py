@@ -15,11 +15,42 @@ from azure.storage.blob import BlobClient, BlobServiceClient
 from azure.storage.queue import QueueServiceClient
 from docker.types import DeviceRequest
 from hastegeo.core.config import Config
+from hastegeo.core.models.compute import (
+    BackendConfigurationError,
+    BackendUnavailableError,
+    CapacitySnapshot,
+    CapacityState,
+    ComputeBackend,
+    ComputeJobHandle,
+    ComputeJobSpec,
+    ComputeJobState,
+    ComputeProviderDetail,
+    ComputeResources,
+    ComputeWorkload,
+    LocalProviderDetail,
+    validate_relative_path,
+)
 from hastegeo.core.utils.logs import Logger
+from hastegeo.core.utils.metadata import MetadataUtils
 
 import docker
 
-from .base import BaseRunner
+from .base import (
+    BaseRunner,
+    ComputeRunner,
+    require_single_output_destination,
+    require_supported_uri_schemes,
+)
+from .base import resource_files_from_inputs as _resource_files_from_inputs
+
+# LocalRunner's own blob download/upload helpers
+# (_download_resource_files/_build_blob_client_candidates/
+# _upload_task_outputs) only understand real http(s) blob URLs — same
+# https://host/container/prefix shape split_destination_uri (base.py)
+# assumes — so those are the only input/output URI schemes this adapter
+# can actually translate. See azure_batch.py's
+# _BATCH_SUPPORTED_URI_SCHEMES for the same reasoning.
+_LOCAL_SUPPORTED_URI_SCHEMES = frozenset({"http", "https"})
 
 
 def _normalize_azurite_url(url: Optional[str]) -> Optional[str]:
@@ -34,7 +65,7 @@ def _normalize_azurite_url(url: Optional[str]) -> Optional[str]:
     return normalized
 
 
-class LocalRunner(BaseRunner):
+class LocalRunner(BaseRunner, ComputeRunner):
     """Local runner that executes containers using Docker instead of Azure Batch."""
 
     def __init__(
@@ -222,11 +253,14 @@ class LocalRunner(BaseRunner):
 
         # Download resource files if specified
         if resource_files_for_upload:
+            # Never log the raw resource_files_for_upload dict: its
+            # values carry input blob URLs (and, depending on caller, a
+            # signed query string) — only the destination-relative path
+            # keys and a count are safe to log.
             self.logger.info(
-                "[PIPELINE-TRACE] Starting resource file download..."
-            )
-            self.logger.info(
-                f"[PIPELINE-TRACE] Resource files to download: {resource_files_for_upload}"
+                "[PIPELINE-TRACE] Starting resource file download for "
+                f"{len(resource_files_for_upload)} input(s): "
+                f"{list(resource_files_for_upload.keys())}"
             )
             self._download_resource_files(task_dir, resource_files_for_upload)
             self.logger.info(
@@ -793,9 +827,11 @@ class LocalRunner(BaseRunner):
                             "config_present": (
                                 task_dir / "config.json"
                             ).exists(),
-                            "output_log_size": os.path.getsize(output_log_path)
-                            if output_log_path.exists()
-                            else -1,
+                            "output_log_size": (
+                                os.path.getsize(output_log_path)
+                                if output_log_path.exists()
+                                else -1
+                            ),
                             "command": container_command,
                         }
                         with open(
@@ -955,6 +991,219 @@ class LocalRunner(BaseRunner):
 
         return True
 
+    # ---------------------------------------------------------------
+    # ComputeRunner contract
+    #
+    # Translates ComputeJobSpec into calls on the legacy add_task/
+    # get_task_status/get_filecontent_from_task/cancel_task/cleanup_task
+    # methods above, so Docker execution, blob download/upload, and
+    # AZ_BATCH_* emulation are reused unchanged rather than duplicated
+    # (design.md#backend-neutral-compute-runner, ADR-0005).
+    # ---------------------------------------------------------------
+
+    def validate(self, spec: ComputeJobSpec) -> None:
+        if self.docker_client is None:
+            raise BackendConfigurationError(
+                "local Docker client is not available"
+            )
+        try:
+            self.docker_client.ping()
+        except docker.errors.DockerException as exc:
+            raise BackendUnavailableError(
+                f"local Docker daemon is unreachable: {exc}"
+            ) from exc
+        if not spec.outputs:
+            raise BackendConfigurationError(
+                "local runner requires at least one output so the task's "
+                "artifacts land at a known path"
+            )
+        try:
+            require_supported_uri_schemes(
+                inputs=spec.inputs,
+                outputs=spec.outputs,
+                allowed_schemes=_LOCAL_SUPPORTED_URI_SCHEMES,
+                backend_name="the local runner",
+            )
+            require_single_output_destination(spec.outputs)
+            _resource_files_from_inputs(spec.inputs)
+        except ValueError as exc:
+            raise BackendConfigurationError(str(exc)) from exc
+
+    def _resolved_container_working_dir(
+        self, job_id: str, task_id: str
+    ) -> str:
+        """Return the in-container working directory add_task will use
+        for ``(job_id, task_id)``, mirroring its internal
+        ``container_working_dir``/``relative_task_path`` computation
+        (see add_task) without modifying that legacy method.
+
+        Needed to pass ``HASTE_JOB_WORKDIR`` through ``env_vars`` ahead of
+        submission, since add_task only derives this value internally and
+        does not expose it to callers.
+        """
+        task_dir = self.work_dir / job_id / task_id
+        relative_task_path = str(task_dir).replace("/shared/azurite/", "")
+        return f"/shared/azurite/{relative_task_path}"
+
+    def submit(self, spec: ComputeJobSpec) -> ComputeJobHandle:
+        self.validate(spec)
+        job_id = f"job-{spec.executionId}"
+        task_id = spec.executionId
+        task_dir = self.work_dir / job_id / task_id
+
+        if (task_dir / "status.json").exists():
+            # Idempotent get-or-create: local execution is synchronous
+            # inside add_task, so a second submit() for the same
+            # executionId (retry / duplicate queue delivery) must reuse
+            # the already-produced result instead of re-running the
+            # container.
+            self.logger.info(
+                "Local task %s already ran; reusing its recorded result "
+                "instead of re-executing.",
+                task_id,
+            )
+        else:
+            resource_files = _resource_files_from_inputs(spec.inputs)
+            (
+                _container_url,
+                container_name,
+                output_prefix,
+                patterns,
+            ) = require_single_output_destination(spec.outputs)
+            file_patterns = [str(task_dir / pattern) for pattern in patterns]
+            # Unlike Batch, the local adapter already knows the resolved
+            # in-container working directory before the container starts,
+            # so HASTE_JOB_WORKDIR can be set as a plain static env var
+            # (design.md#work-directory-contract) rather than exported
+            # from another variable at container-start time. Legacy
+            # AZ_BATCH_* variables are still set by add_task unchanged.
+            env_vars = dict(spec.environment)
+            env_vars[
+                "HASTE_JOB_WORKDIR"
+            ] = self._resolved_container_working_dir(job_id, task_id)
+            self.add_task(
+                job_id=job_id,
+                task_id=task_id,
+                image_name=spec.container.imageReference,
+                command=spec.command,
+                arguments=None,
+                work_dir=spec.container.workingDirectory,
+                output_container_url=container_name,
+                output_prefix=output_prefix,
+                resource_files_for_upload=resource_files or None,
+                file_pattern=file_patterns,
+                env_vars=env_vars,
+            )
+
+        return ComputeJobHandle(
+            executionId=spec.executionId,
+            requestedBackend=ComputeBackend.LOCAL,
+            selectedBackend=ComputeBackend.LOCAL,
+            backendProfile="default",
+            providerJobId=job_id,
+            providerTaskId=task_id,
+            targetId=self.pool_id,
+            outputUri=spec.outputs[0].destinationUri,
+            submittedAt=MetadataUtils.get_timestamp(),
+            routingReason="adapter-default",
+            attempt=1,
+            providerDetail=ComputeProviderDetail(
+                discriminator="local",
+                local=LocalProviderDetail(executionDirectory=str(task_dir)),
+            ),
+        )
+
+    def get_status(self, handle: ComputeJobHandle) -> ComputeJobState:
+        status = self.get_task_status(
+            handle.providerJobId, handle.providerTaskId
+        )
+        status_types = self.config.get_status_types()
+        if status == status_types.COMPLETED.value:
+            return ComputeJobState.SUCCEEDED
+        if status == status_types.FAILED.value:
+            return ComputeJobState.FAILED
+        if status == status_types.IN_PROGRESS.value:
+            return ComputeJobState.RUNNING
+        # Log the raw provider status server-side before failing
+        # explicitly, matching the AML adapter's unmapped-status
+        # diagnostics (design.md's "Unknown provider status" edge case) —
+        # never silently report an unrecognized status as "running".
+        self.logger.error(
+            "Unmapped local task status %r for task %s (job %s)",
+            status,
+            handle.providerTaskId,
+            handle.providerJobId,
+        )
+        raise BackendUnavailableError(
+            f"unmapped local task status: {status!r}"
+        )
+
+    def read_output(
+        self,
+        handle: ComputeJobHandle,
+        relative_path: str,
+        *,
+        as_chunks: bool = False,
+    ):
+        validate_relative_path(relative_path, field_name="relative_path")
+        return self.get_filecontent_from_task(
+            handle.providerJobId,
+            handle.providerTaskId,
+            relative_path,
+            as_chunk=as_chunks,
+        )
+
+    def cancel(self, handle: ComputeJobHandle) -> None:
+        """Cancel the task referenced by ``handle``.
+
+        Local tasks run synchronously inside ``add_task``, so by the time
+        a handle exists the task has usually already finished; guard
+        against the legacy ``cancel_task`` unconditionally overwriting an
+        already-terminal ``status.json`` with ``cancelled`` (NEG-003:
+        cancellation racing with completion must not clobber a final
+        succeeded/failed state).
+        """
+        current_status = self.get_task_status(
+            handle.providerJobId, handle.providerTaskId
+        )
+        status_types = self.config.get_status_types()
+        if current_status in (
+            status_types.COMPLETED.value,
+            status_types.FAILED.value,
+        ):
+            self.logger.info(
+                "Task %s already finished (%s); cancel() is a no-op.",
+                handle.providerTaskId,
+                current_status,
+            )
+            return
+        self.cancel_task(handle.providerJobId, handle.providerTaskId)
+
+    def finalize(self, handle: ComputeJobHandle) -> None:
+        # cleanup_task is already idempotent (checks task_dir.exists()
+        # before removing it) and has no shared-job concept to protect
+        # (unlike Batch, each local task owns its own job_id directory).
+        self.cleanup_task(handle.providerJobId, handle.providerTaskId)
+
+    def get_capacity(
+        self, workload: ComputeWorkload, resources: ComputeResources
+    ) -> CapacitySnapshot:
+        try:
+            self.docker_client.ping()
+        except docker.errors.DockerException as exc:
+            return CapacitySnapshot(
+                backend=ComputeBackend.LOCAL,
+                workload=workload,
+                state=CapacityState.UNAVAILABLE,
+                detail=f"local Docker daemon unreachable: {exc}",
+            )
+        return CapacitySnapshot(
+            backend=ComputeBackend.LOCAL,
+            workload=workload,
+            state=CapacityState.AVAILABLE,
+            detail="local Docker daemon reachable",
+        )
+
     def _download_blob_data(self, blob_path: str, local_dir: Path):
         """Download data from blob storage to local directory."""
         if not blob_path or not self.blob_client:
@@ -1001,7 +1250,8 @@ class LocalRunner(BaseRunner):
                 candidates.append(BlobClient.from_blob_url(blob_url))
         except Exception as blob_url_err:
             self.logger.debug(
-                f"BlobClient.from_blob_url failed; will try fallbacks: {blob_url_err}"
+                "BlobClient.from_blob_url failed "
+                f"({type(blob_url_err).__name__}); will try fallbacks"
             )
 
         parsed = urlparse(blob_url)
@@ -1012,7 +1262,8 @@ class LocalRunner(BaseRunner):
         # not rely on undocumented downstream behavior.
         if any(part == ".." or "\x00" in part for part in path_parts):
             self.logger.warning(
-                f"Rejecting blob URL with unsafe path segments: {blob_url}"
+                "Rejecting blob URL with unsafe path segments "
+                f"({len(path_parts)} segment(s))"
             )
             return candidates
 
@@ -1037,7 +1288,9 @@ class LocalRunner(BaseRunner):
                     )
                 except Exception as bc_err:
                     self.logger.debug(
-                        f"get_blob_client failed for {container_name}/{blob_name}: {bc_err}"
+                        f"get_blob_client failed for container "
+                        f"{container_name!r} "
+                        f"({type(bc_err).__name__})"
                     )
 
         return candidates
@@ -1096,7 +1349,8 @@ class LocalRunner(BaseRunner):
                         )
                     else:
                         self.logger.error(
-                            f"Failed to download resource '{file_key}' from {blob_url}: {last_error}"
+                            f"Failed to download resource '{file_key}' "
+                            f"({type(last_error).__name__ if last_error else 'unknown error'})"
                         )
                     continue
 
@@ -1169,10 +1423,14 @@ class LocalRunner(BaseRunner):
                         )
                     except Exception as download_err:
                         self.logger.error(
-                            f"Failed to download resource '{file_key}' from prefix {blob_prefix}: {download_err}"
+                            f"Failed to download resource '{file_key}' "
+                            f"from prefix {blob_prefix!r} "
+                            f"({type(download_err).__name__})"
                         )
         except Exception as e:
-            self.logger.error(f"Failed to download resource files: {e}")
+            self.logger.error(
+                f"Failed to download resource files ({type(e).__name__})"
+            )
 
     def _upload_blob_data(self, local_dir: Path, blob_path: str):
         """Upload data from local directory to blob storage."""
@@ -1261,7 +1519,8 @@ class LocalRunner(BaseRunner):
                         )
                     except Exception as e:
                         self.logger.error(
-                            f"Failed to upload {relative_path}: {e}"
+                            f"Failed to upload {relative_path} "
+                            f"({type(e).__name__})"
                         )
 
             self.logger.info(
@@ -1270,7 +1529,8 @@ class LocalRunner(BaseRunner):
 
         except Exception as e:
             self.logger.error(
-                f"Failed to upload task files to blob storage: {e}"
+                "Failed to upload task files to blob storage "
+                f"({type(e).__name__})"
             )
 
     def _upload_task_outputs(
