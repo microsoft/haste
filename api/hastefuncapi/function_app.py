@@ -16,6 +16,7 @@ import azure.functions as func  # type: ignore
 import requests  # type: ignore
 from hastegeo.core.config import Config
 from hastegeo.core.models.admin import AdminConfig
+from hastegeo.core.models.loading import ActiveJobs
 from hastegeo.core.models.projects import (
     BuildingValidation,
     ImageLayer,
@@ -44,6 +45,10 @@ from hastegeo.core.processors.assessment import AssessmentReportProcessor
 from hastegeo.core.processors.embedding import EmbeddingPreprocessor
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
+from hastegeo.core.processors.loading import (
+    ActiveJobsProcessor,
+    LabelingWorkspaceProcessor,
+)
 from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.processors.project_details import ProjectDetailsProcessor
 from hastegeo.core.processors.publishing import (
@@ -139,6 +144,13 @@ _PUBLISHED_DATASETS_CACHE_ENTRIES = configured_cache_value(
 _published_datasets_cache = AsyncTTLCache(
     ttl_seconds=_PUBLISHED_DATASETS_CACHE_SECONDS,
     max_entries=_PUBLISHED_DATASETS_CACHE_ENTRIES,
+)
+_ACTIVE_JOBS_CACHE_SECONDS = configured_cache_value(
+    "HASTE_ACTIVE_JOBS_CACHE_SECONDS", 5, 0, 5
+)
+_active_jobs_cache = AsyncTTLCache(
+    ttl_seconds=_ACTIVE_JOBS_CACHE_SECONDS,
+    max_entries=1,
 )
 
 # Development mode check - when running locally with Docker/Azurite
@@ -669,6 +681,64 @@ async def GetDashboardData(req: func.HttpRequest) -> func.HttpResponse:
         )
         return func.HttpResponse(
             "Error loading project stats.", status_code=500
+        )
+
+
+@app.route(
+    route="GetActiveJobs",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetActiveJobs(req: func.HttpRequest) -> func.HttpResponse:
+    """Return the compact set of currently active HASTE jobs."""
+    auth_error = await _require_roles(req, {"administrators", "contributors"})
+    if auth_error:
+        return auth_error
+
+    try:
+
+        async def load_response() -> dict[str, str]:
+            result: ActiveJobs = await ActiveJobsProcessor(
+                config=config
+            ).load()
+            payload = json.dumps(result.model_dump(mode="json"))
+            return {
+                "payload": payload,
+                "etag": '"'
+                + hashlib.sha256(payload.encode()).hexdigest()[:32]
+                + '"',
+            }
+
+        cached_response, cache_hit = await _active_jobs_cache.get_or_create(
+            "active-jobs",
+            load_response,
+        )
+        headers = {
+            "Cache-Control": f"private, max-age={_ACTIVE_JOBS_CACHE_SECONDS}",
+            "ETag": cached_response["etag"],
+            "X-Haste-Cache": "HIT" if cache_hit else "MISS",
+        }
+        if _etag_matches(
+            req.headers.get("If-None-Match"), cached_response["etag"]
+        ):
+            return func.HttpResponse(status_code=304, headers=headers)
+        return func.HttpResponse(
+            cached_response["payload"],
+            status_code=200,
+            mimetype="application/json",
+            headers=headers,
+        )
+    except FileNotFoundError as error:
+        logger.error(f"Active-job stats not found: {error}")
+        return _publishing_error_response(
+            "NOT_FOUND", "Project statistics were not found.", 404
+        )
+    except Exception as error:
+        logger.error(
+            f"Error loading active jobs: {error}\n{traceback.format_exc()}"
+        )
+        return _publishing_error_response(
+            "INTERNAL_ERROR", "Active jobs could not be loaded.", 500
         )
 
 
@@ -1653,6 +1723,51 @@ async def GetLayerLabelingToolData(req: func.HttpRequest) -> func.HttpResponse:
         )
         return func.HttpResponse(
             "Error loading label projects.", status_code=500
+        )
+
+
+@app.route(
+    route="GetLabelingWorkspace",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetLabelingWorkspace(req: func.HttpRequest) -> func.HttpResponse:
+    """Return the minimum records for one standard labeling workspace."""
+    try:
+        project_id = _require_guid_param(req, "projectId")
+        image_layer_id = _require_guid_param(req, "imageLayerId")
+    except ValueError as error:
+        return _bad_request(f"GetLabelingWorkspace: {error}")
+
+    auth_error = await _require_roles(req, {"administrators", "contributors"})
+    if auth_error:
+        return auth_error
+
+    try:
+        workspace = await LabelingWorkspaceProcessor(
+            project_id=project_id,
+            image_layer_id=image_layer_id,
+            config=config,
+        ).load()
+        return func.HttpResponse(
+            json.dumps(workspace.model_dump(mode="json")),
+            status_code=200,
+            mimetype="application/json",
+        )
+    except FileNotFoundError as error:
+        logger.error(f"Labeling workspace not found: {error}")
+        return _publishing_error_response(
+            "NOT_FOUND", "Labeling workspace was not found.", 404
+        )
+    except Exception as error:
+        logger.error(
+            f"Error loading labeling workspace: {error}\n"
+            f"{traceback.format_exc()}"
+        )
+        return _publishing_error_response(
+            "INTERNAL_ERROR",
+            "Labeling workspace could not be loaded.",
+            500,
         )
 
 
