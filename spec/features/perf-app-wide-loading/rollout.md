@@ -33,6 +33,8 @@ or publishing status freshness exceeds ten seconds.
 | Bootstrap p95 | Legacy chain about 3 s | <1 s |
 | Published datasets p95 | 1.89 s post-deploy | <0.75 s warm |
 | Project details p95 | 2.27 s post-deploy | <=3 s |
+| Labeling workspace p95 | Not previously measured | <1 s |
+| Active jobs p95 | N project-detail requests | <1 s warm |
 | API failures | 0 for evaluated endpoints | No increase |
 | Route content-ready p95 | Not previously measured | <=3 s |
 

@@ -52,6 +52,17 @@ artifacts, so full map readiness cannot have a universal three-second limit.
 - Required route failures render retry actions instead of blank content.
 - Route benchmarks require route-owned readiness markers, enforce p95 limits,
   fail on browser/API errors, and omit authentication and fixture details.
+- Dashboard content no longer waits for the optional model catalog. Route-owned
+  requests abort on navigation, and global blocking actions suppress local
+  loading surfaces.
+- Ongoing Jobs uses one conditional `GetActiveJobs` request instead of one full
+  project-details request per candidate project.
+- The standard Labeling Tool loads its module, Maps capabilities, and one
+  allowlisted `GetLabelingWorkspace` response concurrently. One staged loader
+  remains visible through map readiness, drawing setup, AOI fitting, and a
+  stable map frame.
+- Map routes load only their required control, drawing, or swipe capabilities.
+  Standard labeling no longer waits for the unused swipe extension.
 
 ## Expected Impact
 
@@ -64,15 +75,24 @@ These are expected effects, not post-deployment measurements.
 
 ## Local Verification
 
-The final local regression pass completed with 601 core tests, 72 HTTP API
-tests, 6 queue-trigger tests, and 148 UI tests passing. The production UI build
-transformed 2,419 modules in 431 ms.
+The final local regression pass completed with 614 core tests, 79 HTTP API
+tests, 6 queue-trigger tests, and 161 UI tests passing. The production UI build
+transformed 2,423 modules in 399 ms.
 
-Black, isort, and Flake8 passed for the nine feature-owned Python files. ESLint
-passed for 38 changed UI files, both benchmark scripts passed Node syntax
-checks, `git diff --check` passed, and the configured `detect-secrets` hook
-reported no candidates. The Python suites emitted only existing Pydantic v2
-deprecation warnings.
+Black, isort, and Flake8 passed for the five Python files added or updated by
+this follow-up. ESLint passed for 26 changed or new UI files, the three route
+benchmark scripts passed Node syntax checks, `git diff --check` passed, and the
+configured `detect-secrets` hook reported no candidates across 46 feature-owned
+files. The Python suites emitted only existing Pydantic v2 deprecation
+warnings.
+
+A mocked browser interruption test delayed Model Catalog and Active Jobs by two
+seconds, then navigated from Dashboard to Help. Dashboard showed one spinner,
+Help became ready in 38 ms, and both abandoned requests were aborted with no
+remaining loader. A real Azure Maps invalid-auth test confirmed that standard
+labeling retains one persistent retry surface, does not start its tour, and
+raises no application lifecycle exception. Successful production Maps loading
+still requires Dev1 validation with real credentials.
 
 ## Open Validation
 

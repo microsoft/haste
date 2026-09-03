@@ -15,6 +15,9 @@
 | 3 | UI bootstrap and independent request fan-out | `ui` | Slice 2 | US-001, US-003 | implemented |
 | 4 | Published-dataset TTL/ETag cache and safe polling | `backend-dev`, `ui` | Slice 2 | US-002 | implemented |
 | 5 | All-route deterministic performance matrix | `backend-dev`, `ui` | Slices 1-4 | US-004 | in-progress |
+| 6 | Route-local loading and abortable GET lifecycle | `ui` | Slice 3 | US-005, US-007 | implemented |
+| 7 | Labeling Workspace API and staged map initialization | `backend-dev`, `ui` | Slice 6 | US-006 | implemented |
+| 8 | Compact cached Active Jobs API and polling | `backend-dev`, `ui` | Slice 6 | US-007 | implemented |
 
 Each slice is reviewable and testable independently. No infrastructure or
 dependency changes are planned.
@@ -29,6 +32,10 @@ dependency changes are planned.
 - [ ] Function runtime ingress is restricted to trusted SWA/APIM traffic.
 - [ ] No route exceeds the three-second p95 acceptance limit without a
   documented data-volume exception.
+- [x] Interrupted navigation aborts route-owned GET and map work.
+- [x] Standard Labeling Tool renders one staged loader through map readiness.
+- [x] Dashboard renders before optional catalog and active-job requests finish.
+- [x] Active Jobs uses one non-overlapping conditional request per poll.
 
 ## Agent Summary
 

@@ -11,6 +11,9 @@
 //   --project <guid> --layer <guid> --model <numeric-id>
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  isExpectedNavigationAbort,
+} = require("./request_failure.cjs");
 
 function arg(name, fallback = null) {
   const index = process.argv.indexOf(`--${name}`);
@@ -93,7 +96,7 @@ const routes = [
   {
     name: "labeling",
     path: `/labeling-tool/${project}/${layer}`,
-    ready: ".labeling-tool-page",
+    ready: ".labeling-workspace-route",
     mapReady: '.labeling-tool-page[data-map-ready="true"]',
   },
   {
@@ -248,7 +251,9 @@ async function measure(browser, route, profile, mode) {
   const consoleErrors = [];
   const pageErrors = [];
   page.on("request", (request) => requests.push(request.url()));
-  page.on("requestfailed", (request) => failures.push(request.url()));
+  page.on("requestfailed", (request) => {
+    if (!isExpectedNavigationAbort(request)) failures.push(request.url());
+  });
   page.on("response", (response) => {
     if (response.status() >= 400) httpErrors.push(response.status());
   });

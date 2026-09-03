@@ -31,6 +31,17 @@
 | MAP-01 | Cold map route | Module and map loading overlap |
 | MAP-02 | Asset failure then retry | Loader resets and retries safely |
 | HELP-01 | Help route | Images lazy; videos do not preload |
+| LOAD-01 | Blocking action plus lazy route | One visible status surface |
+| LOAD-02 | Navigate during route GET | Request aborts; destination is unaffected |
+| LABEL-01 | Current image layer has label pointer | Direct label read; no partition scan |
+| LABEL-02 | Legacy or dangling label pointer | One compatible partition fallback |
+| LABEL-03 | Standard Labeling Tool startup | Workspace and Maps begin concurrently |
+| LABEL-04 | Map initialization succeeds | Loader remains until map/drawing readiness |
+| LABEL-05 | Navigate during map initialization | Request aborts and map is disposed |
+| HOME-01 | Optional catalog is slow | Dashboard renders without waiting |
+| JOBS-01 | Dashboard has multiple projects | One compact Active Jobs request |
+| JOBS-02 | Active Jobs poll is hidden or in flight | No new request |
+| JOBS-03 | Matching Active Jobs ETag | Existing jobs retained after `304` |
 
 ## Performance Matrix
 

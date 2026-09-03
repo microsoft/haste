@@ -6,6 +6,9 @@
 - [Session Bootstrap](#session-bootstrap)
 - [Published Datasets](#published-datasets)
 - [Route Loading](#route-loading)
+- [Labeling Workspace](#labeling-workspace)
+- [Active Jobs](#active-jobs)
+- [Cancellation and Loading Ownership](#cancellation-and-loading-ownership)
 - [Security](#security)
 - [Deferred Work](#deferred-work)
 
@@ -77,6 +80,48 @@ loading and videos use `preload="none"`.
 Independent Home, create/edit, and validation requests run concurrently while
 preserving required versus optional failure behavior.
 
+## Labeling Workspace
+
+### `GET /api/GetLabelingWorkspace`
+
+The route requires `projectId` and `imageLayerId`. It returns the one label
+project, target image layer, project event types, and primary classes required
+by the standard Labeling Tool. Project and image-layer reads overlap. The label
+project is loaded directly through the image layer's existing `labelProjectId`;
+legacy layers without a usable pointer fall back to one partition scan.
+
+The UI starts this request at the same time as the route-specific Azure Maps
+control and drawing assets. It displays one route-owned staged workspace loader
+until data, map readiness, drawing controls, and the first stable map frame are
+ready. The map starts at the workspace bounds without an animated camera flight
+and is disposed if navigation interrupts initialization.
+
+## Active Jobs
+
+### `GET /api/GetActiveJobs`
+
+The route returns a compact list of active imagery, training, and inference
+jobs. It reads the project summary once, loads only image-layer and model
+partitions for candidate projects, and excludes labels, validation records,
+artifacts, and terminal work. A short process-local single-flight cache bounds
+repeat work; ETags support empty `304` responses.
+
+The Dashboard makes one conditional request instead of one
+`GetProjectDetails` request per project. Polls run only while visible, never
+overlap, and abort on route unmount. Dashboard content does not wait for the
+optional model catalog or active-jobs widget.
+
+## Cancellation and Loading Ownership
+
+Route initialization uses route-local loading state. The global blocking
+overlay remains reserved for explicit user actions such as save, delete, and
+publish. A Suspense fallback is suppressed while that blocking overlay is
+visible so only one page-level status surface is exposed.
+
+GET helpers accept an `AbortSignal`. Dashboard, active-job, and Labeling Tool
+requests abort when their owning route unmounts. Late completions cannot clear
+another route's loading state or mutate an unmounted component.
+
 ## Security
 
 - Identity comes only from the decoded SWA principal; no user ID is accepted
@@ -86,6 +131,7 @@ preserving required versus optional failure behavior.
   access.
 - Stable sessions do not write user state or call the management plane.
 - Caches store data representations, not authorization decisions.
+- Both additive read routes require an active ACL-backed application role.
 - Development fallback remains restricted to `DEVELOPMENT_MODE`.
 
 ## Deferred Work

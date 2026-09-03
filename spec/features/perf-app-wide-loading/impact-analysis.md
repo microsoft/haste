@@ -26,6 +26,10 @@
 | Parallel loading changes error order | medium | Preserve required/optional request semantics in tests |
 | Map assets race their prerequisites | medium | Load control before drawing/swipe and cover failures |
 | Browser budget varies by network | medium | Record cold/warm desktop/mobile profiles and API timing |
+| Aborted requests are reported as failures | low | Preserve `AbortError` and suppress expected unmount errors |
+| Legacy layer has no valid label pointer | medium | Fall back to one partition scan without changing stored data |
+| Active-job cache briefly trails queue updates | low | TTL at most 5 seconds; never cache authorization |
+| Map is disposed while SDK events fire | medium | Guard teardown, remove listeners, and test interrupted startup |
 
 ## Security
 
