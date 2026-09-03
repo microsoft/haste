@@ -17,17 +17,22 @@ function deferred() {
 test("starts imagery, model, and saved-label requests concurrently", async () => {
   const requests = [deferred(), deferred(), deferred()];
   const calls = [];
+  const controller = new AbortController();
   const loading = loadInteractiveMetadata({
     projectId: "project-1",
     imageLayerId: "layer-1",
     modelId: "42",
-    get: (endpoint) => {
-      calls.push(endpoint);
+    signal: controller.signal,
+    get: (endpoint, options) => {
+      calls.push({ endpoint, options });
       return requests[calls.length - 1].promise;
     },
   });
 
   assert.equal(calls.length, 3);
+  calls.forEach((call) => {
+    assert.equal(call.options.signal, controller.signal);
+  });
   requests[0].resolve({ imagery: {} });
   requests[1].resolve([{ modelId: "42", pmtilesUrl: "tiles" }]);
   requests[2].resolve({ labels: { building: { label: 1 } } });

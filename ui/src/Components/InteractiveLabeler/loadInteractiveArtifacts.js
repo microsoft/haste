@@ -16,14 +16,17 @@ export async function loadInteractiveArtifacts({
     }
   };
 
+  const pmtilesPromise = invoke(loadPmtiles);
+  const sidecarPromise = invoke(loadSidecar);
   try {
     const [pmtilesHeader, sidecar] = await Promise.all([
-      invoke(loadPmtiles),
-      invoke(loadSidecar),
+      pmtilesPromise,
+      sidecarPromise,
     ]);
     return { pmtilesHeader, sidecar };
   } catch (error) {
     controller.abort();
+    await Promise.allSettled([pmtilesPromise, sidecarPromise]);
     throw error;
   } finally {
     signal?.removeEventListener("abort", abort);

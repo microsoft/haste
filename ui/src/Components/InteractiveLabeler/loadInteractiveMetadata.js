@@ -3,17 +3,24 @@ export async function loadInteractiveMetadata({
   projectId,
   imageLayerId,
   modelId,
+  signal,
 }) {
+  const options = { signal };
   const [layerResult, modelsResult, labelsResult] = await Promise.allSettled([
     get(
       `GetLayerLabelingToolData?projectId=${projectId}` +
-        `&imageLayerId=${imageLayerId}`
+        `&imageLayerId=${imageLayerId}`,
+      options
     ),
     get(
       `GetLayerModelsDetails?projectId=${projectId}` +
-        `&imageLayerId=${imageLayerId}`
+        `&imageLayerId=${imageLayerId}`,
+      options
     ),
-    get(`GetInteractiveLabels?projectId=${projectId}&modelId=${modelId}`),
+    get(
+      `GetInteractiveLabels?projectId=${projectId}&modelId=${modelId}`,
+      options
+    ),
   ]);
 
   if (modelsResult.status === "rejected") throw modelsResult.reason;

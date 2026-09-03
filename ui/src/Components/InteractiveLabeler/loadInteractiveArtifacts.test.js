@@ -88,3 +88,29 @@ test("aborts the sibling transfer when a required artifact fails", async () => {
 
   assert.equal(sidecarAborted, true);
 });
+
+test("waits for the aborted sibling to settle before rejecting", async () => {
+  let settleSidecar;
+  const events = [];
+  const loading = loadInteractiveArtifacts({
+    loadPmtiles: async () => {
+      throw new Error("tiles unavailable");
+    },
+    loadSidecar: (signal) =>
+      new Promise((resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          events.push("aborted");
+          settleSidecar = () => {
+            events.push("settled");
+            reject(new DOMException("Aborted", "AbortError"));
+          };
+        });
+      }),
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, ["aborted"]);
+  settleSidecar();
+  await assert.rejects(loading, /tiles unavailable/);
+  assert.deepEqual(events, ["aborted", "settled"]);
+});

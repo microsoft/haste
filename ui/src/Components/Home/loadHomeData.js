@@ -1,16 +1,8 @@
-export async function loadHomeData(get) {
-  const [dashboard, catalog] = await Promise.allSettled([
-    get("GetDashboardData"),
-    get("GetModelCatalog"),
-  ]);
-
+export function loadHomeData(get, options = {}) {
   return {
-    dashboardData: dashboard.status === "fulfilled" ? dashboard.value : null,
-    dashboardError: dashboard.status === "rejected" ? dashboard.reason : null,
-    catalog:
-      catalog.status === "fulfilled"
-        ? catalog.value?.modelCatalog || []
-        : [],
-    catalogError: catalog.status === "rejected" ? catalog.reason : null,
+    dashboard: get("GetDashboardData", options),
+    catalog: get("GetModelCatalog", options).then(
+      (response) => response?.modelCatalog || []
+    ),
   };
 }

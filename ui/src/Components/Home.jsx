@@ -20,6 +20,7 @@ import PropTypes from "prop-types";
 import { formatProjectDate } from "./ProjectManagement/projectStatus";
 import CreateEditProjectModal from "./CreateEditProjectModal";
 import { loadHomeData } from "./Home/loadHomeData";
+import { RouteLoading } from "./MapRoute";
 
 const StatCard = ({ icon, value, label, onClick }) => (
   <div
@@ -93,13 +94,14 @@ EmptyWidgetPlaceholder.propTypes = {
 
 const Home = () => {
   const navigate = useNavigate();
-  const { setIsLoading, initCurrentTour, setAppHeaderRightButtons, appParams } =
+  const { initCurrentTour, setAppHeaderRightButtons, appParams } =
     useContext(AppContext);
   const [dashboardData, setDashboardData] = useState(null);
   const [catalog, setCatalog] = useState([]);
   const [modalComponent, setModalComponent] = useState(null);
   const [nowMs] = useState(Date.now);
   const [loadError, setLoadError] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   const openCreateProjectModal = () => {
     setModalComponent(
@@ -107,30 +109,8 @@ const Home = () => {
     );
   };
 
-  const fetchProjects = async () => {
-    setIsLoading(true);
-    try {
-      const result = await loadHomeData(apiGet);
-      if (result.dashboardError) {
-        console.error("Error fetching projects:", result.dashboardError);
-        setLoadError(true);
-      } else {
-        setDashboardData(result.dashboardData);
-        setLoadError(false);
-      }
-      if (result.catalogError) {
-        console.warn(
-          "Model catalog unavailable for dashboard:",
-          result.catalogError
-        );
-      }
-      setCatalog(result.catalog);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   useEffect(() => {
+    let active = true;
     initCurrentTour("dashboardGuide");
     setAppHeaderRightButtons([
       {
@@ -148,16 +128,41 @@ const Home = () => {
       },
     ]);
 
-    fetchProjects();
+    const controller = new AbortController();
+    const { dashboard, catalog: catalogRequest } = loadHomeData(apiGet, {
+      signal: controller.signal,
+    });
+    dashboard
+      .then((response) => {
+        if (!active) return;
+        setDashboardData(response);
+        setLoadError(false);
+      })
+      .catch((error) => {
+        if (!active || error.name === "AbortError") return;
+        console.error("Error fetching projects:", error);
+        setLoadError(true);
+      });
+    catalogRequest
+      .then((response) => {
+        if (active) setCatalog(response);
+      })
+      .catch((error) => {
+        if (active && error.name !== "AbortError") {
+          console.warn("Model catalog unavailable for dashboard:", error);
+        }
+      });
 
     //On component dismount
     return () => {
+      active = false;
+      controller.abort();
       setModalComponent(null);
       initGuidedTourState("dashboardGuide", appParams.guidedTourProperties);
     };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadAttempt]);
 
   if (!dashboardData) {
     return loadError ? (
@@ -167,11 +172,18 @@ const Home = () => {
             Dashboard data could not be loaded.
           </MessageBarBody>
         </MessageBar>
-        <Button className="mt-3" appearance="primary" onClick={fetchProjects}>
+        <Button
+          className="mt-3"
+          appearance="primary"
+          onClick={() => {
+            setLoadError(false);
+            setLoadAttempt((value) => value + 1);
+          }}
+        >
           Retry
         </Button>
       </div>
-    ) : null;
+    ) : <RouteLoading label="Loading dashboard" />;
   }
 
   const projects = dashboardData.projects || [];
@@ -326,7 +338,7 @@ const Home = () => {
                 {isEmpty ? (
                   <EmptyWidgetPlaceholder message="No ongoing jobs to display." />
                 ) : (
-                  <OngoingJobs projects={projects} />
+                  <OngoingJobs />
                 )}
               </WidgetShell>
             </div>

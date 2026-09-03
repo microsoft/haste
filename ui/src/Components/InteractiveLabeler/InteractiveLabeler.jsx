@@ -762,6 +762,7 @@ const InteractiveLabeler = () => {
       projectId,
       imageLayerId,
       modelId,
+      signal,
     });
     signal.throwIfAborted();
     // Cache the imagery URLs for the Advanced → Swipe view, which loads the

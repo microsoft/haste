@@ -1,25 +1,32 @@
 import { Button, Spinner } from "@fluentui/react-components";
+import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 
 import { loadMapRoute } from "../util/azureMapsLoader";
 
 
-export const RouteLoading = () => (
+export const RouteLoading = ({ label = "Loading page" }) => (
   <div className="route-loading" role="status" aria-live="polite">
-    <Spinner size="small" label="Loading page" />
+    <Spinner size="small" label={label} />
   </div>
 );
 
+RouteLoading.propTypes = {
+  label: PropTypes.string,
+};
+
 // eslint-disable-next-line react-refresh/only-export-components
-export function createMapRoute(importRoute) {
+export function createMapRoute(importRoute, loadMaps) {
   const MapRoute = (props) => {
+    const location = useLocation();
     const [attempt, setAttempt] = useState(0);
     const [routeComponent, setRouteComponent] = useState(null);
     const [loadError, setLoadError] = useState(false);
 
     useEffect(() => {
       let active = true;
-      loadMapRoute(importRoute)()
+      loadMapRoute(importRoute, loadMaps)()
         .then((route) => {
           if (active) setRouteComponent(() => route.default);
         })
@@ -53,7 +60,7 @@ export function createMapRoute(importRoute) {
     if (!routeComponent) return <RouteLoading />;
 
     const Component = routeComponent;
-    return <Component {...props} />;
+    return <Component key={location.pathname} {...props} />;
   };
   return MapRoute;
 }

@@ -14,51 +14,46 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-test("starts dashboard and catalog requests concurrently", async () => {
+test("starts dashboard and catalog requests concurrently", () => {
   const dashboard = deferred();
   const catalog = deferred();
   const calls = [];
+  const options = { signal: new AbortController().signal };
+  const loading = loadHomeData((endpoint, receivedOptions) => {
+    calls.push([endpoint, receivedOptions]);
+    return endpoint === "GetDashboardData"
+      ? dashboard.promise
+      : catalog.promise;
+  }, options);
+
+  assert.deepEqual(calls, [
+    ["GetDashboardData", options],
+    ["GetModelCatalog", options],
+  ]);
+  assert.equal(loading.dashboard, dashboard.promise);
+});
+
+test("dashboard resolves without waiting for the optional catalog", async () => {
+  const dashboard = deferred();
+  const catalog = deferred();
   const loading = loadHomeData((endpoint) => {
-    calls.push(endpoint);
     return endpoint === "GetDashboardData"
       ? dashboard.promise
       : catalog.promise;
   });
 
-  assert.deepEqual(calls, ["GetDashboardData", "GetModelCatalog"]);
+  dashboard.resolve({ projects: [] });
+
+  assert.deepEqual(await loading.dashboard, { projects: [] });
   catalog.resolve({ modelCatalog: [{ modelId: "model-1" }] });
-  dashboard.resolve({ projects: [{ projectId: "project-1" }] });
-
-  assert.deepEqual(await loading, {
-    dashboardData: { projects: [{ projectId: "project-1" }] },
-    dashboardError: null,
-    catalog: [{ modelId: "model-1" }],
-    catalogError: null,
-  });
+  assert.deepEqual(await loading.catalog, [{ modelId: "model-1" }]);
 });
 
-test("keeps dashboard data when the optional catalog fails", async () => {
-  const result = await loadHomeData(async (endpoint) => {
-    if (endpoint === "GetModelCatalog") {
-      throw new Error("catalog unavailable");
-    }
-    return { projects: [] };
+test("preserves independent dashboard and catalog failures", async () => {
+  const loading = loadHomeData(async (endpoint) => {
+    throw new Error(`${endpoint} unavailable`);
   });
 
-  assert.deepEqual(result.dashboardData, { projects: [] });
-  assert.deepEqual(result.catalog, []);
-  assert.match(result.catalogError.message, /catalog unavailable/);
-});
-
-test("reports a required dashboard failure independently", async () => {
-  const result = await loadHomeData(async (endpoint) => {
-    if (endpoint === "GetDashboardData") {
-      throw new Error("dashboard unavailable");
-    }
-    return { modelCatalog: [] };
-  });
-
-  assert.equal(result.dashboardData, null);
-  assert.match(result.dashboardError.message, /dashboard unavailable/);
-  assert.deepEqual(result.catalog, []);
+  await assert.rejects(loading.dashboard, /GetDashboardData unavailable/);
+  await assert.rejects(loading.catalog, /GetModelCatalog unavailable/);
 });

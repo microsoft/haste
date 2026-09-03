@@ -47,8 +47,8 @@ export async function apiLogout(redirectPath = "/") {
   }
 }
 
-export async function apiGet(endpoint) {
-  const response = await apiGetResponse(endpoint);
+export async function apiGet(endpoint, options = {}) {
+  const response = await apiGetResponse(endpoint, options);
   return response.data;
 }
 

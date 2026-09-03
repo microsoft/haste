@@ -65,15 +65,23 @@ test("loads styles, map control, drawing tools, and swipe in order", async () =>
 
   await loadAzureMaps(documentRef);
 
+  const assets = documentRef.elements.map(
+    (element) => element.src || element.href
+  );
   assert.deepEqual(
-    documentRef.elements.map((element) => element.src || element.href),
+    assets.slice(0, 3),
     [
       "https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.css",
       "https://atlas.microsoft.com/sdk/javascript/drawing/1/atlas-drawing.min.css",
       "https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.js",
+    ]
+  );
+  assert.deepEqual(
+    new Set(assets.slice(3)),
+    new Set([
       "https://atlas.microsoft.com/sdk/javascript/drawing/1/atlas-drawing.min.js",
       "/assets/js/azure-maps-swipe-map.min.js",
-    ]
+    ])
   );
 });
 
@@ -96,15 +104,63 @@ test("loads independent map assets in two concurrent phases", async () => {
   );
 
   initialAssets.forEach((asset) => documentRef.dispatchAsset(asset));
-  await Promise.resolve();
-  await Promise.resolve();
-  assert.deepEqual(
-    documentRef.elements.map((element) => element.src || element.href),
-    [...initialAssets, ...dependentAssets]
+  await new Promise((resolve) => setImmediate(resolve));
+  const assets = documentRef.elements.map(
+    (element) => element.src || element.href
   );
+  assert.deepEqual(assets.slice(0, 3), initialAssets);
+  assert.deepEqual(new Set(assets.slice(3)), new Set(dependentAssets));
 
   dependentAssets.forEach((asset) => documentRef.dispatchAsset(asset));
   await loading;
+});
+
+test("loads drawing without the unused swipe extension", async () => {
+  const documentRef = fakeDocument();
+
+  await loadAzureMaps(documentRef, { drawing: true, swipe: false });
+
+  assert.deepEqual(
+    documentRef.elements.map((element) => element.src || element.href),
+    [
+      "https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.css",
+      "https://atlas.microsoft.com/sdk/javascript/drawing/1/atlas-drawing.min.css",
+      "https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.js",
+      "https://atlas.microsoft.com/sdk/javascript/drawing/1/atlas-drawing.min.js",
+    ]
+  );
+});
+
+test("loads map control without drawing or swipe extensions", async () => {
+  const documentRef = fakeDocument();
+
+  await loadAzureMaps(documentRef, { drawing: false, swipe: false });
+
+  assert.deepEqual(
+    documentRef.elements.map((element) => element.src || element.href),
+    [
+      "https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.css",
+      "https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.js",
+    ]
+  );
+});
+
+test("drawing stylesheet failure does not fail a map-only caller", async () => {
+  const failedAsset =
+    "https://atlas.microsoft.com/sdk/javascript/drawing/1/atlas-drawing.min.css";
+  const documentRef = fakeDocument({ failOnce: failedAsset });
+
+  const drawing = loadAzureMaps(documentRef, {
+    drawing: true,
+    swipe: false,
+  });
+  const mapOnly = loadAzureMaps(documentRef, {
+    drawing: false,
+    swipe: false,
+  });
+
+  await assert.rejects(drawing, /Unable to load/);
+  await mapOnly;
 });
 
 test("starts the route import while Azure Maps is loading", async () => {

@@ -8,12 +8,15 @@ import PropType from "prop-types";
 
 import { AppContext } from "../AppContext";
 import { createMapRoute, RouteLoading } from "./MapRoute";
+import { loadAzureMaps } from "../util/azureMapsLoader";
+import LabelingToolRoute from "./LabelingTool/LabelingToolRoute";
 
 const AdminLabelingTool = lazy(() => import("./AdminLabelingTool"));
 const AdminSourceTypes = lazy(() => import("./AdminSourceTypes"));
 const AdminUsers = lazy(() => import("./AdminUsers"));
 const BuildingValidation = createMapRoute(
-  () => import("./BuildingValidation/BuildingValidation")
+  () => import("./BuildingValidation/BuildingValidation"),
+  () => loadAzureMaps(document, { drawing: false, swipe: false })
 );
 const CreateEditImageLayerForm = lazy(
   () => import("./CreateEditImageLayerForm")
@@ -23,16 +26,17 @@ const HelpDocs = lazy(() => import("./HelpDocs"));
 const Home = lazy(() => import("./Home"));
 const ImageLayer = lazy(() => import("./ImageLayer"));
 const InteractiveLabeler = createMapRoute(
-  () => import("./InteractiveLabeler/InteractiveLabeler")
-);
-const LabelingTool = createMapRoute(
-  () => import("./LabelingTool/LabelingTool")
+  () => import("./InteractiveLabeler/InteractiveLabeler"),
+  () => loadAzureMaps(document, { drawing: false, swipe: true })
 );
 const ModelCatalog = lazy(() => import("./ModelCatalog"));
 const Project = lazy(() => import("./Project"));
 const Projects = lazy(() => import("./Projects"));
 const PublishedDatasets = lazy(() => import("./PublishedDatasets"));
-const Visualizer = createMapRoute(() => import("./Visualizer/Visualizer"));
+const Visualizer = createMapRoute(
+  () => import("./Visualizer/Visualizer"),
+  () => loadAzureMaps(document, { drawing: false, swipe: true })
+);
 
 const AppBody = ({ setModalComponent }) => {
   const { appParams } = useContext(AppContext);
@@ -40,9 +44,13 @@ const AppBody = ({ setModalComponent }) => {
     appParams.userRoles !== null && appParams.publishingEnabled !== null;
 
   return (
-    <div className="app-body-shell d-flex flex-grow-1 justify-content-center">
+    <div
+      className={`app-body-shell d-flex flex-grow-1 justify-content-center${
+        appParams.isLoading ? " app-body-shell--blocked" : ""
+      }`}
+    >
       {appParams.isLoading && <Loading />}
-      {routesReady && <Suspense fallback={<RouteLoading />}><Routes>
+      {routesReady && <Suspense fallback={appParams.isLoading ? null : <RouteLoading />}><Routes>
         {appParams.userRoles !== null && appParams.publishingEnabled && (
           <Route path="/published-datasets" element={<PublishedDatasets />} />
         )}
@@ -69,7 +77,11 @@ const AppBody = ({ setModalComponent }) => {
               />
               <Route
                 path="/labeling-tool/:projectId/:imageLayerId"
-                element={<LabelingTool setModalComponent={setModalComponent} />}
+                element={
+                  <LabelingToolRoute
+                    setModalComponent={setModalComponent}
+                  />
+                }
               />
               <Route
                 path="/validation/:projectId/:imageLayerId"
