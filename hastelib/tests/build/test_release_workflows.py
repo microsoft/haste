@@ -260,6 +260,35 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             self.assertIn("continueOnError: false", pin)
 
 
+class WheelProvenanceTests(unittest.TestCase):
+    """A release cites its hastegeo wheel; it never hosts a copy."""
+
+    def setUp(self):
+        self.workflow = (
+            REPO_ROOT / ".github/workflows/release.yml"
+        ).read_text(encoding="utf-8")
+
+    def test_wheel_is_resolved_from_reachable_tags(self):
+        self.assertIn("git tag --list 'hastegeo-v*' --merged", self.workflow)
+        self.assertIn("sort -V", self.workflow)
+
+    def test_a_missing_wheel_tag_is_not_an_error(self):
+        # Releases predating wheel tagging must publish without a wheel
+        # rather than failing or inventing one.
+        self.assertIn("recording no wheel", self.workflow)
+
+    def test_only_a_wheel_present_in_the_store_is_cited(self):
+        self.assertIn("is not an asset on haste-binaries", self.workflow)
+
+    def test_the_wheel_is_linked_and_never_copied(self):
+        # haste-binaries is the registry: a wheel needs a stable URL when it
+        # is built, long before a product tag exists. A copy on the release
+        # would be a second URL for identical bytes that no pin references.
+        self.assertIn("releases/download/haste-binaries/", self.workflow)
+        self.assertNotIn("gh release upload", self.workflow)
+        self.assertNotIn("gh release download", self.workflow)
+
+
 class LatestBadgePolicyTests(unittest.TestCase):
     """The Latest badge must track the newest stable release, not the
     most recently published one."""
