@@ -286,6 +286,19 @@ class LatestBadgePolicyTests(unittest.TestCase):
     def test_full_history_is_fetched_so_tags_are_visible(self):
         self.assertIn("fetch-depth: 0", self.workflow)
 
+    def test_tooling_is_checked_out_from_the_default_branch(self):
+        # Historical tags predate the extractor, so a backfill that checked
+        # out the tag would have nothing to run.
+        self.assertIn(
+            "ref: ${{ github.event.repository.default_branch }}",
+            self.workflow,
+        )
+        self.assertNotIn("ref: ${{ steps.tag.outputs.tag }}", self.workflow)
+
+    def test_runs_are_serialized_without_cancelling_a_backfill(self):
+        self.assertIn("group: product-release", self.workflow)
+        self.assertIn("cancel-in-progress: false", self.workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

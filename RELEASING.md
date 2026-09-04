@@ -9,6 +9,13 @@ equal**, and conflating them has broken deployments before.
 | **`hastegeo` wheel** (Python library) | `hastegeo-v1.0.40` | `hastegeo-1.0.40-py3-none-any.whl` | An asset on the `haste-binaries` release |
 | **Docker images** | — | `2.1.0`, `2.1.0-rc01` | Tags in ACR |
 
+## Contents
+
+- [Tag conventions](#tag-conventions)
+- [Cutting a product release](#cutting-a-product-release)
+- [What `haste-binaries` is](#what-haste-binaries-is)
+- [Historical exceptions](#historical-exceptions)
+
 ## Tag conventions
 
 ### Product — `v<MAJOR>.<MINOR>.<PATCH>`

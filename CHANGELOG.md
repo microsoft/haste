@@ -3,8 +3,9 @@
 All notable changes to HASTE are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
-Each `## [vX.Y.Z]` section below is published verbatim as that version's
-[GitHub Release](https://github.com/microsoft/haste/releases). Versioning and tagging
+Each `## [vX.Y.Z]` section below is the source for that version's
+[GitHub Release](https://github.com/microsoft/haste/releases): the heading is dropped
+and repo-relative links are rewritten to permalinks at the tag. Versioning and tagging
 conventions are documented in [RELEASING.md](RELEASING.md).
 
 ---

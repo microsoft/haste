@@ -12,6 +12,7 @@ after the referenced files move.
 from __future__ import annotations
 
 import argparse
+import posixpath
 import re
 import sys
 from dataclasses import dataclass
@@ -49,11 +50,17 @@ def absolutize_links(body: str, ref: str) -> str:
     def replace(match: re.Match[str]) -> str:
         target = match.group(1)
         path, _, anchor = target.partition("#")
-        path = path.lstrip("./")
         if not path:
             return target
+        # Directories are linked with a trailing slash; normpath drops it.
         kind = "tree" if path.endswith("/") else "blob"
-        url = f"https://github.com/{REPOSITORY}/{kind}/{ref}/{path.rstrip('/')}"
+        # normpath resolves "./" and "../" without eating a leading dot, which
+        # a naive lstrip("./") would (".github/..." -> "github/...").
+        normalized = posixpath.normpath(path)
+        if normalized in {".", ".."} or normalized.startswith("../"):
+            # Escapes the repo root, so there is no permalink to build.
+            return target
+        url = f"https://github.com/{REPOSITORY}/{kind}/{ref}/{normalized}"
         return f"{url}#{anchor}" if anchor else url
 
     return RELATIVE_LINK_RE.sub(replace, body)

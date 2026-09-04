@@ -90,6 +90,26 @@ class LinkRewriteTests(unittest.TestCase):
 
         self.assertTrue(result.endswith("/docs/configuration.md#pools)"))
 
+    def test_dotfile_directories_keep_their_leading_dot(self):
+        # A naive lstrip("./") turns ".github/..." into "github/...", which
+        # publishes a 404 permalink.
+        result = absolutize_links(
+            "[w](.github/workflows/release.yml)", "v3.0.0"
+        )
+
+        self.assertIn("/blob/v3.0.0/.github/workflows/release.yml", result)
+        self.assertNotIn("/blob/v3.0.0/github/", result)
+
+    def test_explicit_current_directory_prefix_is_resolved(self):
+        result = absolutize_links("[d](./.github/dependabot.yml)", "v3.0.0")
+
+        self.assertIn("/blob/v3.0.0/.github/dependabot.yml", result)
+
+    def test_links_escaping_the_repo_root_are_left_alone(self):
+        body = "[c](../CONTRIBUTING.md)"
+
+        self.assertEqual(body, absolutize_links(body, "v3.0.0"))
+
     def test_absolute_and_anchor_links_are_left_alone(self):
         body = (
             "[pr](https://github.com/microsoft/haste/pull/1) "
@@ -136,6 +156,19 @@ class RealChangelogTests(unittest.TestCase):
                     if not target.startswith(("http", "#", "mailto:"))
                 ]
                 self.assertEqual([], leftovers)
+
+    def test_no_permalink_drops_a_leading_dot_from_its_path(self):
+        versions = re.findall(
+            r"^## \[(v\d+\.\d+\.\d+)\]", self.changelog, flags=re.MULTILINE
+        )
+
+        for version in versions:
+            with self.subTest(version=version):
+                body = absolutize_links(
+                    extract(self.changelog, version).body, version
+                )
+                self.assertNotIn(f"/blob/{version}/github/", body)
+                self.assertNotIn(f"/tree/{version}/github/", body)
 
 
 if __name__ == "__main__":
