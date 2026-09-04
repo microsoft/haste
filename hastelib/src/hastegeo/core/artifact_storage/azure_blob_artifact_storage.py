@@ -39,9 +39,14 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
         container_read_policy_name="image-r-policy",
         blob_read_policy_name="imageblob-r-policy",
         partition_key=None,
+        serves_read_sas=True,
     ):
         super().__init__(partition_key)
         self.logger = Logger.get_logger(__name__)
+        # A write-only target (e.g. the PC publish container) doesn't mint read
+        # SAS, so it skips the user-delegation key and the stored read policy —
+        # which need Storage Blob Delegator / Owner. Write access alone suffices.
+        self.serves_read_sas = serves_read_sas
         if connection_string:
             credential = connection_string
             self.blob_service_client = (
@@ -68,6 +73,8 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
                     datetime.now(timezone.utc),
                     datetime.now(timezone.utc) + timedelta(hours=1),
                 )
+                if serves_read_sas
+                else None
             )
             self.account_key = None
 
@@ -91,7 +98,8 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
                     )
                 except ResourceExistsError:
                     self.logger.info(f"Container '{container}' already exists.")
-                self._create_or_update_managed_access_policy()
+                if self.serves_read_sas:
+                    self._create_or_update_managed_access_policy()
                 _INITIALIZED_CONTAINERS.add(cache_key)
 
     def _create_or_update_managed_access_policy(self):

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import logging
+import math
 import os
 import re
 import tempfile
@@ -24,6 +25,20 @@ def _get_bool_env(name, default=False):
 
 def _get_bounded_int_env(name, default, minimum, maximum=None):
     value = int(os.getenv(name, str(default)))
+    if value < minimum or (maximum is not None and value > maximum):
+        upper = f" and {maximum}" if maximum is not None else ""
+        raise ValueError(f"{name} must be between {minimum}{upper}")
+    return value
+
+
+def _get_bounded_float_env(name, default, minimum, maximum=None):
+    raw = os.getenv(name, str(default))
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a number")
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number")
     if value < minimum or (maximum is not None and value > maximum):
         upper = f" and {maximum}" if maximum is not None else ""
         raise ValueError(f"{name} must be between {minimum}{upper}")
@@ -345,8 +360,43 @@ class Config:
                 "PC_COLLECTION_PREFIX", "haste-"
             ),
             "pc_explorer_url": os.getenv("PC_EXPLORER_URL", ""),
+            "pc_publishing_license": os.getenv(
+                "PC_PUBLISHING_LICENSE", "CC-BY-4.0"
+            ),
+            # Attribution: the organization operating this deployment, recorded
+            # as the STAC "processor" provider on published datasets. Empty =
+            # omit the provider (no default org for the open-source build).
+            "publishing_organization_name": os.getenv(
+                "PUBLISHING_ORGANIZATION_NAME", ""
+            ),
+            "publishing_organization_url": os.getenv(
+                "PUBLISHING_ORGANIZATION_URL", ""
+            ),
+            # Network-reachable container the GeoCatalog ingests from. When set,
+            # the PC provider copies published assets here (out of the
+            # firewalled data store) and points STAC hrefs at it. Empty =
+            # reference assets in place from the primary artifact store.
+            "publish_storage_account_url": os.getenv(
+                "PUBLISH_STORAGE_ACCOUNT_URL", ""
+            ),
+            "publish_blob_container": os.getenv("PUBLISH_BLOB_CONTAINER", ""),
             "pc_verify_attempts": _get_bounded_int_env(
-                "PC_VERIFY_ATTEMPTS", 5, 1, 20
+                "PC_VERIFY_ATTEMPTS", 20, 1, 60
+            ),
+            # Explorer visualization: render a damage-classification COG (our
+            # derived output, not source imagery) plus the render/mosaic/tile
+            # config the GeoCatalog Explorer requires.
+            "publish_explorer_render_enabled": _get_bool_env(
+                "PUBLISH_EXPLORER_RENDER_ENABLED", True
+            ),
+            "publish_damage_raster_meters": _get_bounded_float_env(
+                "PUBLISH_DAMAGE_RASTER_METERS", 0.5, 0.01, 100.0
+            ),
+            "publish_damage_raster_max_pixels": _get_bounded_int_env(
+                "PUBLISH_DAMAGE_RASTER_MAX_PIXELS", 8192, 256, 20000
+            ),
+            "publish_damage_raster_min_zoom": _get_bounded_int_env(
+                "PUBLISH_DAMAGE_RASTER_MIN_ZOOM", 13, 0, 24
             ),
             "lease_connection_string": os.getenv("AzureWebJobsStorage"),
             "lease_account_url": os.getenv("BLOB_ACCOUNT_URL"),

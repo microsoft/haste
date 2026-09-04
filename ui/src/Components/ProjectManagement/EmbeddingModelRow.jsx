@@ -217,6 +217,23 @@ const EmbeddingModelRow = ({
             setDialog(
               "Publishing started",
               "Track progress in Published Datasets.",
+              [
+                {
+                  type: "primary",
+                  key: "view",
+                  text: "View",
+                  onClick: () => {
+                    setDialog();
+                    navigate("/published-datasets");
+                  },
+                },
+                {
+                  type: "default",
+                  key: "close",
+                  text: "Close",
+                  onClick: () => setDialog(),
+                },
+              ],
             )
           }
         />

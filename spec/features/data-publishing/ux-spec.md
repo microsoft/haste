@@ -147,7 +147,21 @@ actions (menu on `PublishedDatasetRow.jsx`):
 - **Published (PC):** Open in Explorer / Copy STAC collection link.
 - **In progress:** actions disabled; live status.
 - **Failed:** show `statusMessage`; Retry (re-publish); Remove.
-- **Owner/admin:** Unpublish (`DeletePublishedDataset`, with confirm).
+- **Owner/admin:** Edit metadata; Unpublish (`DeletePublishedDataset`, with
+  confirm).
+
+**Edit metadata** (`PutUpdatePublishedDataset`, owner/admin) opens an inline
+form on `PublishedDatasetRow.jsx`, available only for datasets in a terminal
+state (`PUBLISHED` / `FAILED` / `UNPUBLISH_FAILED`) — in-progress records aren't
+editable, enforced both in the UI and server-side in `update_metadata`. Editable
+fields: **name**, **description**, **interactive viewer URL** (optional https
+`rel=preview` link), and **source-imagery citation** (optional free-text /
+URL-aware attribution surfaced on the dataset). Imagery-source provider
+attribution is inferred from the image-layer source type and is not editable.
+For a PC dataset the edit pushes to the live STAC item
+(title/description/preview-link + `providers` + citation) and refreshes the
+collection's rolling summary and provider union; for Local it updates the stored
+record only.
 
 ## UI states (all)
 

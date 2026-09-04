@@ -1619,6 +1619,47 @@ const InteractiveLabeler = () => {
       hydrateViewport(mapRef.current);
     }
   }
+
+  // Bulk counterpart to clearLabel, mirroring labelBuildings: clear each
+  // building, then refresh once. Calling clearLabel in a loop would re-tally
+  // and re-hydrate the whole viewport per building, which is unusable at the
+  // scale this exists for (issue #118 describes clearing ~2,400).
+  function clearBuildings(items) {
+    let n = 0;
+    for (const it of items) {
+      if (!it || it.id == null) continue;
+      const entry = labeledMapRef.current[it.id];
+      // Fall back to the tile's overture_id: a label saved on the server
+      // whose feature vector is missing never enters labeledMapRef, because
+      // hydrateViewport skips it. It still shows in the counts, so the user
+      // can box-clear it — and leaving it in the mirror would let the merge
+      // in handleSaveLabels bring it straight back.
+      const overtureId =
+        entry?.overtureId ?? it.properties?.overture_id ?? it.id;
+      const had = entry != null || savedLabelsRef.current[overtureId] != null;
+      delete savedLabelsRef.current[overtureId];
+      delete labeledMapRef.current[it.id];
+      // primarySourceId(), not it.source: forEachStateTarget pairs the main
+      // renderer with whatever is passed and the swipe renderer with its own
+      // id, so passing the swipe map's source when the box was drawn there
+      // would leave the main map's colour behind.
+      clearFeatureStateLabel(primarySourceId(), it.id);
+      if (had) n++;
+    }
+    if (n === 0) return;
+    labelsDirtyRef.current = true;
+    labelsRevisionRef.current += 1;
+    refreshCounts();
+    setStatus(`Cleared ${n} buildings.`);
+    if (
+      viewModeRef.current === "predict" ||
+      uncertaintyOnRef.current ||
+      misclassifiedOnRef.current
+    ) {
+      hydrateViewport(mapRef.current);
+    }
+  }
+
   function clearLabel(id) {
     // Drop it from the saved mirror too. The save path now merges that
     // mirror into the payload, so leaving it behind would resurrect a label
@@ -1674,9 +1715,13 @@ const InteractiveLabeler = () => {
   function setupBoxSelect(map, glGetter, layerIdsGetter, cleanupRef) {
     const canvas = map.getCanvasContainer();
     let origin = null;
+    // Which button opened the box. Right-drag clears, mirroring right-click
+    // clearing a single label (github.com/microsoft/haste/issues/118).
+    let clearing = false;
 
     const onDown = (e) => {
       if (!e.ctrlKey && !e.metaKey) return;
+      clearing = e.button === 2;
       e.preventDefault();
       e.stopPropagation();
       map.setUserInteraction({ dragPanInteraction: false });
@@ -1737,7 +1782,8 @@ const InteractiveLabeler = () => {
       const items = rf
         .filter((f) => f.id != null)
         .map((f) => ({ id: f.id, properties: f.properties, source: f.source }));
-      labelBuildings(items, selectedClassRef.current);
+      if (clearing) clearBuildings(items);
+      else labelBuildings(items, selectedClassRef.current);
     };
 
     canvas.addEventListener("mousedown", onDown);

@@ -66,7 +66,9 @@ class PublishingProviderRegistry:
                     ProviderConfigField(
                         key="ingestion_source",
                         label="Ingestion source",
-                        required=True,
+                        # Only private HASTE containers need an ingestion
+                        # source; public containers publish without one.
+                        required=False,
                     ),
                 ],
             ),

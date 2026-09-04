@@ -152,6 +152,12 @@ reference.
 
 Each download shows its file size.
 
+### Publish the dataset
+
+If your administrator has enabled publishing, the Results menu also offers **Publish
+dataset…** — archive the result as a downloadable copy or share it to a Planetary Computer
+STAC catalog. See {doc}`Publishing datasets <data-publishing>`.
+
 ### Reports
 
 If you've validated buildings for this layer, the Results menu also offers a **Validation

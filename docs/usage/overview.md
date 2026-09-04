@@ -39,3 +39,6 @@ Those shared building blocks have their own pages: {doc}`Projects <projects>`,
 {doc}`Image layers <image-layers>`, and the {doc}`Model catalog <model-catalog>`.
 See {doc}`Keyboard shortcuts <keyboard-shortcuts>` for the controls available
 across map and labeling views.
+
+When you have a result from either workflow, you can {doc}`publish it <data-publishing>` —
+archive it as a downloadable copy or share it to a Planetary Computer STAC catalog.

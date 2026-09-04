@@ -12,6 +12,7 @@ import {
   sourceTypeOptions,
   normalizeSourceTypeKey,
 } from "./sourceTypeOptions.js";
+import { sourceImageryRef } from "./OpenDataCatalog/openDataCatalog.js";
 
 export { sourceTypeOptions, normalizeSourceTypeKey };
 
@@ -80,6 +81,8 @@ export async function createComponentDefaultState(imageLayerId, projectId) {
                 workflowType: "standard",
                 preEventImageryUrls: [],
                 postEventImageryUrls: [],
+                // Source-imagery provenance captured from the Open Data Catalog.
+                sourceImageryReferences: [],
                 format: "tif",
                 formatError: "",
                 sourceTypePreEvent: "n/a", // Unknown
@@ -264,6 +267,16 @@ export const addSceneToEventImagery = (setComponentState, componentState, scene,
         ],
     };
 
+    // Capture source-imagery provenance when the scene is from an open-data
+    // program (fail-safe: null for anything else). Deduped by STAC item href.
+    const ref = sourceImageryRef(scene, isPre ? "pre" : "post");
+    if (ref) {
+        const existing = componentState.sourceImageryReferences || [];
+        if (!existing.some((r) => r.href === ref.href)) {
+            patch.sourceImageryReferences = [...existing, ref];
+        }
+    }
+
     // Only auto-fill source type when still at the "Unknown" default.
     if (scene.sourceTypeKey && (componentState[sourceTypeField] === "n/a" || !componentState[sourceTypeField])) {
         patch[sourceTypeField] = scene.sourceTypeKey;
@@ -331,9 +344,20 @@ export const addFileToEventImageryArray = (files, acceptedFileTypes, componentSt
 
 
 export const removeUrlFromEventImageryArray = (id, setComponentState, componentState, field) => {
+    const removed = componentState[field].find((u) => u.id === id);
+    const removedUrl = removed?.value;
+    // Drop any captured source-imagery reference tied to the removed COG so
+    // provenance stays in sync with the imagery actually kept on the layer.
+    const refs = componentState.sourceImageryReferences || [];
+    const nextRefs = removedUrl
+        ? refs.filter((r) => r.sourceUrl !== removedUrl)
+        : refs;
     setComponentState({
         ...componentState,
         [field]: componentState[field].filter((u) => u.id !== id),
+        ...(refs.length !== nextRefs.length
+            ? { sourceImageryReferences: nextRefs }
+            : {}),
     });
 };
 

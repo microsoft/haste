@@ -8,7 +8,6 @@ import Labels from "./Labels";
 import { AppContext } from "../../AppContext";
 import PropType from "prop-types";
 import { convertDateToString } from "../../util/conversion";
-import VisualizerImageryControls from "./VisualizerImageryControls"
 import "../../assets/css/visualizer.css";
 import { getAzureMapsAuthOptions } from "../../util/azureMapsAuth";
 import { shouldIgnoreShortcut } from "../keyboardShortcuts";
@@ -29,13 +28,6 @@ const Visualizer = ({ setModalComponent }) => {
   const swipeMapRef = useRef(null);
   const zoomControlRef = useRef(null);
   const [swipeStateMobile, setSwipeStateMobile] = useState("post");
-
-  const [imageryValues, setImageryValues] = useState({
-    opacity: 1,
-    contrast: 0,
-    hueRotation: 0,
-    saturation: 0,
-  });
 
   // Visualizer data fetching function
   async function getVisualizerResults() {
@@ -397,60 +389,6 @@ const Visualizer = ({ setModalComponent }) => {
     }
   }
 
-  const updateImageryProperties = (key, value) => {
-    try {
-
-      var preImageryRef = getLayerById(primaryMapRef, "preDisasterImagery");
-      var postImageryRef = getLayerById(secondaryMapRef, "postDisasterImagery");
-
-      preImageryRef.setOptions({
-        [key]: value,
-      });
-
-      postImageryRef.setOptions({
-        [key]: value,
-      });
-
-      setImageryValues({
-        ...imageryValues,
-        [key]: value,
-      });
-
-    } catch (error) {
-      console.error("Error updating imagery values:", error);
-    }
-  };
-
-  const resetImageryProperties = () => {
-    try {
-
-      var preImageryRef = getLayerById(primaryMapRef, "preDisasterImagery");
-      var postImageryRef = getLayerById(secondaryMapRef, "postDisasterImagery");
-
-      preImageryRef.setOptions({
-        opacity: 1,
-        contrast: 0,
-        hueRotation: 0,
-        saturation: 0,
-      });
-
-      postImageryRef.setOptions({
-        opacity: 1,
-        contrast: 0,
-        hueRotation: 0,
-        saturation: 0,
-      });
-
-      setImageryValues({
-        opacity: 1,
-        contrast: 0,
-        hueRotation: 0,
-        saturation: 0,
-      });
-    } catch (error) {
-      console.error("Error resetting imagery values:", error);
-    }
-  };
 
 
   return (
@@ -466,13 +404,6 @@ const Visualizer = ({ setModalComponent }) => {
         visualizerResults={globalVisualizerResults}
         setSwipeStateMobile={setSwipeStateMobile}
         swipeStateMobile={swipeStateMobile}
-      />
-
-      <VisualizerImageryControls
-        updateImageryProperties={updateImageryProperties}
-        resetImageryProperties={resetImageryProperties}
-        imageryValues={imageryValues}
-        visualizerResults={globalVisualizerResults}
       />
     </div>
   );

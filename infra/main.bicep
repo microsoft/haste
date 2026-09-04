@@ -123,6 +123,42 @@ param managePools bool = true
 @description('Enable the data publishing feature (Published Datasets section + Publish action). On by default.')
 param publishingEnabled bool = true
 
+@description('Register/expose the Planetary Computer publishing provider.')
+param pcProviderEnabled bool = false
+
+@description('Render a damage classification COG + Explorer visualization config on PC publish.')
+param publishExplorerRenderEnabled bool = true
+
+@description('MPC Pro GeoCatalog base URL (no trailing slash). Operator-provisioned.')
+param pcGeocatalogUrl string = ''
+
+@description('GeoCatalog Explorer base URL used to build published-dataset links.')
+param pcExplorerUrl string = ''
+
+@description('GeoCatalog ingestion-source name for private HASTE containers. Empty for public containers.')
+param pcIngestionSource string = ''
+
+@description('STAC Collection id prefix (one collection per project/event).')
+param pcCollectionPrefix string = 'haste-'
+
+@description('STAC license id applied to published PC collections/items (e.g. CC-BY-4.0).')
+param pcPublishingLicense string = 'CC-BY-4.0'
+
+@description('Organization operating this deployment, recorded as the STAC "processor" provider on published datasets. Empty = omit.')
+param publishingOrganizationName string = ''
+
+@description('URL for the publishing organization (optional companion to publishingOrganizationName).')
+param publishingOrganizationUrl string = ''
+
+@description('Network-reachable storage account URL the GeoCatalog ingests published assets from. Empty = reference assets in place from the primary store.')
+param publishStorageAccountUrl string = ''
+
+@description('Blob container (on the publish storage account) that HASTE copies published PC assets into.')
+param publishBlobContainer string = ''
+
+@description('Object id of the GeoCatalog managed identity to grant Storage Blob Data Reader on HASTE storage (asset ingestion). Empty = skip.')
+param pcGeoCatalogIngestPrincipalId string = ''
+
 // ---------------------------------------------------------------------------
 // Computed names — mirror the bash naming scheme exactly.
 // ---------------------------------------------------------------------------
@@ -297,6 +333,17 @@ module functions 'modules/functions.bicep' = {
     useSas: useSas
     managePools: managePools
     publishingEnabled: publishingEnabled
+    pcProviderEnabled: pcProviderEnabled
+    publishExplorerRenderEnabled: publishExplorerRenderEnabled
+    pcGeocatalogUrl: pcGeocatalogUrl
+    pcExplorerUrl: pcExplorerUrl
+    pcIngestionSource: pcIngestionSource
+    pcCollectionPrefix: pcCollectionPrefix
+    pcPublishingLicense: pcPublishingLicense
+    publishingOrganizationName: publishingOrganizationName
+    publishingOrganizationUrl: publishingOrganizationUrl
+    publishStorageAccountUrl: publishStorageAccountUrl
+    publishBlobContainer: publishBlobContainer
     tags: tags
   }
   dependsOn: [
@@ -347,6 +394,8 @@ module roles 'modules/roles.bicep' = {
     staticWebAppName: staticWebAppName
     mapsAccountName: mapsAccountName
     functionSystemPrincipalId: functions.outputs.apiSystemPrincipalId
+    storageAccountName: storageAccountName
+    pcGeoCatalogIngestPrincipalId: pcGeoCatalogIngestPrincipalId
   }
   // frontend is ordered before roles transitively (roles -> functions ->
   // frontend, since functions reads the SWA hostname for STATIC_APP_DOMAIN).

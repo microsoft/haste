@@ -4,8 +4,39 @@ import unicodedata
 import uuid
 from enum import Enum
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def normalize_https_url(value: Optional[str]) -> Optional[str]:
+    """Trim and require an https URL; empty/None becomes None."""
+    if value is None:
+        return None
+    normalized = unicodedata.normalize("NFC", value).strip()
+    if not normalized:
+        return None
+    parsed = urlparse(normalized)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("value must be an https URL")
+    return normalized
+
+
+def normalize_optional_text(value: Optional[str]) -> Optional[str]:
+    """Trim and NFC-normalize free text; empty/None becomes None."""
+    if value is None:
+        return None
+    normalized = unicodedata.normalize("NFC", value).strip()
+    return normalized or None
+
+
+def is_https_url(value: Optional[str]) -> bool:
+    """True when ``value`` parses as an https URL (for URL-aware citations)."""
+    if not value:
+        return False
+    parsed = urlparse(value.strip())
+    return parsed.scheme == "https" and bool(parsed.hostname)
+
 
 PUBLISHING_UUID_NAMESPACE = uuid.NAMESPACE_URL
 PUBLISHING_UUID_NAME_PREFIX = (
@@ -74,6 +105,40 @@ class PublishedArtifact(SourceArtifact):
     publishedPath: str
 
 
+class SourceImageryRef(BaseModel):
+    """A reference to a source-imagery scene an output was derived from.
+
+    Captured from the Open Data Catalog at ingest. ``attributable`` marks that it
+    came from a registered open-data program (the licensing gate); the backend
+    re-validates ``programId`` and stamps the registry's canonical name/license
+    (see ``publishing.open_data.validate_source_refs``).
+    """
+
+    programId: str = Field(min_length=1, max_length=64)
+    programName: str = Field(default="", max_length=200)
+    sceneId: str = Field(default="", max_length=256)
+    title: str = Field(default="", max_length=300)
+    href: str = Field(min_length=1, max_length=2000)
+    license: str = Field(default="", max_length=100)
+    attributable: bool = False
+    phase: Optional[str] = Field(default=None, max_length=16)
+    capturedDate: Optional[str] = Field(default=None, max_length=64)
+    # The specific COG/asset URL this ref was captured from. Persisted purely to
+    # correlate a reference with its imagery entry so that removing imagery in
+    # the layer edit form also drops the matching provenance ref; it is never
+    # emitted to STAC (which uses ``href``).
+    sourceUrl: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("href")
+    @classmethod
+    def validate_href(cls, value: str) -> str:
+        normalized = unicodedata.normalize("NFC", value).strip()
+        parsed = urlparse(normalized)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise ValueError("href must be an https URL")
+        return normalized
+
+
 class PublishDatasetOptions(BaseModel):
     projectId: uuid.UUID
     projectName: str
@@ -82,6 +147,10 @@ class PublishDatasetOptions(BaseModel):
     modelId: str
     modelName: str
     defaultName: str
+    imagerySources: List[str] = Field(default_factory=list)
+    sourceImageryReferences: List[SourceImageryRef] = Field(
+        default_factory=list
+    )
     availableArtifacts: List[SourceArtifact] = Field(default_factory=list)
 
 
@@ -113,6 +182,10 @@ class PublishRequest(BaseModel):
     )
     name: str = Field(min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=4000)
+    interactiveViewerUrl: Optional[str] = Field(default=None, max_length=2000)
+    # Optional user-supplied source-imagery citation (URL-aware: an https URL
+    # becomes a derived_from link, plain text a citation property).
+    sourceImageryCitation: Optional[str] = Field(default=None, max_length=2000)
     target: PublishTarget
     artifacts: List[ArtifactKind] = Field(min_length=1)
 
@@ -131,12 +204,64 @@ class PublishRequest(BaseModel):
             return None
         return unicodedata.normalize("NFC", value).strip()
 
+    @field_validator("interactiveViewerUrl")
+    @classmethod
+    def normalize_viewer_url(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_https_url(value)
+
+    @field_validator("sourceImageryCitation")
+    @classmethod
+    def normalize_citation(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_optional_text(value)
+
     @field_validator("artifacts")
     @classmethod
     def normalize_artifacts(
         cls, value: List[ArtifactKind]
     ) -> List[ArtifactKind]:
         return sorted(set(value), key=lambda artifact: artifact.value)
+
+
+class PublishMetadataUpdate(BaseModel):
+    """Editable, user-authored metadata for an already-created dataset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    projectId: uuid.UUID
+    datasetId: uuid.UUID
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=4000)
+    interactiveViewerUrl: Optional[str] = Field(default=None, max_length=2000)
+    # Optional user-supplied source-imagery citation (URL-aware). Only applied
+    # when the key is present in the request body (empty clears it).
+    sourceImageryCitation: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = unicodedata.normalize("NFC", value).strip()
+        if not normalized:
+            raise ValueError("name must not be empty")
+        return normalized
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return unicodedata.normalize("NFC", value).strip()
+
+    @field_validator("interactiveViewerUrl")
+    @classmethod
+    def normalize_viewer_url(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_https_url(value)
+
+    @field_validator("sourceImageryCitation")
+    @classmethod
+    def normalize_citation(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_optional_text(value)
 
 
 class PublishResult(BaseModel):
@@ -155,12 +280,18 @@ class PublishedDataset(BaseModel):
     requestFingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     name: str
     description: str = ""
+    interactiveViewerUrl: Optional[str] = None
     projectId: uuid.UUID
     projectName: str = ""
     imageLayerId: str
     imageLayerName: str = ""
     modelId: str
     modelName: str = ""
+    imagerySources: List[str] = Field(default_factory=list)
+    sourceImageryReferences: List[SourceImageryRef] = Field(
+        default_factory=list
+    )
+    sourceImageryCitation: Optional[str] = None
     target: PublishTarget
     status: PublishStatus
     statusMessage: str = ""
@@ -211,6 +342,8 @@ def compute_request_fingerprint(
         "modelId": request.modelId,
         "name": request.name,
         "description": request.description or "",
+        "interactiveViewerUrl": request.interactiveViewerUrl or "",
+        "sourceImageryCitation": request.sourceImageryCitation or "",
         "target": request.target.value,
         "artifacts": [artifact.value for artifact in request.artifacts],
         "publisherId": normalized_publisher,

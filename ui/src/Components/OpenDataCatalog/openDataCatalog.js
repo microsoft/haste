@@ -21,6 +21,44 @@ const PLANET_ROOT_CATALOG =
 
 export const SOURCE_COLORS = { Vantor: "#0078d4", Planet: "#00b294" };
 
+// Open-data program registry, keyed by a scene's `source`. Mirrors the backend
+// OPEN_DATA_PROGRAMS (hastegeo.core.publishing.open_data). Only scenes from a
+// program here are captured as attributable source-imagery references; the
+// backend re-validates programId and is authoritative on name/license.
+export const OPEN_DATA_PROGRAMS = {
+  Vantor: {
+    programId: "vantor-open-data",
+    programName: "Vantor Open Data Program",
+    license: "CC-BY-NC-4.0",
+  },
+  Planet: {
+    programId: "planet-open-data",
+    programName: "Planet Disaster Data",
+    license: "CC-BY-NC-4.0",
+  },
+};
+
+// Build a source-imagery reference from a catalog scene (or null if the scene
+// is not from a registered open-data program or has no STAC item href). The
+// `sourceUrl` field correlates the ref with the added COG so it is dropped
+// together on a later layer edit; it is persisted but never emitted to STAC.
+export function sourceImageryRef(scene, phase) {
+  const program = OPEN_DATA_PROGRAMS[scene?.source];
+  if (!program || !scene?.itemHref) return null;
+  return {
+    programId: program.programId,
+    programName: program.programName,
+    sceneId: scene.id || "",
+    title: scene.title || scene.id || "",
+    href: scene.itemHref,
+    license: program.license,
+    attributable: true,
+    phase: phase || scene.phase || null,
+    capturedDate: scene.datetime || null,
+    sourceUrl: scene.cogUrl || "",
+  };
+}
+
 // Maps a normalized scene to the HASTE source-type dropdown key
 // (see sourceTypeOptions in CreateEditImageLayerHelper.js).
 const SOURCE_TYPE_KEYS = {
@@ -339,7 +377,7 @@ export async function discoverEvents() {
 
 // ── Vantor Open Data (STAC item links) ──────────────────────────────────────
 
-function normalizeVantorItem(item, eventDate) {
+function normalizeVantorItem(item, eventDate, itemHref = null) {
   const props = item.properties || {};
   const visual = pickVisualAsset(item.assets);
   const cogUrl = visual?.href || null;
@@ -365,6 +403,8 @@ function normalizeVantorItem(item, eventDate) {
     sunElev: props["view:sun_elevation"] ?? null,
     cogSize: assetSize(visual),
     sourceUrl: cogUrl,
+    // STAC item URL we fetched — the derived_from provenance target.
+    itemHref: itemHref || null,
     sourceTypeKey: SOURCE_TYPE_KEYS.vantor,
   };
 }
@@ -376,8 +416,9 @@ async function fetchVantorItems(doc, baseUrl, eventDate) {
   const scenes = await Promise.all(
     itemLinks.map(async (l) => {
       try {
-        const item = await fetchJson(absUrl(l.href, baseUrl));
-        return normalizeVantorItem(item, eventDate);
+        const itemUrl = absUrl(l.href, baseUrl);
+        const item = await fetchJson(itemUrl);
+        return normalizeVantorItem(item, eventDate, itemUrl);
       } catch {
         return null;
       }
@@ -479,6 +520,8 @@ function normalizePlanetItem({
     sunElev: props["view:sun_elevation"] ?? null,
     cogSize: assetSize(visual),
     sourceUrl: cogUrl || aboutUrl,
+    // STAC item URL we fetched — the derived_from provenance target.
+    itemHref: itemUrl || null,
     sourceTypeKey: planetSourceTypeKey(item, collection),
   };
 }
@@ -507,6 +550,8 @@ function normalizePlanetMosaic({ collection, collectionUrl, asset }) {
     sunElev: null,
     cogSize: assetSize(asset),
     sourceUrl: cogUrl,
+    // No per-item STAC record for a mosaic; reference the collection document.
+    itemHref: collectionUrl || null,
     sourceTypeKey: SOURCE_TYPE_KEYS.planet,
   };
 }

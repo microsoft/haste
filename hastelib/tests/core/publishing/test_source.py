@@ -1,14 +1,54 @@
 import unittest
 import uuid
 
-from hastegeo.core.models.publishing import ArtifactKind, PublishRequest
+from hastegeo.core.models.projects import ImageLayer
+from hastegeo.core.models.publishing import (
+    ArtifactKind,
+    PublishRequest,
+)
 from hastegeo.core.publishing.source import (
     PublishingArtifactUnavailableError,
     PublishingSourceNotEligibleError,
     PublishingSourceNotFoundError,
     PublishingSourceResolver,
+    _imagery_sources,
 )
 from hastegeo.core.utils.metadata import MetadataUtils
+
+
+class TestImagerySources(unittest.TestCase):
+    def test_collects_distinct_ordered_provider_sources(self) -> None:
+        layer = ImageLayer(
+            sourceTypePreEvent="WorldView-3",
+            sourceTypePostEvent="Sentinel-2",
+        )
+        self.assertEqual(
+            _imagery_sources(layer), ["WorldView-3", "Sentinel-2"]
+        )
+
+    def test_dedupes_case_insensitively_preserving_first(self) -> None:
+        layer = ImageLayer(
+            sourceTypePreEvent="Maxar",
+            sourceTypePostEvent="maxar",
+            sourceType="MAXAR",
+        )
+        self.assertEqual(_imagery_sources(layer), ["Maxar"])
+
+    def test_drops_placeholders_and_blanks(self) -> None:
+        # "n/a" (the Unknown dropdown value) and "rgb/no_processing"
+        # (bring-your-own) are not imagery vendors.
+        layer = ImageLayer(
+            sourceTypePreEvent="n/a",
+            sourceTypePostEvent="rgb/no_processing",
+        )
+        self.assertEqual(_imagery_sources(layer), [])
+
+    def test_keeps_real_source_alongside_placeholder(self) -> None:
+        layer = ImageLayer(
+            sourceTypePreEvent="n/a",
+            sourceTypePostEvent="maxar",
+        )
+        self.assertEqual(_imagery_sources(layer), ["maxar"])
 
 
 class FakeTypes:
@@ -185,6 +225,33 @@ class TestPublishingSourceResolver(unittest.TestCase):
                 ArtifactKind.FOOTPRINTS,
             },
         )
+
+    def test_options_carry_validated_source_imagery_refs(self) -> None:
+        FakeMetadataProcessor.records[
+            ("imagelayer", self.project_id, self.layer_id)
+        ]["sourceImageryReferences"] = [
+            {
+                "programId": "vantor-open-data",
+                "href": "https://a.example/1.json",
+                "title": "Scene A",
+                "license": "CC0-1.0",  # client-supplied; registry must win
+                "attributable": False,
+            },
+            {
+                "programId": "commercial-vendor",  # unregistered -> dropped
+                "href": "https://a.example/2.json",
+            },
+        ]
+
+        options = self.resolver.resolve_options(
+            self.project_id, self.layer_id, self.model_id
+        )
+
+        self.assertEqual(len(options.sourceImageryReferences), 1)
+        ref = options.sourceImageryReferences[0]
+        self.assertEqual(ref.programId, "vantor-open-data")
+        self.assertEqual(ref.license, "CC-BY-NC-4.0")
+        self.assertTrue(ref.attributable)
 
     def test_bundle_separates_selected_and_supporting_artifacts(self) -> None:
         request = self.build_request(["gpkg"])
