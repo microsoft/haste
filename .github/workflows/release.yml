@@ -88,6 +88,44 @@ jobs:
           fi
           echo "title=$TITLE" >> "$GITHUB_OUTPUT"
 
+      # A wheel is published on merge to main, so the one belonging to a
+      # release is the highest hastegeo tag reachable from it. Releases cut
+      # before wheel tagging began (2026-08) have none; that is not an error,
+      # they simply record no wheel rather than guessing one.
+      #
+      # Linked, never copied. haste-binaries is the artifact registry: a wheel
+      # needs a stable URL the moment it is built, long before any product tag
+      # exists, and most wheels never get a product release at all. A copy here
+      # would be a second URL for identical bytes that nobody's pins point at.
+      - name: Resolve the matching hastegeo wheel
+        id: wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          VERSION=$(git tag --list 'hastegeo-v*' --merged "$TAG" | sed 's/^hastegeo-v//' | sort -V | tail -1)
+          if [ -z "$VERSION" ]; then
+            echo "No hastegeo tag reachable from $TAG; recording no wheel."
+            exit 0
+          fi
+          WHEEL="hastegeo-$VERSION-py3-none-any.whl"
+          ASSETS=$(gh release view haste-binaries --repo "$REPO" --json assets --jq '.assets[].name')
+          # Only ever cite a wheel we can prove is in the asset store.
+          if ! printf '%s\n' "$ASSETS" | grep -qx "$WHEEL"; then
+            echo "::error::$WHEEL is not an asset on haste-binaries"
+            exit 1
+          fi
+          URL="https://github.com/$REPO/releases/download/haste-binaries/$WHEEL"
+          STORE="https://github.com/$REPO/releases/tag/haste-binaries"
+          {
+            printf '\n### Artifacts\n\n'
+            printf '| | |\n|---|---|\n'
+            printf '| `hastegeo` wheel | `%s` — [download](%s) |\n' "$VERSION" "$URL"
+            printf '\nHosted on [`haste-binaries`](%s), the append-only asset store every `requirements.txt` pins.\n' "$STORE"
+          } >> release-notes.md
+          echo "Recorded hastegeo $VERSION for $TAG."
+
       - name: Create or update the release
         env:
           GH_TOKEN: ${{ github.token }}
