@@ -28,10 +28,15 @@ import AppBody from "./Components/AppBody";
 import AppHeader from "./Components/AppHeader";
 import AppSidebar from "./Components/AppSidebar";
 import AppFooter from "./Components/AppFooter";
-import Loading from "./Components/OtherComponents/Loading";
+import {
+  RouteLoading,
+} from "./Components/MapRoute";
+import { getRouteLoadingLabel } from "./Components/routeLoading";
+import WorkspaceLoader from "./Components/WorkspaceLoader";
+import { LABELING_WORKSPACE_STEPS } from "./Components/LabelingTool/labelingToolLoading";
 
 function App() {
-  const { appParams, setDialog, setIsLoading, setAppParams } =
+  const { appParams, setDialog, setAppParams } =
     useContext(AppContext);
   const { palette, setPalette, mode, setTheme } = useTheme();
   const location = useLocation();
@@ -45,6 +50,7 @@ function App() {
   });
 
   const isMobileNav = Number(appParams.bootstrapBreakpoint) <= 2;
+  const isStandardLabeling = location.pathname.startsWith("/labeling-tool/");
 
   const toggleNav = () => {
     setNavCollapsed((prev) => {
@@ -58,7 +64,6 @@ function App() {
     loadSession({
       validateUser: apiValidateUser,
       setAppParams,
-      setIsLoading,
       setSessionError,
     });
 
@@ -184,7 +189,22 @@ function App() {
               </div>
             </>
           ) : (
-            <Loading />
+            <div className="app-startup-loading">
+              {isStandardLabeling ? (
+                <WorkspaceLoader
+                  eyebrow="Standard labeling tool"
+                  title="Preparing your workspace"
+                  steps={LABELING_WORKSPACE_STEPS}
+                  loadState={{ step: 0, loaded: null, total: null }}
+                  error=""
+                  errorTitle="Could not load the labeling workspace"
+                />
+              ) : (
+                <RouteLoading
+                  label={getRouteLoadingLabel(location.pathname)}
+                />
+              )}
+            </div>
           )
         )}
 

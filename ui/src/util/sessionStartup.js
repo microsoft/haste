@@ -1,11 +1,9 @@
 export async function loadSession({
   validateUser,
   setAppParams,
-  setIsLoading,
   setSessionError,
 }) {
   setSessionError(false);
-  setIsLoading(true);
   try {
     await validateUser(setAppParams);
     return true;
@@ -22,7 +20,5 @@ export async function loadSession({
     }));
     setSessionError(true);
     return false;
-  } finally {
-    setIsLoading(false);
   }
 }

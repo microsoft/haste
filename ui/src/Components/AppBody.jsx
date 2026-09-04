@@ -1,13 +1,17 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 import { lazy, Suspense, useContext } from "react";
 
 import Loading from "./OtherComponents/Loading";
 import PropType from "prop-types";
 
 import { AppContext } from "../AppContext";
-import { createMapRoute, RouteLoading } from "./MapRoute";
+import {
+  createMapRoute,
+  RouteLoading,
+} from "./MapRoute";
+import { getRouteLoadingLabel } from "./routeLoading";
 import { loadAzureMaps } from "../util/azureMapsLoader";
 import LabelingToolRoute from "./LabelingTool/LabelingToolRoute";
 
@@ -40,6 +44,7 @@ const Visualizer = createMapRoute(
 
 const AppBody = ({ setModalComponent }) => {
   const { appParams } = useContext(AppContext);
+  const location = useLocation();
   const routesReady =
     appParams.userRoles !== null && appParams.publishingEnabled !== null;
 
@@ -50,7 +55,7 @@ const AppBody = ({ setModalComponent }) => {
       }`}
     >
       {appParams.isLoading && <Loading />}
-      {routesReady && <Suspense fallback={appParams.isLoading ? null : <RouteLoading />}><Routes>
+      {routesReady && <Suspense fallback={appParams.isLoading ? null : <RouteLoading label={getRouteLoadingLabel(location.pathname)} />}><Routes>
         {appParams.userRoles !== null && appParams.publishingEnabled && (
           <Route path="/published-datasets" element={<PublishedDatasets />} />
         )}

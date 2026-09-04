@@ -1,4 +1,9 @@
 export const MAP_IDLE_TIMEOUT_MS = 30000;
+export const LABELING_WORKSPACE_STEPS = [
+  "Loading workspace data and map tools",
+  "Preparing imagery and labels",
+  "Rendering map and drawing tools",
+];
 export const AZURE_MAPS_SATELLITE_TILES =
   "https://atlas.microsoft.com/map/tile?api-version=2.1&tilesetId=microsoft.imagery&zoom={z}&x={x}&y={y}";
 

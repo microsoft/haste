@@ -28,6 +28,10 @@ test("retains current jobs after an unchanged response", () => {
   );
 });
 
+test("omits the conditional header before the first response", () => {
+  assert.deepEqual(activeJobsHeaders(null), {});
+});
+
 test("adds a conditional header when available", () => {
   assert.deepEqual(activeJobsHeaders('"etag"'), {
     "If-None-Match": '"etag"',

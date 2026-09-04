@@ -76,8 +76,8 @@ These are expected effects, not post-deployment measurements.
 ## Local Verification
 
 The final local regression pass completed with 614 core tests, 79 HTTP API
-tests, 6 queue-trigger tests, and 161 UI tests passing. The production UI build
-transformed 2,423 modules in 399 ms.
+tests, 6 queue-trigger tests, and 164 UI tests passing. The production UI build
+transformed 2,424 modules in 381 ms.
 
 Black, isort, and Flake8 passed for the five Python files added or updated by
 this follow-up. ESLint passed for 26 changed or new UI files, the three route
@@ -93,6 +93,12 @@ remaining loader. A real Azure Maps invalid-auth test confirmed that standard
 labeling retains one persistent retry surface, does not start its tour, and
 raises no application lifecycle exception. Successful production Maps loading
 still requires Dev1 validation with real credentials.
+
+A deterministic direct-load trace paused session bootstrap, Dashboard data, and
+Active Jobs independently. The session and Dashboard phases both displayed the
+same single overall `Loading dashboard` spinner. After Dashboard content
+rendered, that overall spinner cleared and the still-pending Active Jobs request
+displayed its intended spinner inside the Ongoing Jobs box.
 
 ## Open Validation
 

@@ -5,13 +5,8 @@ import PropTypes from "prop-types";
 import { apiGet } from "../../util/api";
 import { loadAzureMaps } from "../../util/azureMapsLoader";
 import WorkspaceLoader from "../WorkspaceLoader";
+import { LABELING_WORKSPACE_STEPS } from "./labelingToolLoading";
 import { loadLabelingRoute } from "./loadLabelingRoute";
-
-const LOAD_STEPS = [
-  "Loading workspace data and map tools",
-  "Preparing imagery and labels",
-  "Rendering map and drawing tools",
-];
 
 const LabelingToolRoute = ({ setModalComponent }) => {
   const { projectId, imageLayerId } = useParams();
@@ -76,7 +71,7 @@ const LabelingToolRoute = ({ setModalComponent }) => {
       <WorkspaceLoader
         eyebrow="Standard labeling tool"
         title="Preparing your workspace"
-        steps={LOAD_STEPS}
+        steps={LABELING_WORKSPACE_STEPS}
         loadState={currentLoadState}
         error={currentError}
         errorTitle="Could not load the labeling workspace"
