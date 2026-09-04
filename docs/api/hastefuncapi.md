@@ -2,6 +2,13 @@
 
 Azure Functions backend for the HASTE application. Provides REST endpoints for managing projects, image layers, ML model training/inference, labeling, user management, and geospatial data access.
 
+## Contents
+
+- [Overview](#overview)
+- [Endpoints](#endpoints)
+- [Development Setup](#development-setup)
+- [Auto-generated API Docs](#auto-generated-api-docs)
+
 ---
 
 ## Overview
@@ -20,8 +27,9 @@ All functions are defined in `function_app.py` as a single Azure Functions app. 
 | Method | Route | Description |
 |--------|-------|-------------|
 | GET | `GetDashboardData` | Aggregated dashboard stats: project summaries, layer info, model status, and system-wide metrics. |
+| GET | `GetActiveJobs` | Compact active imagery, training, and inference jobs. Supports `ETag`/`If-None-Match`. |
 | GET | `GetProjects` | All projects with aggregated layer and model counts. |
-| GET | `GetProjectDetails` | Full project details including image layers, models, and processing status. Requires `projectId`. |
+| GET | `GetProjectDetails` | Project, layer, validation, and optional model details. Supports `ETag`/`If-None-Match`; requires `projectId`. |
 | PUT | `PutProject` | Create or update a project. Auto-generates `projectId` and `creationDate` if not provided. |
 | DELETE | `DeleteProject` | Delete a project by `projectId`. |
 | GET | `GenerateProjectStats` | Regenerates project stats from raw data — useful if stats fall out of sync. |
@@ -35,7 +43,22 @@ All functions are defined in `function_app.py` as a single Azure Functions app. 
 | GET | `GetLayerDetailView` | Detail view for a single image layer. Requires `projectId` and `imageLayerId`. |
 | GET | `GetLayerModelsDetails` | Model status and model list for a given layer. Requires `projectId` and `imageLayerId`. |
 | GET | `GetLayerLabelingToolData` | Label tool data for a given layer. Requires `projectId` and `imageLayerId`. |
+| GET | `GetLabelingWorkspace` | Minimal standard-labeling workspace. Requires `projectId` and `imageLayerId`. |
 | PUT | `PutLabelsFromLabelTool` | Save labels for a layer from the label tool. |
+
+### Route Loading Endpoints
+
+`GetActiveJobs` requires an active contributor or administrator. It returns one
+compact job list from a process-local cache with a maximum five-second TTL.
+Clients send `If-None-Match`; unchanged responses return an empty `304`.
+
+`GetLabelingWorkspace` requires the same active application role. It returns one
+label project, the target image-layer ID, event types, and primary classes. The
+route uses the image layer's label-project pointer when available and falls back
+to a project-partition scan for legacy records. It does not cache current labels.
+
+Both routes return `400` for invalid identifiers, `403` for insufficient access,
+`404` for missing records, and a generic `500` response for internal failures.
 
 ### File Upload
 
@@ -78,12 +101,21 @@ These endpoints use `FUNCTION`-level auth regardless of development mode (intend
 
 | Method | Route | Description |
 |--------|-------|-------------|
+| GET | `GetSessionBootstrap` | Trusted current-user, role, settings, and publishing capabilities for one-call application startup. Accepts no caller identity parameters. |
 | GET | `GetUsers` | All users. Requires `administrators` role. |
 | GET | `GetUserById` | Single user by `userId`. |
 | PUT | `PutUser` | Create or update a user. Handles invitations, reinvitations, role assignment, and reactivation. |
 | DELETE | `DeleteUser` | Delete a user by `userId` (email). Requires `administrators` role. |
 | GET | `GetAdminSettings` | All admin settings. Requires `administrators` role. |
 | PUT | `PutAdminSettings` | Update admin settings. Requires `administrators` role. |
+
+`GetSessionBootstrap` resolves identity from the SWA client-principal header
+and performs no user write for a stable active session. Blocked accounts retain
+their status response but receive no application roles.
+
+`GetPublishedDatasets` supports `ETag`/`If-None-Match` and returns an empty
+`304` for an unchanged fresh representation. Its process-local cache is bounded
+to five seconds and is invalidated after publishing mutations.
 
 ### Utilities
 

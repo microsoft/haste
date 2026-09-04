@@ -20,11 +20,23 @@ All functions are defined in `function_app.py` as a single Azure Functions app. 
 | Method | Route | Description |
 |--------|-------|-------------|
 | GET | `GetDashboardData` | Aggregated dashboard stats: project summaries, layer info, model status, and system-wide metrics. |
+| GET | `GetActiveJobs` | Compact active imagery, training, and inference jobs. Supports `ETag`/`If-None-Match`. |
 | GET | `GetProjects` | All projects with aggregated layer and model counts. |
-| GET | `GetProjectDetails` | Full project details including image layers, models, and processing status. Requires `projectId`. |
+| GET | `GetProjectDetails` | Project, layer, validation, and optional model details. Supports `ETag`/`If-None-Match`; requires `projectId`. |
 | PUT | `PutProject` | Create or update a project. Auto-generates `projectId` and `creationDate` if not provided. |
 | DELETE | `DeleteProject` | Delete a project by `projectId`. |
 | GET | `GenerateProjectStats` | Regenerates project stats from raw data — useful if stats fall out of sync. |
+
+#### Project Detail Caching
+
+`GetProjectDetails` returns `ETag`, `Cache-Control`, and `X-Haste-Cache` headers.
+Send `If-None-Match` to receive an empty `304` when the fresh cached representation is
+unchanged. Send `Cache-Control: no-cache` after a mutation to force storage refresh and
+then compare the ETag.
+
+The response cache is bounded and process-local. It deduplicates concurrent requests but
+does not provide coherence across scaled-out Function workers. Performance headers named
+`X-Haste-Data-Layer-*` count logical calls, not Azure Storage REST transactions.
 
 ### Image Layers
 
@@ -35,7 +47,22 @@ All functions are defined in `function_app.py` as a single Azure Functions app. 
 | GET | `GetLayerDetailView` | Detail view for a single image layer. Requires `projectId` and `imageLayerId`. |
 | GET | `GetLayerModelsDetails` | Model status and model list for a given layer. Requires `projectId` and `imageLayerId`. |
 | GET | `GetLayerLabelingToolData` | Label tool data for a given layer. Requires `projectId` and `imageLayerId`. |
+| GET | `GetLabelingWorkspace` | Minimal standard-labeling workspace. Requires `projectId` and `imageLayerId`. |
 | PUT | `PutLabelsFromLabelTool` | Save labels for a layer from the label tool. |
+
+#### Route Loading Endpoints
+
+`GetActiveJobs` requires an active contributor or administrator. It returns one
+compact job list from a process-local cache with a maximum five-second TTL.
+Clients send `If-None-Match`; unchanged responses return an empty `304`.
+
+`GetLabelingWorkspace` requires the same active application role. It returns one
+label project, the target image-layer ID, event types, and primary classes. The
+route uses the image layer's label-project pointer when available and falls back
+to a project-partition scan for legacy records. It does not cache current labels.
+
+Both routes return `400` for invalid identifiers, `403` for insufficient access,
+`404` for missing records, and a generic `500` response for internal failures.
 
 ### File Upload
 
@@ -78,12 +105,28 @@ These endpoints use `FUNCTION`-level auth regardless of development mode (intend
 
 | Method | Route | Description |
 |--------|-------|-------------|
+| GET | `GetSessionBootstrap` | Trusted current-user, role, settings, and publishing capabilities for one-call application startup. Accepts no caller identity parameters. |
 | GET | `GetUsers` | All users. Requires `administrators` role. |
 | GET | `GetUserById` | Single user by `userId`. |
 | PUT | `PutUser` | Create or update a user. Handles invitations, reinvitations, role assignment, and reactivation. |
 | DELETE | `DeleteUser` | Delete a user by `userId` (email). Requires `administrators` role. |
 | GET | `GetAdminSettings` | All admin settings. Requires `administrators` role. |
 | PUT | `PutAdminSettings` | Update admin settings. Requires `administrators` role. |
+
+#### Session Bootstrap
+
+`GetSessionBootstrap` resolves identity from the SWA client-principal header,
+loads current HASTE ACL state, and returns user and publishing configuration in
+one response. Stable active sessions are read-only; inactive, pending, and
+deleted accounts receive no application roles.
+
+### Published Datasets
+
+`GetPublishedDatasets` returns `ETag`, `Cache-Control`, and `X-Haste-Cache`
+headers. Send `If-None-Match` to receive an empty `304` for an unchanged fresh
+representation. The bounded process-local cache expires within five seconds,
+deduplicates concurrent identical reads, and is invalidated after publishing
+mutations.
 
 ### Utilities
 

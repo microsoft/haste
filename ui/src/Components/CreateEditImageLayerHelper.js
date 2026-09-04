@@ -13,6 +13,7 @@ import {
   normalizeSourceTypeKey,
 } from "./sourceTypeOptions.js";
 import { sourceImageryRef } from "./OpenDataCatalog/openDataCatalog.js";
+import { loadImageLayerFormData } from "./loadImageLayerFormData.js";
 
 export { sourceTypeOptions, normalizeSourceTypeKey };
 
@@ -23,14 +24,11 @@ const imageryOriginOptions = [
 
 export async function createComponentDefaultState(imageLayerId, projectId) {
     try {
-        //const settings = await apiGet("GetAdminSettings");
-        var imageLayerToEdit = null;
-        if (imageLayerId) {
-            imageLayerToEdit = await apiGet("GetLayerDetailView?projectId=" + projectId + "&imageLayerId=" + imageLayerId);
-        }
-
-        // Get Project Name
-        const project = await apiGet("GetProjectDetails?projectId=" + projectId);
+        const { imageLayerToEdit, project } = await loadImageLayerFormData(
+            imageLayerId,
+            projectId,
+            apiGet,
+        );
 
         const tempState = imageLayerToEdit
             ? {
@@ -116,6 +114,7 @@ export async function createComponentDefaultState(imageLayerId, projectId) {
         return tempState;
     } catch (error) {
         console.error("Error inializing component:", error);
+        throw error;
     }
 
 }

@@ -5,6 +5,7 @@ import re
 from azure.cosmos import CosmosClient, exceptions  # type: ignore
 from azure.identity import DefaultAzureCredential  # type: ignore
 
+from ..utils.metadata import matches_metadata_type
 from .abstract_data_layer import AbstractDataLayer
 
 
@@ -77,7 +78,9 @@ class AzureCosmosDBDataLayer(AbstractDataLayer):
             "Method not implemented and supported for Azure Cosmos DB."
         )
 
-    def load(self, identifier, data_type):
+    def load(self, identifier, data_type, data_format="json"):
+        if data_format != "json":
+            raise ValueError("Cosmos DB metadata supports only json")
         partition_key = (
             self.partition_key if self.partition_key else identifier
         )
@@ -91,7 +94,9 @@ class AzureCosmosDBDataLayer(AbstractDataLayer):
                 f"No data found for identifier: {identifier} and data_type: {data_type}"
             )
 
-    def load_all(self, data_type):
+    def load_all(self, data_type, data_format="json"):
+        if data_format != "json":
+            raise ValueError("Cosmos DB metadata supports only json")
         id_prefix = self._id_prefix(data_type)
         query = "SELECT * FROM c WHERE STARTSWITH(c.id, @id_prefix)"
         items = list(
@@ -101,9 +106,15 @@ class AzureCosmosDBDataLayer(AbstractDataLayer):
                 enable_cross_partition_query=True,
             )
         )
-        return items
+        return [
+            item
+            for item in items
+            if matches_metadata_type(item["id"], data_type)
+        ]
 
-    def load_all_from_partition(self, data_type):
+    def load_all_from_partition(self, data_type, data_format="json"):
+        if data_format != "json":
+            raise ValueError("Cosmos DB metadata supports only json")
         id_prefix = self._id_prefix(data_type)
         query = (
             "SELECT * FROM c WHERE c.partition_key = @partition_key "
@@ -123,7 +134,67 @@ class AzureCosmosDBDataLayer(AbstractDataLayer):
                 partition_key=self.partition_key,
             )
         )
-        return items
+        return [
+            item
+            for item in items
+            if matches_metadata_type(item["id"], data_type)
+        ]
+
+    def list_identifiers(self, data_type, data_format="json"):
+        if data_format != "json":
+            return []
+        id_prefix = self._id_prefix(data_type)
+        query = (
+            "SELECT VALUE c.id FROM c WHERE c.partition_key = @partition_key "
+            "AND STARTSWITH(c.id, @id_prefix)"
+        )
+        item_ids = self.container.query_items(
+            query=query,
+            parameters=[
+                {"name": "@partition_key", "value": self.partition_key},
+                {"name": "@id_prefix", "value": id_prefix},
+            ],
+            enable_cross_partition_query=False,
+            partition_key=self.partition_key,
+        )
+        return [
+            item_id[len(id_prefix) :]
+            for item_id in item_ids
+            if matches_metadata_type(item_id, data_type)
+        ]
+
+    def load_map(
+        self,
+        identifiers,
+        data_type,
+        data_format="json",
+        max_workers=None,
+    ):
+        if data_format != "json":
+            raise ValueError("Cosmos DB metadata supports only json")
+        identifiers = list(dict.fromkeys(identifiers))
+        if not identifiers:
+            return {}
+        id_prefix = self._id_prefix(data_type)
+        item_ids = [f"{id_prefix}{identifier}" for identifier in identifiers]
+        query = (
+            "SELECT * FROM c WHERE c.partition_key = @partition_key "
+            "AND ARRAY_CONTAINS(@item_ids, c.id)"
+        )
+        items = self.container.query_items(
+            query=query,
+            parameters=[
+                {"name": "@partition_key", "value": self.partition_key},
+                {"name": "@item_ids", "value": item_ids},
+            ],
+            enable_cross_partition_query=False,
+            partition_key=self.partition_key,
+        )
+        by_identifier = {item["id"][len(id_prefix) :]: item for item in items}
+        return {
+            identifier: by_identifier.get(identifier)
+            for identifier in identifiers
+        }
 
     def load_bounded(self, data_type, max_records, data_format="json"):
         if (

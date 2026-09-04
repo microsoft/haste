@@ -58,6 +58,8 @@ import {
 } from "./interactiveModel.js";
 import { getGpu } from "./gpuLogreg.js";
 import InteractiveLabelerLoader from "./InteractiveLabelerLoader.jsx";
+import { loadInteractiveArtifacts } from "./loadInteractiveArtifacts.js";
+import { loadInteractiveMetadata } from "./loadInteractiveMetadata.js";
 import { readResponseBuffer, waitForMapReady } from "./interactiveLabelerLoading.js";
 import KeyboardShortcutHelp from "../KeyboardShortcutHelp.jsx";
 import {
@@ -118,7 +120,7 @@ async function fetchArtifactBuffer(url, onProgress, signal) {
   const resp = await fetch(url, { signal });
   if (!resp.ok) {
     throw new Error(
-      `Failed to fetch PMTiles archive (HTTP ${resp.status}) at ${url}`
+      `Failed to fetch PMTiles archive (HTTP ${resp.status}).`
     );
   }
   return readResponseBuffer(resp, onProgress);
@@ -453,7 +455,7 @@ async function fetchFeaturesSidecar(url, onProgress, signal) {
   const resp = await fetch(url, { signal });
   if (!resp.ok) {
     throw new Error(
-      `Failed to fetch features sidecar (HTTP ${resp.status}) at ${url}`
+      `Failed to fetch features sidecar (HTTP ${resp.status}).`
     );
   }
   const buf = await readResponseBuffer(resp, onProgress);
@@ -482,7 +484,6 @@ async function fetchFeaturesSidecar(url, onProgress, signal) {
   }
   const matrix = new Float32Array(buf, 16, n * d);
   const ms = Math.round(performance.now() - t0);
-  // eslint-disable-next-line no-console
   console.log(
     `[InteractiveLabeler] sidecar loaded: ${n} buildings × ${d} dims (${(buf.byteLength / (1024 * 1024)).toFixed(1)} MB) in ${ms} ms`
   );
@@ -681,6 +682,7 @@ const InteractiveLabeler = () => {
         if (!window.atlas) {
           throw new Error("Azure Maps is unavailable.");
         }
+        // eslint-disable-next-line react-hooks/immutability
         await createMap(controller.signal);
         setIsMapReady(true);
         setInitialLoad(null);
@@ -755,38 +757,25 @@ const InteractiveLabeler = () => {
   async function createMap(signal) {
     signal.throwIfAborted();
     setInitialLoad({ step: 0, loaded: null, total: null });
-    let layerData = null;
-    try {
-      layerData = await apiGet(
-        `GetLayerLabelingToolData?projectId=${projectId}&imageLayerId=${imageLayerId}`
-      );
-    } catch {
-      // Imagery is optional — labeling works without it.
-    }
+    const metadata = await loadInteractiveMetadata({
+      get: apiGet,
+      projectId,
+      imageLayerId,
+      modelId,
+      signal,
+    });
     signal.throwIfAborted();
     // Cache the imagery URLs for the Advanced → Swipe view, which loads the
     // pre-event tiles onto its secondary map (falls back to satellite when
     // the layer has no pre-event imagery).
-    layerImageryRef.current = layerData?.imagery || null;
+    layerImageryRef.current = metadata.layerData?.imagery || null;
 
     // Resolve the model's PMTiles URL. Models are returned by
     // GetLayerModelsDetails; pick ours by modelId. The pmtilesUrl is
     // populated by the embedding workflow's postprocessor.
-    let pmtilesUrl = "";
-    let sidecarUrl = "";
+    const pmtilesUrl = metadata.model?.pmtilesUrl || "";
+    const sidecarUrl = metadata.model?.featuresSidecarUrl || "";
     setInitialLoad({ step: 1, loaded: null, total: null });
-    try {
-      const models = await apiGet(
-        `GetLayerModelsDetails?projectId=${projectId}&imageLayerId=${imageLayerId}`
-      );
-      const model = (models || []).find(
-        (m) => String(m.modelId) === String(modelId)
-      );
-      pmtilesUrl = model?.pmtilesUrl || "";
-      sidecarUrl = model?.featuresSidecarUrl || "";
-    } catch (e) {
-      console.warn("Could not fetch model URLs:", e);
-    }
     signal.throwIfAborted();
     if (!pmtilesUrl) {
       throw new Error(
@@ -819,58 +808,53 @@ const InteractiveLabeler = () => {
     // and handing pmtiles an in-memory source makes every subsequent range
     // read hit the local buffer instead of the network. `getKey()` returns
     // browserPmtilesUrl so it matches the `pmtiles://<url>` source below.
-    let pmtilesHeader = null;
     setInitialLoad({ step: 2, loaded: 0, total: null });
-    try {
-      const pmtilesBuffer = await fetchArtifactBuffer(
-        browserPmtilesUrl,
-        (loaded, total) => setInitialLoad({ step: 2, loaded, total }),
-        signal
-      );
-      const pm = new PMTiles(
-        new InMemoryPMTilesSource(browserPmtilesUrl, pmtilesBuffer)
-      );
-      // Pre-register so the protocol can serve tile reads from the same handle.
-      _pmtilesProtocol.add(pm);
-      // Read the header so we can place the camera over the archive's bounds
-      // (otherwise the map sits at [0, 0] zoom 3 and the user sees no tiles).
-      pmtilesHeader = await pm.getHeader();
-    } catch (e) {
-      console.warn("Failed to load PMTiles archive (continuing):", e);
-    }
-
-    // Fetch the binary features sidecar and parse the HFTR header. The
-    // resulting Float32Array view is the single source of truth for every
-    // f_* lookup downstream — the PMTiles archive itself only carries id +
-    // overture_id, so the labeler reads feature vectors here, not from
-    // tile properties.
-    setInitialLoad({ step: 3, loaded: 0, total: null });
-    sidecarRef.current = await fetchFeaturesSidecar(
-      browserSidecarUrl,
-      (loaded, total) => setInitialLoad({ step: 3, loaded, total }),
-      signal
-    );
+    let pmtilesDone = false;
+    const { pmtilesHeader, sidecar } = await loadInteractiveArtifacts({
+      signal,
+      loadPmtiles: (artifactSignal) =>
+        fetchArtifactBuffer(
+          browserPmtilesUrl,
+          (loaded, total) => setInitialLoad({ step: 2, loaded, total }),
+          artifactSignal
+        )
+          .then(async (pmtilesBuffer) => {
+            const pm = new PMTiles(
+              new InMemoryPMTilesSource(browserPmtilesUrl, pmtilesBuffer)
+            );
+            _pmtilesProtocol.add(pm);
+            return pm.getHeader();
+          })
+          .finally(() => {
+            pmtilesDone = true;
+            setInitialLoad({ step: 3, loaded: 0, total: null });
+          }),
+      loadSidecar: (artifactSignal) =>
+        fetchFeaturesSidecar(
+          browserSidecarUrl,
+          (loaded, total) =>
+            setInitialLoad({
+              step: pmtilesDone ? 3 : 2,
+              loaded,
+              total,
+            }),
+          artifactSignal
+        ),
+    });
+    sidecarRef.current = sidecar;
 
     // Restore this model's previously-saved interactive labels (separate from
     // the Building Validation store). Labels are keyed by overture id; we
     // re-apply them as feature-state on each moveend hydration when the
     // matching building's tile is in view.
     setInitialLoad({ step: 4, loaded: null, total: null });
-    try {
-      const saved = await apiGet(
-        `GetInteractiveLabels?projectId=${projectId}&modelId=${modelId}`
+    savedLabelsRef.current = metadata.savedLabels;
+    savedLabelsLoadedRef.current = metadata.savedLabelsLoaded;
+    if (metadata.savedLabelsError) {
+      console.error(
+        "Failed to load saved interactive labels:",
+        metadata.savedLabelsError
       );
-      savedLabelsRef.current = saved?.labels || {};
-      // The save path merges this mirror into the payload, and
-      // PutInteractiveLabels replaces the stored document outright. That is
-      // only lossless if the mirror really is what the server holds -- if
-      // this GET failed we would be merging into an empty base and would
-      // wipe the saved set, which is the bug this whole change exists to
-      // fix. Record that it succeeded; saving is blocked otherwise.
-      savedLabelsLoadedRef.current = true;
-    } catch (e) {
-      savedLabelsLoadedRef.current = false;
-      console.error("Failed to load saved interactive labels:", e);
     }
     signal.throwIfAborted();
     // Restore everything we can before the map exists. Labels saved with a
@@ -923,18 +907,18 @@ const InteractiveLabeler = () => {
         position: "bottom-left",
       });
 
-      if (layerData?.imagery?.preEventTileUrl) {
+      if (metadata.layerData?.imagery?.preEventTileUrl) {
         loadImagery(
-          toBrowserTitilerUrl(layerData.imagery.preEventTileUrl),
+          toBrowserTitilerUrl(metadata.layerData.imagery.preEventTileUrl),
           map,
           { current: null },
           "preEventImageryLayer",
           false
         );
       }
-      if (layerData?.imagery?.postEventTileUrl) {
+      if (metadata.layerData?.imagery?.postEventTileUrl) {
         loadImagery(
-          toBrowserTitilerUrl(layerData.imagery.postEventTileUrl),
+          toBrowserTitilerUrl(metadata.layerData.imagery.postEventTileUrl),
           map,
           { current: null },
           "postEventImageryLayer",
@@ -1065,7 +1049,7 @@ const InteractiveLabeler = () => {
       //  (a) detects feature keys on the first f_* props we see;
       //  (b) restores any saved labels for buildings that just rendered;
       //  (c) runs viewport-scoped predict if the model has training data.
-      const hydrate = () => hydrateViewport(map);
+      const hydrate = () => hydrateViewport();
       map.events.add("moveend", () => {
         // A move supersedes any pending first-paint retry.
         if (initialPaintTimerRef.current) {
@@ -1193,7 +1177,6 @@ const InteractiveLabeler = () => {
     // the very symptom this is meant to fix.
     refreshCounts();
     if (restored > 0 || legacy > 0) {
-      // eslint-disable-next-line no-console
       console.log(
         `[InteractiveLabeler] restored ${restored} saved label(s) by rowId` +
           (legacy > 0
@@ -1231,7 +1214,7 @@ const InteractiveLabeler = () => {
   //
   // Returns the number of rendered features it saw, so callers can tell
   // "nothing to do" from "the renderer wasn't ready yet".
-  function hydrateViewport(map) {
+  function hydrateViewport() {
     const gl = glMapRef.current;
     if (!gl) return 0;
     if (mapDisposedRef.current) return 0;
@@ -1299,7 +1282,6 @@ const InteractiveLabeler = () => {
         refreshCounts();
       }
       if (corrected > 0) {
-        // eslint-disable-next-line no-console
         console.warn(
           `[InteractiveLabeler] re-placed ${corrected} label(s) whose saved` +
             " rowId did not match the tile's overture_id (stale sidecar?)"
@@ -1353,9 +1335,8 @@ const InteractiveLabeler = () => {
   // and stops on the first success.
   function paintRestoredLabels(map, attempt = 0) {
     initialPaintTimerRef.current = null;
-    if (hydrateViewport(map) > 0) return;
+    if (hydrateViewport() > 0) return;
     if (attempt >= INITIAL_PAINT_MAX_ATTEMPTS) {
-      // eslint-disable-next-line no-console
       console.warn(
         "[InteractiveLabeler] no rendered features after" +
           ` ${INITIAL_PAINT_MAX_ATTEMPTS} attempts; labels will colour on the` +
@@ -1568,7 +1549,7 @@ const InteractiveLabeler = () => {
   }
 
   // ── Labeling ──────────────────────────────────────────────────────────────
-  function recordLabel(id, props, cls) {
+  function recordLabel(id, properties, cls) {
     const vec = lookupFeatureVector(id);
     if (!isValidVector(vec)) return false;
     // Capture the Overture id (when present) up front so the save path
@@ -1576,7 +1557,9 @@ const InteractiveLabeler = () => {
     // (so labels survive a re-embed that renumbers row-index ids); the
     // hydrate path also looks up by Overture id on restore.
     const overtureId =
-      props && props.overture_id != null ? props.overture_id : id;
+      properties && properties.overture_id != null
+        ? properties.overture_id
+        : id;
     labeledMapRef.current[id] = {
       label: cls,
       features: vec,
@@ -1597,7 +1580,7 @@ const InteractiveLabeler = () => {
       uncertaintyOnRef.current ||
       misclassifiedOnRef.current
     ) {
-      hydrateViewport(mapRef.current);
+      hydrateViewport();
     }
   }
   function labelBuildings(items, cls) {
@@ -2518,7 +2501,11 @@ const InteractiveLabeler = () => {
     ].filter((count) => count >= MIN_PER_CLASS).length >= 2;
 
   return (
-    <div className={styles.root}>
+    <div
+      className={styles.root}
+      data-route-map="interactive-labeler"
+      data-map-ready={isMapReady ? "true" : "false"}
+    >
       <InteractiveLabelerLoader
         loadState={initialLoad}
         error={loadError}

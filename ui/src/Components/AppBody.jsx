@@ -1,39 +1,61 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { Route, Routes } from "react-router-dom";
-import { useContext } from "react";
+import { Route, Routes, useLocation } from "react-router-dom";
+import { lazy, Suspense, useContext } from "react";
 
 import Loading from "./OtherComponents/Loading";
-import Error404 from "./Error404";
-import Project from "./Project";
-import Projects from "./Projects";
-import ImageLayer from "./ImageLayer";
-import Home from "./Home";
-import LabelingTool from "./LabelingTool/LabelingTool";
-import BuildingValidation from "./BuildingValidation/BuildingValidation";
-import InteractiveLabeler from "./InteractiveLabeler/InteractiveLabeler";
-import Visualizer from "./Visualizer/Visualizer";
-import ModelCatalog from "./ModelCatalog";
-import PublishedDatasets from "./PublishedDatasets";
-
-import AdminUsers from "./AdminUsers";
-import AdminSourceTypes from "./AdminSourceTypes";
-import AdminLabelingTool from "./AdminLabelingTool";
-import CreateEditImageLayerForm from "./CreateEditImageLayerForm";
-import HelpDocs from "./HelpDocs";
 import PropType from "prop-types";
 
 import { AppContext } from "../AppContext";
+import {
+  createMapRoute,
+  RouteLoading,
+} from "./MapRoute";
+import { getRouteLoadingLabel } from "./routeLoading";
+import { loadAzureMaps } from "../util/azureMapsLoader";
+import LabelingToolRoute from "./LabelingTool/LabelingToolRoute";
+
+const AdminLabelingTool = lazy(() => import("./AdminLabelingTool"));
+const AdminSourceTypes = lazy(() => import("./AdminSourceTypes"));
+const AdminUsers = lazy(() => import("./AdminUsers"));
+const BuildingValidation = createMapRoute(
+  () => import("./BuildingValidation/BuildingValidation"),
+  () => loadAzureMaps(document, { drawing: false, swipe: false })
+);
+const CreateEditImageLayerForm = lazy(
+  () => import("./CreateEditImageLayerForm")
+);
+const Error404 = lazy(() => import("./Error404"));
+const HelpDocs = lazy(() => import("./HelpDocs"));
+const Home = lazy(() => import("./Home"));
+const ImageLayer = lazy(() => import("./ImageLayer"));
+const InteractiveLabeler = createMapRoute(
+  () => import("./InteractiveLabeler/InteractiveLabeler"),
+  () => loadAzureMaps(document, { drawing: false, swipe: true })
+);
+const ModelCatalog = lazy(() => import("./ModelCatalog"));
+const Project = lazy(() => import("./Project"));
+const Projects = lazy(() => import("./Projects"));
+const PublishedDatasets = lazy(() => import("./PublishedDatasets"));
+const Visualizer = createMapRoute(
+  () => import("./Visualizer/Visualizer"),
+  () => loadAzureMaps(document, { drawing: false, swipe: true })
+);
 
 const AppBody = ({ setModalComponent }) => {
   const { appParams } = useContext(AppContext);
+  const location = useLocation();
   const routesReady =
     appParams.userRoles !== null && appParams.publishingEnabled !== null;
 
   return (
-    <div className="app-body-shell d-flex flex-grow-1 justify-content-center">
+    <div
+      className={`app-body-shell d-flex flex-grow-1 justify-content-center${
+        appParams.isLoading ? " app-body-shell--blocked" : ""
+      }`}
+    >
       {appParams.isLoading && <Loading />}
-      {routesReady && <Routes>
+      {routesReady && <Suspense fallback={appParams.isLoading ? null : <RouteLoading label={getRouteLoadingLabel(location.pathname)} />}><Routes>
         {appParams.userRoles !== null && appParams.publishingEnabled && (
           <Route path="/published-datasets" element={<PublishedDatasets />} />
         )}
@@ -60,7 +82,11 @@ const AppBody = ({ setModalComponent }) => {
               />
               <Route
                 path="/labeling-tool/:projectId/:imageLayerId"
-                element={<LabelingTool setModalComponent={setModalComponent} />}
+                element={
+                  <LabelingToolRoute
+                    setModalComponent={setModalComponent}
+                  />
+                }
               />
               <Route
                 path="/validation/:projectId/:imageLayerId"
@@ -103,7 +129,7 @@ const AppBody = ({ setModalComponent }) => {
           )}
 
         <Route path="*" element={<Error404 />} />
-      </Routes>}
+      </Routes></Suspense>}
     </div>
   );
 };

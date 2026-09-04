@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { useEffect, useState } from "react";
-import PropTypes from "prop-types";
+import { useEffect, useRef, useState } from "react";
 import {
   Button,
   MessageBar,
@@ -9,80 +8,78 @@ import {
   Spinner,
 } from "@fluentui/react-components";
 import { useNavigate } from "react-router-dom";
-import { apiGet } from "../../util/api";
+import { apiGetResponse } from "../../util/api";
+import { createSingleFlight } from "../../util/singleFlight";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
 import NoResultsMessage from "../NoResultsMessage";
-import { extractJobs } from "./ongoingJobsUtils";
+import {
+  ACTIVE_JOBS_ENDPOINT,
+  activeJobsAfterResponse,
+  activeJobsHeaders,
+  shouldPollActiveJobs,
+} from "./activeJobsRequest";
 
 const REFRESH_INTERVAL_MS = 30000;
 
-// Load project details for the projects that could have running work and
-// surface every in-progress imagery/training/inference job. This runs after
-// the dashboard summary is already on screen, with its own in-block spinner,
-// because walking each project's models can take a while.
-const OngoingJobs = ({ projects }) => {
+const OngoingJobs = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [jobs, setJobs] = useState([]);
   const [loadError, setLoadError] = useState("");
   const [refreshToken, setRefreshToken] = useState(0);
-
-  const projectKey = projects
-    .filter((project) =>
-      (project.imageLayerCount || 0) > 0 || (project.modelsCount || 0) > 0
-    )
-    .map((project) => project.projectId)
-    .join("|");
+  const requestRef = useRef(createSingleFlight());
+  const etagRef = useRef(null);
 
   useEffect(() => {
-    let cancelled = false;
-    const projectIds = projectKey ? projectKey.split("|") : [];
+    let mounted = true;
+    const request = requestRef.current;
 
     const load = async (initialLoad = false) => {
+      if (request.isRunning(ACTIVE_JOBS_ENDPOINT)) return;
       if (initialLoad) setLoading(true);
-
-      const results = await Promise.allSettled(
-        projectIds.map((projectId) =>
-          apiGet(
-            `GetProjectDetails?projectId=${projectId}&includeModels=True`
-          )
-            .then((res) => ({ projectId, res }))
-        )
-      );
-
-      if (cancelled) return;
-
-      const collected = [];
-      let failedCount = 0;
-      results.forEach((result) => {
-        if (result.status === "fulfilled") {
-          collected.push(
-            ...extractJobs(result.value.projectId, result.value.res)
+      try {
+        await request.run(ACTIVE_JOBS_ENDPOINT, async (signal) => {
+          const { data, etag, status } = await apiGetResponse(
+            ACTIVE_JOBS_ENDPOINT,
+            {
+              signal,
+              headers: activeJobsHeaders(etagRef.current),
+            }
           );
-        } else {
-          failedCount += 1;
+          if (!mounted) return;
+          if (etag) etagRef.current = etag;
+          setJobs((current) =>
+            activeJobsAfterResponse(current, { data, status })
+          );
+          setLoadError("");
+        });
+      } catch (error) {
+        if (error.name !== "AbortError" && mounted) {
+          setLoadError("Ongoing jobs could not be refreshed.");
         }
-      });
-
-      setJobs(collected);
-      setLoadError(
-        failedCount > 0
-          ? `${failedCount} of ${projectIds.length} projects could not be refreshed.`
-          : ""
-      );
-      setLoading(false);
+      } finally {
+        if (mounted) setLoading(false);
+      }
     };
 
     load(true);
     const intervalId = window.setInterval(() => {
-      if (document.visibilityState === "visible") load();
+      if (
+        shouldPollActiveJobs({
+          visibilityState: document.visibilityState,
+          requestRunning: request.isRunning(ACTIVE_JOBS_ENDPOINT),
+        })
+      ) {
+        load();
+      }
     }, REFRESH_INTERVAL_MS);
 
     return () => {
-      cancelled = true;
+      mounted = false;
       window.clearInterval(intervalId);
+      request.abort();
     };
-  }, [projectKey, refreshToken]);
+  }, [refreshToken]);
 
   if (loading) {
     return (
@@ -143,10 +140,6 @@ const OngoingJobs = ({ projects }) => {
       ))}
     </div>
   );
-};
-
-OngoingJobs.propTypes = {
-  projects: PropTypes.array.isRequired,
 };
 
 export default OngoingJobs;
