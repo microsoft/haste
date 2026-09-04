@@ -276,12 +276,22 @@ class LatestBadgePolicyTests(unittest.TestCase):
         self.assertIn("--latest=true", self.workflow)
         self.assertIn("--latest=false", self.workflow)
 
-    def test_newest_stable_tag_is_computed_before_claiming_latest(self):
+    def test_badge_is_reconciled_from_the_live_release_list(self):
+        # Deciding from a checkout-time tag snapshot let a slow run write a
+        # stale badge; the live list makes concurrent runs converge instead.
+        self.assertIn("Reconcile the Latest badge", self.workflow)
+        self.assertIn("gh release list", self.workflow)
         self.assertIn("sort -V", self.workflow)
-        self.assertIn('[ "$TAG" = "$NEWEST" ]', self.workflow)
+        self.assertIn('gh release edit "$NEWEST"', self.workflow)
 
-    def test_prereleases_never_claim_latest(self):
-        self.assertIn("--prerelease --latest=false", self.workflow)
+    def test_publish_step_never_claims_the_badge_itself(self):
+        self.assertIn("FLAGS=(--latest=false)", self.workflow)
+
+    def test_prereleases_and_drafts_are_excluded_from_the_badge(self):
+        self.assertIn("--prerelease", self.workflow)
+        self.assertIn(
+            ".isPrerelease == false and .isDraft == false", self.workflow
+        )
 
     def test_full_history_is_fetched_so_tags_are_visible(self):
         self.assertIn("fetch-depth: 0", self.workflow)
@@ -295,8 +305,15 @@ class LatestBadgePolicyTests(unittest.TestCase):
         )
         self.assertNotIn("ref: ${{ steps.tag.outputs.tag }}", self.workflow)
 
-    def test_runs_are_serialized_without_cancelling_a_backfill(self):
-        self.assertIn("group: product-release", self.workflow)
+    def test_concurrency_group_is_scoped_per_tag(self):
+        # A single shared group is a trap: GitHub keeps only one *pending* run
+        # per group, so each new dispatch cancels the one queued behind it and
+        # a backfill silently loses releases.
+        self.assertIn(
+            "group: product-release-${{ github.event.inputs.tag "
+            "|| github.ref_name }}",
+            self.workflow,
+        )
         self.assertIn("cancel-in-progress: false", self.workflow)
 
 

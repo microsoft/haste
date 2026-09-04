@@ -17,12 +17,12 @@ on:
 permissions:
   contents: read
 
-# The Latest badge is a read-then-write against the remote tag list, so two
-# overlapping stable runs could otherwise leave it on the older release.
-# cancel-in-progress must stay false: a historical backfill dispatches one run
-# per tag, and cancelling them would silently skip releases.
+# Scoped per tag, never shared. GitHub keeps only one *pending* run per
+# concurrency group, so a single shared group makes each new dispatch cancel
+# the one queued behind it -- a backfill would silently lose releases.
+# Cross-run ordering is handled by reconciling the badge instead (below).
 concurrency:
-  group: product-release
+  group: product-release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -95,21 +95,10 @@ jobs:
           TITLE: ${{ steps.notes.outputs.title }}
           PRERELEASE: ${{ steps.tag.outputs.prerelease }}
         run: |
-          FLAGS=()
+          # Never claim the badge here; the reconcile step below decides.
+          FLAGS=(--latest=false)
           if [ "$PRERELEASE" = "true" ]; then
-            FLAGS+=(--prerelease --latest=false)
-          else
-            # Only the newest stable release carries the "Latest" badge.
-            # Re-publishing notes for an older tag must never steal it, and
-            # backfilling history must not demote a newer release.
-            NEWEST=$(git tag --list 'v*'               | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$'               | sort -V               | tail -1)
-            if [ "$TAG" = "$NEWEST" ]; then
-              echo "$TAG is the newest stable tag; taking the Latest badge."
-              FLAGS+=(--latest=true)
-            else
-              echo "$TAG is older than $NEWEST; leaving the Latest badge."
-              FLAGS+=(--latest=false)
-            fi
+            FLAGS+=(--prerelease)
           fi
           if gh release view "$TAG" --repo "${{ github.repository }}" \
               >/dev/null 2>&1; then
@@ -126,3 +115,21 @@ jobs:
               --verify-tag \
               "${FLAGS[@]}"
           fi
+
+      # Decided from the live release list, not a checkout-time snapshot, and
+      # applied to whichever release is highest rather than to this one. That
+      # makes it idempotent and order-independent: overlapping runs converge on
+      # the same answer, and a mis-set badge self-heals on the next release.
+      - name: Reconcile the Latest badge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          STABLE=$(gh release list --repo "$REPO" --limit 200 --json tagName,isPrerelease,isDraft --jq '.[] | select(.isPrerelease == false and .isDraft == false) | .tagName')
+          NEWEST=$(echo "$STABLE" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          if [ -z "$NEWEST" ]; then
+            echo 'No stable product release yet; leaving the badge alone.'
+            exit 0
+          fi
+          echo "Highest stable release is $NEWEST; giving it the Latest badge."
+          gh release edit "$NEWEST" --repo "$REPO" --latest=true
