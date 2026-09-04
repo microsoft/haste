@@ -117,6 +117,28 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn("contents: write", workflow)
         self.assertNotIn("--clobber", publisher)
 
+    def test_publish_workflow_runs_are_serialized(self):
+        """Concurrent runs must not race for the same "next" RC number.
+
+        "prepare" re-resolves the version independently of the triggering
+        build. If two builds for different commits both find the release
+        with no RC yet for their target version, they both compute the
+        same next number, and whichever publishes second permanently fails
+        because its already-uploaded build artifact can never match a
+        re-resolved, higher RC number. A workflow-level concurrency group
+        (not just the publish-rc job's) prevents this by ensuring only one
+        run's "prepare" step is ever resolving a version against the
+        release state at a time.
+        """
+        workflow = (
+            REPO_ROOT / ".github/workflows/hastegeo-publish.yml"
+        ).read_text(encoding="utf-8")
+        pre_jobs = workflow.split("\njobs:", 1)[0]
+
+        self.assertIn("concurrency:", pre_jobs)
+        self.assertIn("group: hastegeo-publish", pre_jobs)
+        self.assertIn("cancel-in-progress: false", pre_jobs)
+
     def test_pr_workflow_does_not_build_images_twice(self):
         workflow = (
             REPO_ROOT / ".github/workflows/hastegeo-build.yml"
