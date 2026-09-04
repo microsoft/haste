@@ -1,0 +1,128 @@
+name: Publish product release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to publish notes for"
+        required: true
+        type: string
+
+# Product releases only. hastegeo wheels are published by
+# hastegeo-publish.yml into the haste-binaries asset store and never
+# get a release of their own.
+permissions:
+  contents: read
+
+# The Latest badge is a read-then-write against the remote tag list, so two
+# overlapping stable runs could otherwise leave it on the older release.
+# cancel-in-progress must stay false: a historical backfill dispatches one run
+# per tag, and cancelling them would silently skip releases.
+concurrency:
+  group: product-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Resolve tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          TAG="${INPUT_TAG:-$REF_NAME}"
+          # Stable: v1.2.3. Prerelease: v1.2.3-rc01 (rc number zero padded).
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]{2}$ ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Tag '$TAG' is not a product version. Expected" \
+              "vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rcNN (see RELEASING.md)."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Deliberately the default branch, not the tag. The extractor and the
+      # changelog history live on main; historical tags predate both, so
+      # checking out v1.4.1 would leave nothing to run. This also matches the
+      # trusted-publisher pattern in hastegeo-publish.yml -- the code with
+      # contents:write is always the reviewed copy on main. The tag is still
+      # used for permalinks and for the Latest comparison below.
+      - name: Checkout release tooling from the default branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          # Full history + tags: the Latest badge decision compares this tag
+          # against every other product tag.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          # An rc tag documents the stable version it is a candidate for.
+          VERSION="${TAG%-rc*}"
+          python .github/scripts/changelog_release_notes.py \
+            --version "$VERSION" \
+            --ref "$TAG" \
+            --output release-notes.md
+          TITLE=$(python .github/scripts/changelog_release_notes.py \
+            --version "$VERSION" --print-title)
+          if [ "$VERSION" != "$TAG" ]; then
+            TITLE="$TITLE (release candidate)"
+          fi
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          TITLE: ${{ steps.notes.outputs.title }}
+          PRERELEASE: ${{ steps.tag.outputs.prerelease }}
+        run: |
+          FLAGS=()
+          if [ "$PRERELEASE" = "true" ]; then
+            FLAGS+=(--prerelease --latest=false)
+          else
+            # Only the newest stable release carries the "Latest" badge.
+            # Re-publishing notes for an older tag must never steal it, and
+            # backfilling history must not demote a newer release.
+            NEWEST=$(git tag --list 'v*'               | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$'               | sort -V               | tail -1)
+            if [ "$TAG" = "$NEWEST" ]; then
+              echo "$TAG is the newest stable tag; taking the Latest badge."
+              FLAGS+=(--latest=true)
+            else
+              echo "$TAG is older than $NEWEST; leaving the Latest badge."
+              FLAGS+=(--latest=false)
+            fi
+          fi
+          if gh release view "$TAG" --repo "${{ github.repository }}" \
+              >/dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "$TITLE" \
+              --notes-file release-notes.md \
+              "${FLAGS[@]}"
+          else
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "$TITLE" \
+              --notes-file release-notes.md \
+              --verify-tag \
+              "${FLAGS[@]}"
+          fi

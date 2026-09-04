@@ -17,6 +17,7 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             ".github/workflows/docker-build-and-push.yml",
             ".github/workflows/dependency-validation.yml",
             ".github/workflows/rc-cleanup.yml",
+            ".github/workflows/release.yml",
         ]
 
         failures = []
@@ -257,6 +258,46 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             # and only breaks at task runtime.
             pin = block.split("prepackage:", 1)[1].split("postpackage:", 1)[0]
             self.assertIn("continueOnError: false", pin)
+
+
+class LatestBadgePolicyTests(unittest.TestCase):
+    """The Latest badge must track the newest stable release, not the
+    most recently published one."""
+
+    def setUp(self):
+        self.workflow = (
+            REPO_ROOT / ".github/workflows/release.yml"
+        ).read_text(encoding="utf-8")
+
+    def test_latest_is_never_set_unconditionally(self):
+        # A bare "--latest" would let a backfill or a notes re-publish of an
+        # old tag steal the badge from a newer release.
+        self.assertNotIn("(--latest)", self.workflow)
+        self.assertIn("--latest=true", self.workflow)
+        self.assertIn("--latest=false", self.workflow)
+
+    def test_newest_stable_tag_is_computed_before_claiming_latest(self):
+        self.assertIn("sort -V", self.workflow)
+        self.assertIn('[ "$TAG" = "$NEWEST" ]', self.workflow)
+
+    def test_prereleases_never_claim_latest(self):
+        self.assertIn("--prerelease --latest=false", self.workflow)
+
+    def test_full_history_is_fetched_so_tags_are_visible(self):
+        self.assertIn("fetch-depth: 0", self.workflow)
+
+    def test_tooling_is_checked_out_from_the_default_branch(self):
+        # Historical tags predate the extractor, so a backfill that checked
+        # out the tag would have nothing to run.
+        self.assertIn(
+            "ref: ${{ github.event.repository.default_branch }}",
+            self.workflow,
+        )
+        self.assertNotIn("ref: ${{ steps.tag.outputs.tag }}", self.workflow)
+
+    def test_runs_are_serialized_without_cancelling_a_backfill(self):
+        self.assertIn("group: product-release", self.workflow)
+        self.assertIn("cancel-in-progress: false", self.workflow)
 
 
 if __name__ == "__main__":
