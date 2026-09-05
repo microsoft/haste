@@ -43,6 +43,40 @@ class ReleaseNotes:
         """Return the release title, falling back to the bare version."""
         return f"{self.version} — {self.title}" if self.title else self.version
 
+    @property
+    def anchor(self) -> str:
+        """Return the GitHub heading anchor for this section.
+
+        Mirrors github-slugger, which GitHub uses to build heading ids:
+        lowercase, drop everything that is not a letter, number, space or
+        hyphen, then turn spaces into hyphens. The bracketed version and the
+        em dash each leave their surrounding spaces behind, so a real anchor
+        contains a double hyphen.
+        """
+        heading = f"[{self.version}]"
+        if self.title:
+            heading = f"{heading} — {self.title}"
+        slug = re.sub(r"[^\w\s-]", "", heading.lower(), flags=re.UNICODE)
+        return slug.replace(" ", "-")
+
+    #: Sections a reader must act on. Everything else is detail that lives
+    #: in the changelog; a release page renders every release at once, so
+    #: reproducing full sections here buries the parts that matter.
+    ACTIONABLE_SECTIONS = ("Upgrade actions", "Breaking changes")
+
+    @property
+    def summary(self) -> str:
+        """Return only the sections a reader has to act on, verbatim."""
+        out = []
+        for match in re.finditer(
+            r"^(#{3,4}) (.+?)$(.*?)(?=^#{3,4} |\Z)",
+            self.body,
+            flags=re.M | re.S,
+        ):
+            hashes, name, content = match.groups()
+            if name.strip() in self.ACTIONABLE_SECTIONS:
+                out.append(f"{hashes} {name}\n\n{content.strip()}")
+        return "\n\n".join(out)
 
 def absolutize_links(body: str, ref: str) -> str:
     """Rewrite repo-relative markdown links to permalinks at ``ref``."""
@@ -131,15 +165,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="write the release title to stdout instead of the body",
     )
+    parser.add_argument(
+        "--print-anchor",
+        action="store_true",
+        help="write the GitHub heading anchor to stdout instead of the body",
+    )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="condense entries to their headlines; keep upgrade actions",
+    )
     args = parser.parse_args(argv)
 
     notes = extract(
         args.changelog.read_text(encoding="utf-8"), args.version
     )
-    body = absolutize_links(notes.body, args.ref or args.version)
+    source = notes.summary if args.summary else notes.body
+    body = absolutize_links(source, args.ref or args.version)
 
     if args.print_title:
         print(notes.display_title)
+        return 0
+
+    if args.print_anchor:
+        print(notes.anchor)
         return 0
 
     if args.output:

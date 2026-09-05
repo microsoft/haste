@@ -77,16 +77,32 @@ jobs:
         run: |
           # An rc tag documents the stable version it is a candidate for.
           VERSION="${TAG%-rc*}"
-          python .github/scripts/changelog_release_notes.py \
-            --version "$VERSION" \
-            --ref "$TAG" \
-            --output release-notes.md
-          TITLE=$(python .github/scripts/changelog_release_notes.py \
-            --version "$VERSION" --print-title)
-          if [ "$VERSION" != "$TAG" ]; then
-            TITLE="$TITLE (release candidate)"
-          fi
-          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          # Only the sections a reader must act on, verbatim. A releases
+          # page renders every release at once, so reproducing full
+          # sections buries the parts that matter. The rest is one click
+          # away in the changelog.
+          python .github/scripts/changelog_release_notes.py --version "$VERSION" --ref "$TAG" --summary --output release-notes.md
+          ANCHOR=$(python .github/scripts/changelog_release_notes.py --version "$VERSION" --print-anchor)
+          echo "anchor=$ANCHOR" >> "$GITHUB_OUTPUT"
+          # The release name is the bare version. The changelog heading
+          # keeps its descriptive title -- that is what the anchor is
+          # built from -- but the releases page reads as a clean version
+          # list rather than a wall of prose.
+          echo "title=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Link to the full changelog entry
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          ANCHOR: ${{ steps.notes.outputs.anchor }}
+        run: |
+          URL="https://github.com/$REPO/blob/$TAG/CHANGELOG.md#$ANCHOR"
+          # No horizontal rule: the link sits between the upgrade actions
+          # and the artifacts table, not at the end as a footer.
+          {
+            echo
+            echo "**[Full release notes for $TAG →]($URL)**"
+          } >> release-notes.md
 
       # A wheel is published on merge to main, so the one belonging to a
       # release is the highest hastegeo tag reachable from it. Releases cut

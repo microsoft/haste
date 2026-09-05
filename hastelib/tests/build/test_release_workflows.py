@@ -260,6 +260,39 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             self.assertIn("continueOnError: false", pin)
 
 
+class ReleaseBodyShapeTests(unittest.TestCase):
+    """A release page carries what a reader must act on, and links out."""
+
+    def setUp(self):
+        self.workflow = (
+            REPO_ROOT / ".github/workflows/release.yml"
+        ).read_text(encoding="utf-8")
+
+    def test_notes_are_summarised_not_reproduced_in_full(self):
+        self.assertIn("--summary", self.workflow)
+
+    def test_release_name_is_the_bare_version(self):
+        # The changelog heading keeps its descriptive title, since the anchor
+        # is built from it; the releases page stays a clean version list.
+        self.assertIn('echo "title=$TAG"', self.workflow)
+        self.assertNotIn("--print-title", self.workflow)
+
+    def test_body_links_to_the_changelog_anchor(self):
+        self.assertIn("--print-anchor", self.workflow)
+        self.assertIn("CHANGELOG.md#$ANCHOR", self.workflow)
+
+    def test_the_link_precedes_the_artifacts_table(self):
+        # Order in the published body follows step order, since each step
+        # appends to release-notes.md.
+        link = self.workflow.index("- name: Link to the full changelog entry")
+        wheel = self.workflow.index(
+            "- name: Resolve the matching hastegeo wheel"
+        )
+        publish = self.workflow.index("- name: Create or update the release")
+        self.assertLess(link, wheel)
+        self.assertLess(wheel, publish)
+
+
 class WheelProvenanceTests(unittest.TestCase):
     """A release cites its hastegeo wheel; it never hosts a copy."""
 
