@@ -46,6 +46,7 @@
     "STATS_QUEUE_NAME": "my-local-stats-queue",
     "ZIP_QUEUE_NAME": "my-local-zip-queue",
     "EMBEDDING_QUEUE_NAME": "my-local-embedding-queue",
+    "FOOTPRINT_TILES_QUEUE_NAME": "my-local-footprint-tiles-queue",
 
     // ===== REQUIRED: Docker Images =====
     "AZURE_BATCH_DOCKER_IMAGE": "<ACR_NAME>.azurecr.io/hastetraining:<TAG>",

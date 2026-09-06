@@ -1367,16 +1367,21 @@ async def GetLayerModelsDetails(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse("Error loading models.", status_code=500)
 
 
-# Embedding-model artifacts the Interactive Labeler fetches by HTTP byte
-# range, mapped to the Model field that holds each blob URL.
+# Model artifacts the browser fetches by HTTP byte range, mapped to the
+# Model field that holds each blob URL.
 _MODEL_ARTIFACT_URL_FIELDS = {
-    "pmtiles": "pmtilesUrl",
     "sidecar": "featuresSidecarUrl",
     "geojson": "embeddingsGeoJSONUrl",
     "gpkg": "gpkgUrl",
 }
+# Artifacts owned by the ImageLayer rather than a model. Footprint
+# geometry is shared by every model trained on the layer, so it lives
+# here and is looked up by imageLayerId.
+_LAYER_ARTIFACT_URL_FIELDS = {
+    "footprint_pmtiles": "footprintPmtilesUrl",
+}
 _MODEL_ARTIFACT_CONTENT_TYPES = {
-    "pmtiles": "application/octet-stream",
+    "footprint_pmtiles": "application/vnd.pmtiles",
     "sidecar": "application/octet-stream",
     "geojson": "application/geo+json",
     "gpkg": "application/geopackage+sqlite3",
@@ -1400,47 +1405,99 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
     blob I/O server-side over the Azure backbone, honoring ``Range`` so
     pmtiles.js can do partial reads.
 
-    Supported ``kind`` values: ``pmtiles``, ``sidecar`` and ``geojson``
-    (fetched/parsed in-browser), plus ``gpkg`` — the per-building
-    predictions GeoPackage saved by ``PutBuildingPredictions``, served as
-    a downloadable attachment. Example:
+    Supported ``kind`` values: ``sidecar`` and ``geojson``
+    (fetched/parsed in-browser), ``gpkg`` — the per-building predictions
+    GeoPackage saved by ``PutBuildingPredictions``, served as a
+    downloadable attachment — and ``footprint_pmtiles``, the image
+    layer's shared building-footprint vector tiles. Example:
     ``GET /api/GetModelArtifact?projectId=<pid>&modelId=<mid>&kind=gpkg``.
+
+    ``footprint_pmtiles`` is layer-scoped: geometry is shared by every
+    model trained on the layer, so it resolves against ``imageLayerId``
+    (taken from the query string, else from the model's own layer).
     """
     try:
         project_id = _require_guid_param(req, "projectId")
-        model_id = _require_short_int_id_param(req, "modelId")
     except ValueError as e:
         return _bad_request(str(e))
 
     kind = (req.params.get("kind") or "").lower()
     url_field = _MODEL_ARTIFACT_URL_FIELDS.get(kind)
-    if url_field is None:
+    layer_url_field = _LAYER_ARTIFACT_URL_FIELDS.get(kind)
+    if url_field is None and layer_url_field is None:
         return _bad_request(
-            f"kind must be one of {sorted(_MODEL_ARTIFACT_URL_FIELDS)}"
+            "kind must be one of "
+            f"{sorted({**_MODEL_ARTIFACT_URL_FIELDS, **_LAYER_ARTIFACT_URL_FIELDS})}"
         )
 
-    try:
-        model = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=project_id,
-            ).load,
-            model_id,
-        )
-    except FileNotFoundError:
-        return func.HttpResponse("Model not found.", status_code=404)
-    except Exception as e:
-        logger.error(
-            f"GetModelArtifact model load failed: {e}\n"
-            f"{traceback.format_exc()}"
-        )
-        return func.HttpResponse("Error loading model.", status_code=500)
+    # A layer-scoped artifact belongs to the image layer, so an
+    # imageLayerId alone is enough to reach it: a standard-workflow layer
+    # may have no models at all. modelId stays accepted, and is still
+    # required for every model-scoped kind.
+    explicit_layer_id = req.params.get("imageLayerId")
+    layer_only_request = bool(
+        layer_url_field is not None
+        and explicit_layer_id
+        and not req.params.get("modelId")
+    )
+    model_id = None
+    if not layer_only_request:
+        try:
+            model_id = _require_short_int_id_param(req, "modelId")
+        except ValueError as e:
+            return _bad_request(str(e))
 
-    blob_url = (model or {}).get(url_field) or ""
+    document = None
+    if model_id is not None:
+        try:
+            document = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().MODEL.value,
+                    partition_key=project_id,
+                ).load,
+                model_id,
+            )
+        except FileNotFoundError:
+            return func.HttpResponse("Model not found.", status_code=404)
+        except Exception as e:
+            logger.error(
+                f"GetModelArtifact model load failed: {e}\n"
+                f"{traceback.format_exc()}"
+            )
+            return func.HttpResponse("Error loading model.", status_code=500)
+
+    if layer_url_field is not None:
+        # Layer-scoped artifact: take an explicit imageLayerId when the
+        # caller passes one, otherwise the model's own layer.
+        url_field = layer_url_field
+        model_document = document or {}
+        image_layer_id = explicit_layer_id or model_document.get(
+            "imageLayerId"
+        )
+        if not image_layer_id or not _GUID_RE.match(str(image_layer_id)):
+            return _bad_request("Invalid or missing parameter: imageLayerId")
+        try:
+            document = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().IMAGELAYER.value,
+                    partition_key=project_id,
+                ).load,
+                image_layer_id,
+            )
+        except FileNotFoundError:
+            return func.HttpResponse("Image layer not found.", status_code=404)
+        except Exception as e:
+            logger.error(
+                f"GetModelArtifact image layer load failed: {e}\n"
+                f"{traceback.format_exc()}"
+            )
+            return func.HttpResponse(
+                "Error loading image layer.", status_code=500
+            )
+
+    blob_url = (document or {}).get(url_field) or ""
     if not blob_url:
-        return func.HttpResponse(
-            "Artifact not available for this model.", status_code=404
-        )
+        return func.HttpResponse("Artifact not available.", status_code=404)
 
     try:
         offset, length, is_range = parse_byte_range(req.headers.get("Range"))

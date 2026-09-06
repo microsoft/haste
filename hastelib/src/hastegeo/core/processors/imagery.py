@@ -14,9 +14,61 @@ from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
+from .footprint_tiles import (
+    FOOTPRINT_TILE_FIELDS,
+    layer_needs_footprint_tiles,
+    request_preparation,
+)
+from .metadata import MetadataProcessor
 
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 IMAGERY_PREFIX = "img"
+
+
+def save_imagery_layer(
+    image_layer: ImageLayer,
+    config: Optional[Config] = None,
+    prepare_footprints: bool = False,
+) -> None:
+    """Persist imagery/label work without overwriting footprint job state.
+
+    Only the final successful save may publish footprint work. Nothing in
+    the imagery handler saves a stale footprint snapshot after publication.
+    Other imagery saves (including error handling/redelivery) also exclude
+    footprint-owned fields, using MetadataProcessor's top-level merge.
+    """
+    if config is None:
+        config = Config()
+    metadata = MetadataProcessor(
+        data_type=config.get_metadata_types().IMAGELAYER.value,
+        partition_key=image_layer.projectId,
+        config=config,
+    )
+    metadata.save(
+        image_layer.imageLayerId,
+        image_layer.model_dump(exclude=FOOTPRINT_TILE_FIELDS),
+    )
+    if (
+        not prepare_footprints
+        or image_layer.status != config.get_status_types().COMPLETED.value
+    ):
+        return
+    try:
+        # Reload so a duplicate imagery delivery does not reset a running
+        # or completed footprint job with its stale queue snapshot.
+        current = ImageLayer.model_validate(
+            metadata.load(image_layer.imageLayerId)
+        )
+        if layer_needs_footprint_tiles(current):
+            request_preparation(current, config=config)
+    except Exception as error:
+        # Derived tiles must not fail usable imagery. request_preparation
+        # records send failures as FAILED so manual recovery remains visible.
+        Logger.get_logger(__name__).warning(
+            "Could not prepare footprint tiles (%s); imagery is unaffected. "
+            "Footprint preparation can be requested again.",
+            type(error).__name__,
+        )
 
 
 class ImageryLogRecord(NamedTuple):

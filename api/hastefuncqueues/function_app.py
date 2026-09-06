@@ -8,6 +8,7 @@ import traceback
 
 import azure.functions as func  # type: ignore
 from hastegeo.core.config import Config
+from hastegeo.core.models.footprint_tiles import parse_tiles_request
 from hastegeo.core.models.projects import (
     ImageLayer,
     LabelProject,
@@ -20,7 +21,11 @@ from hastegeo.core.models.stats import ProjectsSummary, StatsRequest
 from hastegeo.core.models.training import ExperimentConfig
 from hastegeo.core.processors.artifacts import ArtifactProcessor
 from hastegeo.core.processors.embedding import EmbeddingPostprocessor
-from hastegeo.core.processors.imagery import ImageryPostProcessor
+from hastegeo.core.processors.footprint_tiles import process_tiles_request
+from hastegeo.core.processors.imagery import (
+    ImageryPostProcessor,
+    save_imagery_layer,
+)
 from hastegeo.core.processors.inference import (
     InferencePostprocessor,
     InferencePreprocessor,
@@ -122,14 +127,7 @@ async def GetProcessImageLayerQueueMessage(msg: func.QueueMessage) -> None:
             )
             return
 
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().IMAGELAYER.value,
-                partition_key=image_data.projectId,
-            ).save,
-            image_data.imageLayerId,
-            image_data.dict(),
-        )
+        await asyncio.to_thread(save_imagery_layer, image_data, config=config)
         output = await asyncio.to_thread(
             ImageryPostProcessor(image_data).process
         )
@@ -179,24 +177,15 @@ async def GetProcessImageLayerQueueMessage(msg: func.QueueMessage) -> None:
             )
             # Save ImageLayer completed status
             await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().IMAGELAYER.value,
-                    partition_key=output.projectId,
-                ).save,
-                output.imageLayerId,
-                output.dict(),
+                save_imagery_layer,
+                output,
+                config=config,
+                prepare_footprints=True,
             )
         else:
             # Only save the ImageLayer status reflecting the failure
             output.labelsUrl = None
-            await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().IMAGELAYER.value,
-                    partition_key=output.projectId,
-                ).save,
-                output.imageLayerId,
-                output.dict(),
-            )
+            await asyncio.to_thread(save_imagery_layer, output, config=config)
         logger.info(
             f'GetProcessImageLayerQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
         )
@@ -226,12 +215,7 @@ async def GetProcessImageLayerQueueMessage(msg: func.QueueMessage) -> None:
                     f"Image layer processing failed: {describe_exception(e)}",
                 )
                 await asyncio.to_thread(
-                    MetadataProcessor(
-                        data_type=config.get_metadata_types().IMAGELAYER.value,
-                        partition_key=output.projectId,
-                    ).save,
-                    output.imageLayerId,
-                    output.dict(),
+                    save_imagery_layer, output, config=config
                 )
             elif "image_data" in locals():
                 image_data.status = config.get_status_types().FAILED.value
@@ -240,12 +224,7 @@ async def GetProcessImageLayerQueueMessage(msg: func.QueueMessage) -> None:
                     f"Image layer processing failed: {describe_exception(e)}",
                 )
                 await asyncio.to_thread(
-                    MetadataProcessor(
-                        data_type=config.get_metadata_types().IMAGELAYER.value,
-                        partition_key=image_data.projectId,
-                    ).save,
-                    image_data.imageLayerId,
-                    image_data.dict(),
+                    save_imagery_layer, image_data, config=config
                 )
         except Exception as inner_e:
             logger.error(
@@ -599,6 +578,42 @@ async def GetRunEmbeddingQueueMessage(msg: func.QueueMessage) -> None:
                     f"status: {inner_e}\n{traceback.format_exc()}",
                     stack_info=True,
                 )
+
+
+@app.function_name(name="GetPrepareFootprintTilesQueueTrigger")
+@app.queue_trigger(
+    arg_name="msg",
+    queue_name=config.get_queue_config()["footprint_tiles_queue_name"],
+    connection="AzureWebJobsStorage",
+)
+async def GetPrepareFootprintTilesQueueMessage(
+    msg: func.QueueMessage,
+) -> None:
+    """Build an image layer's shared building-footprint vector tiles.
+
+    Message schema (identifiers only)::
+
+        {"projectId": "...", "imageLayerId": "...", "force": false}
+
+    Manually enqueue this to recover fresh/failed layers; set force=true
+    to rebuild a ready layer. Active jobs are never reset. Optional
+    requestId deduplicates redelivery (defaults to the Azure message ID);
+    internal polls also carry taskId and never start a rebuild.
+    Invalid requests and unexpected failures raise sanitized exceptions
+    for Functions retry/poison handling. Deleted layers are a no-op.
+    """
+    try:
+        request = parse_tiles_request(msg.get_body(), msg.id)
+        await asyncio.to_thread(process_tiles_request, request, config=config)
+    except Exception as error:
+        # Legacy bodies and SDK/Pydantic errors may contain SAS credentials.
+        # Do not log payloads, error text, or an unsanitized exception chain.
+        message = (
+            "Footprint tile queue processing failed "
+            f"({type(error).__name__}); retry/poison handling will apply"
+        )
+        logger.error(message)
+        raise RuntimeError(message) from None
 
 
 @app.function_name(name="GetRunInferenceQueueTrigger")
@@ -1013,7 +1028,9 @@ async def GetPublishDatasetQueueMessage(msg: func.QueueMessage) -> None:
         message = PublishQueueMessage(
             **json.loads(msg.get_body().decode("utf-8"))
         )
-        await asyncio.to_thread(PublishingProcessor(config=config).run_step, message)
+        await asyncio.to_thread(
+            PublishingProcessor(config=config).run_step, message
+        )
     except Exception as error:
         logger.error(
             "PublishDatasetQueueTrigger failed with %s",
