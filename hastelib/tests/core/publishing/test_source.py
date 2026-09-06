@@ -2,10 +2,7 @@ import unittest
 import uuid
 
 from hastegeo.core.models.projects import ImageLayer
-from hastegeo.core.models.publishing import (
-    ArtifactKind,
-    PublishRequest,
-)
+from hastegeo.core.models.publishing import ArtifactKind, PublishRequest
 from hastegeo.core.publishing.source import (
     PublishingArtifactUnavailableError,
     PublishingSourceNotEligibleError,
@@ -61,6 +58,9 @@ class FakeTypes:
     class MODEL:
         value = "model"
 
+    class PREDICTION_RESULTS:
+        value = "prediction_results"
+
 
 class FakeConfig:
     artifact_storage_type = "local"
@@ -96,6 +96,8 @@ class FakeMetadataProcessor:
             return self.records[(self.data_type, self.partition_key, key)]
         except KeyError as error:
             raise FileNotFoundError(key) from error
+
+    load_strict = load
 
 
 class FakeArtifactStorage:
@@ -225,6 +227,35 @@ class TestPublishingSourceResolver(unittest.TestCase):
                 ArtifactKind.FOOTPRINTS,
             },
         )
+
+    def test_raw_publishing_does_not_require_viewer_artifacts(self) -> None:
+        FakeMetadataProcessor.records[
+            ("model", self.project_id, self.model_id)
+        ]["predictionAttrsUrl"] = None
+        FakeMetadataProcessor.records[
+            ("imagelayer", self.project_id, self.layer_id)
+        ]["footprintPmtilesUrl"] = None
+
+        options = self.resolver.resolve_options(
+            self.project_id, self.layer_id, self.model_id
+        )
+        self.assertIn(
+            ArtifactKind.GPKG,
+            {artifact.kind for artifact in options.availableArtifacts},
+        )
+
+    def test_zero_count_excludes_even_a_verified_legacy_gpkg(self) -> None:
+        FakeMetadataProcessor.records[
+            ("model", self.project_id, self.model_id)
+        ]["predictedBuildingCount"] = 0
+
+        self.assertTrue(
+            self.artifact_storage.artifact_exists(self.paths["damage"])
+        )
+        with self.assertRaises(PublishingSourceNotEligibleError):
+            self.resolver.resolve_options(
+                self.project_id, self.layer_id, self.model_id
+            )
 
     def test_options_carry_validated_source_imagery_refs(self) -> None:
         FakeMetadataProcessor.records[
