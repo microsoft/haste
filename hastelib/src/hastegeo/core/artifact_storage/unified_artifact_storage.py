@@ -105,6 +105,8 @@ class UnifiedArtifactStorage:
         data: str = None,
         src_path: str = None,
         namespace: str | list = None,
+        *,
+        overwrite: bool = True,
     ) -> str:
         """
         Store the artifact in storage.
@@ -130,6 +132,7 @@ class UnifiedArtifactStorage:
             data=data,
             src_path=src_path,
             namespace=namespace,
+            **({"overwrite": False} if not overwrite else {}),
         )
 
     def get_base_url(self):

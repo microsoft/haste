@@ -44,7 +44,9 @@ export async function loadPredictionAttributes(results, buildUrl, signal) {
     });
   } catch (error) {
     if (error.status === 404) {
-      throw new Error("Prediction attributes are missing. Rerun inference or predict all buildings in the Interactive Labeler.");
+      throw new Error(results.predictionVersion > 0
+        ? "This saved version's attributes are missing. Choose another version; its GeoPackage may still be downloaded."
+        : "Prediction attributes are missing. Rerun inference or predict all buildings in the Interactive Labeler.");
     }
     throw error;
   }

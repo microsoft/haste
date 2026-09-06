@@ -3,7 +3,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { modelResultsItems } from "./ModelResultsMenuHelper.js";
+import {
+  currentPredictionRevision, hasEditedPredictions, hasRawPredictions, modelResultsItems,
+} from "./ModelResultsMenuHelper.js";
 
 const ready = {
   status: "Processed", inferenceStatus: "Processed", gpkgUrl: "/api/raw",
@@ -77,7 +79,72 @@ for (const workflow of ["inference", "embedding"]) {
     for (const entry of items) await entry.onClick();
     assert.deepEqual(calls, ["view", "download", "validation", "assessment", "publish"]);
   });
+
+  test(`test_saved_only_${workflow}_enables_download_and_reports_but_not_publish`, () => {
+    const items = menu(workflow, {
+      ...ready, rawPredictionsReady: false, hasEditedPredictions: true,
+      predictionVersion: 2, inferenceStatus: "Running",
+    });
+    for (const key of ["viewResults", "downloadGeopackage", "validationReport", "assessmentReport"]) {
+      assert.equal(item(items, key).disabled, false, key);
+    }
+    assert.equal(item(items, "publishDataset").disabled, true);
+  });
+
+  test(`test_saved_version_readiness_${workflow}_never_infers_view_from_an_attribute_url`, () => {
+    for (const editedPredictions of [
+      [{ gpkgUrl: "/api/version", predictionAttrsUrl: "/api/attrs" }],
+      [{ gpkgUrl: "/api/version", predictionAttrsUrl: "/api/attrs", predictionsReady: false }],
+      [{ gpkgUrl: "/api/version", predictionsReady: true, buildingCount: 0 }],
+    ]) {
+      const items = menu(workflow, {
+        ...ready, rawPredictionsReady: false, predictionsReady: false,
+        hasEditedPredictions: true, editedPredictions,
+      });
+      assert.equal(item(items, "viewResults").disabled, true);
+      assert.equal(item(items, "downloadGeopackage").disabled, false);
+      assert.equal(item(items, "assessmentReport").disabled, false);
+      assert.equal(item(items, "publishDataset").disabled, true);
+    }
+  });
+
+  test(`test_historical_viewable_version_${workflow}_remains_available_after_raw_clear`, () => {
+    for (const field of ["editedPredictions", "predictionVersions"]) {
+      const items = menu(workflow, {
+        ...ready, predictionsReady: false, rawPredictionsReady: false, buildingCount: 0,
+        hasEditedPredictions: true,
+        [field]: [{ version: 1, gpkgUrl: "/api/version", predictionsReady: true, buildingCount: 3 }],
+      });
+      assert.equal(item(items, "viewResults").disabled, false);
+      assert.equal(item(items, "downloadGeopackage").disabled, false);
+      assert.equal(item(items, "publishDataset").disabled, true);
+    }
+  });
 }
+
+test("test_selected_edited_pointer_is_not_a_legacy_raw_pointer", () => {
+  const selected = { gpkgUrl: "/api/edited", predictionVersion: 2 };
+  assert.equal(hasRawPredictions(selected), false);
+  assert.equal(hasEditedPredictions(selected), true);
+  assert.equal(hasRawPredictions({ ...selected, rawPredictionsReady: true }), true);
+});
+
+test("test_canonical_edit_flag_and_legacy_version_lists_are_supported", () => {
+  assert.equal(hasEditedPredictions({ hasEditedPredictions: true }), true);
+  assert.equal(hasEditedPredictions({ hasEditedPredictions: false, hasEdits: true }), false);
+  assert.equal(hasEditedPredictions({ hasEdits: true }), true);
+  assert.equal(hasEditedPredictions({ editedPredictions: [{ gpkgUrl: "/api/edited" }] }), true);
+  assert.equal(hasEditedPredictions({ predictionVersions: [{ gpkgUrl: "/api/edited" }] }), true);
+  assert.equal(hasEditedPredictions({ predictionVersions: [] }), false);
+});
+
+test("test_current_revision_prefers_the_raw_generation_over_a_historical_selection", () => {
+  assert.equal(currentPredictionRevision({
+    currentPredictionRevision: "current", predictionRevision: "historical",
+  }), "current");
+  assert.equal(currentPredictionRevision({ predictionRevision: "raw" }), "raw");
+  assert.equal(currentPredictionRevision({}), undefined);
+});
 
 test("test_clear_embedding_disables_all_results_even_with_stale_urls", () => {
   for (const rawPredictionsReady of [false, undefined]) {
@@ -111,6 +178,11 @@ test("test_rows_delegate_modals_and_preserve_layout_hooks", async () => {
   assert.match(shared, /modal === "validation"/);
   assert.match(shared, /modal === "assessment"/);
   assert.match(shared, /modal === "publish"/);
+  assert.match(shared, /modal === "download"/);
+  for (const modal of ["ValidationReportModal", "AssessmentReportModal", "DownloadPredictionsDialog"]) {
+    assert.match(shared, new RegExp(`<${modal}[^>]+currentRevision=\\{currentRevision\\}[^>]+onDismiss=\\{dismiss\\}`));
+  }
+  assert.match(shared, /currentRevision = currentPredictionRevision\(model\)/);
   assert.match(shared, /onDismiss=\{dismiss\}/);
   assert.match(shared, /if \(outcome\.error\) setDialog\("Download failed", outcome\.error\)/);
   assert.match(shared, /navigate\("\/published-datasets"\)/);
@@ -118,7 +190,7 @@ test("test_rows_delegate_modals_and_preserve_layout_hooks", async () => {
   const embedding = await read("EmbeddingModelRow.jsx");
   for (const row of [standard, embedding]) {
     assert.match(row, /ModelResultsMenu/);
-    assert.doesNotMatch(row, /ValidationReportModal|AssessmentReportModal|PublishDatasetModal/);
+    assert.doesNotMatch(row, /ValidationReportModal|AssessmentReportModal|PublishDatasetModal|DownloadPredictionsDialog/);
   }
   assert.match(standard, /ModelResultsStatusIndicator/);
   assert.match(standard, /trainingZipUrl/);
