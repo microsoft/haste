@@ -32,6 +32,12 @@ from .prediction_generations import (
     PredictionGenerationRepository,
     PredictionSupersededError,
 )
+from .prediction_sources import (
+    prediction_source_url,
+    prediction_versions,
+    resolve_prediction_source,
+    source_readiness,
+)
 
 MAX_ATTRIBUTES_BYTES = 256 * 1024**2
 MODEL_ARTIFACT_FIELDS = {
@@ -341,16 +347,34 @@ class PredictionResultsProcessor:
                 continue
             model = self.repository.load(project_id, str(raw["modelId"]))
             data = model.model_dump()
-            response = self.response(model, layer)
-            # Keep legacy metadata URLs for existing consumers; readiness is
-            # server-derived, while the visualizer uses only protected URLs.
+            data.update(self.response(model, layer))
+            selected = resolve_prediction_source(
+                model, default="latest_current"
+            )
+            readiness = source_readiness(model, layer, selected)
             data.update(
                 {
-                    key: value
-                    for key, value in response.items()
-                    if key not in ("gpkgUrl", "predictionAttrsUrl")
+                    **selected.descriptor(),
+                    "gpkgUrl": (
+                        prediction_source_url(model, selected, "gpkg")
+                        if selected.gpkgUrl
+                        else None
+                    ),
+                    "predictionAttrsUrl": (
+                        prediction_source_url(
+                            model, selected, "prediction_attrs"
+                        )
+                        if selected.predictionAttrsUrl
+                        else None
+                    ),
+                    "buildingCount": selected.buildingCount,
+                    "predictionsReady": readiness["ready"],
+                    "predictionsReadiness": readiness,
+                    "editedPredictions": prediction_versions(model, layer),
+                    "hasEditedPredictions": bool(model.editedPredictions),
                 }
             )
+            data.pop("predictionEditReceipts", None)
             output.append(data)
         return output
 
@@ -374,26 +398,19 @@ class PredictionResultsProcessor:
             url = layer.footprintPmtilesUrl
         else:
             if request.kind in ("gpkg", "prediction_attrs"):
-                if (
-                    request.predictionRevision
-                    and request.predictionRevision != model.predictionRevision
-                ):
-                    raise FileNotFoundError(
-                        "Prediction generation is no longer current"
-                    )
-                if not raw_predictions_readiness(model)["ready"]:
-                    raise FileNotFoundError(
-                        "Raw predictions are not available"
-                    )
-                if request.kind == "prediction_attrs" and (
-                    not model.predictionRevision
-                    or model.predictionReadyRevision
-                    != model.predictionRevision
-                ):
-                    raise FileNotFoundError(
-                        "Matching prediction attributes are unavailable"
-                    )
-            url = getattr(model, MODEL_ARTIFACT_FIELDS[request.kind])
+                selected = resolve_prediction_source(
+                    model,
+                    request.version,
+                    default="raw",
+                    prediction_revision=request.predictionRevision,
+                )
+                url = (
+                    selected.gpkgUrl
+                    if request.kind == "gpkg"
+                    else selected.predictionAttrsUrl
+                )
+            else:
+                url = getattr(model, MODEL_ARTIFACT_FIELDS[request.kind])
         if not url:
             raise FileNotFoundError("Artifact is not available")
         # Always revalidate generations: a retired query cannot return another

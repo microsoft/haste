@@ -13,13 +13,18 @@ Local metadata uses a process-shared filesystem lock instead.
 
 from contextlib import contextmanager
 from pathlib import Path
+from time import monotonic, sleep
 from typing import Any, Callable, Iterator
 
 from azure.core.exceptions import ResourceNotFoundError
 
 from ..config import Config
+from ..models.prediction_edits import (
+    EditedPredictionVersion,
+    PredictionEditReceipt,
+)
 from ..models.projects import Model
-from ..publishing.lease import BlobLeaseCoordinator
+from ..publishing.lease import BlobLeaseCoordinator, LeaseUnavailableError
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from .metadata import MetadataProcessor
@@ -47,10 +52,21 @@ INFERENCE_FIELDS = {
     "inferenceProgressPct",
     "inferenceStatusMessage",
 }
+EDIT_FIELDS = {
+    "editedPredictions",
+    "predictionEditVersionCounter",
+    "predictionEditReceipts",
+}
 
 
 class PredictionSupersededError(RuntimeError):
     """Another accepted request replaced this generation."""
+
+
+class PredictionEditConflict(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class PredictionGenerationRepository:
@@ -103,9 +119,16 @@ class PredictionGenerationRepository:
                 # must not overwrite a recreated model's layer association.
                 generation = {
                     field: generation[field]
-                    for field in GENERATION_FIELDS | INFERENCE_FIELDS
+                    for field in GENERATION_FIELDS
+                    | INFERENCE_FIELDS
+                    | EDIT_FIELDS
                     if field in generation
                 }
+                generation.update(
+                    editedPredictions=[],
+                    predictionEditVersionCounter=0,
+                    predictionEditReceipts={},
+                )
             record = {**record, **generation}
         elif record.get("predictionRevision"):
             # A mirror is not proof of publication. Confirmed loss of the
@@ -140,9 +163,11 @@ class PredictionGenerationRepository:
             authority.storage.save(
                 identifier=model_id,
                 data=empty.model_dump(
+                    mode="json",
                     include=GENERATION_FIELDS
                     | INFERENCE_FIELDS
-                    | {"projectId", "modelId"}
+                    | EDIT_FIELDS
+                    | {"projectId", "modelId"},
                 ),
                 data_type=authority.data_type,
                 data_format="json",
@@ -164,7 +189,13 @@ class PredictionGenerationRepository:
                     pass  # These optional records may never have been created.
 
     @contextmanager
-    def lock(self, project_id: str, model_id: str) -> Iterator[Any]:
+    def lock(
+        self,
+        project_id: str,
+        model_id: str,
+        *,
+        wait_timeout_seconds: float | None = None,
+    ) -> Iterator[Any]:
         if self.config.storage_type == "local":
             import fcntl
 
@@ -176,7 +207,21 @@ class PredictionGenerationRepository:
             )
             lock_dir.mkdir(parents=True, exist_ok=True)
             with (lock_dir / f"{model_id}.lock").open("a") as handle:
-                fcntl.flock(handle, fcntl.LOCK_EX)
+                if wait_timeout_seconds is None:
+                    fcntl.flock(handle, fcntl.LOCK_EX)
+                else:
+                    deadline = monotonic() + wait_timeout_seconds
+                    while True:
+                        try:
+                            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            break
+                        except BlockingIOError:
+                            remaining = deadline - monotonic()
+                            if remaining <= 0:
+                                raise LeaseUnavailableError(
+                                    "Model prediction operation is busy"
+                                ) from None
+                            sleep(min(remaining, 0.02))
                 try:
                     yield None
                 finally:
@@ -195,17 +240,23 @@ class PredictionGenerationRepository:
         with self.coordinator.acquire(
             project_id,
             f"prediction-results-{model_id}",
-            wait_timeout_seconds=2,
+            wait_timeout_seconds=2
+            if wait_timeout_seconds is None
+            else wait_timeout_seconds,
         ) as lease:
             yield lease
 
     def save_locked(self, model: Model, lease: Any) -> None:
         if lease is not None:
             lease.renew()  # Fail closed before publishing if ownership was lost.
-        fields = GENERATION_FIELDS | {"projectId", "imageLayerId", "modelId"}
+        fields = (
+            GENERATION_FIELDS
+            | EDIT_FIELDS
+            | {"projectId", "imageLayerId", "modelId"}
+        )
         if model.modelType != "embedding":
             fields |= INFERENCE_FIELDS
-        document = model.model_dump(include=fields)
+        document = model.model_dump(mode="json", include=fields)
         # Readers use this record even if a later mirror save fails.
         self.metadata(model.projectId, generations=True).save_strict(
             model.modelId, document
@@ -221,6 +272,101 @@ class PredictionGenerationRepository:
                 "Prediction authority committed; Model mirror update failed (%s)",
                 type(error).__name__,
             )
+
+    def reserve_edit_locked(
+        self,
+        model: Model,
+        request_id: str,
+        fingerprint: str,
+        created_by: str | None,
+        lease: Any,
+    ) -> PredictionEditReceipt:
+        previous = model.predictionEditReceipts.get(request_id)
+        if previous and previous.fingerprint != fingerprint:
+            raise PredictionEditConflict(
+                "request_conflict", "Request ID was used for a different save."
+            )
+        if previous and previous.state == "committed":
+            raise PredictionEditConflict(
+                "save_conflict", "Save is already committed."
+            )
+        version = (
+            max(
+                [model.predictionEditVersionCounter]
+                + [entry.version for entry in model.editedPredictions or []]
+            )
+            + 1
+        )
+        receipt = PredictionEditReceipt(
+            fingerprint=fingerprint,
+            version=version,
+            attemptId=MetadataUtils.generate_id(),
+            state="reserved",
+            sourcePredictionRevision=model.predictionRevision,
+            createdAt=MetadataUtils.get_timestamp(),
+            createdBy=previous.createdBy if previous else created_by,
+        )
+        model.predictionEditVersionCounter = version
+        model.predictionEditReceipts[request_id] = receipt
+        self.renew_edit_lease(lease)
+        self.save_locked(model, None)
+        return receipt
+
+    def commit_edit_locked(
+        self,
+        project_id: str,
+        model_id: str,
+        request_id: str,
+        receipt: PredictionEditReceipt,
+        entry: EditedPredictionVersion,
+        lease: Any,
+    ) -> Model:
+        self.renew_edit_lease(lease)
+        current = self.load(project_id, model_id)
+        if (
+            current.predictionRevision != receipt.sourcePredictionRevision
+            or current.predictionState != "ready"
+        ):
+            raise PredictionEditConflict(
+                "source_changed", "Raw predictions changed during the save."
+            )
+        owned = current.predictionEditReceipts.get(request_id)
+        if (
+            owned is None
+            or owned.attemptId != receipt.attemptId
+            or owned.fingerprint != receipt.fingerprint
+            or owned.version != receipt.version
+            or owned.state != "reserved"
+            or entry.version != receipt.version
+            or entry.sourcePredictionRevision
+            != receipt.sourcePredictionRevision
+            or str(entry.clientRequestId) != request_id
+            or any(
+                item.version == entry.version
+                or str(item.clientRequestId) == request_id
+                for item in current.editedPredictions or []
+            )
+        ):
+            raise PredictionEditConflict(
+                "save_conflict", "The save reservation is no longer owned."
+            )
+        current.editedPredictions = [*(current.editedPredictions or []), entry]
+        current.predictionEditReceipts[request_id] = owned.model_copy(
+            update={"state": "committed"}
+        )
+        self.renew_edit_lease(lease)
+        self.save_locked(current, None)
+        return current
+
+    @staticmethod
+    def renew_edit_lease(lease: Any) -> None:
+        if lease is not None:
+            try:
+                lease.renew()
+            except Exception:
+                raise PredictionEditConflict(
+                    "save_conflict", "The save lease is no longer owned."
+                ) from None
 
     @staticmethod
     def initialize(

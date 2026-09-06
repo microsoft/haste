@@ -231,6 +231,8 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
         data: str = None,
         src_path: str = None,
         namespace: str | list = None,
+        *,
+        overwrite: bool = True,
     ) -> str:
         """Upload the artifact to Azure Blob Storage.
 
@@ -266,21 +268,23 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
         try:
             if src_path is not None:
                 with open(src_path, "rb") as file_data:
-                    blob_client.upload_blob(file_data, overwrite=True)
+                    blob_client.upload_blob(file_data, overwrite=overwrite)
                 self.logger.info(
                     f"Uploaded file '{src_path}' to blob '{dst_path}'"
                 )
             else:
                 # Handle string data upload
                 if self.is_bytes(data):
-                    blob_client.upload_blob(data, overwrite=True)
+                    blob_client.upload_blob(data, overwrite=overwrite)
                 elif self.is_json(data):
-                    blob_client.upload_blob(json.dumps(data), overwrite=True)
+                    blob_client.upload_blob(
+                        json.dumps(data), overwrite=overwrite
+                    )
                 elif self.is_yaml(data):
                     self.logger.info("data is yaml, dumping to blob")
                     blob_client.upload_blob(
                         yaml.dump(data, default_flow_style=False),
-                        overwrite=True,
+                        overwrite=overwrite,
                     )
                 else:
                     raise ValueError(

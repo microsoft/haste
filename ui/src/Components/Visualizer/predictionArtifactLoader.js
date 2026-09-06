@@ -4,6 +4,8 @@
 import { readResponseBuffer } from "../InteractiveLabeler/interactiveLabelerLoading.js";
 import { normalizeAttrs } from "./predictionClassify.js";
 import { resolvePredictionArtifacts, validateResultsMetadata } from "./predictionResults.js";
+import { PMTiles } from "pmtiles";
+import { getPmtilesProtocol, InMemoryPMTilesSource } from "../../util/pmtiles.js";
 
 export const MAX_ATTRIBUTES_BYTES = 64 * 1024 * 1024;
 export const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
@@ -44,11 +46,31 @@ export async function loadPredictionAttributes(results, buildUrl, signal) {
     });
   } catch (error) {
     if (error.status === 404) {
-      throw new Error("Prediction attributes are missing. Rerun inference or predict all buildings in the Interactive Labeler.");
+      throw new Error(results.predictionVersion > 0
+        ? "This saved version's attributes are missing. Choose another version; its GeoPackage may still be downloaded."
+        : "Prediction attributes are missing. Rerun inference or predict all buildings in the Interactive Labeler.");
     }
     throw error;
   }
   signal?.throwIfAborted();
   const attrs = normalizeAttrs(JSON.parse(new TextDecoder().decode(buffer)), results);
   return { attrs, archiveUrl: buildUrl(urls.footprintTilesUrl) };
+}
+
+export async function loadPredictionArtifacts(results, buildUrl, signal) {
+  const { attrs, archiveUrl } = await loadPredictionAttributes(results, buildUrl, signal);
+  const protocol = getPmtilesProtocol();
+  let archive = protocol.get(archiveUrl);
+  if (!archive) {
+    const buffer = await fetchArtifactBuffer(archiveUrl, { signal });
+    signal?.throwIfAborted();
+    archive = new PMTiles(new InMemoryPMTilesSource(archiveUrl, buffer));
+  }
+  const header = await archive.getHeader();
+  signal?.throwIfAborted();
+  protocol.add(archive);
+  return {
+    attrs, archiveKey: archiveUrl,
+    bounds: [header.minLon, header.minLat, header.maxLon, header.maxLat],
+  };
 }

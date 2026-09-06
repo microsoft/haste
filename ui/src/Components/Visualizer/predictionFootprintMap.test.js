@@ -235,3 +235,24 @@ test("theme lookup produces parseable colors, and renderer access is duck-typed"
   assert.equal(findGlMap({ _map: gl }), gl);
   assert.equal(findGlMap({}), null);
 });
+
+test("live presentation, selection and dimming update both renderers and reset to read-only classes", async (t) => {
+  const { create, operations } = fixture(t);
+  const renderer = create();
+  await renderer.ready;
+  const boundary = operations.length;
+  renderer.setPresentation({
+    classes: ["NotDamaged", "Damaged"], editedIds: new Set([0]), selectedId: 1, dimmedIds: new Set([0]),
+  });
+  const changed = operations.slice(boundary).filter(([op]) => op === "state");
+  assert.equal(changed.length, 4);
+  for (const entry of changed) {
+    if (entry[2].id === 0) assert.deepEqual(entry[3], { cls: 2, edited: true, dim: true, selected: false });
+    else assert.deepEqual(entry[3], { cls: 1, edited: false, dim: false, selected: true });
+  }
+  const resetBoundary = operations.length;
+  renderer.setPresentation(null);
+  const reset = operations.slice(resetBoundary).filter(([op]) => op === "state");
+  assert.equal(reset.length, 4);
+  assert.ok(reset.every((entry) => !entry[3].selected && !entry[3].dim && !entry[3].edited));
+});

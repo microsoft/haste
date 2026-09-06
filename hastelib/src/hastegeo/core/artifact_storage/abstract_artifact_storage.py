@@ -43,6 +43,8 @@ class AbstractArtifactStorage(ABC):
         data: str = None,
         src_path: str = None,
         namespace: str | list = None,
+        *,
+        overwrite: bool = True,
     ) -> str:
         pass
 

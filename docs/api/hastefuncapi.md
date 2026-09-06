@@ -4,6 +4,7 @@ Azure Functions backend for the HASTE application. Provides REST endpoints for m
 
 **Contents:** [Overview](#overview) - [Endpoints](#endpoints) -
 [Common prediction results](#common-prediction-results) -
+[Versioned prediction editing](#versioned-prediction-editing) -
 [Development setup](#development-setup) - [Generated API docs](#auto-generated-api-docs)
 
 ---
@@ -58,6 +59,9 @@ All functions are defined in `function_app.py` as a single Azure Functions app. 
 | GET | `GetVisualizerResults` | Shared vector-first results for standard inference and interactive labeling, including imagery and protected artifact URLs. Requires `projectId`, `imageLayerId`, and `modelId`. |
 | GET | `GetModelArtifact` | Stream protected model/layer artifacts, including `gpkg`, `prediction_attrs`, and `footprint_pmtiles`. |
 | PUT | `PutBuildingPredictions` | Replace interactive predictions and eagerly publish their GeoPackage and matching results sidecar; an empty list clears predictions. |
+| GET | `GetPredictionEditSession` | Read edit readiness and metadata for an explicit raw/saved prediction version. |
+| GET | `GetEditedPredictionVersions` | List confirmed saved versions and the current raw-generation identity. |
+| PUT | `PutEditedPredictions` | Save a new numbered GeoPackage/sidecar pair without overwriting raw predictions. |
 | PUT | `PutArtifactsZipQueueMessage` | Queue a job to zip model artifacts for download. |
 
 ### Model Catalog
@@ -171,6 +175,114 @@ an old cache identity. `version=0` explicitly selects raw GeoPackage output.
 
 See [the shared-results specification](../../spec/features/common-prediction-results/README.md)
 for the sidecar schema, generation lifecycle, and deployment requirements.
+
+---
+
+## Versioned Prediction Editing
+
+Editing uses the same authentication and project/model/layer ownership rules
+as common results. No edit-session read creates artifacts or queues work.
+
+### Read a session and version history
+
+`GET /api/GetPredictionEditSession` requires `projectId`, `imageLayerId`,
+`modelId`, and explicit integer `version=0|N`. Its response includes
+`predictionVersion`, the selected `predictionRevision`, the
+`currentPredictionRevision`, flavor, count, thresholds, artifact URLs, `versions`,
+and `editReadiness` with `ready`, `reason`, and `detail`.
+
+Raw trained-model sessions support threshold changes, including models whose
+scores happen to be binary. Embedding models and saved versions do not expose
+threshold controls. Historical versions remain readable but cannot be edited
+against a different current raw generation.
+
+`GET /api/GetEditedPredictionVersions` requires `projectId` and `modelId`;
+optional `imageLayerId` must match the model. It returns
+`currentPredictionRevision` and a `versions` list, newest first. Each entry
+identifies its version, source generation, thresholds, creation metadata,
+counts, and GeoPackage/attribute availability.
+
+### Save edits
+
+`PUT /api/PutEditedPredictions` accepts:
+
+```json
+{
+  "projectId": "11111111-1111-4111-8111-111111111111",
+  "imageLayerId": "22222222-2222-4222-8222-222222222222",
+  "modelId": "5557",
+  "predictionRevision": "33333333-3333-4333-8333-333333333333",
+  "baseVersion": 0,
+  "clientRequestId": "44444444-4444-4444-8444-444444444444",
+  "threshold": 0.0,
+  "unknownThreshold": 0.0,
+  "overrides": [{"id": 7, "class": "Damaged"}]
+}
+```
+
+Thresholds are finite fractions in `[0, 1]`. Override IDs are unique non-negative
+integers within the footprint set; classes are `Damaged`, `NotDamaged`, or
+`Unknown`. Overrides are the **complete sparse explicit-assignment snapshot**,
+not a delta from the displayed version. `baseVersion` may be an older saved
+version of the current generation; it need not be the newest version.
+
+A successful HTTP 200 JSON response includes `version`, `predictionRevision`,
+protected `gpkgUrl` and `predictionAttrsUrl`, `buildingCount`, and `editedCount`.
+The latter counts classes changed from the original model;
+`overridesApplied` separately counts explicit assignments, including model-class
+pins. Both artifacts exist before the version is advertised.
+
+Retry the identical logical save with the same `clientRequestId` to recover a
+lost response. A confirmed replay returns its original saved version, even if
+raw predictions subsequently changed. A changed logical save uses a new UUID.
+Failed reservations are not selectable versions and may leave numbering gaps.
+
+New edit endpoints use structured errors:
+
+```json
+{
+  "error": {
+    "code": "source_changed",
+    "message": "The prediction source changed. Reload before editing."
+  }
+}
+```
+
+HTTP 400 indicates invalid request/override data; 404 indicates an unknown
+resource or version. HTTP 409 distinguishes `source_changed`, `save_conflict`,
+and `request_conflict`. Unexpected storage/processing failures return 500.
+Clients preserve the draft on failure and must not interpret an error as a save.
+
+### Select maps, downloads, and reports
+
+| Endpoint | Omitted `version` | Explicit `version=0` / positive `N` |
+|---|---|---|
+| `GetVisualizerResults` | Latest confirmed edit matching the current generation, otherwise raw | Current raw / exact saved version |
+| `GetModelArtifact` (`gpkg`, `prediction_attrs`) | Current raw | Current raw / exact saved version |
+| `GetValidationReport`, `GetAssessmentReport` | Latest confirmed edit matching the current generation, otherwise raw | Current raw / exact saved version |
+
+Unknown positive versions return 404, not a raw/latest fallback. Downloads use
+version-identifying filenames. Saved historical versions remain available
+after raw regeneration; `version=0` is not a historical raw catalog. Versions
+without sidecars remain downloadable but are not falsely marked renderable.
+
+Model-list rows also keep their `predictionVersion`, source descriptor, and
+protected `gpkgUrl`/`predictionAttrsUrl` aligned. These are response projections;
+the persisted Model's raw artifact pointers are not replaced by a saved edit.
+Use explicit artifact `version=0` when requesting raw output.
+
+Validation and Assessment accept independent version choices and identify the
+resolved source in their responses. Edited reports use the analyst's effective
+class, preserving the original model scores as provenance. Unknown predictions
+are reported separately from binary metrics without shrinking the population
+estimator's ground-truth cohort. Edited precision/recall is a single operating
+point with unavailable average precision; raw Assessment retains its existing
+`threshold=0.1` default and score-based analysis.
+
+After saving, load the returned version before labeling the map/download as
+that version. If the save succeeded but display loading failed, retry the GET,
+not the save. See [the editing specification](../../spec/features/prediction-editing/README.md)
+for UI interactions and artifact details.
 
 ---
 

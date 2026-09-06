@@ -3,9 +3,16 @@
 
 """Read-only raw prediction generation contracts."""
 
+import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    model_validator,
+)
 
 Guid = Annotated[
     str,
@@ -21,6 +28,19 @@ Revision = Annotated[
 RowId = Annotated[int, Field(strict=True, ge=0)]
 Binary = Annotated[int, Field(strict=True, ge=0, le=1)]
 Score = Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
+VersionNumber = Annotated[int, Field(strict=True, ge=0, le=2**31 - 1)]
+PositiveVersion = Annotated[int, Field(strict=True, ge=1, le=2**31 - 1)]
+
+
+def parse_version(value: Any) -> Any:
+    if isinstance(value, str):
+        if not re.fullmatch(r"0|[1-9][0-9]{0,9}", value):
+            raise ValueError("Version must be a non-negative integer")
+        return int(value)
+    return value
+
+
+QueryVersion = Annotated[VersionNumber, BeforeValidator(parse_version)]
 
 
 class ResultsRequest(BaseModel):
@@ -124,7 +144,7 @@ class ModelArtifactRequest(BaseModel):
         "sidecar", "geojson", "gpkg", "footprint_pmtiles", "prediction_attrs"
     ]
     predictionRevision: Revision | None = None
-    version: Literal["0"] | None = None
+    version: QueryVersion | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -137,6 +157,10 @@ class ModelArtifactRequest(BaseModel):
 
     @model_validator(mode="after")
     def required_owner(self) -> "ModelArtifactRequest":
+        if self.version and self.kind not in ("gpkg", "prediction_attrs"):
+            raise ValueError(
+                "This artifact kind does not have prediction versions"
+            )
         if self.kind == "footprint_pmtiles":
             if not self.modelId and not self.imageLayerId:
                 raise ValueError("An image layer or model is required")

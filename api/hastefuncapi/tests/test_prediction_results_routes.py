@@ -234,9 +234,9 @@ class TestPredictionResultsRoutes(
             self.assertEqual(response.status_code, status)
         self.assertNotIn("sig=secret", str(self.logger.mock_calls))
 
-    async def test_malformed_or_edited_version_requests_are_400(self) -> None:
+    async def test_malformed_version_requests_are_400(self) -> None:
         for overrides in (
-            {"version": "1"},
+            {"version": "-1"},
             {"predictionRevision": "../other"},
             {"modelId": "not-a-model"},
             {"kind": "prediction_tiles"},

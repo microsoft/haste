@@ -8,6 +8,7 @@ export const CLASS_CODES = { [CLASS_DAMAGED]: 1, [CLASS_NOT_DAMAGED]: 2, [CLASS_
 export const FALLBACK_COLORS = {
   damaged: "firebrick", notDamaged: "seagreen", unknown: "dimgray",
   pending: "lightgray", outline: "steelblue",
+  edited: "royalblue", selected: "white",
 };
 
 export function resolveMapColors(tokenMap, lookup) {
@@ -25,6 +26,16 @@ export function fillColorExpression(colors = FALLBACK_COLORS) {
     ["==", ["feature-state", "cls"], CLASS_CODES[CLASS_UNKNOWN]], colors.unknown,
     colors.pending,
   ];
+}
+export function strokeColorExpression(colors) {
+  return ["case", ["boolean", ["feature-state", "selected"], false], colors.selected,
+    ["boolean", ["feature-state", "edited"], false], colors.edited, colors.outline];
+}
+export function featureCentroid(geometry) {
+  const ring = geometry?.type === "Polygon" ? geometry.coordinates?.[0] :
+    geometry?.type === "MultiPolygon" ? geometry.coordinates?.[0]?.[0] : null;
+  if (!ring?.length) return null;
+  return ring.reduce((sum, point) => [sum[0] + point[0] / ring.length, sum[1] + point[1] / ring.length], [0, 0]);
 }
 
 export function findGlMap(atlasMap) {
@@ -69,6 +80,9 @@ export function createPredictionRenderer({ atlas, maps, archiveKey, attrs, onErr
   }
   const byId = indexById(attrs);
   const panes = [];
+  const locations = new Map();
+  const disposers = new Set();
+  let presentation = null;
   let disposed = false;
   let ready = false;
   let frame = null;
@@ -87,6 +101,8 @@ export function createPredictionRenderer({ atlas, maps, archiveKey, attrs, onErr
     disposed = true;
     clearTimeout(timer);
     if (frame !== null) cancelAnimationFrame(frame);
+    for (const cleanup of disposers) cleanup();
+    disposers.clear();
     for (const pane of panes) {
       for (const [event, handler] of pane.handlers) {
         try { pane.gl.off(event, handler); } catch { /* map may already be disposed */ }
@@ -133,21 +149,37 @@ export function createPredictionRenderer({ atlas, maps, archiveKey, attrs, onErr
         if (overtureId != null && overtureId !== attrs.overtureIds[row]) {
           throw new Error("Footprint and prediction Overture IDs do not match.");
         }
+        if (!locations.has(feature.id)) {
+          const location = featureCentroid(feature.geometry);
+          if (location) locations.set(feature.id, location);
+        }
         ids.add(feature.id);
       }
     }
     // Discover sources on BOTH panes before deduplication or any state write.
+    // Also update previously seen IDs, e.g. deselecting an off-screen building.
+    for (const pane of panes) for (const id of pane.written.keys()) ids.add(id);
+    paintIds(ids);
+  }
+
+  function paintIds(ids) {
     for (const id of ids) {
-      const state = { cls: CLASS_CODES[attrs.classes[byId.get(id)]] };
+      const state = {
+        cls: CLASS_CODES[(presentation?.classes || attrs.classes)[byId.get(id)]],
+        edited: presentation?.editedIds?.has(id) || false,
+        dim: presentation?.dimmedIds?.has(id) || false,
+        selected: presentation?.selectedId === id,
+      };
+      const fingerprint = JSON.stringify(state);
       for (const pane of panes) {
         // Writing identical state on every idle event would create a perpetual
         // render -> idle -> state-write loop. GL retains state across tile
         // eviction, so only newly seen IDs need a write in this generation.
-        if (pane.written.get(id) === state.cls) continue;
+        if (pane.written.get(id) === fingerprint) continue;
         pane.gl.setFeatureState({
           source: pane.sourceId, sourceLayer: PMTILES_SOURCE_LAYER, id,
         }, state);
-        pane.written.set(id, state.cls);
+        pane.written.set(id, fingerprint);
       }
     }
   }
@@ -197,6 +229,7 @@ export function createPredictionRenderer({ atlas, maps, archiveKey, attrs, onErr
         map, gl, previousSources: new Set(Object.keys(gl.getStyle()?.sources || {})),
         sourceId: null, handlers: [], fillIds: [], written: new Map(),
         requestedSourceId: `${prefix}Buildings`, sourceUrl: `pmtiles://${archiveKey}`,
+        key: index === 0 ? "primary" : "secondary",
       };
       panes.push(pane);
       const onRendererError = (event) => fail(event.error || new Error("Map tile loading failed."));
@@ -213,12 +246,15 @@ export function createPredictionRenderer({ atlas, maps, archiveKey, attrs, onErr
       map.sources.add(pane.source);
       if (disposed) break;
       pane.fill = new atlas.layer.PolygonLayer(pane.source, `${prefix}FootprintFill`, {
-        sourceLayer: PMTILES_SOURCE_LAYER, fillColor: fillColorExpression(), fillOpacity: 0.55,
+        sourceLayer: PMTILES_SOURCE_LAYER, fillColor: fillColorExpression(),
+        fillOpacity: ["case", ["boolean", ["feature-state", "dim"], false], 0.1, 0.55],
       });
       map.layers.add(pane.fill);
       if (disposed) break;
       pane.line = new atlas.layer.LineLayer(pane.source, `${prefix}FootprintOutline`, {
-        sourceLayer: PMTILES_SOURCE_LAYER, strokeColor: FALLBACK_COLORS.outline, strokeWidth: 1,
+        sourceLayer: PMTILES_SOURCE_LAYER, strokeColor: strokeColorExpression(FALLBACK_COLORS),
+        strokeWidth: ["case", ["boolean", ["feature-state", "selected"], false], 4,
+          ["boolean", ["feature-state", "edited"], false], 2.5, 1],
       });
       map.layers.add(pane.line);
       if (disposed) break;
@@ -235,6 +271,37 @@ export function createPredictionRenderer({ atlas, maps, archiveKey, attrs, onErr
   return {
     ready: readyPromise,
     dispose,
+    onDispose(cleanup) {
+      disposers.add(cleanup);
+      return () => disposers.delete(cleanup);
+    },
+    getPanes() {
+      return disposed ? [] : panes.map((pane) => ({ key: pane.key, map: pane.map, fillLayer: pane.fill }));
+    },
+    getKnownLocation(id) { return locations.get(id); },
+    query(paneKey, box) {
+      if (disposed || !ready) return [];
+      const pane = panes.find((value) => value.key === paneKey);
+      if (!pane) return [];
+      return pane.gl.queryRenderedFeatures(box, { layers: pane.fillIds })
+        .filter((feature) => feature.source === pane.sourceId && byId.has(feature.id));
+    },
+    setPresentation(next) {
+      if (disposed) return;
+      if (next && (next.classes?.length !== attrs.n || next.classes.some((cls) => !CLASS_CODES[cls]))) {
+        fail(new Error("Invalid prediction presentation."));
+        return;
+      }
+      const previous = presentation;
+      presentation = next;
+      if (ready && previous && next && previous.classes === next.classes &&
+          previous.editedIds === next.editedIds && previous.dimmedIds === next.dimmedIds) {
+        // Keyboard review changes just two selection flags, not every class.
+        try {
+          paintIds(new Set([previous.selectedId, next.selectedId].filter((id) => byId.has(id))));
+        } catch (error) { fail(error); }
+      } else if (ready) update();
+    },
     setVisible(visible) {
       if (disposed) return;
       try {
@@ -252,7 +319,7 @@ export function createPredictionRenderer({ atlas, maps, archiveKey, attrs, onErr
       try {
         for (const pane of panes) {
           pane.fill.setOptions({ fillColor: fillColorExpression(colors) });
-          pane.line.setOptions({ strokeColor: colors.outline });
+          pane.line.setOptions({ strokeColor: strokeColorExpression(colors) });
         }
       } catch (error) { fail(error); }
     },
