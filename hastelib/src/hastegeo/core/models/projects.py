@@ -786,6 +786,9 @@ class ImageLayer(BaseModel):
     footprintTilesJob: Optional[TrainingJob] = Field(default=None)
     footprintTilesStatus: Optional[str] = Field(default=None)
     footprintTilesStatusMessage: Optional[str] = Field(default="")
+    # Stable request identity prevents a forced delivery retry from rebuilding
+    # again after that request's task has already finished.
+    footprintTilesRequestId: Optional[str] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("Project", "projectId")
     )
