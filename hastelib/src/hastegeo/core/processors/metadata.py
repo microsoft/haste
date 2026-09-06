@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import json
+from typing import Any
 
 from hastegeo.core.config import Config
 
@@ -100,6 +101,30 @@ class MetadataProcessor:
             identifier=key, data_type=self.data_type, data_format=data_format
         )
         return metadata
+
+    def load_strict(self, key: str, data_format: str = "json") -> Any:
+        """Only confirmed absence is FileNotFoundError, not a transport failure."""
+        return self.storage.load_strict(key, self.data_type, data_format)
+
+    def save_strict(
+        self, key: str, metadata: dict, data_format: str = "json"
+    ) -> None:
+        """Merge a guarded update without treating unavailable storage as empty."""
+        try:
+            existing = self.load_strict(key, data_format)
+        except FileNotFoundError:
+            existing = None
+        combined = (
+            self._combine_metadata(existing, metadata)
+            if existing
+            else metadata
+        )
+        self.storage.save(
+            identifier=key,
+            data=combined,
+            data_type=self.data_type,
+            data_format=data_format,
+        )
 
     def load_all(self, data_format="json"):
         """

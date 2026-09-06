@@ -27,6 +27,7 @@ import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
 import PublishDatasetModal from "../PublishDatasetModal";
 import { fileDownload } from "../../util/file";
 import { limitTextLength } from "../../util/conversion";
+import { buildRawGpkgUrl, canViewResults, readinessDetail } from "../Visualizer/predictionResults.js";
 
 // Friendly per-row label for the embedding backbone column. The Model schema
 // stores ``embeddingModel`` as the raw backbone name passed to the workflow
@@ -109,6 +110,14 @@ const EmbeddingModelRow = ({
   const resultsMenu = {
     items: [
       {
+        key: "viewResults",
+        text: "View",
+        icon: <FluentIcon name="Forward" />,
+        disabled: !canViewResults(model),
+        tooltip: readinessDetail(model),
+        onClick: () => navigate(`/visualizer/${projectId}/${imageLayerId}/${model.modelId}`),
+      },
+      {
         key: "downloadGeopackage",
         text: "Download Geopackage (.gpkg)",
         icon: <FluentIcon name="download" />,
@@ -120,8 +129,7 @@ const EmbeddingModelRow = ({
           // labeler fetches the model's other artifacts.
           fileDownload(
             buildUrl(
-              `GetModelArtifact?projectId=${projectId}` +
-                `&modelId=${model.modelId}&kind=gpkg`
+              buildRawGpkgUrl({ projectId, imageLayerId, modelId: model.modelId })
             ),
             setDialog
           );
@@ -160,6 +168,19 @@ const EmbeddingModelRow = ({
         : []),
     ],
   };
+
+  const renderResultsMenuItems = () => resultsMenu.items.map((item) => {
+    const menuItem = (
+      <MenuItem key={item.key} icon={item.icon} disabled={item.disabled} onClick={item.onClick}>
+        {item.text}
+      </MenuItem>
+    );
+    return item.disabled && item.tooltip ? (
+      <Tooltip key={item.key} content={item.tooltip} relationship="description" withArrow>
+        {menuItem}
+      </Tooltip>
+    ) : menuItem;
+  });
 
   const moreMenuOptions = {
     items: [
@@ -316,23 +337,14 @@ const EmbeddingModelRow = ({
                     appearance="primary"
                     id={"embeddingResults" + index}
                     className="dashboard-button ms-2"
-                    disabled={!hasPredictions}
+                    disabled={resultsMenu.items.every((item) => item.disabled)}
                   >
                     Results
                   </Button>
                 </MenuTrigger>
                 <MenuPopover>
                   <MenuList>
-                    {resultsMenu.items.map((mi) => (
-                      <MenuItem
-                        key={mi.key}
-                        icon={mi.icon}
-                        disabled={mi.disabled}
-                        onClick={mi.onClick}
-                      >
-                        {mi.text}
-                      </MenuItem>
-                    ))}
+                    {renderResultsMenuItems()}
                   </MenuList>
                 </MenuPopover>
               </Menu>
@@ -433,23 +445,14 @@ const EmbeddingModelRow = ({
               appearance="primary"
               id={"embeddingResults" + index}
               className="dashboard-button"
-              disabled={!hasPredictions}
+              disabled={resultsMenu.items.every((item) => item.disabled)}
             >
               Results
             </Button>
           </MenuTrigger>
           <MenuPopover>
             <MenuList>
-              {resultsMenu.items.map((mi) => (
-                <MenuItem
-                  key={mi.key}
-                  icon={mi.icon}
-                  disabled={mi.disabled}
-                  onClick={mi.onClick}
-                >
-                  {mi.text}
-                </MenuItem>
-              ))}
+              {renderResultsMenuItems()}
             </MenuList>
           </MenuPopover>
         </Menu>

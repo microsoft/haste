@@ -14,6 +14,8 @@ import "../../assets/css/labels.css";
 import PropType from "prop-types";
 import InfoPanel from "./InfoPanel";
 import VisualizerInformationMobile from "./VisualizerInformationMobile";
+import { hasRasterLayer } from "./predictionResults.js";
+import { swipeLeftPaneLabel, swipeRightPaneLabel } from "./visualizerSwipe.js";
 import "../../assets/css/drawingToolbar.css";
 
 const useStyles = makeStyles({
@@ -26,7 +28,9 @@ const useStyles = makeStyles({
 });
 
 const Labels = ({
-  togglePredictedDamageLayerVisibility,
+  layerOptions,
+  layerVisibility,
+  onLayerVisibilityChange,
   resetMapPosition,
   visualizerResults,
   setSwipeStateMobile,
@@ -54,7 +58,7 @@ const Labels = ({
       (option) => option.key === normalizeSourceTypeKey(sourceTypeTemp)
     ) || null;
 
-    if (!sourceType || sourceType === "" || !sourceTypeTempObject) return "Source: Unknown";
+    if (!sourceTypeTempObject) return "Source: Unknown";
     if (sourceTypeTempObject.url === ""){
       return "Source: " + sourceTypeTempObject.visualizerText;
     }else{
@@ -76,24 +80,23 @@ const Labels = ({
 
   return (
     <>
+      <div className="labeling-tool-surface labeling-navigation-controls">
+        <Button
+          appearance="transparent"
+          id="visualizerBackButton"
+          icon={<FluentIcon name="ChevronLeft" />}
+          onClick={handleBackNavigation}
+        >
+          Back
+        </Button>
+      </div>
       {visualizerResults.projectName && (
         <>
           {/* PRE DISASTER */}
 
-          <div className="labeling-tool-surface labeling-navigation-controls">
-            <Button
-              appearance="transparent"
-              id="visualizerBackButton"
-              icon={<FluentIcon name="ChevronLeft" />}
-              onClick={handleBackNavigation}
-            >
-              Back
-            </Button>
-          </div>
-
           <div className={`absolute-labels pre-disaster d-flex flex-column d-none d-lg-flex ${styles.surface}`}>
             <Text className="fw-semibold">
-              Pre disaster imagery
+              {swipeLeftPaneLabel(visualizerResults)}
             </Text>
             <Text>
               {convertPreOrPostEventImageryDate(
@@ -102,7 +105,8 @@ const Labels = ({
             </Text>
             <Text size={200}>
             {convertPreOrPostEventImagerySource(
-                visualizerResults.preDisasterImagery.url, visualizerResults.sourceTypePreEvent
+                hasRasterLayer(visualizerResults.preDisasterImagery) ? visualizerResults.preDisasterImagery.url : "",
+                visualizerResults.sourceTypePreEvent
               )}
             </Text>
           </div>
@@ -111,7 +115,7 @@ const Labels = ({
 
           <div className={`absolute-labels post-disaster d-flex flex-column d-none d-lg-flex ${styles.surface}`}>
             <Text className="fw-semibold">
-              Post disaster imagery
+              {swipeRightPaneLabel(visualizerResults)}
             </Text>
             <Text>
               {convertPreOrPostEventImageryDate(
@@ -120,7 +124,8 @@ const Labels = ({
             </Text>
             <Text size={200}>
               {convertPreOrPostEventImagerySource(
-                visualizerResults.postDisasterImagery.url, visualizerResults.sourceTypePostEvent
+                hasRasterLayer(visualizerResults.postDisasterImagery) ? visualizerResults.postDisasterImagery.url : "",
+                visualizerResults.sourceTypePostEvent
               )}
             </Text>
           </div>
@@ -134,16 +139,16 @@ const Labels = ({
             convertPreOrPostEventImagerySource={convertPreOrPostEventImagerySource}
             setSwipeStateMobile={setSwipeStateMobile}
             swipeStateMobile={swipeStateMobile}
-            togglePredictedDamageLayerVisibility={
-              togglePredictedDamageLayerVisibility
-            }
+            layerOptions={layerOptions}
+            layerVisibility={layerVisibility}
+            onLayerVisibilityChange={onLayerVisibilityChange}
             surfaceClassName={styles.surface}
           />
 
           <InfoPanel
-            togglePredictedDamageLayerVisibility={
-              togglePredictedDamageLayerVisibility
-            }
+            layerOptions={layerOptions}
+            layerVisibility={layerVisibility}
+            onLayerVisibilityChange={onLayerVisibilityChange}
             resetMapPosition={resetMapPosition}
             visualizerResults={visualizerResults}
             surfaceClassName={styles.surface}
@@ -155,7 +160,9 @@ const Labels = ({
 };
 
 Labels.propTypes = {
-  togglePredictedDamageLayerVisibility: PropType.func.isRequired,
+  layerOptions: PropType.array.isRequired,
+  layerVisibility: PropType.object.isRequired,
+  onLayerVisibilityChange: PropType.func.isRequired,
   resetMapPosition: PropType.func.isRequired,
   visualizerResults: PropType.object.isRequired,
   setSwipeStateMobile: PropType.func.isRequired,

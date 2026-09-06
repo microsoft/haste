@@ -29,6 +29,14 @@ class Inference(BaseModel):
     building_footprints_source: Optional[str] = Field(default=None)
     country_alpha2_iso_code: Optional[str] = Field(default=None)
     predictions_gpkg_fileprefix: Optional[str] = Field(default=None)
+    prediction_attrs_filename: Optional[str] = Field(
+        default=None,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*\.json$",
+    )
+    prediction_revision: Optional[str] = Field(
+        default=None, min_length=1, max_length=128, pattern=r"^[\w-]+$"
+    )
 
 
 class Labels(BaseModel):

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import importlib
+from typing import Any
 
 from ..utils.metadata import MetadataUtils
 
@@ -35,9 +36,7 @@ class UnifiedDataLayer:
 
         if storage_type in storage_class_map:
             module_name, class_name = storage_class_map[storage_type]
-            module = importlib.import_module(
-                f"{__package__}.{module_name}"
-            )
+            module = importlib.import_module(f"{__package__}.{module_name}")
             data_layer_class = getattr(module, class_name)
             self.data_layer = data_layer_class(
                 partition_key=self.partition_key, **kwargs
@@ -113,6 +112,19 @@ class UnifiedDataLayer:
         )
 
     def load(self, identifier, data_type, data_format="json"):
+        return self.data_layer.load(
+            identifier, data_type, data_format=data_format
+        )
+
+    def load_strict(
+        self, identifier: str, data_type: str, data_format: str = "json"
+    ) -> Any:
+        from .azure_blob_storage_data_layer import AzureBlobStorageDataLayer
+
+        if isinstance(self.data_layer, AzureBlobStorageDataLayer):
+            return self.data_layer.load(
+                identifier, data_type, data_format=data_format, strict=True
+            )
         return self.data_layer.load(
             identifier, data_type, data_format=data_format
         )

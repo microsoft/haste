@@ -9,6 +9,7 @@ import traceback
 import azure.functions as func  # type: ignore
 from hastegeo.core.config import Config
 from hastegeo.core.models.footprint_tiles import parse_tiles_request
+from hastegeo.core.models.prediction_results import InferenceQueueRequest
 from hastegeo.core.models.projects import (
     ImageLayer,
     LabelProject,
@@ -18,7 +19,6 @@ from hastegeo.core.models.projects import (
 )
 from hastegeo.core.models.publishing import PublishQueueMessage
 from hastegeo.core.models.stats import ProjectsSummary, StatsRequest
-from hastegeo.core.models.training import ExperimentConfig
 from hastegeo.core.processors.artifacts import ArtifactProcessor
 from hastegeo.core.processors.embedding import EmbeddingPostprocessor
 from hastegeo.core.processors.footprint_tiles import process_tiles_request
@@ -27,8 +27,9 @@ from hastegeo.core.processors.imagery import (
     save_imagery_layer,
 )
 from hastegeo.core.processors.inference import (
-    InferencePostprocessor,
     InferencePreprocessor,
+    enqueue_inference_artifacts,
+    process_inference_request,
 )
 from hastegeo.core.processors.labels import LabelTaskGenerator
 from hastegeo.core.processors.metadata import MetadataProcessor
@@ -464,14 +465,6 @@ async def GetCreateModelRunQueueMessage(msg: func.QueueMessage) -> None:
             output = await asyncio.to_thread(
                 InferencePreprocessor(output).send_to_queue
             )
-            await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().MODEL.value,
-                    partition_key=output.projectId,
-                ).save,
-                output.modelId,
-                output.dict(),
-            )
             logger.info(
                 f"GetCreateModelRunQueueTrigger: Successfully sent inference queue message for model {output.modelId}"
             )
@@ -678,162 +671,24 @@ async def GetRunInferenceQueueMessage(msg: func.QueueMessage) -> None:
         6. Generate output files and visualization assets
         7. Update inference status and store results metadata
     """
-    logger.info(
-        f'GetRunInferenceQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
-    )
     try:
-        model_data = Model(**json.loads(msg.get_body().decode("utf-8")))
-        try:
-            # This check is to ensure deleted model does not get recreated here
-            existing_model = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().MODEL.value,
-                    partition_key=model_data.projectId,
-                ).load,
-                model_data.modelId,
-            )
-        except FileNotFoundError:
-            existing_model = None
-
-        if existing_model:
-            existing_model = Model(**existing_model)
-        else:
-            logger.info(
-                f"Model {model_data.modelId} not found, likely deleted, skipping processing."
-            )
-            return
-
-        if (
-            existing_model.inferenceStatus
-            == config.get_status_types().CANCELLED.value
-        ):
-            output = await asyncio.to_thread(
-                InferencePostprocessor(existing_model).cancel
-            )
-        else:
-            await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().MODEL.value,
-                    partition_key=model_data.projectId,
-                ).save,
-                model_data.modelId,
-                model_data.dict(),
-            )
-            image_layer = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().IMAGELAYER.value,
-                    partition_key=model_data.projectId,
-                ).load,
-                model_data.imageLayerId,
-            )
-            image_layer = ImageLayer(**image_layer)
-
-            experiment_config_raw = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().EXPERIMENT_CONFIG.value,
-                    partition_key=model_data.projectId,
-                ).load,
-                model_data.modelId,
-                data_format="yaml",
-            )
-            experiment_config = ExperimentConfig(**experiment_config_raw)
-            output = await asyncio.to_thread(
-                InferencePostprocessor(
-                    model_data, image_layer, experiment_config
-                ).process
-            )
-
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=output.projectId,
-            ).save,
-            output.modelId,
-            output.dict(),
+        request = InferenceQueueRequest.model_validate_json(msg.get_body())
+        output = await asyncio.to_thread(
+            process_inference_request, request, config=config
         )
-        logger.info(
-            f'GetRunInferenceQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
-        )
-    except ValueError as e:
-        logger.error(
-            f"GetRunInferenceQueueTrigger: Invalid JSON: {e}\n{traceback.format_exc()}"
-        )
-    except Exception as e:
-        logger.error(
-            f"GetRunInferenceQueueTrigger: Error processing queue message: {e}\n{traceback.format_exc()}",
-            stack_info=True,
-        )
-        logger.error(traceback.format_exc())
-        model_data.inferenceStatus = config.get_status_types().FAILED.value
-        model_data.inferenceStatusMessage = (
-            MetadataUtils.append_status_message(
-                model_data.inferenceStatusMessage or "",
-                f"Inference job failed: {describe_exception(e)}",
-            )
-        )
-        output = model_data
-        try:
-            await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().MODEL.value,
-                    partition_key=model_data.projectId,
-                ).save,
-                model_data.modelId,
-                model_data.dict(),
-            )
-        except ValidationError as ve:
-            logger.error(
-                f"GetRunInferenceQueueTrigger: Validation error: {ve}\n{traceback.format_exc()}"
-            )
-        except Exception as inner_e:
-            logger.error(
-                f"GetRunInferenceQueueTrigger: Error saving failed status: {inner_e}\n{traceback.format_exc()}",
-                stack_info=True,
-            )
+    except Exception as error:
+        message = f"Inference queue processing failed ({type(error).__name__})"
+        logger.error(message)
+        raise RuntimeError(message) from None
 
-    # Send a message to zip artifacts
-    # Separate from upper block because we don't want to fail the model if this fails
+    if output is None:
+        return
     try:
-        if (
-            output.inferenceStatus
-            in (
-                config.get_status_types().COMPLETED.value,
-                config.get_status_types().FAILED.value,
-            )
-            and output.inferenceOutputPath
-        ):
-            try:
-                model_artifacts = await asyncio.to_thread(
-                    MetadataProcessor(
-                        data_type=config.get_metadata_types().MODEL_ARTIFACTS.value,
-                        partition_key=model_data.projectId,
-                    ).load,
-                    model_data.modelId,
-                )
-            except FileNotFoundError:
-                model_artifacts = ModelArtifacts(
-                    modelId=model_data.modelId,
-                    projectId=model_data.projectId,
-                    imageLayerId=model_data.imageLayerId,
-                )
-            artifact_output = await asyncio.to_thread(
-                ArtifactProcessor(
-                    partition_key=model_artifacts.projectId,
-                    model_artifacts=model_artifacts,
-                ).send_to_zip_queue
-            )
-            await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().MODEL_ARTIFACTS.value,
-                    partition_key=model_artifacts.projectId,
-                ).save,
-                model_artifacts.modelId,
-                artifact_output.dict(),
-            )
-    except Exception as e:
+        await asyncio.to_thread(enqueue_inference_artifacts, output, config)
+    except Exception as error:
         logger.error(
-            f"GetCreateModelRunQueueTrigger: Error sending zip queue message: {e}\n{traceback.format_exc()}",
-            stack_info=True,
+            "Could not queue inference ZIP artifacts (%s)",
+            type(error).__name__,
         )
 
 

@@ -7,13 +7,18 @@ import binascii
 import json
 import os
 import re
-import tempfile
 import traceback
 
 import azure.functions as func  # type: ignore
-import requests  # type: ignore
+from azure.core.exceptions import ResourceNotFoundError
 from hastegeo.core.config import Config
 from hastegeo.core.models.admin import AdminConfig
+from hastegeo.core.models.prediction_results import (
+    BuildingPredictionsRequest,
+    ModelArtifactRequest,
+    ModelCancellationRequest,
+    ResultsRequest,
+)
 from hastegeo.core.models.projects import (
     BuildingValidation,
     ImageLayer,
@@ -36,13 +41,24 @@ from hastegeo.core.models.stats import (
 )
 from hastegeo.core.models.training import CatalogModel
 from hastegeo.core.models.users import User
-from hastegeo.core.models.visualizer import Imagery, Visualizer
 from hastegeo.core.processors.artifacts import ArtifactProcessor
 from hastegeo.core.processors.assessment import AssessmentReportProcessor
 from hastegeo.core.processors.embedding import EmbeddingPreprocessor
 from hastegeo.core.processors.imagery import ImageryPreProcessor
-from hastegeo.core.processors.inference import InferencePreprocessor
+from hastegeo.core.processors.inference import (
+    InferencePreprocessor,
+    should_cancel_inference,
+)
 from hastegeo.core.processors.metadata import MetadataProcessor
+from hastegeo.core.processors.prediction_generations import (
+    PredictionGenerationRepository,
+    PredictionSupersededError,
+)
+from hastegeo.core.processors.prediction_results import (
+    PredictionRequestError,
+    PredictionResultsProcessor,
+    read_result_artifact,
+)
 from hastegeo.core.processors.publishing import (
     PublishingDependencyError,
     PublishingDisabledError,
@@ -55,6 +71,7 @@ from hastegeo.core.processors.stats import StatsPreProcessor
 from hastegeo.core.processors.train import TrainPreprocessor
 from hastegeo.core.processors.uploader import FileUploader
 from hastegeo.core.processors.validation import BuildingValidationProcessor
+from hastegeo.core.processors.visualizer import VisualizerProcessor
 from hastegeo.core.publishing.lease import LeaseUnavailableError
 from hastegeo.core.publishing.registry import (
     ProviderUnavailableError,
@@ -75,7 +92,6 @@ from hastegeo.core.publishing.source import (
 from hastegeo.core.utils.blob import (
     download_blob_to_tempfile,
     parse_byte_range,
-    read_blob_range,
 )
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
@@ -1127,6 +1143,7 @@ async def DeleteLayer(req: func.HttpRequest) -> func.HttpResponse:
                 MetadataProcessor(
                     data_type=config.get_metadata_types().IMAGELAYER.value,
                     partition_key=project_id,
+                    config=config,
                 ).delete,
                 image_layer_id,
             )
@@ -1141,6 +1158,7 @@ async def DeleteLayer(req: func.HttpRequest) -> func.HttpResponse:
             MetadataProcessor(
                 data_type=config.get_metadata_types().MODEL.value,
                 partition_key=project_id,
+                config=config,
             ).load_all_from_partition
         )
         delete_list = []
@@ -1148,28 +1166,10 @@ async def DeleteLayer(req: func.HttpRequest) -> func.HttpResponse:
             if model["imageLayerId"] == image_layer_id:
                 try:
                     await asyncio.to_thread(
-                        MetadataProcessor(
-                            data_type=config.get_metadata_types().MODEL.value,
-                            partition_key=project_id,
-                        ).delete,
-                        model["modelId"],
-                    )
-                    # Delete all other model artifacts if they exist
-                    await asyncio.to_thread(
-                        MetadataProcessor(
-                            data_type=config.get_metadata_types().EXPERIMENT_CONFIG.value,
-                            partition_key=project_id,
-                        ).delete,
-                        model["modelId"],
-                        "yaml",
-                    )
-
-                    await asyncio.to_thread(
-                        MetadataProcessor(
-                            data_type=config.get_metadata_types().TRAIN_LABELS.value,
-                            partition_key=project_id,
-                            data_format="geojson",
-                        ).delete,
+                        PredictionGenerationRepository(
+                            config
+                        ).delete_model_metadata,
+                        project_id,
                         model["modelId"],
                     )
                 except Exception as e:
@@ -1259,52 +1259,16 @@ async def GetLayerDetailView(req: func.HttpRequest) -> func.HttpResponse:
 async def DeleteModel(req: func.HttpRequest) -> func.HttpResponse:
     logger.info("DeleteModel HTTP trigger function processed a request.")
     try:
-        project_id = req.params.get("projectId")
-        model_id = req.params.get("modelId")
-
+        project_id = _require_guid_param(req, "projectId")
+        model_id = _require_short_int_id_param(req, "modelId")
+    except ValueError:
+        return _bad_request("Invalid model deletion request")
+    try:
         await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=project_id,
-            ).delete,
+            PredictionGenerationRepository(config).delete_model_metadata,
+            project_id,
             model_id,
         )
-
-        # Delete all other model artifacts
-        try:
-            await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().EXPERIMENT_CONFIG.value,
-                    partition_key=project_id,
-                ).delete,
-                model_id,
-                "yaml",
-            )
-
-            await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().TRAIN_LABELS.value,
-                    partition_key=project_id,
-                ).delete,
-                model_id,
-                "geojson",
-            )
-
-            await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().MODEL_ARTIFACTS.value,
-                    partition_key=project_id,
-                ).delete,
-                model_id,
-            )
-
-            # NOTE: Also delete training, inference and zip output dirs
-
-        except Exception as e:
-            if "BlobNotFound" in str(e):
-                pass  # no other model artifacts exist
-            else:
-                raise e
 
         request = StatsPreProcessor(
             request=StatsRequest(
@@ -1324,8 +1288,10 @@ async def DeleteModel(req: func.HttpRequest) -> func.HttpResponse:
     except FileNotFoundError as e:
         logger.error(f"Model not found: {e}\n{traceback.format_exc()}")
         return func.HttpResponse("Model not found.", status_code=404)
-    except Exception as e:
-        logger.error(f"Error deleting model: {e}\n{traceback.format_exc()}")
+    except LeaseUnavailableError:
+        return func.HttpResponse("Model is busy.", status_code=409)
+    except Exception as error:
+        logger.error("Error deleting model (%s)", type(error).__name__)
         return func.HttpResponse("Error deleting model.", status_code=500)
 
 
@@ -1339,22 +1305,19 @@ async def GetLayerModelsDetails(req: func.HttpRequest) -> func.HttpResponse:
         "Get models for a given projectId and imageLayerId HTTP trigger function processed a request."
     )
     try:
-        project_id = req.params.get("projectId")
-        image_layer_id = req.params.get("imageLayerId")
-
+        project_id = _require_guid_param(req, "projectId")
+        image_layer_id = _require_guid_param(req, "imageLayerId")
+    except ValueError:
+        return _bad_request("Invalid model list request")
+    try:
         models = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=project_id,
-            ).load_all_from_partition
+            PredictionResultsProcessor(config).list_models,
+            project_id,
+            image_layer_id,
         )
-        match_models = [
-            model
-            for model in models
-            if model["imageLayerId"] == image_layer_id
-        ]
-
-        return func.HttpResponse(json.dumps(match_models), status_code=200)
+        return func.HttpResponse(
+            json.dumps(models), status_code=200, mimetype="application/json"
+        )
 
     except FileNotFoundError as e:
         logger.error(f"Models not found: {e}\n{traceback.format_exc()}")
@@ -1369,22 +1332,15 @@ async def GetLayerModelsDetails(req: func.HttpRequest) -> func.HttpResponse:
 
 # Model artifacts the browser fetches by HTTP byte range, mapped to the
 # Model field that holds each blob URL.
-_MODEL_ARTIFACT_URL_FIELDS = {
-    "sidecar": "featuresSidecarUrl",
-    "geojson": "embeddingsGeoJSONUrl",
-    "gpkg": "gpkgUrl",
-}
 # Artifacts owned by the ImageLayer rather than a model. Footprint
 # geometry is shared by every model trained on the layer, so it lives
 # here and is looked up by imageLayerId.
-_LAYER_ARTIFACT_URL_FIELDS = {
-    "footprint_pmtiles": "footprintPmtilesUrl",
-}
 _MODEL_ARTIFACT_CONTENT_TYPES = {
     "footprint_pmtiles": "application/vnd.pmtiles",
     "sidecar": "application/octet-stream",
     "geojson": "application/geo+json",
     "gpkg": "application/geopackage+sqlite3",
+    "prediction_attrs": "application/json",
 }
 
 
@@ -1417,87 +1373,26 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
     (taken from the query string, else from the model's own layer).
     """
     try:
-        project_id = _require_guid_param(req, "projectId")
-    except ValueError as e:
-        return _bad_request(str(e))
-
-    kind = (req.params.get("kind") or "").lower()
-    url_field = _MODEL_ARTIFACT_URL_FIELDS.get(kind)
-    layer_url_field = _LAYER_ARTIFACT_URL_FIELDS.get(kind)
-    if url_field is None and layer_url_field is None:
-        return _bad_request(
-            "kind must be one of "
-            f"{sorted({**_MODEL_ARTIFACT_URL_FIELDS, **_LAYER_ARTIFACT_URL_FIELDS})}"
+        request = ModelArtifactRequest.model_validate(dict(req.params))
+    except ValueError:
+        return _bad_request("Invalid artifact request")
+    try:
+        blob_url, generation_scoped = await asyncio.to_thread(
+            PredictionResultsProcessor(config).resolve_artifact, request
         )
-
-    # A layer-scoped artifact belongs to the image layer, so an
-    # imageLayerId alone is enough to reach it: a standard-workflow layer
-    # may have no models at all. modelId stays accepted, and is still
-    # required for every model-scoped kind.
-    explicit_layer_id = req.params.get("imageLayerId")
-    layer_only_request = bool(
-        layer_url_field is not None
-        and explicit_layer_id
-        and not req.params.get("modelId")
-    )
-    model_id = None
-    if not layer_only_request:
-        try:
-            model_id = _require_short_int_id_param(req, "modelId")
-        except ValueError as e:
-            return _bad_request(str(e))
-
-    document = None
-    if model_id is not None:
-        try:
-            document = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().MODEL.value,
-                    partition_key=project_id,
-                ).load,
-                model_id,
-            )
-        except FileNotFoundError:
-            return func.HttpResponse("Model not found.", status_code=404)
-        except Exception as e:
-            logger.error(
-                f"GetModelArtifact model load failed: {e}\n"
-                f"{traceback.format_exc()}"
-            )
-            return func.HttpResponse("Error loading model.", status_code=500)
-
-    if layer_url_field is not None:
-        # Layer-scoped artifact: take an explicit imageLayerId when the
-        # caller passes one, otherwise the model's own layer.
-        url_field = layer_url_field
-        model_document = document or {}
-        image_layer_id = explicit_layer_id or model_document.get(
-            "imageLayerId"
+    except PredictionRequestError:
+        return _bad_request("Invalid artifact request")
+    except FileNotFoundError:
+        return func.HttpResponse(
+            "Artifact not available.",
+            status_code=404,
+            headers={"Cache-Control": "private, no-store"},
         )
-        if not image_layer_id or not _GUID_RE.match(str(image_layer_id)):
-            return _bad_request("Invalid or missing parameter: imageLayerId")
-        try:
-            document = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().IMAGELAYER.value,
-                    partition_key=project_id,
-                ).load,
-                image_layer_id,
-            )
-        except FileNotFoundError:
-            return func.HttpResponse("Image layer not found.", status_code=404)
-        except Exception as e:
-            logger.error(
-                f"GetModelArtifact image layer load failed: {e}\n"
-                f"{traceback.format_exc()}"
-            )
-            return func.HttpResponse(
-                "Error loading image layer.", status_code=500
-            )
-
-    blob_url = (document or {}).get(url_field) or ""
-    if not blob_url:
-        return func.HttpResponse("Artifact not available.", status_code=404)
+    except Exception as error:
+        logger.error("Artifact resolution failed (%s)", type(error).__name__)
+        return func.HttpResponse("Error resolving artifact.", status_code=500)
+    kind = request.kind
+    model_id = request.modelId
 
     try:
         offset, length, is_range = parse_byte_range(req.headers.get("Range"))
@@ -1506,14 +1401,18 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
         offset, length, is_range = 0, None, False
 
     try:
-        result = await read_blob_range(blob_url, offset, length)
-    except ValueError as e:
-        logger.error(f"GetModelArtifact bad blob url: {e}")
-        return func.HttpResponse("Artifact unavailable.", status_code=500)
-    except Exception as e:
-        logger.error(
-            f"GetModelArtifact read failed: {e}\n{traceback.format_exc()}"
+        result = await read_result_artifact(blob_url, offset, length, config)
+    except (FileNotFoundError, ResourceNotFoundError):
+        return func.HttpResponse(
+            "Artifact not available.",
+            status_code=404,
+            headers={"Cache-Control": "private, no-store"},
         )
+    except ValueError:
+        logger.error("GetModelArtifact invalid stored artifact location")
+        return func.HttpResponse("Artifact unavailable.", status_code=500)
+    except Exception as error:
+        logger.error("GetModelArtifact read failed (%s)", type(error).__name__)
         return func.HttpResponse("Error reading artifact.", status_code=502)
 
     content_type = _MODEL_ARTIFACT_CONTENT_TYPES.get(kind, result.content_type)
@@ -1521,7 +1420,11 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
         "Content-Type": content_type,
         "Accept-Ranges": "bytes",
         "Content-Length": str(len(result.data)),
-        "Cache-Control": "private, max-age=3600",
+        "Cache-Control": (
+            "private, no-store"
+            if generation_scoped
+            else "private, max-age=3600"
+        ),
     }
     # The GeoPackage predictions artifact is a downloadable file (the
     # interactive labeler's other artifacts are fetched by range and parsed
@@ -2261,169 +2164,24 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
         "GetVisualizerResults HTTP trigger function processed a request."
     )
     try:
-        try:
-            project_id = _require_guid_param(req, "projectId")
-            image_layer_id = _require_guid_param(req, "imageLayerId")
-            # modelId is generated by MetadataUtils.generate_short_int_id()
-            # (currently "0000"-"9999"), not a UUID — so the GUID validator
-            # rejected every real value. See _require_short_int_id_param.
-            model_id = _require_short_int_id_param(req, "modelId")
-        except ValueError as ve:
-            return _bad_request(f"GetVisualizerResults: {ve}")
-
-        model_data = Model(
-            **await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().MODEL.value,
-                    partition_key=project_id,
-                ).load,
-                model_id,
-            )
+        request = ResultsRequest.model_validate(dict(req.params))
+    except ValueError:
+        return _bad_request("Invalid visualizer request")
+    try:
+        visualizer = await asyncio.to_thread(
+            VisualizerProcessor(config).load, request
         )
-        project = Project(
-            **await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().PROJECT.value,
-                    partition_key=project_id,
-                ).load,
-                project_id,
-            )
-        )
-        image_layer = ImageLayer(
-            **await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().IMAGELAYER.value,
-                    partition_key=project_id,
-                ).load,
-                image_layer_id,
-            )
-        )
-        label_projects = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().LABELS.value,
-                partition_key=model_data.projectId,
-            ).load_all_from_partition
-        )
-        match_label_projects = [
-            label_project
-            for label_project in label_projects
-            if label_project["imageLayerId"] == image_layer.imageLayerId
-        ]
-        label_project = LabelProject(
-            **match_label_projects[0] if match_label_projects else {}
-        )
-
-        titiler_ep = config.titiler_endpoint
-        # URL needs to include SAS token for the image to be accessible
-        # Also needs to be urlencoded so that SAS is not mangled
-        pre_event_image_URL = (
-            requests.utils.quote(
-                image_layer.preEventProcessedImageryUrl, safe=""
-            )
-            if image_layer.preEventImageryUrls
-            else ""
-        )
-        post_disaster_image_URL = requests.utils.quote(
-            image_layer.postEventProcessedImageryUrl, safe=""
-        )
-        predicted_damage_layer_URL = (
-            requests.utils.quote(model_data.predictedDamageLayerUrl, safe="")
-            if model_data.predictedDamageLayerUrl
-            else ""
-        )
-        # The inference workflow always produces a `_predictions.tif` next to
-        # `_visualizer.tif`, sharing the same container SAS. Derive its URL by
-        # swapping the suffix rather than persisting a separate model field.
-        predictions_url_raw = (
-            model_data.predictedDamageLayerUrl.replace(
-                "_visualizer.tif", "_predictions.tif"
-            )
-            if model_data.predictedDamageLayerUrl
-            else None
-        )
-        predictions_layer_URL = (
-            requests.utils.quote(predictions_url_raw, safe="")
-            if predictions_url_raw
-            else ""
-        )
-        # TiTiler colormap overrides the embedded TIFF palette (whose alpha=0 entry
-        # is silently dropped by TIFF). Maps pixel values 0/1 -> transparent,
-        # 2 -> green, 3 -> red, matching the inference.py palette.
-        predictions_colormap = requests.utils.quote(
-            json.dumps(
-                {
-                    "0": [0, 0, 0, 0],
-                    "1": [0, 0, 0, 0],
-                    "2": [0, 255, 0, 255],
-                    "3": [255, 0, 0, 255],
-                }
-            ),
-            safe="",
-        )
-
-        visualizer = Visualizer(
-            projectId=project_id,
-            imageLayerId=image_layer_id,
-            modelId=model_id,
-            projectName=project.name,
-            studyArea=label_project.features,
-            eventDate=project.eventDate,
-            # NOTE: predictedDamageImageryDownloadUrl will be a screenshot for pre-release, could be something else in the future
-            preDisasterImagery=Imagery(
-                # If no image is uploaded, then the base Azure Map will be displayed in the pre section
-                url=(
-                    f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={pre_event_image_URL}"
-                    if pre_event_image_URL
-                    else ""
-                ),
-                bounds=(
-                    label_project.features[0].bbox
-                    if label_project.features
-                    else None
-                ),
-            ),
-            postDisasterImagery=Imagery(
-                url=f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={post_disaster_image_URL}",
-                bounds=(
-                    label_project.features[0].bbox
-                    if label_project.features
-                    else None
-                ),
-            ),
-            predictedDamageLayer=Imagery(
-                url=f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={predicted_damage_layer_URL}",
-                bounds=(
-                    label_project.features[0].bbox
-                    if label_project.features
-                    else None
-                ),
-            ),
-            predictionsLayer=Imagery(
-                url=(
-                    f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={predictions_layer_URL}&colormap={predictions_colormap}"
-                    if predictions_layer_URL
-                    else ""
-                ),
-                bounds=(
-                    label_project.features[0].bbox
-                    if label_project.features
-                    else None
-                ),
-            ),
-            sourceTypePreEvent=image_layer.sourceTypePreEvent,
-            sourceTypePostEvent=image_layer.sourceTypePostEvent,
-            imageryCaptureDatePreEvent=image_layer.imageryCaptureDatePreEvent,
-            imageryCaptureDatePostEvent=image_layer.imageryCaptureDatePostEvent,
-        )
-
         return func.HttpResponse(
-            json.dumps(visualizer.dict()), status_code=200
+            visualizer.model_dump_json(),
+            status_code=200,
+            mimetype="application/json",
         )
-    except Exception as e:
-        logger.error(
-            f"Error loading visualizer results: {e}\n{traceback.format_exc()}",
-            stack_info=True,
-        )
+    except PredictionRequestError:
+        return _bad_request("Invalid visualizer request")
+    except FileNotFoundError:
+        return func.HttpResponse("Results source not found.", status_code=404)
+    except Exception as error:
+        logger.error("Visualizer read failed (%s)", type(error).__name__)
         return func.HttpResponse(
             "Error loading visualizer results.", status_code=500
         )
@@ -2515,33 +2273,30 @@ async def PutRunInferenceQueueMessage(
     )
     try:
         req_body = req.get_json()
-        output = Model(**req_body)
+        output = Model.model_validate(req_body)
         if output.creationDate is None:
             output.creationDate = MetadataUtils.get_timestamp()
 
         output = await asyncio.to_thread(
             InferencePreprocessor(output).send_to_queue
         )
-
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=output.projectId,
-            ).save,
-            output.modelId,
-            output.dict(),
-        )
-
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
-    except ValidationError as e:
-        logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
+    except (PredictionSupersededError, LeaseUnavailableError):
+        return func.HttpResponse(
+            "Inference is already active.", status_code=409
+        )
+    except FileNotFoundError:
+        return func.HttpResponse("Model not found.", status_code=404)
+    except ValidationError:
         return func.HttpResponse("Validation error.", status_code=400)
-    except ValueError as e:
-        logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
+    except ValueError:
         return func.HttpResponse(
             "Invalid JSON in request body.", status_code=400
         )
+    except Exception as error:
+        logger.error("Could not queue inference (%s)", type(error).__name__)
+        return func.HttpResponse("Could not queue inference.", status_code=500)
 
 
 @app.route(
@@ -2727,130 +2482,40 @@ async def PutBuildingPredictions(
     logger.info(
         "PutBuildingPredictions HTTP trigger function processed a request."
     )
-    tmp_fp = None
-    out_gpkg = None
     try:
-        import geopandas as gpd
-
-        body = req.get_json()
-        project_id = body.get("projectId")
-        image_layer_id = body.get("imageLayerId")
-        model_id = body.get("modelId")
-        predictions = body.get("predictions") or []
-        if not project_id or not image_layer_id or not model_id:
-            return func.HttpResponse(
-                "projectId, imageLayerId and modelId are required.",
-                status_code=400,
-            )
-
-        image_layer_data = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().IMAGELAYER.value,
-                partition_key=project_id,
-            ).load,
-            image_layer_id,
-        )
-        footprints_url = image_layer_data.get("buildingFootprintsUrl")
-        if not footprints_url:
-            return func.HttpResponse(
-                "No building footprints available for this image layer.",
-                status_code=404,
-            )
-
-        model_data = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=project_id,
-            ).load,
-            model_id,
-        )
-
-        tmp_fp = await download_blob_to_tempfile(
-            footprints_url, suffix=".gpkg"
-        )
-
-        def _build_predictions_gpkg():
-            gdf = gpd.read_file(tmp_fp).reset_index(drop=True)
-            n = len(gdf)
-            damaged = [0] * n
-            unknown = [0.0] * n
-            for p in predictions:
-                try:
-                    idx = int(p.get("id"))
-                except (TypeError, ValueError):
-                    continue
-                if 0 <= idx < n:
-                    damaged[idx] = 1 if int(p.get("damaged", 0)) == 1 else 0
-                    unknown[idx] = float(p.get("unknown", 0.0))
-            out = gdf[["geometry"]].copy()
-            out.insert(0, "id", range(n))
-            out["damaged"] = damaged
-            out["damage_pct_0m"] = [float(d) for d in damaged]
-            out["unknown_pct"] = unknown
-            # Footprint area in m^2 via an equal-area projection.
-            try:
-                out["area"] = gdf.geometry.to_crs(epsg=6933).area
-            except Exception:
-                out["area"] = None
-            fd, path = tempfile.mkstemp(suffix=".gpkg")
-            os.close(fd)
-            out.to_file(path, layer="predictions", driver="GPKG")
-            return path
-
-        out_gpkg = await asyncio.to_thread(_build_predictions_gpkg)
-
-        artifact_name = (
-            config.get_artifact_types().BUILDING_PREDICTIONS_GPKG.value.substitute(
-                modelName=model_id
-            )
-            + ".gpkg"
-        )
-
-        def _store_and_url():
-            ap = ArtifactProcessor(project_id)
-            ap.store_artifact(artifact_name=artifact_name, src_path=out_gpkg)
-            return ap.get_download_url(identifier=artifact_name)
-
-        gpkg_url = await asyncio.to_thread(_store_and_url)
-
-        model_data["gpkgUrl"] = gpkg_url
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=project_id,
-            ).save,
-            model_id,
-            model_data,
-        )
-
+        request = BuildingPredictionsRequest.model_validate(req.get_json())
+    except ValueError:
         return func.HttpResponse(
-            json.dumps({"gpkgUrl": gpkg_url, "count": len(predictions)}),
+            "Invalid prediction request body.", status_code=400
+        )
+    try:
+        result = await asyncio.to_thread(
+            PredictionResultsProcessor(config).save_building_predictions,
+            request,
+        )
+        return func.HttpResponse(
+            json.dumps(result),
             status_code=200,
             mimetype="application/json",
         )
 
-    except FileNotFoundError:
-        return func.HttpResponse("Model not found.", status_code=404)
-    except ValueError as e:
-        logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
+    except (FileNotFoundError, ResourceNotFoundError):
         return func.HttpResponse(
-            "Invalid JSON in request body.", status_code=400
+            "Prediction source not found.", status_code=404
         )
-    except Exception as e:
-        logger.error(
-            f"Error in PutBuildingPredictions: {e}\n{traceback.format_exc()}",
-            stack_info=True,
+    except (PredictionSupersededError, LeaseUnavailableError):
+        return func.HttpResponse(
+            "Prediction request was superseded or busy.", status_code=409
         )
+    except PredictionRequestError:
+        return func.HttpResponse(
+            "Invalid prediction request.", status_code=400
+        )
+    except Exception as error:
+        logger.error("Prediction save failed (%s)", type(error).__name__)
         return func.HttpResponse(
             "Error saving building predictions.", status_code=500
         )
-    finally:
-        for _p in (tmp_fp, out_gpkg):
-            if _p and os.path.exists(_p):
-                try:
-                    os.unlink(_p)
-                except OSError:
-                    pass
 
 
 @app.route(
@@ -3028,50 +2693,51 @@ async def PutCancelModelQueueMessage(
         "PutCancelModelQueueMessage HTTP trigger function processed a request."
     )
     try:
-        model_cancel_req = req.get_json()
-
+        model_cancel_req = ModelCancellationRequest.model_validate(
+            req.get_json()
+        )
+    except ValueError:
+        return _bad_request("Invalid model cancellation request")
+    try:
         try:
             existing_model_data = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().MODEL.value,
-                    partition_key=model_cancel_req["projectId"],
-                ).load,
-                model_cancel_req["modelId"],
+                PredictionGenerationRepository(config).load,
+                model_cancel_req.projectId,
+                model_cancel_req.modelId,
             )
         except FileNotFoundError:
             existing_model_data = None
 
-        if existing_model_data:
-            existing_model_data = Model(**existing_model_data)
-        else:
+        if existing_model_data is None:
             logger.info(
                 f"Model {model_cancel_req.modelId} not found, likely deleted, skipping canceling"
             )
             return func.HttpResponse(json.dumps({}), status_code=200)
 
-        if (
-            existing_model_data.status
-            == config.get_status_types().COMPLETED.value
-            and not (
-                existing_model_data.inferenceStatus
-                == config.get_status_types().COMPLETED.value
-                or existing_model_data.inferenceStatus
-                == config.get_status_types().FAILED.value
-            )
-        ):
+        if should_cancel_inference(existing_model_data, config):
             logger.info(
-                f"Training for model {model_cancel_req['modelId']} already completed, cancelling inference"
+                "Cancelling inference for model %s", model_cancel_req.modelId
             )
             output = await asyncio.to_thread(
-                InferencePreprocessor(existing_model_data).send_to_queue,
+                InferencePreprocessor(
+                    existing_model_data, config
+                ).send_to_queue,
                 status=config.get_status_types().CANCELLED.value,
+            )
+            # The processor persisted intent before publishing. A fast
+            # consumer may already have acknowledged cancellation; do not
+            # overwrite its mirror with this pre-publication snapshot.
+            return func.HttpResponse(
+                output.model_dump_json(),
+                status_code=200,
+                mimetype="application/json",
             )
         elif (
             existing_model_data.status
             == config.get_status_types().FAILED.value
         ):
             logger.info(
-                f"Training for model {model_cancel_req['modelId']} already failed, no action taken"
+                f"Training for model {model_cancel_req.modelId} already failed, no action taken"
             )
             output = existing_model_data
             output.statusMessage = MetadataUtils.append_status_message(
@@ -3083,7 +2749,7 @@ async def PutCancelModelQueueMessage(
             == config.get_status_types().COMPLETED.value
         ):
             logger.info(
-                f"Inference for model {model_cancel_req['modelId']} already completed, no action taken"
+                f"Inference for model {model_cancel_req.modelId} already completed, no action taken"
             )
             output = existing_model_data
             output.inferenceStatusMessage = (
@@ -3097,7 +2763,7 @@ async def PutCancelModelQueueMessage(
             == config.get_status_types().FAILED.value
         ):
             logger.info(
-                f"Inference for model {model_cancel_req['modelId']} already failed, no action taken"
+                f"Inference for model {model_cancel_req.modelId} already failed, no action taken"
             )
             output = existing_model_data
             output.inferenceStatusMessage = (
@@ -3108,7 +2774,9 @@ async def PutCancelModelQueueMessage(
             )
         else:
             output = await asyncio.to_thread(
-                TrainPreprocessor(existing_model_data).send_to_queue,
+                TrainPreprocessor(
+                    existing_model_data, config=config
+                ).send_to_queue,
                 status=config.get_status_types().CANCELLED.value,
             )
 
@@ -3116,6 +2784,7 @@ async def PutCancelModelQueueMessage(
             MetadataProcessor(
                 data_type=config.get_metadata_types().MODEL.value,
                 partition_key=output.projectId,
+                config=config,
             ).save,
             output.modelId,
             output.dict(),
@@ -3123,18 +2792,17 @@ async def PutCancelModelQueueMessage(
 
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
-    except ValidationError as e:
-        logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
-        return func.HttpResponse("Validation error.", status_code=400)
-    except ValueError as e:
-        logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
+    except PredictionSupersededError:
         return func.HttpResponse(
-            "Invalid JSON in request body.", status_code=400
+            "Inference changed before cancellation. Refresh and try again.",
+            status_code=409,
         )
-    except Exception as e:
+    except LeaseUnavailableError:
+        return func.HttpResponse("Model is busy.", status_code=409)
+    except Exception as error:
         logger.error(
-            f"Error cancelling model task: {e}\n{traceback.format_exc()}",
-            stack_info=True,
+            "Error cancelling model task (%s)",
+            type(error).__name__,
         )
         return func.HttpResponse(
             "Error cancelling model task.", status_code=500
@@ -4203,40 +3871,23 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         "GetValidationReport HTTP trigger function processed a request."
     )
     try:
-        project_id = req.params.get("projectId")
-        image_layer_id = req.params.get("imageLayerId")
-        model_id = req.params.get("modelId")
-
-        if not project_id or not image_layer_id or not model_id:
-            return func.HttpResponse(
-                "projectId, imageLayerId and modelId are required.",
-                status_code=400,
-            )
-
-        # ── 1. Load model (modelType picks the label store; gpkgUrl needed) ────
-        model_data = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=project_id,
-            ).load,
-            model_id,
+        source_request = ResultsRequest(
+            projectId=req.params.get("projectId"),
+            imageLayerId=req.params.get("imageLayerId"),
+            modelId=req.params.get("modelId"),
         )
+    except ValueError:
+        return _bad_request("Invalid validation report request")
+    try:
+        project_id = source_request.projectId
+        image_layer_id = source_request.imageLayerId
 
-        gpkg_url = model_data.get("gpkgUrl")
-        if not gpkg_url:
-            return func.HttpResponse(
-                json.dumps(
-                    {
-                        "error": (
-                            "No inference results available for this model. "
-                            "Run inference on this model, then generate the "
-                            "validation report."
-                        )
-                    }
-                ),
-                status_code=404,
-                mimetype="application/json",
-            )
+        # Reports consume raw readiness, not viewer sidecars or layer tiles.
+        model, image_layer = await asyncio.to_thread(
+            PredictionResultsProcessor(config).raw_context, source_request
+        )
+        model_data = model.model_dump()
+        gpkg_url = model.gpkgUrl
 
         # ── 2. Load labels from the Building Validation store ──────────────────
         # The report always reads the layer-scoped Building Validation labels,
@@ -4247,6 +3898,7 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
                 MetadataProcessor(
                     data_type=label_meta["type"],
                     partition_key=project_id,
+                    config=config,
                 ).load,
                 label_meta["key"],
             )
@@ -4288,6 +3940,7 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
                 MetadataProcessor(
                     data_type=label_meta["type"],
                     partition_key=project_id,
+                    config=config,
                 ).load,
                 label_meta["key"],
             )
@@ -4307,15 +3960,7 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         # ── 3. Load image layer to get buildingFootprintsUrl ──────────────────
-        image_layer_data = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().IMAGELAYER.value,
-                partition_key=project_id,
-            ).load,
-            image_layer_id,
-        )
-
-        footprints_url = image_layer_data.get("buildingFootprintsUrl")
+        footprints_url = image_layer.buildingFootprintsUrl
         if not footprints_url:
             return func.HttpResponse(
                 json.dumps(
@@ -4448,10 +4093,16 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
         )
 
-    except Exception as e:
+    except PredictionRequestError:
+        return _bad_request("Invalid validation report source")
+    except (FileNotFoundError, ResourceNotFoundError):
+        return func.HttpResponse(
+            "Raw report source unavailable.", status_code=404
+        )
+    except Exception as error:
         logger.error(
-            f"Error in GetValidationReport: {e}\n{traceback.format_exc()}",
-            stack_info=True,
+            "GetValidationReport failed (%s)",
+            type(error).__name__,
         )
         return func.HttpResponse(
             "Error generating validation report.", status_code=500
@@ -4493,20 +4144,21 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
         "GetAssessmentReport HTTP trigger function processed a request."
     )
     try:
+        source_request = ResultsRequest(
+            projectId=req.params.get("projectId"),
+            imageLayerId=req.params.get("imageLayerId"),
+            modelId=req.params.get("modelId"),
+        )
+    except ValueError:
+        return _bad_request("Invalid assessment report request")
+    try:
         from hastegeo.core.utils.assessment import (
             build_assessment_inputs_from_gpkgs,
             compute_assessment_report,
         )
 
-        project_id = req.params.get("projectId")
-        image_layer_id = req.params.get("imageLayerId")
-        model_id = req.params.get("modelId")
-
-        if not project_id or not image_layer_id or not model_id:
-            return func.HttpResponse(
-                "projectId, imageLayerId and modelId are required.",
-                status_code=400,
-            )
+        project_id = source_request.projectId
+        image_layer_id = source_request.imageLayerId
 
         # Parse optional knobs with bounded fallbacks; surfacing 400s on
         # garbage so the modal doesn't try to render an opaque 500.
@@ -4532,32 +4184,12 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
                 "minAreaM2 must be >= 0.", status_code=400
             )
 
-        # Load model + image layer to get the two blob URLs we need.
-        model_data = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=project_id,
-            ).load,
-            model_id,
+        model, image_layer = await asyncio.to_thread(
+            PredictionResultsProcessor(config).raw_context, source_request
         )
-        gpkg_url = model_data.get("gpkgUrl")
-        if not gpkg_url:
-            return func.HttpResponse(
-                json.dumps(
-                    {"error": "No inference results available for this model."}
-                ),
-                status_code=404,
-                mimetype="application/json",
-            )
-
-        image_layer_data = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().IMAGELAYER.value,
-                partition_key=project_id,
-            ).load,
-            image_layer_id,
-        )
-        footprints_url = image_layer_data.get("buildingFootprintsUrl")
+        model_data = model.model_dump()
+        gpkg_url = model.gpkgUrl
+        footprints_url = image_layer.buildingFootprintsUrl
         if not footprints_url:
             return func.HttpResponse(
                 json.dumps(
@@ -4580,6 +4212,7 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
                 MetadataProcessor(
                     data_type=label_meta["type"],
                     partition_key=project_id,
+                    config=config,
                 ).load,
                 label_meta["key"],
             )
@@ -4624,10 +4257,16 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
         )
 
-    except Exception as e:
+    except PredictionRequestError:
+        return _bad_request("Invalid assessment report source")
+    except (FileNotFoundError, ResourceNotFoundError):
+        return func.HttpResponse(
+            "Raw report source unavailable.", status_code=404
+        )
+    except Exception as error:
         logger.error(
-            f"Error in GetAssessmentReport: {e}\n{traceback.format_exc()}",
-            stack_info=True,
+            "GetAssessmentReport failed (%s)",
+            type(error).__name__,
         )
         return func.HttpResponse(
             "Error generating assessment report.", status_code=500

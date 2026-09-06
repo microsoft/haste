@@ -24,6 +24,8 @@ import {
   Button,
   Divider,
   Field,
+  MessageBar,
+  MessageBarBody,
   ProgressBar,
   Radio,
   RadioGroup,
@@ -34,8 +36,9 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
-import { PMTiles, Protocol } from "pmtiles";
-import { apiGet, apiPut, buildUrl } from "../../util/api";
+import { PMTiles } from "pmtiles";
+import { apiGet, buildUrl } from "../../util/api";
+import { getPmtilesProtocol, InMemoryPMTilesSource } from "../../util/pmtiles.js";
 import {
   getAzureMapsAuthOptions,
   isAzureMapsPlaceholder,
@@ -74,46 +77,20 @@ import {
   selectRestorableByRowId,
   tallyLabels,
 } from "./labelStore.js";
+import {
+  clearLabelsAndPredictions,
+  createLabelerWriter,
+  saveBuildingPredictions,
+} from "./interactiveLabelerPersistence.js";
 
-// Register the pmtiles protocol once at module load. After this, any
-// VectorTileSource configured with `url: "pmtiles://<url>"` will route
-// through pmtiles' byte-range-aware reader. Atlas v3 exposes the Mapbox-GL
-// style `addProtocol` hook (see AZURE_MAPS_INTERACTIVE_LABELER.md §2).
-const _pmtilesProtocol = new Protocol();
-if (typeof window !== "undefined" && window.atlas) {
-  // The bound `.tile` member is what addProtocol expects. Re-registering the
-  // same scheme is idempotent in atlas.
-  window.atlas.addProtocol("pmtiles", _pmtilesProtocol.tile);
-}
+const writeLabelerData = createLabelerWriter(buildUrl);
+
+// Results and labeling share one PMTiles protocol. Register when loading the
+// archive (after Atlas exists), not at module import time.
 
 // Tippecanoe writes the buildings layer with `-l buildings`. The
 // VectorTileSource references this layer name to draw the polygons.
 const PMTILES_SOURCE_LAYER = "buildings";
-
-// pmtiles.js reads an archive through a `Source` (getKey + getBytes). Its
-// default FetchSource issues HTTP Range requests, but the Interactive
-// Labeler is served behind an Azure Static Web App whose /api proxy does
-// NOT honor byte serving: a ranged GET comes back as a full 200, so
-// pmtiles throws "Server returned no content-length header or content-length
-// exceeding request." We sidestep that by downloading the whole archive once
-// (a plain full GET, which the SWA proxy handles fine — same as the HFTR
-// sidecar) and satisfying every range read from that in-memory buffer.
-// `getKey()` must equal the string used in the `pmtiles://<key>` source URL
-// so Protocol.add()'s lookup matches.
-class InMemoryPMTilesSource {
-  constructor(key, arrayBuffer) {
-    this._key = key;
-    this._buf = arrayBuffer;
-  }
-  getKey() {
-    return this._key;
-  }
-  async getBytes(offset, length) {
-    // ArrayBuffer.slice clamps to the buffer end, which is what pmtiles
-    // expects for the initial 16 KB header read on a smaller archive.
-    return { data: this._buf.slice(offset, offset + length) };
-  }
-}
 
 // Download an entire artifact through the same-origin API proxy as raw
 // bytes. Used for the PMTiles archive so it can be read fully in memory
@@ -125,7 +102,7 @@ async function fetchArtifactBuffer(url, onProgress, signal) {
       `Failed to fetch PMTiles archive (HTTP ${resp.status}) at ${url}`
     );
   }
-  return readResponseBuffer(resp, onProgress);
+  return readResponseBuffer(resp, onProgress, { signal });
 }
 
 // Class colors (match index.html). Index = class number.
@@ -573,6 +550,9 @@ const InteractiveLabeler = () => {
   // labels changed or were cleared while that work was in flight.
   const labelsRevisionRef = useRef(0);
   const fullPredictAbortRef = useRef({ cancelled: false });
+  // Serialize user-initiated writes immediately, including before React has
+  // rendered disabled buttons. Viewport prediction itself remains local.
+  const writeBusyRef = useRef(false);
 
   // Advanced → Swipe view. atlas.SwipeMap always reveals its SECONDARY map on
   // the RIGHT of the divider and shows its PRIMARY on the LEFT, so to land PRE
@@ -616,6 +596,11 @@ const InteractiveLabeler = () => {
   const [viewportPredicted, setViewportPredicted] = useState(0);
   const [metrics, setMetrics] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [persistenceNotice, setPersistenceNotice] = useState("");
+  // A prediction retry cannot repair labels removed by a partial clear. Keep
+  // that recovery warning until labels are saved or the complete clear succeeds.
+  const [clearRecoveryNotice, setClearRecoveryNotice] = useState("");
   const [status, setStatus] = useState("");
   const [mapInfo, setMapInfo] = useState({ lat: 0, lon: 0, zoom: 0 });
   // Progress state for the "Predict all buildings" full-coverage pass.
@@ -829,7 +814,7 @@ const InteractiveLabeler = () => {
         new InMemoryPMTilesSource(browserPmtilesUrl, pmtilesBuffer)
       );
       // Pre-register so the protocol can serve tile reads from the same handle.
-      _pmtilesProtocol.add(pm);
+      getPmtilesProtocol().add(pm);
       // Read the header so we can place the camera over the archive's bounds
       // (otherwise the map sits at [0, 0] zoom 3 and the user sees no tiles).
       pmtilesHeader = await pm.getHeader();
@@ -2209,6 +2194,9 @@ const InteractiveLabeler = () => {
   // below — labels and predictions are saved independently so users can
   // checkpoint labels without paying for a full-coverage predict pass.
   async function handleSaveLabels() {
+    if (writeBusyRef.current) return;
+    writeBusyRef.current = true;
+    setPersistenceNotice("");
     setIsSaving(true);
     setIsLoading(true, "Saving labels…");
     try {
@@ -2249,7 +2237,7 @@ const InteractiveLabeler = () => {
         new Date().toISOString(),
         sidecarRef.current?.n ?? null
       );
-      await apiPut("PutInteractiveLabels", {
+      await writeLabelerData("PutInteractiveLabels", {
         projectId,
         imageLayerId,
         modelId,
@@ -2258,6 +2246,7 @@ const InteractiveLabeler = () => {
       // Keep the in-memory mirror in step with what the server now holds, so
       // a subsequent save in the same session doesn't resurrect deletions.
       savedLabelsRef.current = labels;
+      setClearRecoveryNotice("");
       setDialog("Saved", "Labels saved successfully.", [
         {
           type: "primary",
@@ -2268,8 +2257,11 @@ const InteractiveLabeler = () => {
       ]);
     } catch (e) {
       console.error("Error saving labels:", e);
-      setDialog("Error", "Failed to save labels.");
+      const message = `Failed to save labels: ${e.message || e}`;
+      setPersistenceNotice(message);
+      setDialog("Error", message);
     } finally {
+      writeBusyRef.current = false;
       setIsSaving(false);
       setIsLoading(false);
     }
@@ -2282,6 +2274,7 @@ const InteractiveLabeler = () => {
   // persisted store with an empty document so revisiting the labeler
   // doesn't restore the cleared labels.
   function handleClearLabels() {
+    if (writeBusyRef.current) return;
     const total =
       counts[CLASS_INTACT] + counts[CLASS_DAMAGED] + counts[CLASS_CLOUDY];
     const message =
@@ -2294,65 +2287,66 @@ const InteractiveLabeler = () => {
         key: "yes",
         text: "Clear labels",
         onClick: async () => {
+          if (writeBusyRef.current) return;
+          writeBusyRef.current = true;
           setDialog();
+          setIsClearing(true);
+          setPersistenceNotice("");
           setIsLoading(true, "Clearing labels…");
           try {
-            // Clear ALL feature-state for the buildings source in one
-            // call per source (instead of per-feature, which freezes the
-            // browser on large viewports).
-            const gl = glMapRef.current;
-            if (gl) {
-              for (const sourceId of internalSourceIdsRef.current) {
-                try {
-                  gl.removeFeatureState(
-                    { source: sourceId, sourceLayer: PMTILES_SOURCE_LAYER }
-                  );
-                } catch { /* ignore */ }
-              }
-              mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
-            }
-            // The swipe pre map keeps its own feature-state, so clear it too
-            // or the left pane stays colored after a reset.
-            const preGl = swipePreGlMapRef.current;
-            if (preGl) {
-              try {
-                preGl.removeFeatureState(
-                  { source: SWIPE_SOURCE_ID, sourceLayer: PMTILES_SOURCE_LAYER }
-                );
-              } catch { /* ignore */ }
-              swipePreMapRef.current?.triggerRepaint &&
-                swipePreMapRef.current.triggerRepaint();
-            }
-            // In-memory reset (labels + predictions).
-            labeledMapRef.current = {};
-            savedLabelsRef.current = {};
-            predictionsMapRef.current = {};
-            trainedModelRef.current = null;
-            labelsDirtyRef.current = true;
-            labelsRevisionRef.current += 1;
-            refreshCounts();
-            setMetrics(null);
-            setViewportPredicted(0);
-            setStatus("Cleared all labels and predictions.");
-            // Persist empty labels and empty predictions so the DB
-            // matches the UI state.
-            await apiPut("PutInteractiveLabels", {
-              projectId,
-              imageLayerId,
-              modelId,
-              labels: {},
-            });
-            await apiPut("PutBuildingPredictions", {
-              projectId,
-              imageLayerId,
-              modelId,
-              predictions: [],
-            });
+            await clearLabelsAndPredictions(
+              writeLabelerData,
+              { projectId, imageLayerId, modelId },
+              () => {
+                // Do not clear local state or either renderer until BOTH writes
+                // acknowledge success. On partial failure these are recovery copies.
+                // Clear ALL feature-state in one call per source, not per feature.
+                const gl = glMapRef.current;
+                if (gl) {
+                  for (const sourceId of internalSourceIdsRef.current) {
+                    try {
+                      gl.removeFeatureState(
+                        { source: sourceId, sourceLayer: PMTILES_SOURCE_LAYER }
+                      );
+                    } catch { /* ignore */ }
+                  }
+                  mapRef.current?.triggerRepaint && mapRef.current.triggerRepaint();
+                }
+                // The swipe pre map owns separate feature-state.
+                const preGl = swipePreGlMapRef.current;
+                if (preGl) {
+                  try {
+                    preGl.removeFeatureState(
+                      { source: SWIPE_SOURCE_ID, sourceLayer: PMTILES_SOURCE_LAYER }
+                    );
+                  } catch { /* ignore */ }
+                  swipePreMapRef.current?.triggerRepaint &&
+                    swipePreMapRef.current.triggerRepaint();
+                }
+                labeledMapRef.current = {};
+                savedLabelsRef.current = {};
+                savedLabelsLoadedRef.current = true;
+                predictionsMapRef.current = {};
+                trainedModelRef.current = null;
+                labelsDirtyRef.current = true;
+                labelsRevisionRef.current += 1;
+                refreshCounts();
+                setMetrics(null);
+                setViewportPredicted(0);
+                setClearRecoveryNotice("");
+                setStatus("Cleared all labels and predictions.");
+              },
+            );
           } catch (e) {
             console.error("Error clearing labels:", e);
-            setDialog("Error", "Failed to clear labels from the server.");
+            const detail = e.message || "Clearing labels and predictions could not be confirmed. Local copies have been kept.";
+            setPersistenceNotice(detail);
+            if (e.labelsCleared) setClearRecoveryNotice(detail);
+            setDialog("Error", detail);
             return;
           } finally {
+            writeBusyRef.current = false;
+            setIsClearing(false);
             setIsLoading(false);
           }
         },
@@ -2372,6 +2366,7 @@ const InteractiveLabeler = () => {
   // modal, then PUTs predictions so the Validation/Assessment reports have
   // full coverage. Cancellable via fullPredictAbortRef.
   async function handlePredictAll() {
+    if (writeBusyRef.current) return;
     const entries = getValidLabeledEntries();
     const perClass = {};
     entries.forEach((e) => (perClass[e.label] = (perClass[e.label] || 0) + 1));
@@ -2386,6 +2381,8 @@ const InteractiveLabeler = () => {
       return;
     }
 
+    writeBusyRef.current = true;
+    setPersistenceNotice("");
     fullPredictAbortRef.current = { cancelled: false };
     setFullPredict({ phase: "train", message: "Training model…" });
 
@@ -2452,8 +2449,12 @@ const InteractiveLabeler = () => {
         await new Promise((r) => setTimeout(r, 0));
       }
 
-      // 5. Persist. predictionsMap also gets refreshed so the in-session
-      // predict view immediately shows the full-coverage result.
+      if (fullPredictAbortRef.current.cancelled) {
+        setFullPredict(null);
+        return;
+      }
+      // 5. Publish first. Do not replace the local prediction map or claim
+      // anything was saved until the server confirms paired-artifact success.
       setFullPredict({ phase: "save", message: "Saving predictions…" });
       const predMap = {};
       const payload = [];
@@ -2466,15 +2467,16 @@ const InteractiveLabeler = () => {
           unknown: cls === CLASS_CLOUDY ? 1.0 : 0.0,
         });
       }
-      predictionsMapRef.current = {
-        ...predictionsMapRef.current,
-        ...predMap,
-      };
-      await apiPut("PutBuildingPredictions", {
+      await saveBuildingPredictions(writeLabelerData, {
         projectId,
         imageLayerId,
         modelId,
         predictions: payload,
+      }, () => {
+        predictionsMapRef.current = {
+          ...predictionsMapRef.current,
+          ...predMap,
+        };
       });
       // Re-apply to the rendered viewport.
       if (mapRef.current) hydrateViewport(mapRef.current);
@@ -2495,7 +2497,11 @@ const InteractiveLabeler = () => {
     } catch (e) {
       console.error("Predict-all failed:", e);
       setFullPredict(null);
-      setDialog("Error", `Predict-all failed: ${e?.message || e}`);
+      const detail = `Predict-all failed: ${e?.message || e}`;
+      setPersistenceNotice(detail);
+      setDialog("Error", detail);
+    } finally {
+      writeBusyRef.current = false;
     }
   }
 
@@ -2786,16 +2792,22 @@ const InteractiveLabeler = () => {
           )}
 
           <div id="interactiveLabelerProgress">
-            <div
-              className={styles.secondaryText}
-              style={{
-                marginTop: 8,
-                minHeight: 18,
-                fontSize: 12,
-              }}
-            >
-              {status}
-            </div>
+            {(persistenceNotice || clearRecoveryNotice) ? (
+              <MessageBar intent="error">
+                <MessageBarBody>{persistenceNotice || clearRecoveryNotice}</MessageBarBody>
+              </MessageBar>
+            ) : (
+              <div
+                className={styles.secondaryText}
+                style={{
+                  marginTop: 8,
+                  minHeight: 18,
+                  fontSize: 12,
+                }}
+              >
+                {status}
+              </div>
+            )}
             <div className={styles.secondaryText} style={{ marginTop: 4, fontSize: 12 }}>
               {totalLabeled} labeled · {viewportPredicted} predicted in viewport
             </div>
@@ -2804,14 +2816,14 @@ const InteractiveLabeler = () => {
           <div id="interactiveLabelerActions">
             <Button
               appearance="primary"
-              disabled={isSaving || totalLabeled === 0}
+              disabled={isSaving || isClearing || !!fullPredict || totalLabeled === 0}
               onClick={handleSaveLabels}
               style={{ marginTop: 16, width: "100%" }}
             >
               {isSaving ? "Saving…" : "Save labels"}
             </Button>
             <Button
-              disabled={!!fullPredict || !canTrain}
+              disabled={!!fullPredict || isSaving || isClearing || !canTrain}
               onClick={handlePredictAll}
               style={{ marginTop: 8, width: "100%" }}
               title="Run the trained model across every building in the layer (not just the viewport) and persist the predictions for the Validation / Assessment reports."
@@ -2819,6 +2831,7 @@ const InteractiveLabeler = () => {
               Predict all buildings
             </Button>
             <Button
+              disabled={isSaving || isClearing || !!fullPredict}
               onClick={handleClearLabels}
               className={styles.dangerButton}
               title="Remove every label for this model — both in-session and in the saved store."
