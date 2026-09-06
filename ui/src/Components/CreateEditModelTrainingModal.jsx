@@ -18,6 +18,7 @@ import { validateEmptyOrInvalid, validateInt, validateFloat } from "../util/vali
 import { useNavigate } from "react-router-dom";
 import { initGuidedTourState, setGuidedTourState } from "./GuidedTourHelper";
 import BaseModelDropdown from "./BaseModelDropdown";
+import { resolveBaseModelId } from "./BaseModelDropdownHelper";
 
 import {
   createComponentDefaultState,
@@ -65,8 +66,14 @@ const CreateEditModelTrainingModal = ({
         projectId
       );
       const cataloguedModels = await fetchModelCatalog(imageLayer, eventTypes);
+      const baseModelId = resolveBaseModelId(
+        cataloguedModels,
+        baseState.initialWeightsUrl
+      );
       setComponentState({
         ...baseState,
+        baseModelId,
+        baseModelIdError: "",
         cataloguedModels,
         catalogLoading: false,
       });
@@ -227,7 +234,6 @@ const CreateEditModelTrainingModal = ({
             <BaseModelDropdown
               componentState={componentState}
               setComponentState={setComponentState}
-              onFormChange={onFormChange}
             />
           </div>
         </div>

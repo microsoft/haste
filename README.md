@@ -62,6 +62,7 @@ Full documentation is published at **[microsoft.github.io/haste](https://microso
 
 - [Architecture](https://microsoft.github.io/haste/architecture.html) — how the components fit together
 - [API Reference](https://microsoft.github.io/haste/api/modules.html) — REST, queue, and tile-server APIs
+- [Releasing](RELEASING.md) — versioning and tagging conventions for the product, the `hastegeo` wheel, and Docker images
 
 Source for the docs lives in [`docs/`](docs/) and is built with [Jupyter Book](https://jupyterbook.org/).
 

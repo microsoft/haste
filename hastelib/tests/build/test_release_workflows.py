@@ -17,6 +17,7 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             ".github/workflows/docker-build-and-push.yml",
             ".github/workflows/dependency-validation.yml",
             ".github/workflows/rc-cleanup.yml",
+            ".github/workflows/release.yml",
         ]
 
         failures = []
@@ -257,6 +258,125 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             # and only breaks at task runtime.
             pin = block.split("prepackage:", 1)[1].split("postpackage:", 1)[0]
             self.assertIn("continueOnError: false", pin)
+
+
+class ReleaseBodyShapeTests(unittest.TestCase):
+    """A release page carries what a reader must act on, and links out."""
+
+    def setUp(self):
+        self.workflow = (
+            REPO_ROOT / ".github/workflows/release.yml"
+        ).read_text(encoding="utf-8")
+
+    def test_notes_are_summarised_not_reproduced_in_full(self):
+        self.assertIn("--summary", self.workflow)
+
+    def test_release_name_is_the_bare_version(self):
+        # The changelog heading keeps its descriptive title, since the anchor
+        # is built from it; the releases page stays a clean version list.
+        self.assertIn('echo "title=$TAG"', self.workflow)
+        self.assertNotIn("--print-title", self.workflow)
+
+    def test_body_links_to_the_changelog_anchor(self):
+        self.assertIn("--print-anchor", self.workflow)
+        self.assertIn("CHANGELOG.md#$ANCHOR", self.workflow)
+
+    def test_the_link_precedes_the_artifacts_table(self):
+        # Order in the published body follows step order, since each step
+        # appends to release-notes.md.
+        link = self.workflow.index("- name: Link to the full changelog entry")
+        wheel = self.workflow.index(
+            "- name: Resolve the matching hastegeo wheel"
+        )
+        publish = self.workflow.index("- name: Create or update the release")
+        self.assertLess(link, wheel)
+        self.assertLess(wheel, publish)
+
+
+class WheelProvenanceTests(unittest.TestCase):
+    """A release cites its hastegeo wheel; it never hosts a copy."""
+
+    def setUp(self):
+        self.workflow = (
+            REPO_ROOT / ".github/workflows/release.yml"
+        ).read_text(encoding="utf-8")
+
+    def test_wheel_is_resolved_from_reachable_tags(self):
+        self.assertIn("git tag --list 'hastegeo-v*' --merged", self.workflow)
+        self.assertIn("sort -V", self.workflow)
+
+    def test_a_missing_wheel_tag_is_not_an_error(self):
+        # Releases predating wheel tagging must publish without a wheel
+        # rather than failing or inventing one.
+        self.assertIn("recording no wheel", self.workflow)
+
+    def test_only_a_wheel_present_in_the_store_is_cited(self):
+        self.assertIn("is not an asset on haste-binaries", self.workflow)
+
+    def test_the_wheel_is_linked_and_never_copied(self):
+        # haste-binaries is the registry: a wheel needs a stable URL when it
+        # is built, long before a product tag exists. A copy on the release
+        # would be a second URL for identical bytes that no pin references.
+        self.assertIn("releases/download/haste-binaries/", self.workflow)
+        self.assertNotIn("gh release upload", self.workflow)
+        self.assertNotIn("gh release download", self.workflow)
+
+
+class LatestBadgePolicyTests(unittest.TestCase):
+    """The Latest badge must track the newest stable release, not the
+    most recently published one."""
+
+    def setUp(self):
+        self.workflow = (
+            REPO_ROOT / ".github/workflows/release.yml"
+        ).read_text(encoding="utf-8")
+
+    def test_latest_is_never_set_unconditionally(self):
+        # A bare "--latest" would let a backfill or a notes re-publish of an
+        # old tag steal the badge from a newer release.
+        self.assertNotIn("(--latest)", self.workflow)
+        self.assertIn("--latest=true", self.workflow)
+        self.assertIn("--latest=false", self.workflow)
+
+    def test_badge_is_reconciled_from_the_live_release_list(self):
+        # Deciding from a checkout-time tag snapshot let a slow run write a
+        # stale badge; the live list makes concurrent runs converge instead.
+        self.assertIn("Reconcile the Latest badge", self.workflow)
+        self.assertIn("gh release list", self.workflow)
+        self.assertIn("sort -V", self.workflow)
+        self.assertIn('gh release edit "$NEWEST"', self.workflow)
+
+    def test_publish_step_never_claims_the_badge_itself(self):
+        self.assertIn("FLAGS=(--latest=false)", self.workflow)
+
+    def test_prereleases_and_drafts_are_excluded_from_the_badge(self):
+        self.assertIn("--prerelease", self.workflow)
+        self.assertIn(
+            ".isPrerelease == false and .isDraft == false", self.workflow
+        )
+
+    def test_full_history_is_fetched_so_tags_are_visible(self):
+        self.assertIn("fetch-depth: 0", self.workflow)
+
+    def test_tooling_is_checked_out_from_the_default_branch(self):
+        # Historical tags predate the extractor, so a backfill that checked
+        # out the tag would have nothing to run.
+        self.assertIn(
+            "ref: ${{ github.event.repository.default_branch }}",
+            self.workflow,
+        )
+        self.assertNotIn("ref: ${{ steps.tag.outputs.tag }}", self.workflow)
+
+    def test_concurrency_group_is_scoped_per_tag(self):
+        # A single shared group is a trap: GitHub keeps only one *pending* run
+        # per group, so each new dispatch cancels the one queued behind it and
+        # a backfill silently loses releases.
+        self.assertIn(
+            "group: product-release-${{ github.event.inputs.tag "
+            "|| github.ref_name }}",
+            self.workflow,
+        )
+        self.assertIn("cancel-in-progress: false", self.workflow)
 
 
 if __name__ == "__main__":

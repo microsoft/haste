@@ -117,6 +117,19 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             ).strip(),
         }
         self.max_verify_attempts = int(settings.get("pc_verify_attempts") or 5)
+        # Explorer visualization (damage classification COG + render config).
+        self._explorer_render_enabled = bool(
+            settings.get("publish_explorer_render_enabled", True)
+        )
+        self._damage_raster_meters = float(
+            settings.get("publish_damage_raster_meters", 0.5)
+        )
+        self._damage_raster_max_pixels = int(
+            settings.get("publish_damage_raster_max_pixels") or 8192
+        )
+        self._damage_raster_min_zoom = int(
+            settings.get("publish_damage_raster_min_zoom") or 13
+        )
         self.artifact_storage = artifact_storage or UnifiedArtifactStorage(
             storage_type=self.config.artifact_storage_type,
             **self.config.artifact_storage_config,
@@ -1140,6 +1153,7 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
         )
         collection_id, _ = self._ids(dataset)
         self._upload_collection_tile(dataset, source, collection_id)
+        self._ensure_explorer_config(dataset, collection_id)
         metadata = self._stable_metadata(dataset)
         metadata["assetsCopiedToManagedStorage"] = True
         return PublishResult(
@@ -1161,29 +1175,11 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
         # attach it as the collection thumbnail via the Collection Asset API.
         # Best-effort: never fail the publish over a tile.
         try:
-            import geopandas as gpd
-
             from .tile import render_collection_tile
 
-            mask = source.get(ArtifactKind.VALID_MASK)
-            if mask is None:
+            buildings_gdf, aoi_gdf = self._load_buildings_aoi(source)
+            if aoi_gdf is None:
                 return
-            valid_mask = self.json_reader(mask)
-            aoi_gdf = gpd.GeoDataFrame.from_features(
-                valid_mask.get("features") or [], crs="EPSG:4326"
-            )
-            if aoi_gdf.empty:
-                return
-            buildings_artifact = source.get(ArtifactKind.GPKG) or source.get(
-                ArtifactKind.FOOTPRINTS
-            )
-            if buildings_artifact is not None:
-                with self._materialized_artifact(
-                    buildings_artifact
-                ) as local_path:
-                    buildings_gdf = gpd.read_file(local_path)
-            else:
-                buildings_gdf = aoi_gdf.iloc[0:0]
             png = render_collection_tile(
                 buildings_gdf,
                 aoi_gdf,
@@ -1379,7 +1375,9 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
             organization=self.organization,
         )
         self.stac_validator(objects)
-        return serialize_stac_objects(objects)
+        documents = serialize_stac_objects(objects)
+        self._attach_damage_class_asset(dataset, source, documents)
+        return documents
 
     @staticmethod
     def _valid_mask_crs(valid_mask: Mapping[str, Any]) -> str:
@@ -1543,16 +1541,224 @@ class PlanetaryComputerPublishingProvider(PublishingProvider):
                 namespace=["published", str(dataset_id)],
             )
 
+    def _load_buildings_aoi(self, source: ArtifactBundle):
+        """Load ``(buildings, aoi)`` GeoDataFrames from the published bundle.
+
+        ``aoi`` is ``None`` when there is no valid-area mask (or it is empty);
+        ``buildings`` is an empty frame when no building artifact is present.
+        Shared by the collection thumbnail and the damage classification COG.
+        """
+        import geopandas as gpd
+
+        mask = source.get(ArtifactKind.VALID_MASK)
+        if mask is None:
+            return None, None
+        valid_mask = self.json_reader(mask)
+        aoi_gdf = gpd.GeoDataFrame.from_features(
+            valid_mask.get("features") or [], crs="EPSG:4326"
+        )
+        if aoi_gdf.empty:
+            return None, None
+        buildings_artifact = source.get(ArtifactKind.GPKG) or source.get(
+            ArtifactKind.FOOTPRINTS
+        )
+        if buildings_artifact is not None:
+            with self._materialized_artifact(buildings_artifact) as local_path:
+                buildings_gdf = gpd.read_file(local_path)
+        else:
+            buildings_gdf = aoi_gdf.iloc[0:0]
+        return buildings_gdf, aoi_gdf
+
+    def _stage_damage_class_asset(
+        self, dataset: PublishedDataset, source: ArtifactBundle
+    ) -> Optional[dict]:
+        """Rasterize the damage output to a COG, stage it, return its STAC asset.
+
+        Returns the item asset dict (with a publish-store href), or ``None``
+        when the feature is disabled or there is nothing to rasterize.
+        Best-effort: an ordinary failure is caught and degrades to a publish
+        without Explorer visualization (the collection is still created). The
+        one exception is resource exhaustion — an OOM-kill terminates the
+        worker rather than raising, so it can still fail the publish; the raster
+        is bounded by the per-side pixel cap to keep that path unlikely.
+        """
+        if not self._explorer_render_enabled:
+            return None
+        # The classification is derived from the predicted-damage geopackage;
+        # without it (e.g. a footprints-only publish) there is nothing to
+        # render, and reusing a previously staged COG would be misleading.
+        if source.get(ArtifactKind.GPKG) is None:
+            return None
+        from .raster import (
+            DAMAGE_CLASS_ASSET_TITLE,
+            DAMAGE_CLASS_MEDIA_TYPE,
+            rasterize_damage_cog,
+        )
+
+        dest_name = "damage_class.tif"
+        destination = f"published/{dataset.datasetId}/{dest_name}"
+        try:
+            if not self.publish_storage.artifact_exists(destination):
+                buildings_gdf, aoi_gdf = self._load_buildings_aoi(source)
+                if aoi_gdf is None:
+                    return None
+                with tempfile.TemporaryDirectory() as staging_dir:
+                    cog_path = str(Path(staging_dir, dest_name))
+                    result = rasterize_damage_cog(
+                        buildings_gdf,
+                        aoi_gdf,
+                        cog_path,
+                        target_meters=self._damage_raster_meters,
+                        max_pixels_per_side=self._damage_raster_max_pixels,
+                        logger=self.logger,
+                    )
+                    if result is None:
+                        return None
+                    self.publish_storage.store_artifact(
+                        artifact_name=dest_name,
+                        src_path=cog_path,
+                        namespace=["published", str(dataset.datasetId)],
+                    )
+            return {
+                "href": self._publish_href(destination),
+                "type": DAMAGE_CLASS_MEDIA_TYPE,
+                "title": DAMAGE_CLASS_ASSET_TITLE,
+                "roles": ["data"],
+            }
+        except Exception as error:
+            self.logger.warning(
+                "Skipping Planetary Computer damage classification COG: %s",
+                type(error).__name__,
+            )
+            return None
+
+    def _attach_damage_class_asset(
+        self,
+        dataset: PublishedDataset,
+        source: ArtifactBundle,
+        documents,
+    ) -> None:
+        """Inject the ``damage_class`` COG asset into the item + collection.
+
+        Added post-serialization so the raster asset (our derived output) is
+        the renderable asset the Explorer render configuration points at.
+        """
+        from .raster import (
+            DAMAGE_CLASS_ASSET_KEY,
+            DAMAGE_CLASS_ASSET_TITLE,
+            DAMAGE_CLASS_MEDIA_TYPE,
+        )
+
+        asset = self._stage_damage_class_asset(dataset, source)
+        if asset is None:
+            return
+        documents.item.setdefault("assets", {})[DAMAGE_CLASS_ASSET_KEY] = asset
+        documents.collection.setdefault("item_assets", {})[
+            DAMAGE_CLASS_ASSET_KEY
+        ] = {
+            "type": DAMAGE_CLASS_MEDIA_TYPE,
+            "title": DAMAGE_CLASS_ASSET_TITLE,
+            "roles": ["data"],
+        }
+
+    def _damage_render_option(self) -> dict:
+        import json
+        import urllib.parse
+
+        from .raster import (
+            DAMAGE_CLASS_ASSET_KEY,
+            DAMAGE_CLASS_COLORMAP,
+            DAMAGE_CLASS_NODATA,
+        )
+
+        colormap = json.dumps(
+            {str(value): list(rgba) for value, rgba in DAMAGE_CLASS_COLORMAP.items()}
+        )
+        options = urllib.parse.urlencode(
+            {
+                "assets": DAMAGE_CLASS_ASSET_KEY,
+                "nodata": DAMAGE_CLASS_NODATA,
+                "colormap": colormap,
+            }
+        )
+        return {
+            "id": "damage",
+            "name": "Damage classification",
+            "description": (
+                "Predicted building damage (red) over undamaged buildings "
+                "(grey)."
+            ),
+            "type": "raster-tile",
+            "options": options,
+            "minZoom": self._damage_raster_min_zoom,
+        }
+
+    def _ensure_explorer_config(
+        self, dataset: PublishedDataset, collection_id: str
+    ) -> None:
+        """Register the render/mosaic/tile config the Explorer requires.
+
+        Idempotent (create-if-absent; tile-settings is a PUT). Runs only when a
+        damage classification COG was actually staged for this dataset, so the
+        render option always points at a real renderable asset. Best-effort: a
+        failure never fails the publish, it just leaves the collection
+        non-explorable until the next publish.
+        """
+        if not self._explorer_render_enabled:
+            return
+        destination = f"published/{dataset.datasetId}/damage_class.tif"
+        try:
+            if not self.publish_storage.artifact_exists(destination):
+                return
+            render_ids = {
+                option.get("id")
+                for option in self.sdk.get_render_options(collection_id)
+                if isinstance(option, Mapping)
+            }
+            if "damage" not in render_ids:
+                self.sdk.create_render_option(
+                    collection_id, self._damage_render_option()
+                )
+            mosaic_ids = {
+                mosaic.get("id")
+                for mosaic in self.sdk.get_mosaics(collection_id)
+                if isinstance(mosaic, Mapping)
+            }
+            if "most-recent" not in mosaic_ids:
+                self.sdk.create_mosaic(
+                    collection_id,
+                    {
+                        "id": "most-recent",
+                        "name": "Most recent available",
+                        "description": "Show the most recent available data",
+                        "cql": [],
+                    },
+                )
+            self.sdk.replace_tile_settings(
+                collection_id,
+                {
+                    "minZoom": self._damage_raster_min_zoom,
+                    "maxItemsPerTile": 35,
+                },
+            )
+        except Exception as error:
+            self.logger.warning(
+                "Skipping Planetary Computer Explorer configuration: %s",
+                type(error).__name__,
+            )
+
     def finalize_unpublish(self, dataset: PublishedDataset) -> None:
         """Remove staging copies once an unpublish has fully completed.
 
-        With a dedicated publish container, published assets are copied under
+        Published assets and the damage-classification COG are staged under
         ``published/<datasetId>/``. GeoCatalog cleanup only removes the STAC
-        item/collection, so those staging blobs would otherwise accumulate
-        indefinitely. Best-effort: a failure here must not fail the unpublish.
+        item/collection, so those blobs would otherwise accumulate. Always
+        attempt to delete this dataset-specific prefix -- the current feature
+        flags are not reliable evidence of what was staged when the dataset was
+        published (rendering may have since been toggled, or a dedicated store
+        added/removed), and the delete is a no-op when nothing is there.
+        Best-effort: a failure here must not fail the unpublish.
         """
-        if not self._stages_to_publish:
-            return
         prefix = f"published/{dataset.datasetId}/"
         try:
             self.publish_storage.delete_prefix(prefix)

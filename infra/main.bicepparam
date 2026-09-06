@@ -52,6 +52,7 @@ param publishingEnabled = bool(readEnvironmentVariable('HASTE_PUBLISHING_ENABLED
 // Planetary Computer publishing target. Provisioned/owned by the operator; the
 // GeoCatalog is external to this template. Default off / unset.
 param pcProviderEnabled = bool(readEnvironmentVariable('HASTE_PC_PROVIDER_ENABLED', 'false'))
+param publishExplorerRenderEnabled = bool(readEnvironmentVariable('HASTE_PUBLISH_EXPLORER_RENDER_ENABLED', 'true'))
 param pcGeocatalogUrl = readEnvironmentVariable('HASTE_PC_GEOCATALOG_URL', '')
 param pcExplorerUrl = readEnvironmentVariable('HASTE_PC_EXPLORER_URL', '')
 param pcIngestionSource = readEnvironmentVariable('HASTE_PC_INGESTION_SOURCE', '')
