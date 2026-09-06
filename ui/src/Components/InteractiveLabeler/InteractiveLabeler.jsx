@@ -58,7 +58,11 @@ import {
 } from "./interactiveModel.js";
 import { getGpu } from "./gpuLogreg.js";
 import InteractiveLabelerLoader from "./InteractiveLabelerLoader.jsx";
-import { readResponseBuffer, waitForMapReady } from "./interactiveLabelerLoading.js";
+import {
+  readResponseBuffer,
+  throwFootprintTilesLoadError,
+  waitForMapReady,
+} from "./interactiveLabelerLoading.js";
 import KeyboardShortcutHelp from "../KeyboardShortcutHelp.jsx";
 import {
   INTERACTIVE_LABELER_SHORTCUTS,
@@ -834,12 +838,7 @@ const InteractiveLabeler = () => {
       // empty map is the one thing this must not silently become. The
       // archive belongs to the image layer and is built once its footprints
       // are cached, so the usual cause is that job not having finished yet.
-      console.error("Failed to load the footprint PMTiles archive:", e);
-      throw new Error(
-        "The building footprint tiles for this image layer are not ready " +
-          "yet. They are built once per layer, shortly after the layer " +
-          "finishes processing. Try again in a few minutes."
-      );
+      throwFootprintTilesLoadError(e);
     }
 
     // Fetch the binary features sidecar and parse the HFTR header. The

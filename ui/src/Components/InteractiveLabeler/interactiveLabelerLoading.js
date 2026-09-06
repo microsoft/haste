@@ -13,6 +13,16 @@ export const PROGRESS_THROTTLE_MS = 100;
 // until the tab dies.
 export const MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024;
 
+export function throwFootprintTilesLoadError(error) {
+  if (error?.name === "AbortError") throw error;
+  console.error("Failed to load the footprint PMTiles archive:", error);
+  throw new Error(
+    "The building footprint tiles for this image layer are not ready " +
+      "yet. They are built once per layer, shortly after the layer " +
+      "finishes processing. Try again in a few minutes."
+  );
+}
+
 export function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "";
   const units = ["B", "KB", "MB", "GB"];
