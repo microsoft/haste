@@ -22,6 +22,7 @@ import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
 import PublishDatasetModal from "../PublishDatasetModal";
 import { buildUrl } from "../../util/api";
 import { buildRawGpkgUrl, canViewResults, readinessDetail } from "../Visualizer/predictionResults.js";
+import useRawPredictionDownload from "../Visualizer/useRawPredictionDownload";
 
 
 function formatFileSize(bytes) {
@@ -40,6 +41,9 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
   const [showValidationReport, setShowValidationReport] = useState(false);
   const [showAssessmentReport, setShowAssessmentReport] = useState(false);
   const [showPublishDataset, setShowPublishDataset] = useState(false);
+  const rawDownload = useRawPredictionDownload(buildUrl(buildRawGpkgUrl({
+    projectId, imageLayerId, modelId: model.modelId,
+  })));
 
   function handleDownload(url) {
     try {
@@ -90,12 +94,11 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
         key: "downloadGeopackage",
         text: "Download Geopackage (.gpkg)",
         icon: <FluentIcon name="download" />,
-        onClick: () => {
-          fileDownload(buildUrl(buildRawGpkgUrl({
-            projectId, imageLayerId, modelId: model.modelId,
-          })), setDialog);
+        onClick: async () => {
+          const outcome = await rawDownload.download();
+          if (outcome.error) setDialog("Download failed", outcome.error);
         },
-        disabled: model.gpkgUrl === null || model.gpkgUrl === undefined || model.gpkgUrl === "",
+        disabled: !model.gpkgUrl || !!rawDownload.loading,
       },
       {
         key: "downloadTrainingArtifacts",
