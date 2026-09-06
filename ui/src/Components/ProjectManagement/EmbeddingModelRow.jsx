@@ -25,9 +25,9 @@ import StatusIndicator from "../OtherComponents/StatusIndicator";
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
 import PublishDatasetModal from "../PublishDatasetModal";
-import { fileDownload } from "../../util/file";
 import { limitTextLength } from "../../util/conversion";
 import { buildRawGpkgUrl, canViewResults, readinessDetail } from "../Visualizer/predictionResults.js";
+import useRawPredictionDownload from "../Visualizer/useRawPredictionDownload";
 
 // Friendly per-row label for the embedding backbone column. The Model schema
 // stores ``embeddingModel`` as the raw backbone name passed to the workflow
@@ -82,6 +82,9 @@ const EmbeddingModelRow = ({
   const [showValidationReport, setShowValidationReport] = useState(false);
   const [showAssessmentReport, setShowAssessmentReport] = useState(false);
   const [showPublishDataset, setShowPublishDataset] = useState(false);
+  const rawDownload = useRawPredictionDownload(buildUrl(buildRawGpkgUrl({
+    projectId, imageLayerId, modelId: model.modelId,
+  })));
 
   const isProcessed = model.status === "Processed";
   const hasPredictions = !!model.gpkgUrl;
@@ -121,18 +124,10 @@ const EmbeddingModelRow = ({
         key: "downloadGeopackage",
         text: "Download Geopackage (.gpkg)",
         icon: <FluentIcon name="download" />,
-        disabled: !hasPredictions,
-        onClick: () => {
-          // Stream the predictions GeoPackage through the same-origin API
-          // (GetModelArtifact) rather than the raw blob URL, so it works for
-          // remote labelers behind the storage firewall — matching how the
-          // labeler fetches the model's other artifacts.
-          fileDownload(
-            buildUrl(
-              buildRawGpkgUrl({ projectId, imageLayerId, modelId: model.modelId })
-            ),
-            setDialog
-          );
+        disabled: !hasPredictions || !!rawDownload.loading,
+        onClick: async () => {
+          const outcome = await rawDownload.download();
+          if (outcome.error) setDialog("Download failed", outcome.error);
         },
       },
       {
