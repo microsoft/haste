@@ -2,39 +2,24 @@
 // Licensed under the MIT License.
 // PR136's artifact/renderer boundary, with eager read-only artifact semantics.
 import { useEffect, useState } from "react";
-import { PMTiles } from "pmtiles";
 import { buildUrl } from "../../util/api";
-import { getPmtilesProtocol, InMemoryPMTilesSource } from "../../util/pmtiles.js";
-import { fetchArtifactBuffer, loadPredictionAttributes } from "./predictionArtifactLoader.js";
+import { loadPredictionArtifacts } from "./predictionArtifactLoader.js";
 import { predictionRenderKey } from "./predictionResults.js";
 
-export default function usePredictionArtifacts(results) {
+export default function usePredictionArtifacts(results, preloaded) {
   const [loaded, setLoaded] = useState(null);
   const key = predictionRenderKey(results);
 
   useEffect(() => {
     if (!results || results.predictionsReady !== true || results.buildingCount === 0) return;
+    if (preloaded?.results === results) return;
     const controller = new AbortController();
     const { signal } = controller;
     async function load() {
       try {
-        const { attrs, archiveUrl } = await loadPredictionAttributes(results, buildUrl, signal);
-        const protocol = getPmtilesProtocol();
-        let archive = protocol.get(archiveUrl);
-        if (!archive) {
-          const buffer = await fetchArtifactBuffer(archiveUrl, { signal });
-          signal.throwIfAborted();
-          archive = new PMTiles(new InMemoryPMTilesSource(archiveUrl, buffer));
-        }
-        // Validate the archive before declaring a successful download. Its
-        // bounds also locate embedding results without a labeling study area.
-        const header = await archive.getHeader();
+        const data = await loadPredictionArtifacts(results, buildUrl, signal);
         signal.throwIfAborted();
-        protocol.add(archive);
-        setLoaded({
-          key, results, attrs, archiveKey: archiveUrl,
-          bounds: [header.minLon, header.minLat, header.maxLon, header.maxLat],
-        });
+        setLoaded({ key, results, ...data });
       } catch (error) {
         if (!signal.aborted) setLoaded({
           key, results,
@@ -46,9 +31,10 @@ export default function usePredictionArtifacts(results) {
     }
     load();
     return () => controller.abort();
-  }, [results, key]);
+  }, [results, key, preloaded]);
 
   // Never expose the previous generation while its replacement downloads.
+  if (preloaded?.results === results && results?.predictionsReady === true) return { key, ...preloaded };
   return loaded?.key === key && loaded.results === results &&
     results?.predictionsReady === true && results?.buildingCount !== 0
     ? loaded

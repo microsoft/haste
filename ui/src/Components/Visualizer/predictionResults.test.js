@@ -257,19 +257,24 @@ test("cancelling a pending stream read cannot return partial attributes", async 
   await assert.rejects(read, { name: "AbortError" });
 });
 
-test("read-only modules do not import editor or preparation machinery", async () => {
+test("shared artifact hooks stay read-only while the results page gains an editor", async () => {
   for (const file of [
-    "Visualizer.jsx", "usePredictionArtifacts.js", "usePredictionFootprints.js",
+    "usePredictionArtifacts.js", "usePredictionFootprints.js", "predictionFootprintMap.js",
     "useVisualizerResults.js", "predictionArtifactLoader.js", "PredictionStatusNote.jsx",
   ]) {
     const source = await readFile(new URL(file, import.meta.url), "utf8");
     assert.doesNotMatch(source, /predictionPrep|PutPreparePrediction|GetPredictionEditSession|apiPut|PredictionEditPanel|PredictionVersionControls|setInterval/);
   }
   const source = await readFile(new URL("Labels.jsx", import.meta.url), "utf8");
-  assert.doesNotMatch(source, /visualizerEditButton/);
+  assert.match(source, /visualizerEditButton/);
+  for (const file of ["Visualizer.jsx", "usePredictionEditor.js", "predictionVersions.js", "usePredictionEditorMap.js"]) {
+    const code = await readFile(new URL(file, import.meta.url), "utf8");
+    assert.doesNotMatch(code, /predictionPrep|PutPreparePrediction|setInterval/);
+  }
   for (const file of ["ModelResultsButton.jsx", "EmbeddingModelRow.jsx"]) {
     const row = await readFile(new URL(`../ProjectManagement/${file}`, import.meta.url), "utf8");
-    assert.match(row, /buildRawGpkgUrl/);
+    assert.match(row, /onClick: \(\) => setShowDownloadPredictions\(true\)/);
     assert.doesNotMatch(row, /handleDownload\(model\.gpkgUrl\)/);
+    assert.doesNotMatch(row, /fileDownload\(buildUrl\(buildRawGpkgUrl/);
   }
 });

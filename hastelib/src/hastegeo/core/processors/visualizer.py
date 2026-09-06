@@ -6,12 +6,19 @@
 import json
 from urllib.parse import quote
 
+from ..models.prediction_edits import PredictionSelectionRequest
 from ..models.prediction_results import ResultsRequest
 from ..models.projects import ImageLayer, LabelProject, Model, Project
 from ..models.visualizer import Imagery, Visualizer
-from ..utils.prediction_readiness import artifact_api_url, prediction_flavor
+from ..utils.prediction_readiness import artifact_api_url
 from .metadata import MetadataProcessor
 from .prediction_results import PredictionResultsProcessor
+from .prediction_sources import (
+    prediction_source_url,
+    prediction_versions,
+    resolve_prediction_source,
+    source_readiness,
+)
 
 
 def build_visualizer(
@@ -20,6 +27,9 @@ def build_visualizer(
     project: Project,
     labels: LabelProject,
     titiler_endpoint: str,
+    *,
+    version: int | None = None,
+    prediction_revision: str | None = None,
 ) -> Visualizer:
     bounds = labels.features[0].bbox or [] if labels.features else []
 
@@ -32,9 +42,22 @@ def build_visualizer(
         )
         return Imagery(url=tile_url, bounds=bounds)
 
-    flavor = prediction_flavor(model)
+    source = resolve_prediction_source(
+        model,
+        version,
+        default="latest_current",
+        prediction_revision=prediction_revision,
+    )
+    flavor = source.flavor
     predicted_url = (
-        model.predictedDamageLayerUrl if flavor == "inference" else None
+        model.predictedDamageLayerUrl
+        if flavor == "inference"
+        and (
+            not source.is_edited
+            or source.predictionRevision is not None
+            and source.predictionRevision == model.predictionRevision
+        )
+        else None
     )
     classified_url = (
         predicted_url.replace("_visualizer.tif", "_predictions.tif")
@@ -53,6 +76,7 @@ def build_visualizer(
         safe="",
     )
     results = PredictionResultsProcessor.response(model, layer)
+    readiness = source_readiness(model, layer, source)
     return Visualizer(
         projectId=project.projectId,
         imageLayerId=layer.imageLayerId,
@@ -69,14 +93,21 @@ def build_visualizer(
         footprintTilesUrl=artifact_api_url(model, "footprint_pmtiles")
         if layer.footprintPmtilesUrl
         else None,
-        predictionAttrsUrl=results["predictionAttrsUrl"],
-        gpkgUrl=results["gpkgUrl"],
-        predictionRevision=model.predictionRevision,
-        flavor=flavor,
-        supportsThreshold=flavor == "inference",
-        buildingCount=model.predictedBuildingCount,
-        predictionsReady=results["predictionsReady"],
-        predictionsReadiness=results["predictionsReadiness"],
+        predictionAttrsUrl=prediction_source_url(
+            model, source, "prediction_attrs"
+        )
+        if source.predictionAttrsUrl
+        else None,
+        gpkgUrl=prediction_source_url(model, source, "gpkg")
+        if source.gpkgUrl
+        else None,
+        **source.descriptor(),
+        predictionVersions=prediction_versions(model, layer),
+        supportsThreshold=flavor == "inference" and not source.is_edited,
+        buildingCount=source.buildingCount,
+        editedCount=source.editedCount,
+        predictionsReady=readiness["ready"],
+        predictionsReadiness=readiness,
         rawPredictionsReady=results["rawPredictionsReady"],
         sourceTypePreEvent=layer.sourceTypePreEvent,
         sourceTypePostEvent=layer.sourceTypePostEvent,
@@ -86,7 +117,9 @@ def build_visualizer(
 
 
 class VisualizerProcessor(PredictionResultsProcessor):
-    def load(self, request: ResultsRequest) -> Visualizer:
+    def load(
+        self, request: ResultsRequest | PredictionSelectionRequest
+    ) -> Visualizer:
         model, layer = self.context(request)
         metadata_types = self.config.get_metadata_types()
         raw_project = MetadataProcessor(
@@ -113,5 +146,11 @@ class VisualizerProcessor(PredictionResultsProcessor):
             LabelProject(),
         )
         return build_visualizer(
-            model, layer, project, labels, self.config.titiler_endpoint
+            model,
+            layer,
+            project,
+            labels,
+            self.config.titiler_endpoint,
+            version=getattr(request, "version", None),
+            prediction_revision=getattr(request, "predictionRevision", None),
         )

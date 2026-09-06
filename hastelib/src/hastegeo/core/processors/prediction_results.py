@@ -1,16 +1,13 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-"""Paired prediction outputs on Model, using ordinary metadata load/save.
-
-The final re-read rejects known superseded writes; it is not CAS or a
-transaction. GIS/upload failure leaves the last successful pair untouched.
-"""
+"""Eager interactive result publication and protected read-only resolution."""
 
 import asyncio
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, Callable
 
 from ..artifact_storage.unified_artifact_storage import UnifiedArtifactStorage
 from ..config import Config
@@ -22,10 +19,8 @@ from ..models.prediction_results import (
 )
 from ..models.projects import ImageLayer, Model
 from ..utils.blob import BlobRange, read_blob_range
-from ..utils.footprint_artifacts import validate_layer_footprint_url
 from ..utils.metadata import MetadataUtils
 from ..utils.prediction_attrs import attrs_artifact_name
-from ..utils.prediction_download import prediction_download_filename
 from ..utils.prediction_readiness import (
     artifact_api_url,
     raw_predictions_readiness,
@@ -33,69 +28,28 @@ from ..utils.prediction_readiness import (
 )
 from .building_predictions import write_building_predictions
 from .metadata import MetadataProcessor
+from .prediction_generations import (
+    PredictionGenerationRepository,
+    PredictionSupersededError,
+)
+from .prediction_sources import (
+    prediction_source_url,
+    prediction_versions,
+    resolve_prediction_source,
+    source_readiness,
+)
 
-MAX_ATTRIBUTES_BYTES = 64 * 1024**2
+MAX_ATTRIBUTES_BYTES = 256 * 1024**2
+MODEL_ARTIFACT_FIELDS = {
+    "gpkg": "gpkgUrl",
+    "prediction_attrs": "predictionAttrsUrl",
+    "sidecar": "featuresSidecarUrl",
+    "geojson": "embeddingsGeoJSONUrl",
+}
 
 
 class PredictionRequestError(ValueError):
-    """Invalid model/layer association or prediction coverage."""
-
-
-class PredictionSupersededError(RuntimeError):
-    """Model changed before this output could be published."""
-
-
-def fetch_prediction_file(
-    storage: UnifiedArtifactStorage,
-    location: str,
-    directory: str,
-    max_bytes: int | None = None,
-) -> Path:
-    """Adapt the existing Local/Blob fetch interface for one expected file."""
-    relative = storage.resolve_artifact_path(location)
-    if not storage.artifact_exists(relative):
-        raise FileNotFoundError("Prediction artifact is missing")
-    if (
-        max_bytes is not None
-        and storage.get_artifact_size(relative) > max_bytes
-    ):
-        raise ValueError("Prediction attributes exceed the download limit")
-    storage.fetch_artifact(
-        src_path=storage.get_file_path(relative), dst_path=directory
-    )
-    path = Path(directory, relative)
-    if not path.is_file():  # Local fetch copies the basename into directory.
-        path = Path(directory, Path(relative).name)
-    if not path.is_file():
-        raise FileNotFoundError("Prediction artifact was not downloaded")
-    return path
-
-
-def validate_uploaded_pair(
-    storage: UnifiedArtifactStorage,
-    gpkg_path: str,
-    attrs_path: str,
-    revision: str,
-    flavor: str,
-) -> PredictionAttributes:
-    """Check uploaded storage, not a runner's local success status."""
-    if (
-        not storage.artifact_exists(gpkg_path)
-        or storage.get_artifact_size(gpkg_path) <= 0
-    ):
-        raise FileNotFoundError("Uploaded prediction GeoPackage is missing")
-    with TemporaryDirectory() as directory:
-        path = fetch_prediction_file(
-            storage, attrs_path, directory, MAX_ATTRIBUTES_BYTES
-        )
-        with path.open("rb") as stream:
-            content = stream.read(MAX_ATTRIBUTES_BYTES + 1)
-        if len(content) > MAX_ATTRIBUTES_BYTES:
-            raise ValueError("Prediction attributes exceed the download limit")
-    attrs = PredictionAttributes.model_validate_json(content)
-    if attrs.predictionRevision != revision or attrs.flavor != flavor:
-        raise ValueError("Prediction attributes do not match this output")
-    return attrs
+    """A validated request has an invalid association or prediction coverage."""
 
 
 async def read_result_artifact(
@@ -103,14 +57,17 @@ async def read_result_artifact(
 ) -> BlobRange:
     if config.artifact_storage_type != "local":
         return await read_blob_range(url, offset, length)
-    storage = UnifiedArtifactStorage("local", **config.artifact_storage_config)
-    path = Path(storage.get_file_path(storage.resolve_artifact_path(url)))
+    storage = UnifiedArtifactStorage(
+        storage_type="local", **config.artifact_storage_config
+    )
+    relative = storage.resolve_artifact_path(url)
+    path = Path(storage.get_file_path(relative))
 
     def read() -> BlobRange:
         stat = path.stat()
-        with path.open("rb") as stream:
-            stream.seek(offset)
-            data = stream.read() if length is None else stream.read(length)
+        with path.open("rb") as source:
+            source.seek(offset)
+            data = source.read() if length is None else source.read(length)
         return BlobRange(
             data,
             stat.st_size,
@@ -121,133 +78,245 @@ async def read_result_artifact(
     return await asyncio.to_thread(read)
 
 
+def validate_uploaded_pair(
+    storage: UnifiedArtifactStorage,
+    gpkg_path: str,
+    attrs_path: str,
+    revision: str,
+    flavor: str,
+) -> PredictionAttributes:
+    """Verify actual uploaded storage, not node files or generated URLs."""
+    if (
+        not storage.artifact_exists(gpkg_path)
+        or storage.get_artifact_size(gpkg_path) <= 0
+    ):
+        raise FileNotFoundError("Uploaded prediction GeoPackage is missing")
+    attributes = PredictionAttributes.model_validate_json(
+        storage.read_artifact_bytes(attrs_path, MAX_ATTRIBUTES_BYTES)
+    )
+    if (
+        attributes.predictionRevision != revision
+        or attributes.flavor != flavor
+    ):
+        raise ValueError(
+            "Uploaded prediction attributes do not match this generation"
+        )
+    return attributes
+
+
 class PredictionResultsProcessor:
-    def __init__(self, config: Config | None = None) -> None:
+    def __init__(
+        self,
+        config: Config | None = None,
+        processor_factory: Callable[..., MetadataProcessor] | None = None,
+    ) -> None:
         self.config = config or Config()
+        self.processor_factory = processor_factory or MetadataProcessor
+        self.repository = PredictionGenerationRepository(
+            self.config, self.processor_factory
+        )
 
-    def metadata(
-        self, project_id: str, kind: str = "model"
-    ) -> MetadataProcessor:
-        return MetadataProcessor(kind, project_id, self.config)
-
-    def model(self, project_id: str, model_id: str) -> Model:
-        record = self.metadata(project_id).load(model_id)
-        if not record:
-            raise FileNotFoundError("Model not found")
-        model = Model.model_validate(record)
-        if model.projectId != project_id or model.modelId != model_id:
-            raise PredictionRequestError(
-                "Model does not belong to this project"
-            )
-        return model
+    def storage(self, project_id: str | None = None) -> UnifiedArtifactStorage:
+        return UnifiedArtifactStorage(
+            storage_type=self.config.artifact_storage_type,
+            partition_key=project_id,
+            **self.config.artifact_storage_config,
+        )
 
     def layer(self, project_id: str, layer_id: str) -> ImageLayer:
-        record = self.metadata(
-            project_id, self.config.get_metadata_types().IMAGELAYER.value
-        ).load(layer_id)
-        if not record:
+        raw = self.processor_factory(
+            data_type=self.config.get_metadata_types().IMAGELAYER.value,
+            partition_key=project_id,
+            config=self.config,
+        ).load_strict(layer_id)
+        if not raw:
             raise FileNotFoundError("Image layer not found")
-        layer = ImageLayer.model_validate(record)
+        layer = ImageLayer.model_validate(raw)
         if layer.projectId != project_id or layer.imageLayerId != layer_id:
-            raise PredictionRequestError(
+            raise FileNotFoundError(
                 "Image layer does not belong to this project"
             )
         return layer
 
     def context(self, request: ResultsRequest) -> tuple[Model, ImageLayer]:
-        model = self.model(request.projectId, request.modelId)
+        model = self.repository.load(request.projectId, request.modelId)
         if model.imageLayerId != request.imageLayerId:
-            raise PredictionRequestError("Model does not belong to this layer")
+            raise PredictionRequestError(
+                "Model does not belong to the requested image layer"
+            )
         return model, self.layer(request.projectId, request.imageLayerId)
 
-    def _publish(self, baseline: Model, fields: dict[str, Any]) -> Model:
-        current = self.model(baseline.projectId, baseline.modelId)
-        if (
-            current.imageLayerId != baseline.imageLayerId
-            or current.predictionRevision != baseline.predictionRevision
-        ):
-            raise PredictionSupersededError(
-                "Model predictions changed before publication"
+    def raw_context(self, request: ResultsRequest) -> tuple[Model, ImageLayer]:
+        """Resolve a report's authoritative raw source without viewer gates."""
+        model, layer = self.context(request)
+        if not raw_predictions_readiness(model)["ready"]:
+            raise FileNotFoundError(
+                "No raw predictions available for this model"
             )
-        self.metadata(current.projectId).save(current.modelId, fields)
-        return current.model_copy(update=fields)
+        return model, layer
 
     def save_building_predictions(
         self, request: BuildingPredictionsRequest
     ) -> dict[str, Any]:
         model, layer = self.context(request)
+        baseline_revision = model.predictionRevision
         if model.modelType != "embedding":
             raise PredictionRequestError(
                 "Interactive predictions require an embedding model"
             )
         revision = MetadataUtils.generate_id()
-        fields = dict(
-            gpkgUrl=None,
-            predictionAttrsUrl=None,
-            predictedBuildingCount=0,
-            predictionRevision=revision,
+        if not request.predictions:
+            with self.repository.lock(
+                request.projectId, request.modelId
+            ) as lease:
+                model = self.repository.load(
+                    request.projectId, request.modelId
+                )
+                if (
+                    model.imageLayerId != request.imageLayerId
+                    or model.modelType != "embedding"
+                ):
+                    raise PredictionRequestError("Model association changed")
+                if model.predictionRevision != baseline_revision:
+                    raise PredictionSupersededError(
+                        "Prediction source generation changed before clear"
+                    )
+                self.repository.initialize(model, revision, clear=True)
+                self.repository.save_locked(model, lease)
+            return self.response(model, layer)
+        if not layer.buildingFootprintsUrl:
+            raise FileNotFoundError("Cached building footprints are missing")
+
+        storage = self.storage(request.projectId)
+        # Root-relative resolution works for both local file URLs and blobs.
+        root_storage = self.storage()
+        source_path = root_storage.resolve_artifact_path(
+            layer.buildingFootprintsUrl
         )
-        if request.predictions:
-            if not layer.buildingFootprintsUrl:
+        namespace = ["prediction_results", request.modelId, revision]
+        gpkg_name = (
+            self.config.get_artifact_types().BUILDING_PREDICTIONS_GPKG.value.substitute(
+                modelName=request.modelId
+            )
+            + ".gpkg"
+        )
+        attrs_name = attrs_artifact_name(request.modelId)
+        with TemporaryDirectory(dir=self.config.TEMP_DIR) as directory:
+            # fetch_artifact is a prefix downloader on Blob and an exact-file
+            # copier locally. Check the exact file after downloading.
+            if self.config.artifact_storage_type == "local":
+                source = root_storage.artifact_storage.get_file_path(
+                    source_path
+                )
+                footprints = root_storage.fetch_artifact(
+                    src_path=source, dst_path=directory
+                )
+                footprints = os.path.join(
+                    footprints, os.path.basename(source_path)
+                )
+            else:
+                root_storage.fetch_artifact(
+                    src_path=source_path, dst_path=directory
+                )
+                footprints = os.path.join(directory, source_path)
+            if not Path(footprints).is_file():
                 raise FileNotFoundError(
                     "Cached building footprints are missing"
                 )
-            storage = UnifiedArtifactStorage(
-                self.config.artifact_storage_type,
-                **self.config.artifact_storage_config,
-            )
-            namespace = [
-                MetadataUtils.hash_string(model.projectId),
-                "predictions",
-                model.modelId,
-                revision,
-            ]
-            gpkg_name = f"building_predictions_{model.modelId}.gpkg"
-            attrs_name = attrs_artifact_name(model.modelId)
-            with TemporaryDirectory(dir=self.config.TEMP_DIR) as directory:
-                footprints = fetch_prediction_file(
-                    storage, layer.buildingFootprintsUrl, directory
+            # GIS validates complete IDs/coverage before a good generation is
+            # invalidated. The empty clear path never downloads feature data.
+            try:
+                artifacts = write_building_predictions(
+                    footprints,
+                    [
+                        row.model_dump(exclude_none=True)
+                        for row in request.predictions
+                    ],
+                    os.path.join(directory, gpkg_name),
+                    os.path.join(directory, attrs_name),
+                    prediction_revision=revision,
+                )
+            except ValueError:
+                raise PredictionRequestError(
+                    "Predictions must match the cached footprint source"
+                ) from None
+            with self.repository.lock(
+                request.projectId, request.modelId
+            ) as lease:
+                model = self.repository.load(
+                    request.projectId, request.modelId
+                )
+                if (
+                    model.imageLayerId != request.imageLayerId
+                    or model.modelType != "embedding"
+                ):
+                    raise PredictionRequestError("Model image layer changed")
+                if model.predictionRevision != baseline_revision:
+                    raise PredictionSupersededError(
+                        "Prediction source generation changed during validation"
+                    )
+                self.repository.initialize(model, revision)
+                self.repository.save_locked(model, lease)
+            try:
+                gpkg_path = storage.store_artifact(
+                    artifact_name=gpkg_name,
+                    src_path=artifacts.gpkg_path,
+                    namespace=namespace,
+                )
+                attrs_path = storage.store_artifact(
+                    artifact_name=attrs_name,
+                    src_path=artifacts.attrs_path,
+                    namespace=namespace,
                 )
                 try:
-                    output = write_building_predictions(
-                        str(footprints),
-                        [
-                            row.model_dump(exclude_none=True)
-                            for row in request.predictions
-                        ],
-                        str(Path(directory, gpkg_name)),
-                        str(Path(directory, attrs_name)),
-                        prediction_revision=revision,
+                    attributes = validate_uploaded_pair(
+                        storage, gpkg_path, attrs_path, revision, "embedding"
                     )
                 except ValueError:
-                    raise PredictionRequestError(
-                        "Predictions must cover the cached footprints with valid IDs"
+                    raise RuntimeError(
+                        "Uploaded prediction artifacts are invalid"
                     ) from None
-                gpkg = storage.store_artifact(
-                    gpkg_name, src_path=output.gpkg_path, namespace=namespace
-                )
-                attrs = storage.store_artifact(
-                    attrs_name, src_path=output.attrs_path, namespace=namespace
-                )
-                count = validate_uploaded_pair(
-                    storage, gpkg, attrs, revision, "embedding"
-                ).n
-            fields.update(
-                gpkgUrl=storage.get_download_url(
+                gpkg_url = storage.get_download_url(
                     identifier=gpkg_name, extra_partition_keys=namespace
-                ),
-                predictionAttrsUrl=storage.get_download_url(
+                )
+                attrs_url = storage.get_download_url(
                     identifier=attrs_name, extra_partition_keys=namespace
-                ),
-                predictedBuildingCount=count,
-            )
-        fields["predictedAt"] = MetadataUtils.get_timestamp()
-        return self.response(self._publish(model, fields), layer)
+                )
+                with self.repository.lock(
+                    request.projectId, request.modelId
+                ) as lease:
+                    model = self.repository.load(
+                        request.projectId, request.modelId
+                    )
+                    if model.predictionRevision != revision:
+                        raise PredictionSupersededError(
+                            "Prediction generation was superseded"
+                        )
+                    model.gpkgUrl = gpkg_url
+                    model.predictionAttrsUrl = attrs_url
+                    model.predictedBuildingCount = attributes.n
+                    model.predictedAt = MetadataUtils.get_timestamp()
+                    model.predictionState = "ready"
+                    model.predictionReadyRevision = revision
+                    model.predictionGpkgFilename = gpkg_name
+                    model.predictionOutputPrefix = str(
+                        PurePosixPath(
+                            MetadataUtils.hash_string(request.projectId),
+                            *namespace,
+                        )
+                    )
+                    self.repository.save_locked(model, lease)
+            except Exception:
+                self.repository.fail(
+                    request.projectId, request.modelId, revision
+                )
+                raise
+        return self.response(model, layer)
 
     @staticmethod
     def response(model: Model, layer: ImageLayer) -> dict[str, Any]:
-        raw_ready = raw_predictions_readiness(model)["ready"]
         readiness = results_readiness(model, layer)
+        raw_ready = raw_predictions_readiness(model)["ready"]
         return {
             "count": model.predictedBuildingCount,
             "buildingCount": model.predictedBuildingCount,
@@ -255,9 +324,11 @@ class PredictionResultsProcessor:
             "predictedAt": model.predictedAt,
             "predictionRevision": model.predictionRevision,
             "gpkgUrl": artifact_api_url(model, "gpkg") if raw_ready else None,
-            "predictionAttrsUrl": artifact_api_url(model, "prediction_attrs")
-            if raw_ready and model.predictionAttrsUrl
-            else None,
+            "predictionAttrsUrl": (
+                artifact_api_url(model, "prediction_attrs")
+                if model.predictionAttrsUrl and raw_ready
+                else None
+            ),
             "predictionsReady": readiness["ready"],
             "predictionsReadiness": readiness,
             "rawPredictionsReady": raw_ready,
@@ -267,70 +338,81 @@ class PredictionResultsProcessor:
         self, project_id: str, layer_id: str
     ) -> list[dict[str, Any]]:
         layer = self.layer(project_id, layer_id)
-        rows = self.metadata(project_id).load_all_from_partition()
-        for row in rows:
-            if row.get("imageLayerId") == layer_id:
-                state = self.response(Model.model_validate(row), layer)
-                row.update(
-                    {
-                        k: v
-                        for k, v in state.items()
-                        if k not in ("gpkgUrl", "predictionAttrsUrl")
-                    }
-                )
-        return [row for row in rows if row.get("imageLayerId") == layer_id]
-
-    def download_filename(self, request: ModelArtifactRequest) -> str:
-        model = self.model(request.projectId, request.modelId)
-        if (
-            request.predictionRevision
-            and request.predictionRevision != model.predictionRevision
-        ):
-            raise FileNotFoundError("Prediction output is no longer current")
-        return prediction_download_filename(model)
+        records = self.repository.metadata(
+            project_id
+        ).load_all_from_partition()
+        output = []
+        for raw in records:
+            if raw.get("imageLayerId") != layer_id:
+                continue
+            model = self.repository.load(project_id, str(raw["modelId"]))
+            data = model.model_dump()
+            data.update(self.response(model, layer))
+            selected = resolve_prediction_source(
+                model, default="latest_current"
+            )
+            readiness = source_readiness(model, layer, selected)
+            data.update(
+                {
+                    **selected.descriptor(),
+                    "gpkgUrl": (
+                        prediction_source_url(model, selected, "gpkg")
+                        if selected.gpkgUrl
+                        else None
+                    ),
+                    "predictionAttrsUrl": (
+                        prediction_source_url(
+                            model, selected, "prediction_attrs"
+                        )
+                        if selected.predictionAttrsUrl
+                        else None
+                    ),
+                    "buildingCount": selected.buildingCount,
+                    "predictionsReady": readiness["ready"],
+                    "predictionsReadiness": readiness,
+                    "editedPredictions": prediction_versions(model, layer),
+                    "hasEditedPredictions": bool(model.editedPredictions),
+                }
+            )
+            data.pop("predictionEditReceipts", None)
+            output.append(data)
+        return output
 
     def resolve_artifact(
         self, request: ModelArtifactRequest
     ) -> tuple[str, bool]:
-        model = (
-            self.model(request.projectId, request.modelId)
-            if request.modelId
-            else None
-        )
-        if (
-            model
-            and request.imageLayerId
-            and model.imageLayerId != request.imageLayerId
-        ):
-            raise PredictionRequestError("Model does not belong to this layer")
+        model = None
+        if request.modelId:
+            model = self.repository.load(request.projectId, request.modelId)
+            if (
+                request.imageLayerId
+                and request.imageLayerId != model.imageLayerId
+            ):
+                raise PredictionRequestError(
+                    "Model does not belong to the requested image layer"
+                )
         if request.kind == "footprint_pmtiles":
             layer = self.layer(
                 request.projectId, request.imageLayerId or model.imageLayerId
             )
             url = layer.footprintPmtilesUrl
-            if url:
-                try:
-                    validate_layer_footprint_url(url, layer, self.config)
-                except ValueError as error:
-                    raise PredictionRequestError(str(error)) from error
         else:
             if request.kind in ("gpkg", "prediction_attrs"):
-                if (
-                    request.predictionRevision
-                    and request.predictionRevision != model.predictionRevision
-                ):
-                    raise FileNotFoundError(
-                        "Prediction output is no longer current"
-                    )
-                if not raw_predictions_readiness(model)["ready"]:
-                    raise FileNotFoundError("Raw predictions are unavailable")
-            field = {
-                "gpkg": "gpkgUrl",
-                "prediction_attrs": "predictionAttrsUrl",
-                "sidecar": "featuresSidecarUrl",
-                "geojson": "embeddingsGeoJSONUrl",
-            }[request.kind]
-            url = getattr(model, field)
+                selected = resolve_prediction_source(
+                    model,
+                    request.version,
+                    default="raw",
+                    prediction_revision=request.predictionRevision,
+                )
+                url = (
+                    selected.gpkgUrl
+                    if request.kind == "gpkg"
+                    else selected.predictionAttrsUrl
+                )
+            else:
+                url = getattr(model, MODEL_ARTIFACT_FIELDS[request.kind])
         if not url:
-            raise FileNotFoundError("Artifact is unavailable")
+            raise FileNotFoundError("Artifact is not available")
+        # Always revalidate generations: a retired query cannot return another
+        # generation's content from browser cache, even though storage is immutable.
         return url, request.kind in ("gpkg", "prediction_attrs")

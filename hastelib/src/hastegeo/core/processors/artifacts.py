@@ -267,6 +267,8 @@ class ArtifactProcessor:
         data: str = None,
         src_path: str = None,
         namespace: str | list = None,
+        *,
+        overwrite: bool = True,
     ) -> str:
         """
         Store an artifact in artifact storage.
@@ -276,6 +278,7 @@ class ArtifactProcessor:
             data=data,
             src_path=src_path,
             namespace=namespace,
+            **({"overwrite": False} if not overwrite else {}),
         )
 
     def prepare_zip_job(self):
