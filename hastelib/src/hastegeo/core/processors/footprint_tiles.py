@@ -33,18 +33,28 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import ArtifactTypes, Config
 from ..data_layer.unified import UnifiedDataLayer
+from ..models.footprint_tiles import FootprintTilesRequest
 from ..models.projects import ImageLayer, TrainingJob
 from ..runners.unified_runner import UnifiedRunner
+from ..utils.blob import fetch_url_text
 from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
+from .metadata import MetadataProcessor
 
 # Do not prefix with '$'. Replaced at runtime with the task working dir.
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 FOOTPRINT_TILES_PREFIX = "ftl"
 MANIFEST_FILENAME = "footprint_tiles_manifest.json"
 FRIENDLY_LOG_FILENAME = "footprint_tiles_friendly.log"
+FOOTPRINT_TILE_FIELDS = {
+    "footprintPmtilesUrl",
+    "footprintTilesJob",
+    "footprintTilesStatus",
+    "footprintTilesStatusMessage",
+    "footprintTilesRequestId",
+}
 
 
 def pmtiles_artifact_name(image_layer_id: str) -> str:
@@ -71,8 +81,9 @@ def layer_needs_footprint_tiles(image_layer: ImageLayer) -> bool:
 def build_tiles_message(
     project_id: str,
     image_layer_id: str,
-    source_footprints_url: Optional[str] = None,
     force: bool = False,
+    request_id: Optional[str] = None,
+    task_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build a footprint-tiles queue message payload.
 
@@ -80,20 +91,21 @@ def build_tiles_message(
     from metadata so a re-queued poll message and a fresh request take
     the same code path.
     """
-    return {
-        "projectId": project_id,
-        "imageLayerId": image_layer_id,
-        "sourceFootprintsUrl": source_footprints_url or "",
-        "force": bool(force),
-    }
+    return FootprintTilesRequest(
+        projectId=project_id,
+        imageLayerId=image_layer_id,
+        force=force,
+        requestId=request_id or MetadataUtils.generate_id(),
+        taskId=task_id,
+    ).model_dump(exclude_none=True)
 
 
 def enqueue_footprint_tiles(
     project_id: str,
     image_layer_id: str,
-    source_footprints_url: Optional[str] = None,
     force: bool = False,
     config: Optional[Config] = None,
+    request_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Put a tiling request on the footprint-tiles queue.
 
@@ -105,8 +117,8 @@ def enqueue_footprint_tiles(
     message = build_tiles_message(
         project_id=project_id,
         image_layer_id=image_layer_id,
-        source_footprints_url=source_footprints_url,
         force=force,
+        request_id=request_id,
     )
     queue_client = AzureQueueHandler(
         config.queue_config["queue_connection_string"],
@@ -124,8 +136,11 @@ def request_preparation(
 ) -> Dict[str, Any]:
     """Decide whether to enqueue a tiling job, and do it if so.
 
-    Mutates ``image_layer`` in place when a job is queued; the caller
-    persists it.
+    The caller supplies an authoritative, already-persisted image layer.
+    Persist PENDING before publishing, and never save the caller's stale
+    snapshot after publishing: a consumer may already have advanced it.
+    Queue failures are recorded as FAILED (unless a consumer advanced the
+    request despite an ambiguous send failure), then propagated.
 
     Returns:
         ``{"imageLayerId", "queued", "tilesReady", "status",
@@ -138,7 +153,11 @@ def request_preparation(
     if config is None:
         config = Config()
     statuses = config.get_status_types()
-    logger = Logger.get_logger(__name__)
+    metadata = MetadataProcessor(
+        data_type=config.get_metadata_types().IMAGELAYER.value,
+        partition_key=image_layer.projectId,
+        config=config,
+    )
 
     if not image_layer.buildingFootprintsUrl:
         raise ValueError(
@@ -162,6 +181,11 @@ def request_preparation(
             "statusMessage": image_layer.footprintTilesStatusMessage or "",
         }
 
+    if in_flight:
+        # Force is not cancellation. Duplicates must keep the active job,
+        # even while a forced rebuild still has the old archive available.
+        return _state(False)
+
     if not force and not needs_tiles:
         # The archive already exists: record the transition once rather
         # than paying for a redundant container job.
@@ -173,37 +197,136 @@ def request_preparation(
                     "Footprint tiles already available",
                 )
             )
+            _save_tiles(metadata, image_layer)
         return _state(False)
 
-    if not force and in_flight:
-        # A job is already queued or running for this layer. Re-queueing
-        # would submit a second task for the same archive.
-        logger.info(
-            "Footprint tiles for image layer %s already %s; not re-queueing",
-            image_layer.imageLayerId,
-            image_layer.footprintTilesStatus,
+    _initialize_request(image_layer, MetadataUtils.generate_id(), config)
+    _save_tiles(metadata, image_layer)
+    try:
+        enqueue_footprint_tiles(
+            project_id=image_layer.projectId,
+            image_layer_id=image_layer.imageLayerId,
+            force=force,
+            request_id=image_layer.footprintTilesRequestId,
+            config=config,
         )
-        return _state(False)
+    except Exception:
+        current = metadata.load(image_layer.imageLayerId)
+        if (
+            current
+            and current.get("footprintTilesRequestId")
+            == image_layer.footprintTilesRequestId
+            and current.get("footprintTilesStatus") == statuses.PENDING.value
+        ):
+            image_layer.footprintTilesStatus = statuses.FAILED.value
+            image_layer.footprintTilesStatusMessage = (
+                MetadataUtils.append_status_message(
+                    image_layer.footprintTilesStatusMessage,
+                    "Could not queue footprint tiles; request preparation "
+                    "again to retry",
+                )
+            )
+            _save_tiles(metadata, image_layer)
+        raise
+    return _state(True)
 
-    image_layer.footprintTilesStatus = statuses.PENDING.value
+
+def _initialize_request(
+    image_layer: ImageLayer, request_id: str, config: Config
+) -> None:
+    image_layer.footprintTilesRequestId = request_id
+    image_layer.footprintTilesJob = None
+    image_layer.footprintTilesStatus = config.get_status_types().PENDING.value
     image_layer.footprintTilesStatusMessage = (
         MetadataUtils.append_status_message(
             "", "Queued for footprint tile preparation"
         )
     )
-    enqueue_footprint_tiles(
-        project_id=image_layer.projectId,
-        image_layer_id=image_layer.imageLayerId,
-        source_footprints_url=image_layer.buildingFootprintsUrl,
-        force=force,
+
+
+def _save_tiles(metadata: MetadataProcessor, image_layer: ImageLayer) -> None:
+    # MetadataProcessor merges top-level fields. Do not overwrite imagery
+    # or label work with a snapshot taken by the footprint consumer.
+    metadata.save(
+        image_layer.imageLayerId,
+        image_layer.model_dump(include=FOOTPRINT_TILE_FIELDS),
+    )
+
+
+def process_tiles_request(
+    request: FootprintTilesRequest, config: Optional[Config] = None
+) -> Optional[ImageLayer]:
+    """Load authoritative state, advance it, save, then publish a poll.
+
+    Fresh/failed layers can be recovered by an identifiers-only request;
+    ready layers require force. Task-specific polls never initialize work
+    and stale polls are discarded. Invalid requests (including layers with
+    no cached footprints) raise; deleted layers are a no-op.
+
+    Metadata uses the existing read/merge/write contract, not CAS. Ordering
+    prevents our own fast consumers/stale outer saves from losing state;
+    this is not a cross-worker lock or an atomic Batch/metadata transaction.
+    """
+    if config is None:
+        config = Config()
+    if not request.requestId:
+        raise ValueError("A stable request identity is required")
+    metadata = MetadataProcessor(
+        data_type=config.get_metadata_types().IMAGELAYER.value,
+        partition_key=request.projectId,
         config=config,
     )
-    logger.info(
-        "Queued footprint tiles for image layer %s (force=%s)",
-        image_layer.imageLayerId,
-        force,
+    try:
+        record = metadata.load(request.imageLayerId)
+    except FileNotFoundError:
+        return None
+    if not record:
+        return None
+    layer = ImageLayer.model_validate(record)
+    if (
+        layer.projectId != request.projectId
+        or layer.imageLayerId != request.imageLayerId
+    ):
+        raise ValueError("Footprint request does not match layer metadata")
+
+    statuses = config.get_status_types()
+    in_flight = layer.footprintTilesStatus in (
+        statuses.PENDING.value,
+        statuses.IN_PROGRESS.value,
     )
-    return _state(True)
+    if request.taskId:
+        if (
+            not in_flight
+            or not layer.footprintTilesJob
+            or layer.footprintTilesJob.taskId != request.taskId
+        ):
+            return layer
+    elif not in_flight:
+        if layer.footprintTilesRequestId == request.requestId:
+            return layer  # Terminal redelivery, including force.
+        if layer.footprintPmtilesUrl and not request.force:
+            return layer
+
+    if not layer.buildingFootprintsUrl:
+        raise ValueError("Image layer has no cached building footprints")
+    if not in_flight:
+        _initialize_request(layer, request.requestId, config)
+        _save_tiles(metadata, layer)
+    elif not layer.footprintTilesRequestId:
+        # Adopt legacy PENDING/IN_PROGRESS work without resetting its job.
+        # Its first validated delivery must also be idempotent at terminal
+        # state, especially if this delivery requested force.
+        layer.footprintTilesRequestId = request.requestId
+        _save_tiles(metadata, layer)
+
+    processor = FootprintTilesPreprocessor(layer, config=config)
+    output = processor.process()
+    _save_tiles(metadata, output)
+    if output.footprintTilesStatus == statuses.IN_PROGRESS.value:
+        # A failed send propagates for queue retry. The saved task reference
+        # makes that retry a poll rather than a second task submission.
+        processor.queue_client.put_message(processor._poll_message())
+    return output
 
 
 class FootprintTilesPreprocessor:
@@ -258,7 +381,8 @@ class FootprintTilesPreprocessor:
             build_tiles_message(
                 project_id=self.project_id,
                 image_layer_id=self.layer_id,
-                source_footprints_url=(self.image_layer.buildingFootprintsUrl),
+                request_id=self.image_layer.footprintTilesRequestId,
+                task_id=self.image_layer.footprintTilesJob.taskId,
             )
         )
 
@@ -272,11 +396,17 @@ class FootprintTilesPreprocessor:
         statuses = self.config.get_status_types()
         status = self.image_layer.footprintTilesStatus
 
-        if status == statuses.PENDING.value:
+        if (
+            status == statuses.PENDING.value
+            and self.image_layer.footprintTilesJob is None
+        ):
             self._update_progress("Submitting footprint tile job")
             self._execute_job()
 
-        elif status == statuses.IN_PROGRESS.value:
+        elif status in (
+            statuses.PENDING.value,
+            statuses.IN_PROGRESS.value,
+        ):
             job = self.image_layer.footprintTilesJob
             if job is None:
                 self.image_layer.footprintTilesStatus = statuses.FAILED.value
@@ -296,24 +426,24 @@ class FootprintTilesPreprocessor:
             )
 
             if task_status == statuses.COMPLETED.value:
-                job.status = task_status
-                job.completedDate = MetadataUtils.get_timestamp()
                 try:
                     self._update_results_from_job()
                     self.image_layer.footprintTilesStatus = task_status
-                except Exception as error:
+                except (FileNotFoundError, ValueError) as error:
                     self.logger.error(
-                        "Error finalizing footprint tiles for "
-                        f"{self.layer_id}: {error}",
-                        stack_info=True,
+                        "Invalid footprint tile manifest (%s)",
+                        type(error).__name__,
                     )
                     self.image_layer.footprintTilesStatus = (
                         statuses.FAILED.value
                     )
-                    job.status = statuses.FAILED.value
                     self._update_progress(
-                        f"Footprint tile job failed: {error}"
+                        "Footprint tile job failed: missing or invalid manifest"
                     )
+                # Retrieval failures must leave both the layer and job
+                # active, with no cleanup, so the queue delivery can retry.
+                job.status = self.image_layer.footprintTilesStatus
+                job.completedDate = MetadataUtils.get_timestamp()
                 self._replay_friendly_logs()
                 self.runner.cleanup_task(job_id=job.jobId, task_id=job.taskId)
 
@@ -325,62 +455,53 @@ class FootprintTilesPreprocessor:
                 self._update_progress("Footprint tile job failed")
                 self.runner.cleanup_task(job_id=job.jobId, task_id=job.taskId)
             else:
-                self.image_layer.footprintTilesStatus = task_status
+                # A queued Batch task is still an active submission, not
+                # a fresh PENDING layer that should be submitted again.
+                self.image_layer.footprintTilesStatus = (
+                    statuses.IN_PROGRESS.value
+                )
                 job.status = task_status
-                self.queue_client.put_message(self._poll_message())
 
         return self.image_layer
 
     def _execute_job(self) -> ImageLayer:
         statuses = self.config.get_status_types()
-        try:
-            input_files = self._create_job_config()
-            config_path = input_files["config"]["file_path"]
-            command = (
-                f'"mkdir -p ${BATCH_JOB_WORKDIR} '
-                f"&& cd ${BATCH_JOB_WORKDIR} "
-                "&& python -m hastegeo.workflows.prepare_footprint_tiles "
-                f'--config ${BATCH_JOB_WORKDIR}/{config_path}"'
-            )
-            job_id = self.config.get_azure_batch_config()[
-                "training_batch_job_id"
-            ][:64]
-            task_id = f"{FOOTPRINT_TILES_PREFIX}-{MetadataUtils.generate_id()}"
-            output_prefix = (
-                f"{MetadataUtils.hash_string(self.project_id)}/{task_id}"
-            )
-            job_id, task_id = self.runner.add_task(
-                job_id=job_id,
-                task_id=task_id,
-                output_prefix=output_prefix,
-                resource_files_for_upload=input_files,
-                file_pattern=f"${BATCH_JOB_WORKDIR}/outputs/*.*",
-                command=command,
-                image_name=self.config.get_azure_batch_config()[
-                    "docker_image"
-                ],
-            )
-            self.image_layer.footprintTilesJob = TrainingJob(
-                jobId=job_id,
-                taskId=task_id,
-                modelId=None,
-                projectId=self.project_id,
-                status=statuses.IN_PROGRESS.value,
-                creationDate=MetadataUtils.get_timestamp(),
-            )
-            self.image_layer.footprintTilesStatus = statuses.IN_PROGRESS.value
-            self._update_progress(
-                f"Footprint tiles submitted with task id {task_id}"
-            )
-            self.queue_client.put_message(self._poll_message())
-        except Exception as error:
-            self.logger.error(
-                f"Error submitting footprint tiles for {self.layer_id}: "
-                f"{error}",
-                stack_info=True,
-            )
-            self.image_layer.footprintTilesStatus = statuses.FAILED.value
-            self._update_progress(f"Footprint tile job failed: {error}")
+        input_files = self._create_job_config()
+        config_path = input_files["config"]["file_path"]
+        command = (
+            f'"mkdir -p ${BATCH_JOB_WORKDIR} '
+            f"&& cd ${BATCH_JOB_WORKDIR} "
+            "&& python -m hastegeo.workflows.prepare_footprint_tiles "
+            f'--config ${BATCH_JOB_WORKDIR}/{config_path}"'
+        )
+        job_id = self.config.get_azure_batch_config()["training_batch_job_id"][
+            :64
+        ]
+        task_id = f"{FOOTPRINT_TILES_PREFIX}-{MetadataUtils.generate_id()}"
+        output_prefix = (
+            f"{MetadataUtils.hash_string(self.project_id)}/{task_id}"
+        )
+        job_id, task_id = self.runner.add_task(
+            job_id=job_id,
+            task_id=task_id,
+            output_prefix=output_prefix,
+            resource_files_for_upload=input_files,
+            file_pattern=f"${BATCH_JOB_WORKDIR}/outputs/*.*",
+            command=command,
+            image_name=self.config.get_azure_batch_config()["docker_image"],
+        )
+        self.image_layer.footprintTilesJob = TrainingJob(
+            jobId=job_id,
+            taskId=task_id,
+            modelId=None,
+            projectId=self.project_id,
+            status=statuses.IN_PROGRESS.value,
+            creationDate=MetadataUtils.get_timestamp(),
+        )
+        self.image_layer.footprintTilesStatus = statuses.IN_PROGRESS.value
+        self._update_progress(
+            f"Footprint tiles submitted with task id {task_id}"
+        )
         return self.image_layer
 
     def _create_job_config(self) -> Dict[str, Dict[str, str]]:
@@ -443,12 +564,7 @@ class FootprintTilesPreprocessor:
 
     def _update_results_from_job(self) -> None:
         """Persist the archive URL and count from the task manifest."""
-        job = self.image_layer.footprintTilesJob
-        content = self.runner.get_filecontent_from_task(
-            job_id=job.jobId,
-            task_id=job.taskId,
-            filename=MANIFEST_FILENAME,
-        )
+        content = self._read_task_output(MANIFEST_FILENAME, required=True)
         if not content:
             raise FileNotFoundError(
                 f"Footprint tiles manifest not found for {self.layer_id}"
@@ -473,13 +589,21 @@ class FootprintTilesPreprocessor:
         """Resolve a task output filename to a downloadable URL."""
         if not filename:
             return ""
-        return self.storage.get_file_remote_path(
-            identifier=filename,
-            extra_partition_keys=(
-                f"{self.image_layer.footprintTilesJob.taskId}"
-            ),
-            data_format=os.path.splitext(filename)[1].strip("."),
-        )
+        try:
+            return self.storage.get_file_remote_path(
+                identifier=filename,
+                extra_partition_keys=(
+                    f"{self.image_layer.footprintTilesJob.taskId}"
+                ),
+                data_format=os.path.splitext(filename)[1].strip("."),
+            )
+        except Exception as error:
+            # Resolving either the manifest or its archive is a retrieval
+            # operation, not manifest validation (even for ValueError).
+            raise RuntimeError(
+                "Footprint task output URL resolution failed "
+                f"({type(error).__name__})"
+            ) from None
 
     def _replay_friendly_logs(self) -> None:
         for timestamp, message in self._get_friendly_logs():
@@ -488,13 +612,44 @@ class FootprintTilesPreprocessor:
             ):
                 self._update_progress(message, timestamp=timestamp)
 
-    def _get_friendly_logs(self) -> List[Tuple[str, str]]:
+    def _read_task_output(
+        self, filename: str, *, required: bool = False
+    ) -> Optional[str]:
+        """Read node output, then its uploaded copy after node deallocation.
+
+        Only confirmed absence is a missing required output. Retrieval
+        failures must retry, not turn a successful Batch task into a
+        terminal failure. Friendly logs remain entirely best effort.
+        """
         job = self.image_layer.footprintTilesJob
-        content = self.runner.get_filecontent_from_task(
-            job_id=job.jobId,
-            task_id=job.taskId,
-            filename=FRIENDLY_LOG_FILENAME,
-        )
+        try:
+            content = self.runner.get_filecontent_from_task(
+                job_id=job.jobId,
+                task_id=job.taskId,
+                filename=filename,
+            )
+            if content:
+                return content
+            return fetch_url_text(
+                self._artifact_url(filename), strict=required
+            )
+        except Exception as error:
+            # URLs and SDK exception text can contain credentials.
+            if required:
+                # Keep even ValueError/FileNotFoundError from URL resolution
+                # out of the terminal manifest-validation failure path.
+                raise RuntimeError(
+                    "Required footprint task output retrieval failed "
+                    f"({type(error).__name__})"
+                ) from None
+            self.logger.warning(
+                "Optional footprint task output unavailable (%s)",
+                type(error).__name__,
+            )
+            return None
+
+    def _get_friendly_logs(self) -> List[Tuple[str, str]]:
+        content = self._read_task_output(FRIENDLY_LOG_FILENAME)
         logs: List[Tuple[str, str]] = []
         if content:
             for record in content.splitlines():

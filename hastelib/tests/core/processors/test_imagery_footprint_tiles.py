@@ -1,105 +1,156 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-"""The imagery processor queues footprint tiling once footprints exist.
+"""Imagery persists before handing footprint-owned state to the consumer."""
 
-Footprint geometry belongs to the image layer, so the archive is built
-when imagery prep caches the footprints rather than per model. These
-tests pin the two things that matter: it happens for both workflow types,
-and a queue failure never takes the image layer down with it.
-"""
+from typing import Any
+from unittest.mock import patch
 
-import unittest
-from unittest.mock import MagicMock, patch
+from hastegeo.core.models.footprint_tiles import FootprintTilesRequest
+from hastegeo.core.processors import footprint_tiles, imagery
 
-from hastegeo.core.config import Config
-from hastegeo.core.models.projects import ImageLayer
-from hastegeo.core.processors import imagery
+from .test_footprint_tiles import (
+    SECRET_URL,
+    STATUSES,
+    FootprintTestCase,
+    _job,
+    _layer,
+)
 
-STATUSES = Config.get_status_types()
 
+class TestImageryHandoff(FootprintTestCase):
+    def test_standard_and_building_workflows_persist_before_enqueue(
+        self,
+    ) -> None:
+        for workflow in ("standard", "building"):
+            with self.subTest(workflow=workflow):
+                self.record = _layer(buildingFootprintsUrl=None).model_dump()
+                output = _layer(
+                    workflowType=workflow,
+                    status=STATUSES.COMPLETED.value,
+                    labelsUrl="https://acct/new-labels",
+                )
 
-def _processor(image_data):
-    """An ImageryPostProcessor with only the fields the hook reads."""
-    processor = MagicMock(spec=imagery.ImageryPostProcessor)
-    processor.image_data = image_data
-    processor.config = Config()
-    processor.logger = MagicMock()
-    # Bind the real method so the mock exercises production logic.
-    processor._enqueue_footprint_tiles = (
-        imagery.ImageryPostProcessor._enqueue_footprint_tiles.__get__(
-            processor
+                def consume(message: str, **kwargs: Any) -> None:
+                    self.assertEqual(
+                        self.record["buildingFootprintsUrl"], SECRET_URL
+                    )
+                    self.assertEqual(
+                        self.record["labelsUrl"], "https://acct/new-labels"
+                    )
+                    self.assertEqual(
+                        self.record["footprintTilesStatus"],
+                        STATUSES.PENDING.value,
+                    )
+                    self.assertNotIn("do-not-log", message)
+
+                self.queue.put_message.side_effect = consume
+                imagery.save_imagery_layer(
+                    output, config=self.config, prepare_footprints=True
+                )
+        self.assertEqual(self.queue.put_message.call_count, 2)
+
+    def test_fast_consumer_transitions_survive_the_imagery_handoff(
+        self,
+    ) -> None:
+        self.record["buildingFootprintsUrl"] = None
+        output = _layer(status=STATUSES.COMPLETED.value)
+
+        def consume(message: str, **kwargs: Any) -> None:
+            request = FootprintTilesRequest.model_validate_json(message)
+            if request.taskId:
+                self.complete_task()
+            footprint_tiles.process_tiles_request(request, config=self.config)
+
+        self.queue.put_message.side_effect = consume
+        imagery.save_imagery_layer(
+            output, config=self.config, prepare_footprints=True
         )
-    )
-    return processor
-
-
-def _layer(**overrides):
-    data = {
-        "projectId": "proj-1",
-        "imageLayerId": "22222222-2222-2222-2222-222222222222",
-        "buildingFootprintsUrl": "https://acct/footprints.gpkg?sas",
-    }
-    data.update(overrides)
-    return ImageLayer(**data)
-
-
-class TestEnqueueFootprintTiles(unittest.TestCase):
-    def test_queues_for_the_standard_workflow(self):
-        layer = _layer(workflowType="standard")
-        processor = _processor(layer)
-        with patch.object(imagery, "enqueue_footprint_tiles") as enqueue:
-            processor._enqueue_footprint_tiles()
-
-        enqueue.assert_called_once()
+        # Both the new-request and poll consumers ran before send returned.
         self.assertEqual(
-            enqueue.call_args.kwargs["image_layer_id"], layer.imageLayerId
+            self.record["footprintTilesStatus"], STATUSES.COMPLETED.value
         )
-        self.assertEqual(layer.footprintTilesStatus, STATUSES.PENDING.value)
+        self.assertEqual(
+            self.record["footprintPmtilesUrl"], "https://acct/tiles.pmtiles"
+        )
+        self.runner.add_task.assert_called_once()
 
-    def test_queues_for_the_building_workflow(self):
-        # The embedding job no longer tiles, so this layer type depends on
-        # the same archive as every other.
-        layer = _layer(workflowType="building")
-        processor = _processor(layer)
-        with patch.object(imagery, "enqueue_footprint_tiles") as enqueue:
-            processor._enqueue_footprint_tiles()
+        # Late imagery/error saves and duplicate completed deliveries must
+        # not restore the stale footprint fields from output.
+        imagery.save_imagery_layer(output, config=self.config)
+        imagery.save_imagery_layer(
+            output, config=self.config, prepare_footprints=True
+        )
+        self.assertEqual(
+            self.record["footprintPmtilesUrl"], "https://acct/tiles.pmtiles"
+        )
+        self.assertEqual(self.queue.put_message.call_count, 2)
 
-        enqueue.assert_called_once()
-        self.assertEqual(layer.footprintTilesStatus, STATUSES.PENDING.value)
+    def test_duplicate_imagery_does_not_reset_an_active_footprint_job(
+        self,
+    ) -> None:
+        for status in (STATUSES.PENDING.value, STATUSES.IN_PROGRESS.value):
+            self.record = _layer(
+                footprintTilesStatus=status,
+                footprintTilesJob=_job(),
+                footprintTilesRequestId="active-request",
+            ).model_dump()
+            imagery.save_imagery_layer(
+                _layer(status=STATUSES.COMPLETED.value),
+                config=self.config,
+                prepare_footprints=True,
+            )
+            self.assertEqual(self.record["footprintTilesStatus"], status)
+            self.assertEqual(
+                self.record["footprintTilesRequestId"], "active-request"
+            )
+            self.assertEqual(
+                self.record["footprintTilesJob"]["taskId"], "ftl-task"
+            )
+        self.queue.put_message.assert_not_called()
 
-    def test_skips_when_the_layer_has_no_footprints(self):
-        layer = _layer(buildingFootprintsUrl=None)
-        processor = _processor(layer)
-        with patch.object(imagery, "enqueue_footprint_tiles") as enqueue:
-            processor._enqueue_footprint_tiles()
+    def test_queue_failure_is_visible_without_failing_usable_imagery(
+        self,
+    ) -> None:
+        output = _layer(status=STATUSES.COMPLETED.value)
+        self.queue.put_message.side_effect = RuntimeError(SECRET_URL)
+        with patch.object(imagery.Logger, "get_logger") as get_logger:
+            imagery.save_imagery_layer(
+                output, config=self.config, prepare_footprints=True
+            )
+        self.assertEqual(self.record["status"], STATUSES.COMPLETED.value)
+        self.assertEqual(
+            self.record["footprintTilesStatus"], STATUSES.FAILED.value
+        )
+        get_logger.return_value.warning.assert_called_once()
+        self.assertNotIn("do-not-log", str(get_logger.return_value.mock_calls))
+        self.assertNotIn(
+            "do-not-log", self.record["footprintTilesStatusMessage"]
+        )
 
-        enqueue.assert_not_called()
-        self.assertIsNone(layer.footprintTilesStatus)
-
-    def test_skips_when_the_archive_already_exists(self):
-        layer = _layer(footprintPmtilesUrl="https://acct/f.pmtiles")
-        processor = _processor(layer)
-        with patch.object(imagery, "enqueue_footprint_tiles") as enqueue:
-            processor._enqueue_footprint_tiles()
-
-        enqueue.assert_not_called()
-
-    def test_a_queue_failure_does_not_fail_the_layer(self):
-        # The tiles are derived data. An unreachable queue must leave the
-        # imagery perfectly usable.
-        layer = _layer(status=STATUSES.COMPLETED.value)
-        processor = _processor(layer)
-        with patch.object(
-            imagery,
-            "enqueue_footprint_tiles",
-            side_effect=RuntimeError("queue unreachable"),
+    def test_only_the_final_successful_imagery_save_may_enqueue(self) -> None:
+        for layer, final_save in (
+            (_layer(status=STATUSES.COMPLETED.value), False),
+            (_layer(status=STATUSES.FAILED.value), True),
+            (
+                _layer(
+                    status=STATUSES.COMPLETED.value,
+                    buildingFootprintsUrl=None,
+                ),
+                True,
+            ),
         ):
-            processor._enqueue_footprint_tiles()
+            imagery.save_imagery_layer(
+                layer, config=self.config, prepare_footprints=final_save
+            )
+        self.queue.put_message.assert_not_called()
 
-        self.assertEqual(layer.status, STATUSES.COMPLETED.value)
-        processor.logger.warning.assert_called_once()
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_failed_imagery_persistence_does_not_publish(self) -> None:
+        self.storage.save.side_effect = RuntimeError("storage unavailable")
+        with self.assertRaises(RuntimeError):
+            imagery.save_imagery_layer(
+                _layer(status=STATUSES.COMPLETED.value),
+                config=self.config,
+                prepare_footprints=True,
+            )
+        self.queue.put_message.assert_not_called()
