@@ -8,6 +8,7 @@ import traceback
 
 import azure.functions as func  # type: ignore
 from hastegeo.core.config import Config
+from hastegeo.core.models.footprint_tiles import parse_tiles_request
 from hastegeo.core.models.projects import (
     ImageLayer,
     LabelProject,
@@ -20,8 +21,11 @@ from hastegeo.core.models.stats import ProjectsSummary, StatsRequest
 from hastegeo.core.models.training import ExperimentConfig
 from hastegeo.core.processors.artifacts import ArtifactProcessor
 from hastegeo.core.processors.embedding import EmbeddingPostprocessor
-from hastegeo.core.processors.footprint_tiles import FootprintTilesPreprocessor
-from hastegeo.core.processors.imagery import ImageryPostProcessor
+from hastegeo.core.processors.footprint_tiles import process_tiles_request
+from hastegeo.core.processors.imagery import (
+    ImageryPostProcessor,
+    save_imagery_layer,
+)
 from hastegeo.core.processors.inference import (
     InferencePostprocessor,
     InferencePreprocessor,
@@ -123,14 +127,7 @@ async def GetProcessImageLayerQueueMessage(msg: func.QueueMessage) -> None:
             )
             return
 
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().IMAGELAYER.value,
-                partition_key=image_data.projectId,
-            ).save,
-            image_data.imageLayerId,
-            image_data.dict(),
-        )
+        await asyncio.to_thread(save_imagery_layer, image_data, config=config)
         output = await asyncio.to_thread(
             ImageryPostProcessor(image_data).process
         )
@@ -180,24 +177,15 @@ async def GetProcessImageLayerQueueMessage(msg: func.QueueMessage) -> None:
             )
             # Save ImageLayer completed status
             await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().IMAGELAYER.value,
-                    partition_key=output.projectId,
-                ).save,
-                output.imageLayerId,
-                output.dict(),
+                save_imagery_layer,
+                output,
+                config=config,
+                prepare_footprints=True,
             )
         else:
             # Only save the ImageLayer status reflecting the failure
             output.labelsUrl = None
-            await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().IMAGELAYER.value,
-                    partition_key=output.projectId,
-                ).save,
-                output.imageLayerId,
-                output.dict(),
-            )
+            await asyncio.to_thread(save_imagery_layer, output, config=config)
         logger.info(
             f'GetProcessImageLayerQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
         )
@@ -227,12 +215,7 @@ async def GetProcessImageLayerQueueMessage(msg: func.QueueMessage) -> None:
                     f"Image layer processing failed: {describe_exception(e)}",
                 )
                 await asyncio.to_thread(
-                    MetadataProcessor(
-                        data_type=config.get_metadata_types().IMAGELAYER.value,
-                        partition_key=output.projectId,
-                    ).save,
-                    output.imageLayerId,
-                    output.dict(),
+                    save_imagery_layer, output, config=config
                 )
             elif "image_data" in locals():
                 image_data.status = config.get_status_types().FAILED.value
@@ -241,12 +224,7 @@ async def GetProcessImageLayerQueueMessage(msg: func.QueueMessage) -> None:
                     f"Image layer processing failed: {describe_exception(e)}",
                 )
                 await asyncio.to_thread(
-                    MetadataProcessor(
-                        data_type=config.get_metadata_types().IMAGELAYER.value,
-                        partition_key=image_data.projectId,
-                    ).save,
-                    image_data.imageLayerId,
-                    image_data.dict(),
+                    save_imagery_layer, image_data, config=config
                 )
         except Exception as inner_e:
             logger.error(
@@ -615,85 +593,27 @@ async def GetPrepareFootprintTilesQueueMessage(
 
     Message schema (identifiers only)::
 
-        {"projectId", "imageLayerId", "sourceFootprintsUrl", "force"}
+        {"projectId": "...", "imageLayerId": "...", "force": false}
 
-    Imagery prep enqueues this as soon as a layer's footprints are cached,
-    so every map that draws those buildings finds the archive already
-    built. The authoritative state is read from metadata, so a fresh
-    request and the preprocessor's own poll messages take the same path.
-    The work runs as a task in the training docker image because
-    tippecanoe ships only there.
+    Manually enqueue this to recover fresh/failed layers; set force=true
+    to rebuild a ready layer. Active jobs are never reset. Optional
+    requestId deduplicates redelivery (defaults to the Azure message ID);
+    internal polls also carry taskId and never start a rebuild.
+    Invalid requests and unexpected failures raise sanitized exceptions
+    for Functions retry/poison handling. Deleted layers are a no-op.
     """
-    logger.info(
-        "GetPrepareFootprintTilesQueueTrigger function processed a message: "
-        f'{msg.get_body().decode("utf-8")}'
-    )
     try:
-        payload = json.loads(msg.get_body().decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("Queue message must be a JSON object")
-        project_id = payload.get("projectId")
-        image_layer_id = payload.get("imageLayerId")
-        if not project_id or not image_layer_id:
-            raise ValueError(
-                "Queue message requires projectId and imageLayerId, got: "
-                f"{sorted(payload.keys())}"
-            )
-
-        try:
-            layer_record = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().IMAGELAYER.value,
-                    partition_key=project_id,
-                ).load,
-                image_layer_id,
-            )
-        except FileNotFoundError:
-            layer_record = None
-
-        if not layer_record:
-            logger.info(
-                f"Image layer {image_layer_id} not found, likely deleted, "
-                "skipping footprint tile preparation."
-            )
-            return
-
-        image_layer = ImageLayer(**layer_record)
-        if not image_layer.buildingFootprintsUrl:
-            logger.info(
-                f"Image layer {image_layer_id} has no cached building "
-                "footprints; nothing to tile."
-            )
-            return
-
-        output = await asyncio.to_thread(
-            FootprintTilesPreprocessor(image_layer).process
+        request = parse_tiles_request(msg.get_body(), msg.id)
+        await asyncio.to_thread(process_tiles_request, request, config=config)
+    except Exception as error:
+        # Legacy bodies and SDK/Pydantic errors may contain SAS credentials.
+        # Do not log payloads, error text, or an unsanitized exception chain.
+        message = (
+            "Footprint tile queue processing failed "
+            f"({type(error).__name__}); retry/poison handling will apply"
         )
-
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().IMAGELAYER.value,
-                partition_key=project_id,
-            ).save,
-            image_layer_id,
-            output.dict(),
-        )
-    except ValidationError as e:
-        logger.error(
-            f"GetPrepareFootprintTilesQueueTrigger: Validation error: {e}\n"
-            f"{traceback.format_exc()}"
-        )
-    except ValueError as e:
-        logger.error(
-            "GetPrepareFootprintTilesQueueTrigger: Invalid queue message: "
-            f"{e}\n{traceback.format_exc()}"
-        )
-    except Exception as e:
-        logger.error(
-            "GetPrepareFootprintTilesQueueTrigger: Error processing queue "
-            f"message: {e}\n{traceback.format_exc()}",
-            stack_info=True,
-        )
+        logger.error(message)
+        raise RuntimeError(message) from None
 
 
 @app.function_name(name="GetRunInferenceQueueTrigger")

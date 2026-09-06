@@ -60,14 +60,21 @@ def split_blob_url(url: str) -> Tuple[str, str]:
     return parts[1], "/".join(parts[2:])
 
 
-def fetch_url_text(url: str, timeout: int = 30) -> Optional[str]:
+def fetch_url_text(
+    url: Optional[str], timeout: int = 30, *, strict: bool = False
+) -> Optional[str]:
     """Return the text body at ``url``, or ``None`` if it cannot be read.
 
     Used to recover a task's output files from the copy Azure Batch uploaded to
     blob storage when the compute node that ran the task is no longer able to
-    serve them. Callers treat this as a best-effort fallback, so transport and
-    HTTP errors are reported as ``None`` rather than raised — a failure here
-    must never mask the original reason the node read failed.
+    serve them. By default this is best effort: transport and HTTP errors
+    return ``None``, preserving the behavior of existing optional readers.
+
+    With ``strict=True``, HTTP 404 still returns ``None``, but all other
+    HTTP/transport or unexpected errors propagate. Required-output readers
+    can then distinguish a missing file from a failed retrieval and retry.
+    Callers must sanitize exceptions before logging: requests errors may
+    contain the URL, including SAS credentials.
 
     Only ``http(s)`` locations are fetched; a data layer that resolves to a
     local filesystem path (the docker dev stack) returns ``None``.
@@ -80,9 +87,13 @@ def fetch_url_text(url: str, timeout: int = 30) -> Optional[str]:
 
     try:
         response = requests.get(url, timeout=timeout)
+        if strict and response.status_code == 404:
+            return None
         response.raise_for_status()
         return response.text
     except Exception:
+        if strict:
+            raise
         return None
 
 
@@ -128,10 +139,7 @@ async def download_blob_to_tempfile(
                 downloaded_bytes = 0
                 for chunk in blob_client.download_blob().chunks():
                     downloaded_bytes += len(chunk)
-                    if (
-                        max_bytes is not None
-                        and downloaded_bytes > max_bytes
-                    ):
+                    if max_bytes is not None and downloaded_bytes > max_bytes:
                         raise ValueError(
                             "Blob exceeds the allowed download size"
                         )
