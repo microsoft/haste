@@ -41,7 +41,7 @@ changes, protected version selection, and 324 categorical report combinations.
 Legacy raw report compatibility and model-list source/URL consistency have
 native regression coverage.
 
-The editor's Node suite passed 198 cases before incorporating the parent's
+The final merged editor's Node suite passed 206 cases, including the parent's
 additional raw-download tests. Real Chrome/Azure Maps SDK/WebGL fixtures covered
 gestures, complete pins, version selection, report/download choices, navigation
 guards, and failure recovery. After 39 passing cases in the last broad pass,

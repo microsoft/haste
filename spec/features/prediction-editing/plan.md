@@ -17,4 +17,5 @@ Create this branch from the common-results PR head only after that stage is
 ready. Open a separate stacked PR targeting the common-results branch.
 Keep the live local stack and saved project data untouched.
 
-Base: [#200](https://github.com/microsoft/haste/pull/200), commit `9bec81a`.
+Base: [#200](https://github.com/microsoft/haste/pull/200), including its
+raw-download correction at `f68a1fe` (initial implementation base `9bec81a`).
