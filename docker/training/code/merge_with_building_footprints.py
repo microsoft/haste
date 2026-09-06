@@ -13,6 +13,7 @@ import pyproj
 import rasterio
 import rasterio.mask
 import shapely.geometry
+from hastegeo.core.utils.predictions import read_footprint_ids
 from tqdm import tqdm
 
 
@@ -114,114 +115,50 @@ def set_up_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(args):
-    """Main function for the merge_with_building_footprints.py script."""
-    with rasterio.open(args.predictions_fn, "r") as src:
-        predictions_crs = src.crs.to_string()
+def score_shape(
+    raster: rasterio.io.DatasetReader,
+    geometry: shapely.geometry.base.BaseGeometry,
+) -> tuple[float | None, float | None]:
+    """Score valid pixels only; outside/nodata is unknown, not undamaged.
 
-    with fiona.open(args.footprints_fn, "r") as src:
-        footprints_crs = src.crs.to_string()
+    Preserve the existing raster class contract: 3 is damaged and 4 is
+    unknown. Zero is unlabeled, even when the raster has another nodata
+    value. ``filled=False`` also respects its mask and nodata metadata.
+    """
+    if geometry.is_empty:
+        return None, None
+    try:
+        masked, _ = rasterio.mask.mask(
+            raster, [geometry], crop=True, filled=False, indexes=1
+        )
+    except ValueError as error:
+        if "Input shapes do not overlap raster" not in str(error):
+            raise
+        return None, None
+    values = masked.compressed()
+    values = values[(values != 0) & np.isfinite(values)]
+    if not len(values):
+        return None, None
+    return float(np.mean(values == 3)), float(np.mean(values == 4))
 
-    # Clip building footprints to image data mask
-    projected_building_geoms = []
-    valid_building_geoms = []
-    with fiona.open(args.footprints_fn) as f:
-        for row in tqdm(f):
-            projected_geom = fiona.transform.transform_geom(
-                footprints_crs, predictions_crs, row["geometry"]
-            )
-            projected_building_geoms.append(projected_geom)
 
-    ############################################
-    # Read predictions within building footprints
-    # and track damage values
-    ############################################
-    damage_vals_per_geom = []
-    unknown_val_per_geom = []
-    print(f"Reading predictions from {args.predictions_fn}")
-    with rasterio.open(args.predictions_fn) as f:
-        # Buffer distances below are in METRES. shapely buffers in the
-        # geometry's own units, so for a geographic prediction CRS
-        # (e.g. EPSG:4326, degrees) we buffer in an estimated metric UTM
-        # CRS and transform back; for a projected CRS we buffer directly.
-        # Compute the metric CRS once here (not per geometry) — the loop
-        # below can run over many thousands of footprints.
-        metric_crs = metric_crs_for(predictions_crs, f.bounds)
-        # Compute the fraction of damage per geometry and buffer size option
-        for building_geom in tqdm(projected_building_geoms):
-            skip_geom = False
-            t_dmg_vals = []
-            for buffer in [0, 10, 20]:
-                building_shape = buffered_shape(
-                    building_geom, predictions_crs, metric_crs, buffer
-                )
-                try:
-                    building_mask, transform = rasterio.mask.mask(
-                        f, [building_shape], crop=True, nodata=0, filled=True
-                    )
-                except ValueError:
-                    # If the geometry is outside the raster bounds, we skip it.
-                    # This typically happens because overture bounds are not cropped off as a straight line
-                    # and can end up downloading buildings outside the prediction bounds
-                    print(
-                        f"WARNING: Geometry {building_geom} is outside the raster bounds, skipping."
-                    )
-                    skip_geom = True
-                    break
-                vals, counts = np.unique(building_mask, return_counts=True)
-                val_counts = dict(zip(vals, counts))
-                N = 0
-                for k, v in val_counts.items():
-                    if k != 0:
-                        N += v
+def main(args: argparse.Namespace) -> None:
+    """Write one prediction row for every cached source footprint."""
+    if os.path.realpath(args.output_fn) in {
+        os.path.realpath(args.footprints_fn),
+        os.path.realpath(args.predictions_fn),
+    }:
+        raise ValueError("Prediction output must not overwrite an input.")
+    if os.path.exists(args.output_fn) and not args.overwrite:
+        raise FileExistsError(args.output_fn)
 
-                if 3 in val_counts:
-                    fraction_damaged = min(val_counts[3] / N, 1)
-                else:
-                    fraction_damaged = 0
-                t_dmg_vals.append(fraction_damaged)
-
-            if not skip_geom:
-                valid_building_geoms.append(building_geom)
-                damage_vals_per_geom.append(t_dmg_vals)
-
-        print(f"Incoming Projected Geoms = {len(projected_building_geoms)} ")
-        print(f"Valid Building Geoms = {len(valid_building_geoms)} ")
-        print(f"Damage vals calculated for {len(damage_vals_per_geom)} geoms")
-
-        # Compute the fraction of unknown (cloud covered) pixels per geometry
-        for building_geom in tqdm(valid_building_geoms):
-            # No buffering here (buffer 0 == the geometry itself), so this
-            # masks the footprint directly in ``predictions_crs`` and needs
-            # no metric-CRS round-trip.
-            building_shape = shapely.geometry.shape(building_geom)
-
-            building_mask, transform = rasterio.mask.mask(
-                f, [building_shape], crop=True, nodata=0, filled=True
-            )
-            vals, counts = np.unique(building_mask, return_counts=True)
-            val_counts = dict(zip(vals, counts))
-
-            N = 0
-            for k, v in val_counts.items():
-                if k != 0:
-                    N += v
-
-            if 4 in val_counts:
-                fraction_unknown = val_counts[4] / N
-            else:
-                fraction_unknown = 0
-            unknown_val_per_geom.append(fraction_unknown)
-
-        print(f"Unknown vals calculated for {len(unknown_val_per_geom)} geoms")
-
-    ############################################
-    # Write damage values to file
-    ############################################
+    # Validate before creating any output; IDs must agree with layer tiles.
+    overture_ids = read_footprint_ids(args.footprints_fn)
     schema = {
         "geometry": "MultiPolygon",
         "properties": {
             "id": "int",
+            "overture_id": "str",
             "damage_pct_0m": "float",
             "damage_pct_10m": "float",
             "damage_pct_20m": "float",
@@ -230,40 +167,80 @@ def main(args):
         },
     }
 
-    if os.path.exists(args.output_fn):
-        os.remove(args.output_fn)
-
-    with fiona.open(
-        args.output_fn, "w", driver="GPKG", crs=predictions_crs, schema=schema
-    ) as f:
-        for i, geom in enumerate(tqdm(valid_building_geoms)):
-            shape = shapely.geometry.shape(geom)
-            if geom["type"] == "Polygon":
-                geom = shapely.geometry.mapping(
-                    shapely.geometry.MultiPolygon([shape])
+    scored_damage = []
+    with rasterio.open(args.predictions_fn) as raster, fiona.open(
+        args.footprints_fn
+    ) as footprints:
+        if not raster.crs:
+            raise ValueError("Prediction raster must declare a CRS.")
+        predictions_crs = raster.crs.to_string()
+        footprints_crs = footprints.crs.to_string()
+        metric_crs = metric_crs_for(predictions_crs, raster.bounds)
+        if os.path.exists(args.output_fn):
+            fiona.remove(args.output_fn, driver="GPKG")
+        with fiona.open(
+            args.output_fn,
+            "w",
+            driver="GPKG",
+            crs=predictions_crs,
+            schema=schema,
+        ) as dst:
+            for index, feature in enumerate(tqdm(footprints)):
+                geom = feature["geometry"]
+                shape = None
+                damage, unknown = None, None
+                if geom is not None:
+                    geom = fiona.transform.transform_geom(
+                        footprints_crs, predictions_crs, geom
+                    )
+                    shape = shapely.geometry.shape(geom)
+                    if shape.geom_type == "Polygon":
+                        shape = shapely.geometry.MultiPolygon([shape])
+                    if shape.geom_type != "MultiPolygon":
+                        raise ValueError(
+                            "Footprints must be polygon geometries."
+                        )
+                    damage, unknown = score_shape(raster, shape.buffer(0))
+                damages = [damage, None, None]
+                # A larger buffer may overlap imagery even when the actual
+                # building is unscored. Do not invent scores for that row.
+                if damage is not None:
+                    scored_damage.append(damage)
+                    for slot, distance in enumerate((10, 20), start=1):
+                        buffered = buffered_shape(
+                            geom, predictions_crs, metric_crs, distance
+                        )
+                        damages[slot], _ = score_shape(raster, buffered)
+                dst.write(
+                    {
+                        "geometry": (
+                            shapely.geometry.mapping(shape)
+                            if shape is not None
+                            else None
+                        ),
+                        "properties": {
+                            "id": index,
+                            "overture_id": overture_ids[index],
+                            "damage_pct_0m": damages[0],
+                            "damage_pct_10m": damages[1],
+                            "damage_pct_20m": damages[2],
+                            "damaged": int(damage is not None and damage > 0),
+                            "unknown_pct": unknown,
+                        },
+                    }
                 )
 
-            row = {
-                "type": "Feature",
-                "geometry": geom,
-                "properties": {
-                    "id": i,
-                    "damage_pct_0m": damage_vals_per_geom[i][0],
-                    "damage_pct_10m": damage_vals_per_geom[i][1],
-                    "damage_pct_20m": damage_vals_per_geom[i][2],
-                    "damaged": 1 if damage_vals_per_geom[i][0] > 0 else 0,
-                    "unknown_pct": unknown_val_per_geom[i],
-                },
-            }
-            f.write(row)
-
     print(f"Output written to {args.output_fn}")
-    damage_vals_per_geom = np.array(damage_vals_per_geom)
+    print(
+        f"{len(overture_ids)} source rows; "
+        f"{len(overture_ids) - len(scored_damage)} unscored"
+    )
+    damage_values = np.asarray(scored_damage, dtype=float)
     breakpoints = [0, 0.2, 0.4, 0.6, 0.8, 1.0001]
     for i in range(1, len(breakpoints)):
         count = np.sum(
-            (damage_vals_per_geom[:, 0] >= breakpoints[i - 1])
-            & (damage_vals_per_geom[:, 0] < breakpoints[i])
+            (damage_values >= breakpoints[i - 1])
+            & (damage_values < breakpoints[i])
         )
         print(
             f"- {count} buildings with damage fraction between {breakpoints[i-1]*100:0.0f}% and {breakpoints[i]*100:0.0f}%"

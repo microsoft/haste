@@ -440,6 +440,16 @@ class Model(BaseModel):
     inferenceStatusMessage: Optional[str] = Field(default="")
     predictedDamageLayerUrl: Optional[str] = Field(default=None)
     gpkgUrl: Optional[str] = Field(default=None)
+    predictionAttrsUrl: Optional[str] = Field(default=None)
+    predictedBuildingCount: Optional[int] = Field(default=None, ge=0)
+    predictedAt: Optional[str] = Field(default=None)
+    # Raw generation identity, never an edited version number.
+    predictionRevision: Optional[str] = Field(default=None)
+    predictionReadyRevision: Optional[str] = Field(default=None)
+    predictionState: Optional[str] = Field(default=None)
+    predictionOutputPrefix: Optional[str] = Field(default=None)
+    predictionSourceTaskId: Optional[str] = Field(default=None)
+    predictionGpkgFilename: Optional[str] = Field(default=None)
     labelsUrl: Optional[str] = Field(default=None)
     # ── Building labeling workflow (embedding sub-row) ──────────────────
     # A Model with modelType="embedding" represents a building-embedding

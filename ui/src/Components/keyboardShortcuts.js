@@ -4,7 +4,7 @@
 export const VISUALIZER_SHORTCUTS = [
   {
     keys: ["A", "S", "D"],
-    description: "Move the swipe divider left / split / right",
+    description: "Move the swipe divider left / split / right — left shows more post-event imagery",
   },
 ];
 

@@ -75,6 +75,9 @@ class AbstractArtifactStorage(ABC):
     def get_artifact_size(self, artifact_path: str) -> int:
         pass
 
+    def read_artifact_bytes(self, artifact_path: str, max_bytes: int) -> bytes:
+        raise NotImplementedError
+
     @abstractmethod
     def get_artifact_etag(self, artifact_path: str) -> str:
         pass
