@@ -3,12 +3,14 @@ import os
 from typing import Any, Callable, Dict, Optional
 
 from ..config import Config
+from ..models.prediction_results import ResultsRequest
 from ..utils.assessment import (
     build_assessment_inputs_from_gpkgs,
     compute_assessment_report,
 )
 from ..utils.blob import download_blob_to_tempfile
 from .metadata import MetadataProcessor
+from .prediction_results import PredictionResultsProcessor
 
 
 class AssessmentSizeLimitError(ValueError):
@@ -42,29 +44,18 @@ class AssessmentReportProcessor:
         if max_total_bytes is not None and max_total_bytes < 1:
             raise ValueError("max_total_bytes must be positive")
         metadata_types = self.config.get_metadata_types()
-        model_data = await asyncio.to_thread(
-            self.processor_factory(
-                data_type=metadata_types.MODEL.value,
-                partition_key=project_id,
-                config=self.config,
-            ).load,
-            model_id,
+        model, image_layer = await asyncio.to_thread(
+            PredictionResultsProcessor(
+                self.config, self.processor_factory
+            ).raw_context,
+            ResultsRequest(
+                projectId=project_id,
+                imageLayerId=image_layer_id,
+                modelId=model_id,
+            ),
         )
-        gpkg_url = model_data.get("gpkgUrl")
-        if not gpkg_url:
-            raise FileNotFoundError(
-                "No inference results available for this model"
-            )
-
-        image_layer_data = await asyncio.to_thread(
-            self.processor_factory(
-                data_type=metadata_types.IMAGELAYER.value,
-                partition_key=project_id,
-                config=self.config,
-            ).load,
-            image_layer_id,
-        )
-        footprints_url = image_layer_data.get("buildingFootprintsUrl")
+        gpkg_url = model.gpkgUrl
+        footprints_url = image_layer.buildingFootprintsUrl
         if not footprints_url:
             raise FileNotFoundError(
                 "No building footprints available for this image layer"

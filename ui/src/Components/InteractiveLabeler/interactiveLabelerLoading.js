@@ -81,7 +81,8 @@ export function createProgressThrottle(onProgress, options = {}) {
 // home, so peak memory stays at a single copy of the artifact rather than the
 // chunk list plus the consolidated buffer.
 export async function readResponseBuffer(response, onProgress, options = {}) {
-  const { maxBytes = MAX_ARTIFACT_BYTES } = options;
+  const { maxBytes = MAX_ARTIFACT_BYTES, signal } = options;
+  signal?.throwIfAborted();
   const total = parseContentLength(response.headers?.get?.("content-length"));
   const progress = createProgressThrottle(onProgress, options);
 
@@ -94,41 +95,57 @@ export async function readResponseBuffer(response, onProgress, options = {}) {
 
   if (!response.body) {
     const buffer = await response.arrayBuffer();
+    signal?.throwIfAborted();
+    if (buffer.byteLength > maxBytes) {
+      throw new Error(`Artifact exceeded the ${formatBytes(maxBytes)} download limit.`);
+    }
     progress.flush(buffer.byteLength, total ?? buffer.byteLength);
     return buffer;
   }
 
   const reader = response.body.getReader();
+  const cancel = () => { reader.cancel?.(signal.reason)?.catch(() => {}); };
+  signal?.addEventListener("abort", cancel, { once: true });
   let bytes = total !== null ? new Uint8Array(total) : null;
   const chunks = bytes ? null : [];
   let loaded = 0;
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  let complete = false;
+  try {
+    for (;;) {
+      signal?.throwIfAborted();
+      const { done, value } = await reader.read();
+      signal?.throwIfAborted();
+      if (done) break;
 
-    const next = loaded + value.byteLength;
-    if (next > maxBytes) {
-      throw new Error(
-        `Artifact exceeded the ${formatBytes(maxBytes)} download limit.`
-      );
-    }
-
-    if (bytes) {
-      // The body outran its declared length. Grow once instead of silently
-      // truncating the archive.
-      if (next > bytes.length) {
-        const grown = new Uint8Array(next);
-        grown.set(bytes.subarray(0, loaded));
-        bytes = grown;
+      const next = loaded + value.byteLength;
+      if (next > maxBytes) {
+        throw new Error(
+          `Artifact exceeded the ${formatBytes(maxBytes)} download limit.`
+        );
       }
-      bytes.set(value, loaded);
-    } else {
-      chunks.push(value);
-    }
 
-    loaded = next;
-    progress.report(loaded, total);
+      if (bytes) {
+        // The body outran its declared length. Grow once instead of silently
+        // truncating the archive.
+        if (next > bytes.length) {
+          const grown = new Uint8Array(next);
+          grown.set(bytes.subarray(0, loaded));
+          bytes = grown;
+        }
+        bytes.set(value, loaded);
+      } else {
+        chunks.push(value);
+      }
+
+      loaded = next;
+      progress.report(loaded, total);
+    }
+    complete = true;
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+    if (!complete) await reader.cancel?.()?.catch(() => {});
+    reader.releaseLock?.();
   }
 
   progress.flush(loaded, total);
