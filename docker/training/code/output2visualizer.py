@@ -4,6 +4,7 @@
 """Script for creating visualization of building footprints."""
 
 import argparse
+import math
 import os
 
 import fiona
@@ -52,7 +53,7 @@ def set_up_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def classify(x):
+def classify(x: float) -> int:
     thresholds = [0.2, 0.4, 0.6, 0.8]
     for i, threshold in enumerate(thresholds):
         if x <= threshold:
@@ -60,7 +61,7 @@ def classify(x):
     return len(thresholds)
 
 
-def main(args):
+def main(args: argparse.Namespace) -> None:
     """Main function for the output2visualizer.py script."""
     if os.path.exists(args.output_fn) and not args.overwrite:
         raise FileExistsError(
@@ -68,15 +69,11 @@ def main(args):
         )
 
     with rasterio.open(args.predictions_fn, "r") as src:
-        predictions_crs = src.crs.to_string()
+        if not src.crs:
+            raise ValueError("Prediction raster must declare a CRS.")
+        predictions_crs = src.crs
         height, width = src.shape
         transform = src.transform
-        profile = src.profile
-
-    with fiona.open(args.merged_footprints_fn, "r") as src:
-        footprints_crs = src.crs.to_string()
-
-    assert footprints_crs == predictions_crs
 
     ############################################
     # Read predictions within building footprints
@@ -84,26 +81,53 @@ def main(args):
     ############################################
     shape_vals = []
     with fiona.open(args.merged_footprints_fn) as f:
+        if not f.crs:
+            raise ValueError("Prediction GeoPackage must declare a CRS.")
+        if rasterio.crs.CRS.from_wkt(f.crs_wkt) != predictions_crs:
+            raise ValueError("Prediction raster and GeoPackage CRS differ.")
         for row in f:
             geom = row["geometry"]
-            val = classify(row["properties"]["damage_pct_0m"]) + 1
+            damage = row["properties"]["damage_pct_0m"]
+            unknown = row["properties"]["unknown_pct"]
+            if (
+                geom is None
+                or damage is None
+                or unknown is None
+                or not math.isfinite(damage)
+                or not math.isfinite(unknown)
+                or unknown > 0
+            ):
+                continue
+            val = classify(damage) + 1
             shape_vals.append((geom, val))
 
-    mask = rasterio.features.rasterize(
-        shape_vals,
-        out_shape=(height, width),
-        transform=transform,
-        fill=0,
-    )
+    # rasterize([]) raises; an empty or entirely unscored run is a valid
+    # transparent result, not a reason to drop rows or fabricate predictions.
+    mask = np.zeros((height, width), dtype=np.uint8)
+    if shape_vals:
+        rasterio.features.rasterize(
+            shape_vals, out=mask, transform=transform, fill=0
+        )
 
     colors = IDX_TO_COLOR[mask]
     colors = colors.transpose(2, 0, 1)
 
-    profile["count"] = 4
-    profile["nodata"] = 0
-    profile["BIGTIFF"] = "IF_SAFER"
-
-    with rasterio.open(args.output_fn, "w", **profile) as f:
+    with rasterio.open(
+        args.output_fn,
+        "w",
+        driver="COG",
+        crs=predictions_crs,
+        transform=transform,
+        height=height,
+        width=width,
+        count=4,
+        dtype="uint8",
+        nodata=0,
+        compress="LZW",
+        blocksize=512,
+        overview_resampling="nearest",
+        BIGTIFF="IF_SAFER",
+    ) as f:
         f.colorinterp = [
             rasterio.enums.ColorInterp.red,
             rasterio.enums.ColorInterp.green,

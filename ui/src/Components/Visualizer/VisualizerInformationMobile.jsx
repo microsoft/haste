@@ -5,6 +5,7 @@ import {
   Button,
   Text,
   Switch,
+  makeStyles,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 
@@ -13,6 +14,18 @@ import { useState } from "react";
 import PropType from "prop-types";
 import KeyboardShortcutHelp from "../KeyboardShortcutHelp";
 import { VISUALIZER_SHORTCUTS } from "../keyboardShortcuts";
+import PredictionLegend from "./PredictionLegend";
+import { hasRasterLayer } from "./predictionResults.js";
+import { RESULTS_DESKTOP_MIN_WIDTH, swipeLeftPaneLabel, swipeRightPaneLabel } from "./visualizerSwipe.js";
+
+const useStyles = makeStyles({
+  panel: {
+    zIndex: 1000,
+    display: "block",
+    [`@media (min-width: ${RESULTS_DESKTOP_MIN_WIDTH}px)`]: { display: "none" },
+  },
+  scroll: { maxHeight: "calc(100vh - 180px)", overflowY: "auto", overscrollBehavior: "contain" },
+});
 
 const VisualizerInformationMobile = ({
   visualizerResults,
@@ -20,10 +33,13 @@ const VisualizerInformationMobile = ({
   convertPreOrPostEventImagerySource,
   setSwipeStateMobile,
   swipeStateMobile,
-  togglePredictedDamageLayerVisibility,
+  layerOptions,
+  layerVisibility,
+  onLayerVisibilityChange,
   surfaceClassName,
 }) => {
   const [panelVisibility, setPanelVisibility] = useState("d-none");
+  const styles = useStyles();
 
   const togglePanelVisibility = () => {
     if (panelVisibility === "d-none") {
@@ -37,7 +53,7 @@ const VisualizerInformationMobile = ({
       <div
         className={`absolute-labels post-disaster visualizer-information-mobile${
           panelVisibility === "" ? " visualizer-information-mobile--expanded" : ""
-        } d-block d-lg-none ${surfaceClassName}`}
+        } ${surfaceClassName} ${styles.panel}`}
       >
         <Button
           appearance="transparent"
@@ -50,14 +66,14 @@ const VisualizerInformationMobile = ({
         </Button>
 
         <div
-          className={`${panelVisibility} visualizer-information-mobile-content d-flex flex-column`}
+          className={`${panelVisibility} visualizer-information-mobile-content d-flex flex-column ${styles.scroll}`}
         >
           <Text className="mt-2 fw-semibold">
             {visualizerResults.projectName}
           </Text>
 
           <Switch
-            label={swipeStateMobile === "post" ? "Post Event" : "Pre Event"}
+            label={swipeStateMobile === "post" ? swipeRightPaneLabel(visualizerResults) : swipeLeftPaneLabel(visualizerResults)}
             checked={swipeStateMobile === "post"}
             onChange={(e, data) =>
               setSwipeStateMobile(data.checked ? "post" : "pre")
@@ -69,7 +85,7 @@ const VisualizerInformationMobile = ({
           {swipeStateMobile === "pre" ? (
             <>
               <Text className="fw-semibold">
-                Pre disaster imagery
+                {swipeLeftPaneLabel(visualizerResults)}
               </Text>
               <Text>
                 {convertPreOrPostEventImageryDate(
@@ -78,14 +94,15 @@ const VisualizerInformationMobile = ({
               </Text>
               <Text size={200}>
                 {convertPreOrPostEventImagerySource(
-                  visualizerResults.preDisasterImagery.url, visualizerResults.sourceTypePreEvent
+                  hasRasterLayer(visualizerResults.preDisasterImagery) ? visualizerResults.preDisasterImagery.url : "",
+                  visualizerResults.sourceTypePreEvent
                 )}
               </Text>
             </>
           ) : (
             <>
               <Text className="fw-semibold">
-                Post disaster imagery
+                {swipeRightPaneLabel(visualizerResults)}
               </Text>
               <Text>
                 {convertPreOrPostEventImageryDate(
@@ -94,7 +111,8 @@ const VisualizerInformationMobile = ({
               </Text>
               <Text size={200}>
                 {convertPreOrPostEventImagerySource(
-                  visualizerResults.postDisasterImagery.url, visualizerResults.sourceTypePostEvent
+                  hasRasterLayer(visualizerResults.postDisasterImagery) ? visualizerResults.postDisasterImagery.url : "",
+                  visualizerResults.sourceTypePostEvent
                 )}
               </Text>
             </>
@@ -102,26 +120,16 @@ const VisualizerInformationMobile = ({
           <hr />
 
 
-            <Checkbox
-              defaultChecked={true}
-              label="Predicted damage layer"
-              onChange={(e, data) =>
-                togglePredictedDamageLayerVisibility(
-                  "predictedDamageLayer",
-                  data.checked
-                )
-              }
-            />
-            <Checkbox
-              defaultChecked={false}
-              label="Predictions layer (raw)"
-              onChange={(e, data) =>
-                togglePredictedDamageLayerVisibility(
-                  "predictionsLayer",
-                  data.checked
-                )
-              }
-            />
+            {layerOptions.map((option) => (
+              <Checkbox
+                key={option.key}
+                checked={!!layerVisibility[option.key]}
+                disabled={option.disabled}
+                label={option.label}
+                onChange={(_event, data) => onLayerVisibilityChange(option.key, data.checked)}
+              />
+            ))}
+            {layerVisibility.footprints && <PredictionLegend />}
             <hr />
             <KeyboardShortcutHelp shortcuts={VISUALIZER_SHORTCUTS} />
         </div>
@@ -137,7 +145,9 @@ VisualizerInformationMobile.propTypes = {
   convertPreOrPostEventImagerySource: PropType.func.isRequired,
   setSwipeStateMobile: PropType.func.isRequired,
   swipeStateMobile: PropType.string.isRequired,
-  togglePredictedDamageLayerVisibility: PropType.func.isRequired,
+  layerOptions: PropType.array.isRequired,
+  layerVisibility: PropType.object.isRequired,
+  onLayerVisibilityChange: PropType.func.isRequired,
   surfaceClassName: PropType.string.isRequired,
 };
 

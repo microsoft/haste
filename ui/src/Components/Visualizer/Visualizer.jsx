@@ -1,412 +1,167 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-// Dependencies
-import { useEffect, useRef, useState, useContext } from "react";
-import { apiGet } from "../../util/api";
+//
+// Common read-only results, adapted from PR136. Both workflows draw the same
+// per-building vectors over two Azure Maps panes. Results GETs never start work.
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import PropTypes from "prop-types";
+import { makeStyles, tokens } from "@fluentui/react-components";
 import { useParams } from "react-router-dom";
-import Labels from "./Labels";
 import { AppContext } from "../../AppContext";
-import PropType from "prop-types";
+import { useTheme } from "../../util/ThemeContext.jsx";
 import { convertDateToString } from "../../util/conversion";
-import "../../assets/css/visualizer.css";
-import { getAzureMapsAuthOptions } from "../../util/azureMapsAuth";
 import { shouldIgnoreShortcut } from "../keyboardShortcuts";
+import Labels from "./Labels";
+import PredictionStatusNote from "./PredictionStatusNote";
+import useVisualizerResults from "./useVisualizerResults";
+import useVisualizerMaps, { validBounds } from "./useVisualizerMaps";
+import usePredictionArtifacts from "./usePredictionArtifacts";
+import usePredictionFootprints from "./usePredictionFootprints";
+import {
+  FOOTPRINTS_LOADING, FOOTPRINTS_UNAVAILABLE, readinessDetail,
+  resolveFootprintStatus, visualizerLayerOptions,
+} from "./predictionResults.js";
+import { dividerPositionForKey, isMobileResultsLayout } from "./visualizerSwipe.js";
+import "../../assets/css/visualizer.css";
 
+const useStyles = makeStyles({
+  topStack: {
+    position: "absolute", top: "10px", left: "50%", transform: "translateX(-50%)",
+    zIndex: 950, boxSizing: "border-box", width: "min(560px, calc(100% - 32px))",
+    pointerEvents: "none", display: "flex", flexDirection: "column",
+    gap: tokens.spacingVerticalS,
+    "@media (max-width: 1100px)": { top: "66px" },
+  },
+});
 
-const Visualizer = ({ setModalComponent }) => {
-  Visualizer.propTypes = {
-    setModalComponent: PropType.func.isRequired,
-  };
-
-
-  // Constants
-  const { projectId, imageLayerId, modelId } = useParams();
-  const [globalVisualizerResults, setGlobalVisualizerResults] = useState({});
-  const { setIsLoading, updateAppParams, appParams } = useContext(AppContext);
-  const primaryMapRef = useRef(null);
-  const secondaryMapRef = useRef(null);
-  const swipeMapRef = useRef(null);
-  const zoomControlRef = useRef(null);
+export default function Visualizer({ setModalComponent }) {
+  const ids = useParams();
+  const styles = useStyles();
+  const { updateAppParams } = useContext(AppContext);
+  const { isDark, palette } = useTheme();
+  const containerRef = useRef(null);
+  const primaryContainerRef = useRef(null);
+  const secondaryContainerRef = useRef(null);
+  const callbacksRef = useRef({ updateAppParams, setModalComponent });
   const [swipeStateMobile, setSwipeStateMobile] = useState("post");
+  const [visibility, setVisibility] = useState({
+    predictedDamageLayer: false, predictionsLayer: false, footprints: true,
+  });
+  const { results, error: resultsError, retry } = useVisualizerResults(ids);
+  const scene = useVisualizerMaps({ results, primaryContainerRef, secondaryContainerRef });
+  const artifacts = usePredictionArtifacts(results);
+  const footprints = usePredictionFootprints({
+    maps: scene.maps, registerCleanup: scene.registerCleanup, artifacts, visible: visibility.footprints,
+    themeHostRef: containerRef, isDark, palette,
+  });
+  const error = resultsError || scene.error || artifacts.error || footprints.error;
+  const status = error ? FOOTPRINTS_UNAVAILABLE : resolveFootprintStatus({
+    results, loaded: !!artifacts.attrs, layersReady: footprints.layersReady,
+  });
+  const layerOptions = visualizerLayerOptions({ results, footprintStatus: status });
 
-  // Visualizer data fetching function
-  async function getVisualizerResults() {
-    setIsLoading(true);
-    return await apiGet(
-      "GetVisualizerResults?projectId=" +
-      projectId +
-      "&imageLayerId=" +
-      imageLayerId +
-      "&modelId=" +
-      modelId
-    )
-      .then((response) => {
-        setIsLoading(false);
-                console.log(response);
-        return response;
-
-      })
-      .catch((error) => {
-        console.error("Error fetching visualizer results:", error);
-        throw error;
-      });
-  }
-
+  // AppContext's update function is not memoized. Read its latest value from
+  // an effect rather than repeatedly updating the title on context renders.
   useEffect(() => {
-    if (swipeMapRef.current) {
-      if (swipeStateMobile === "post") {
-        swipeMapRef.current.setOptions({
-          sliderPosition: 0,
-        });
-      } else {
-        swipeMapRef.current.setOptions({
-          sliderPosition: window.innerWidth,
-        });
-      }
-    }
-  }, [swipeStateMobile]);
-
-
-  function checkResponsiveness() {
-    const bootstrapBreakpoint = appParams.bootstrapBreakpoint;
-    if (bootstrapBreakpoint < 4) {
-      if (swipeMapRef.current) {
-        swipeMapRef.current.setOptions({
-          sliderPosition: swipeStateMobile === "post" ? 0 : window.innerWidth,
-        });
-      }
-
-      if (primaryMapRef.current && primaryMapRef.current.controls && zoomControlRef.current) {
-        primaryMapRef.current.controls.remove(zoomControlRef.current);
-      }
-
-      const swipeMapElement = document.querySelector('.azure-maps-swipe-map');
-      if (swipeMapElement) {
-        swipeMapElement.classList.add('d-none');
-      }
-    } else {
-      if (swipeMapRef.current) {
-        swipeMapRef.current.setOptions({
-          sliderPosition: window.innerWidth / 2
-        });
-      }
-
-      if (primaryMapRef.current && primaryMapRef.current.controls && zoomControlRef.current) {
-        const controls = primaryMapRef.current.controls.getControls();
-        const hasZoomControl = controls.includes(zoomControlRef.current);
-        if (!hasZoomControl) {
-          primaryMapRef.current.controls.add(zoomControlRef.current, {
-            position: "bottom-left",
-          });
-        }
-      }
-
-      const swipeMapElement = document.querySelector('.azure-maps-swipe-map');
-      if (swipeMapElement) {
-        swipeMapElement.classList.remove('d-none');
-      }
-    }
-
-  }
-
+    callbacksRef.current = { updateAppParams, setModalComponent };
+  }, [updateAppParams, setModalComponent]);
   useEffect(() => {
-    checkResponsiveness();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appParams.bootstrapBreakpoint]);
-
-  useEffect(() => {
-    const initializeMaps = async () => {
-      if (window.atlas) {
-
-        // Create zoom control reference, so it can be referenced when deleting and resetting regarding responsiveness
-        zoomControlRef.current = new window.atlas.control.ZoomControl();
-
-        var visualizerResults = await getVisualizerResults();
-
-        updateAppParams({
-          visualizerTitle: convertToVisualizerTitle(visualizerResults),
-        });
-
-        var authOptions = getAzureMapsAuthOptions();
-
-        // PRE EVENT MAP SETUP
-        const primaryMap = new window.atlas.Map(primaryMapRef.current, {
-          style: "satellite",
-          authOptions: authOptions,
-        });
-
-        // POST EVENT MAP SETUP
-        const secondaryMap = new window.atlas.Map(secondaryMapRef.current, {
-          style: "satellite",
-          authOptions: authOptions,
-        });
-
-        // SwipeMap object to enable swipe functionality
-        swipeMapRef.current = new window.atlas.SwipeMap(
-          primaryMap,
-          secondaryMap
-        );
-
-        // Primary map event listeners
-        primaryMap.events.add("ready", async function () {
-          // Avoid map rotation
-          avoidRotation(primaryMap);
-
-          await loadPreOrPostDisasterLayer(
-            primaryMap,
-            visualizerResults.preDisasterImagery,
-            "preDisasterImagery"
-          );
-
-          loadPredictedDamageLayer(
-            primaryMap,
-            visualizerResults.predictedDamageLayer,
-          );
-
-          loadPredictionsLayer(
-            primaryMap,
-            visualizerResults.predictionsLayer,
-          );
-
-          await loadStudyArea(primaryMap, visualizerResults.studyArea);
-
-        });
-
-        // Secondary map event listeners
-        secondaryMap.events.add("ready", function () {
-          // Avoid map rotation
-          avoidRotation(secondaryMap);
-
-          loadPreOrPostDisasterLayer(
-            secondaryMap,
-            visualizerResults.postDisasterImagery,
-            "postDisasterImagery"
-          );
-
-          loadPredictedDamageLayer(
-            secondaryMap,
-            visualizerResults.predictedDamageLayer
-          );
-
-          loadPredictionsLayer(
-            secondaryMap,
-            visualizerResults.predictionsLayer
-          );
-
-          loadStudyArea(secondaryMap, visualizerResults.studyArea);
-        });
-
-        // Assign maps to refs
-        primaryMapRef.current = primaryMap;
-        secondaryMapRef.current = secondaryMap;
-
-        // Set global visualizer results to be used in child components
-        setGlobalVisualizerResults(visualizerResults);
-        checkResponsiveness();
-      }
-    };
-
-    // Call the async function inside the effect
-    initializeMaps();
-
-    window.addEventListener("keydown", handleKeyboardShortcuts);
-    //On component dismount
+    const title = results?.projectName
+      ? `${results.projectName}${results.eventDate ? `: ${convertDateToString(results.eventDate)}` : ""}`
+      : "";
+    callbacksRef.current.updateAppParams({ visualizerTitle: title });
     return () => {
-      setModalComponent(null);
-      updateAppParams({ visualizerTitle: "" });
-      window.removeEventListener("keydown", handleKeyboardShortcuts);
+      callbacksRef.current.updateAppParams({ visualizerTitle: "" });
+      callbacksRef.current.setModalComponent(null);
     };
+  }, [results]);
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleKeyboardShortcuts = (event) => {
-    if (shouldIgnoreShortcut(event)) return;
-    if (event.ctrlKey || event.altKey || event.metaKey) {
-      return;
+  const resetMapPosition = useCallback(() => {
+    const bounds = [
+      results?.studyArea?.[0]?.bbox, artifacts.bounds,
+      results?.postDisasterImagery?.bounds, results?.preDisasterImagery?.bounds,
+    ].find(validBounds);
+    if (bounds && scene.maps) {
+      // SwipeMap synchronizes cameras. Do not add a second camera sync loop.
+      scene.maps[0].setCamera({ bounds, padding: 80, duration: 0 });
     }
-    if (!swipeMapRef.current) {
-      return;
-    }
-    switch (event.key.toLowerCase()) {
-      case "a":
-        swipeMapRef.current.setOptions({
-          sliderPosition: 1,
-        });
-        break;
-      case "s":
-        swipeMapRef.current.setOptions({
-          sliderPosition: window.innerWidth / 2,
-        });
-        break;
-      case "d":
-        swipeMapRef.current.setOptions({
-          sliderPosition: window.innerWidth - 1,
-        });
-        break;
-      default:
-        break;
-    }
-  };
+  }, [results, artifacts.bounds, scene.maps]);
+  useEffect(() => { resetMapPosition(); }, [resetMapPosition]);
 
-  // Avoid map rotation and set camera bearing to 0
-  function avoidRotation(map) {
-    map.setUserInteraction({
-      dragRotateInteraction: false,
-      scrollZoomInteraction: true,
-      pinchZoomInteraction: true,
-      pinchRotateInteraction: false,
-    });
-
-    map.setCamera({
-      bearing: 0,
-    });
-  }
-
-  // Load study area on map
-  async function loadStudyArea(map, studyArea) {
-    // Create Data Source
-    var dataSource = new window.atlas.source.DataSource();
-    map.sources.add(dataSource);
-
-    // Add data
-    var geoJsonData = {
-      type: "FeatureCollection",
-      features: studyArea,
-    };
-    dataSource.add(geoJsonData);
-
-    // Create linelayer to define workspace
-    var lineLayer = new window.atlas.layer.LineLayer(dataSource, null, {
-      strokeColor: "#FFFFFF",
-      strokeWidth: 2,
-    });
-    map.layers.add(lineLayer);
-
-    resetMapPosition(studyArea, 3000);
-  }
-
-  // Reset map position to study area
-  function resetMapPosition(studyArea, duration = 700) {
-    primaryMapRef.current.setCamera({
-      bounds: studyArea[0].bbox,
-      type: "fly",
-      duration: duration,
-      padding: 100,
-    });
-  }
-
-  // Adds a layer with pre or post disaster imagery
-  async function loadPreOrPostDisasterLayer(map, disasterLayer, customId) {
-
-    if (!disasterLayer || disasterLayer.url != "") {
-      const layer = new window.atlas.layer.TileLayer({
-        tileUrl: disasterLayer.url,
-        minZoom: 1,
-        maxZoom: 22,
-        bounds: disasterLayer.bounds,
-        attribution: disasterLayer.attribution,
-      });
-      layer.customId = customId;
-
-      map.layers.add(layer);
-    } else {
-
-      const tempTileUrlPath = `https://atlas.microsoft.com/map/tile?api-version=2.1&tilesetId=microsoft.imagery&zoom={z}&x={x}&y={y}`;
-
-      var imagery = new window.atlas.layer.TileLayer({
-        tileUrl: tempTileUrlPath,
-        tileSize: 512,
-      });
-
-      try {
-        imagery.customId = customId;
-        map.layers.add(imagery);
-      } catch (error) {
-        console.error("Error loading imagery layer:", error);
+  useEffect(() => {
+    if (!scene.maps) return;
+    for (const map of scene.maps) {
+      for (const id of ["predictedDamageLayer", "predictionsLayer"]) {
+        map.layers.getLayerById(id)?.setOptions({ visible: visibility[id] });
       }
     }
-  }
+  }, [scene.maps, visibility]);
 
-  // Adds a layer with predicted damage
-  function loadPredictedDamageLayer(map, predictedDamageLayer) {
-    const layer = new window.atlas.layer.TileLayer({
-      tileUrl: predictedDamageLayer.url,
-      minZoom: 1,
-      maxZoom: 22,
-      bounds: predictedDamageLayer.bounds,
-      attribution: predictedDamageLayer.attribution,
-    });
+  useEffect(() => {
+    if (!scene.swipe || !scene.maps) return;
+    const container = containerRef.current;
+    const resize = () => {
+      const mobile = isMobileResultsLayout(window.innerWidth);
+      const width = container.getBoundingClientRect().width;
+      scene.swipe.setOptions({
+        sliderPosition: mobile ? (swipeStateMobile === "post" ? 0 : width) : width / 2,
+      });
+      const divider = container.querySelector(".azure-maps-swipe-map");
+      if (divider) divider.classList.toggle("d-none", mobile);
+      const controls = scene.maps[0].controls;
+      const hasZoom = scene.zoom && controls.getControls().includes(scene.zoom);
+      if (mobile && hasZoom) controls.remove(scene.zoom);
+      else if (!mobile && scene.zoom && !hasZoom) {
+        controls.add(scene.zoom, { position: "bottom-left" });
+      }
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(container);
+    window.addEventListener("resize", resize);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", resize);
+    };
+  }, [scene, swipeStateMobile]);
 
-    layer.customId = "predictedDamageLayer";
-    map.layers.add(layer);
-  }
-
-  // Adds a layer with the raw model predictions (rendered via TiTiler colormap).
-  // Hidden by default; toggle from the InfoPanel.
-  function loadPredictionsLayer(map, predictionsLayer) {
-    if (!predictionsLayer || !predictionsLayer.url) {
-      return;
-    }
-    const layer = new window.atlas.layer.TileLayer({
-      tileUrl: predictionsLayer.url,
-      minZoom: 1,
-      maxZoom: 22,
-      bounds: predictionsLayer.bounds,
-      attribution: predictionsLayer.attribution,
-      visible: false,
-    });
-
-    layer.customId = "predictionsLayer";
-    map.layers.add(layer);
-  }
-
-  // Get layer by customId
-  function getLayerById(currentMap, customId) {
-    const layers = currentMap.current.layers.getLayers();
-    return layers.find((layer) => layer.customId === customId);
-  }
-
-  // Toggles visibility of predicted damage layer
-  function togglePredictedDamageLayerVisibility(customId, isVisible) {
-    const layer = getLayerById(primaryMapRef, customId);
-    if (layer) {
-      layer.setOptions({ visible: isVisible });
-    }
-
-    const layer2 = getLayerById(secondaryMapRef, customId);
-    if (layer2) {
-      layer2.setOptions({ visible: isVisible });
-    }
-  }
-
-  // Convert date to string for visualizer title
-  function convertToVisualizerTitle(response) {
-    if (response.eventDate && response.eventDate !== "") {
-      return response.projectName + ": " + convertDateToString(response.eventDate);
-    } else {
-      return response.projectName;
-    }
-  }
-
-
-
-  return (
-    <div className="visualizer-container">
-      <div id="primaryMap" ref={primaryMapRef} className="map"></div>
-      <div id="secondaryMap" ref={secondaryMapRef} className="map"></div>
-
-      <Labels
-        togglePredictedDamageLayerVisibility={
-          togglePredictedDamageLayerVisibility
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (shouldIgnoreShortcut(event) || event.ctrlKey || event.altKey || event.metaKey || !scene.swipe) return;
+      const position = dividerPositionForKey(event.key, containerRef.current.getBoundingClientRect().width);
+      if (position !== null) {
+        scene.swipe.setOptions({ sliderPosition: position });
+        if (isMobileResultsLayout(window.innerWidth) && event.key.toLowerCase() !== "s") {
+          setSwipeStateMobile(event.key.toLowerCase() === "a" ? "post" : "pre");
         }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [scene.swipe]);
+
+  const changeVisibility = (key, visible) => setVisibility((previous) => ({ ...previous, [key]: visible }));
+  return (
+    <div className="visualizer-container" ref={containerRef}>
+      <div id="primaryMap" ref={primaryContainerRef} className="map" aria-label="Pre-event results map" />
+      <div id="secondaryMap" ref={secondaryContainerRef} className="map" aria-label="Post-event results map" />
+      <Labels
+        visualizerResults={results || {}}
         resetMapPosition={resetMapPosition}
-        visualizerResults={globalVisualizerResults}
         setSwipeStateMobile={setSwipeStateMobile}
         swipeStateMobile={swipeStateMobile}
+        layerOptions={layerOptions}
+        layerVisibility={visibility}
+        onLayerVisibilityChange={changeVisibility}
       />
+      <div className={styles.topStack}>
+        <PredictionStatusNote
+          status={status}
+          detail={error || (status === FOOTPRINTS_LOADING ? "" : readinessDetail(results))}
+          onRetry={retry}
+        />
+      </div>
     </div>
   );
-};
-
-export default Visualizer;
+}
+Visualizer.propTypes = { setModalComponent: PropTypes.func.isRequired };

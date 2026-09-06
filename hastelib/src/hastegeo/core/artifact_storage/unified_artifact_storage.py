@@ -157,6 +157,12 @@ class UnifiedArtifactStorage:
     def get_artifact_size(self, artifact_path: str) -> int:
         return self.artifact_storage.get_artifact_size(artifact_path)
 
+    def read_artifact_bytes(self, artifact_path: str, max_bytes: int) -> bytes:
+        """Read one exact artifact, bounded; missing and transport errors raise."""
+        return self.artifact_storage.read_artifact_bytes(
+            artifact_path, max_bytes
+        )
+
     def get_artifact_etag(self, artifact_path: str) -> str:
         return self.artifact_storage.get_artifact_etag(artifact_path)
 

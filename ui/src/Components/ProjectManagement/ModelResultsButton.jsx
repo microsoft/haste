@@ -8,6 +8,7 @@ import {
   MenuPopover,
   MenuList,
   MenuItem,
+  Tooltip,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 import React, { useContext, useState } from "react";
@@ -19,6 +20,8 @@ import ModelResultsStatusIndicator from "../OtherComponents/ModelResultsStatusIn
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
 import PublishDatasetModal from "../PublishDatasetModal";
+import { buildUrl } from "../../util/api";
+import { buildRawGpkgUrl, canViewResults, readinessDetail } from "../Visualizer/predictionResults.js";
 
 
 function formatFileSize(bytes) {
@@ -37,20 +40,6 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
   const [showValidationReport, setShowValidationReport] = useState(false);
   const [showAssessmentReport, setShowAssessmentReport] = useState(false);
   const [showPublishDataset, setShowPublishDataset] = useState(false);
-
-  function evaluateViewResultsButtonState(model) {
-    // Results button must be enabled if inference jobs exist and status is processed
-    if (
-      model.inferenceJobs.length > 0 &&
-      model.inferenceStatus === "Processed"
-    ) {
-      return false;
-    // If inference fails, then the button should be enabled because will allow the user to download the artifacts when they are ready.
-    } else if (model.status === "Failed" && model.artifacts != null) {
-      return false;
-    }
-    return true;
-  }
 
   function handleDownload(url) {
     try {
@@ -81,7 +70,8 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
   const resultsMenuOptions = (model) => ({
     items: [
       {
-        disabled: model.inferenceStatus !== "Processed",
+        disabled: !canViewResults(model),
+        tooltip: readinessDetail(model),
         key: "viewResults",
         text: "View",
         icon: <FluentIcon name="Forward" />,
@@ -101,7 +91,9 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
         text: "Download Geopackage (.gpkg)",
         icon: <FluentIcon name="download" />,
         onClick: () => {
-          handleDownload(model.gpkgUrl);
+          fileDownload(buildUrl(buildRawGpkgUrl({
+            projectId, imageLayerId, modelId: model.modelId,
+          })), setDialog);
         },
         disabled: model.gpkgUrl === null || model.gpkgUrl === undefined || model.gpkgUrl === "",
       },
@@ -165,14 +157,15 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
                 appearance="primary"
                 id={"singleModelResults" + index}
                 className="dashboard-button dashboard-button-light"
-                disabled={evaluateViewResultsButtonState(model)}
+                disabled={resultsMenuOptions(model).items.every((item) => item.disabled)}
               >
                 Results
               </Button>
             </MenuTrigger>
             <MenuPopover>
               <MenuList>
-                {resultsMenuOptions(model).items.map((mi) => (
+                {resultsMenuOptions(model).items.map((mi) => {
+                  const item = (
                   <MenuItem
                     key={mi.key}
                     icon={mi.icon}
@@ -180,8 +173,13 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
                     onClick={mi.onClick}
                   >
                     {mi.text}
-                  </MenuItem>
-                ))}
+                  </MenuItem>);
+                  return mi.disabled && mi.tooltip ? (
+                    <Tooltip key={mi.key} content={mi.tooltip} relationship="description" withArrow>
+                      {item}
+                    </Tooltip>
+                  ) : item;
+                })}
               </MenuList>
             </MenuPopover>
           </Menu>

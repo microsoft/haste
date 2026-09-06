@@ -7,6 +7,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Lock
+from typing import Any
 
 import yaml
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
@@ -262,7 +263,14 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
     ):
         self.save(data, identifier, data_type, data_file_path, data_format)
 
-    def load(self, identifier, data_type, data_format="json"):
+    def load(
+        self,
+        identifier: str,
+        data_type: str,
+        data_format: str = "json",
+        *,
+        strict: bool = False,
+    ) -> Any:
         blob_name = self.get_file_path(identifier, data_type, data_format)
         blob_client = self.container_client.get_blob_client(blob_name)
         try:
@@ -277,6 +285,8 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
             elif data_format == "yaml":
                 return yaml.safe_load(downloader.readall())
         except Exception as e:
+            if strict and not isinstance(e, ResourceNotFoundError):
+                raise
             raise FileNotFoundError(
                 f"{self.__class__.__name__}.load: No data found for identifier: {identifier} and data_type: {data_type}"
             ) from e
