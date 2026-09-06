@@ -9,12 +9,14 @@ export function buildAssessmentSummary(report) {
   const predictions = report?.predictions;
   if (!predictions) return "";
 
+  const edited = (report.predictionVersion ?? 0) > 0;
   let summary =
     `Out of a total of ${formatInteger(predictions.total)} building footprints in the study area, ` +
-    `${formatInteger(predictions.cloudy)} were obscured by clouds; of the remaining ` +
-    `${formatInteger(predictions.knownNonCloudy)} non-cloudy footprints, the model ` +
-    `predicted that ${formatInteger(predictions.predictedDamaged)} ` +
-    `(${predictions.predictedDamagedPctOfKnown ?? 0}%) were damaged to some extent.`;
+    `${formatInteger(predictions.cloudy)} had Unknown or cloud-covered predictions; of the remaining ` +
+    `${formatInteger(predictions.knownNonCloudy)} known footprints, ` +
+    (edited ? `the saved analyst classes in version ${report.predictionVersion} identify ` : "the model predicted that ") +
+    `${formatInteger(predictions.predictedDamaged)} ` +
+    `(${predictions.predictedDamagedPctOfKnown ?? 0}%) ${edited ? "as damaged" : "were damaged to some extent"}.`;
 
   if ((report.matched ?? 0) <= 0) {
     return (

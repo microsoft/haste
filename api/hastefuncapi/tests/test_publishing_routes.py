@@ -583,6 +583,7 @@ class TestPublishingRoutes(unittest.IsolatedAsyncioTestCase):
             max_total_bytes=function_app.config.publishing_config[
                 "assessment_max_total_bytes"
             ],
+            version=0,
         )
 
     async def test_publish_replay_skips_assessment_generation(self) -> None:
