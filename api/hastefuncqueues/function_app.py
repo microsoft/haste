@@ -9,7 +9,6 @@ import traceback
 import azure.functions as func  # type: ignore
 from hastegeo.core.config import Config
 from hastegeo.core.models.footprint_tiles import parse_tiles_request
-from hastegeo.core.models.prediction_results import InferenceQueueRequest
 from hastegeo.core.models.projects import (
     ImageLayer,
     LabelProject,
@@ -672,7 +671,7 @@ async def GetRunInferenceQueueMessage(msg: func.QueueMessage) -> None:
         7. Update inference status and store results metadata
     """
     try:
-        request = InferenceQueueRequest.model_validate_json(msg.get_body())
+        request = Model.model_validate_json(msg.get_body())
         output = await asyncio.to_thread(
             process_inference_request, request, config=config
         )

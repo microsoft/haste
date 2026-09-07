@@ -28,12 +28,9 @@ Choose eager production: interactive prediction saves write attributes with
 their GeoPackage; standard inference emits attributes in its existing job.
 Both publish matching metadata. Results reads only load artifacts.
 
-Use a per-model `prediction_results` metadata document as the authoritative
-generation record and mirror result fields onto `Model` for compatibility.
-Existing unrelated writers can save full Model snapshots; treating those
-snapshots as publication authority could resurrect superseded results.
-Serialize participating result publishers with renewable Blob leases (or a
-filesystem lock for local metadata), not an assumed global metadata CAS.
+Keep result pointers and output identity on `Model`, using existing metadata
+and artifact storage. A separate authority/mirror and raw-result locking
+framework were rejected during review as unnecessary scope for this feature.
 
 Retain #183's layer-footprint queue. Do not add #136's prediction-edit-prep
 queue, its configuration/trigger, or a first-open enqueue API.
@@ -44,6 +41,4 @@ Deploy the changed inference image with the backend. Legacy results need an
 explicit rerun to gain attributes; opening them does not start a migration.
 Versioned editing builds on the same attribute utility and writes its own
 matching sidecar while saving a version.
-Cloud publishers need access to the existing lease-storage account/container;
-no new queue is added. Unreferenced immutable generation artifacts can remain
-after failures or supersession; garbage collection is a separate concern.
+No new raw-result metadata collection, lease permissions, or queue is required.

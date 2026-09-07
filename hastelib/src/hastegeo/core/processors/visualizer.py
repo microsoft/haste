@@ -93,7 +93,7 @@ class VisualizerProcessor(PredictionResultsProcessor):
             data_type=metadata_types.PROJECT.value,
             partition_key=request.projectId,
             config=self.config,
-        ).load_strict(request.projectId)
+        ).load(request.projectId)
         if not raw_project:
             raise FileNotFoundError("Project not found")
         project = Project.model_validate(raw_project)

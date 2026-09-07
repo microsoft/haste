@@ -11,11 +11,8 @@ from ..models.publishing import (
     PublishRequest,
     SourceArtifact,
 )
-from ..processors.artifacts import _slugify_model_name
 from ..processors.metadata import MetadataProcessor
-from ..processors.prediction_generations import PredictionGenerationRepository
 from ..utils.metadata import MetadataUtils
-from ..utils.prediction_readiness import raw_predictions_readiness
 from .open_data import validate_source_refs
 
 
@@ -128,9 +125,13 @@ class PublishingSourceResolver:
                     config=self.config,
                 ).load(image_layer_id)
             )
-            model = PredictionGenerationRepository(
-                self.config, self.processor_factory
-            ).load(project_id, model_id)
+            model = Model(
+                **self.processor_factory(
+                    data_type=metadata_types.MODEL.value,
+                    partition_key=project_id,
+                    config=self.config,
+                ).load(model_id)
+            )
         except FileNotFoundError as error:
             raise PublishingSourceNotFoundError(str(error)) from error
 
@@ -145,9 +146,17 @@ class PublishingSourceResolver:
             raise PublishingSourceNotFoundError(
                 "Model does not belong to the requested project and image layer"
             )
-        readiness = raw_predictions_readiness(model)
-        if not readiness["ready"]:
-            raise PublishingSourceNotEligibleError(readiness["detail"])
+        completed = self.config.get_status_types().COMPLETED.value
+        # Embedding models signal completion via `status`; trained/inference
+        # models via `inferenceStatus`. Gate on the field that actually applies.
+        if model.modelType == "embedding":
+            is_complete = model.status == completed
+        else:
+            is_complete = model.inferenceStatus == completed
+        if not is_complete or model.predictedBuildingCount == 0:
+            raise PublishingSourceNotEligibleError(
+                "Model must have nonempty Processed predictions before publishing"
+            )
         return project, image_layer, model
 
     def ensure_project_exists(self, project_id: str) -> None:
@@ -353,32 +362,6 @@ class PublishingSourceResolver:
                 expected[kind].add(str(task_prefix / file_name))
 
         if (
-            model.predictionRevision
-            and model.predictionReadyRevision == model.predictionRevision
-            and model.predictionState == "ready"
-            and model.modelType == "embedding"
-        ):
-            prefix = str(
-                PurePosixPath(
-                    project_prefix,
-                    "prediction_results",
-                    str(model.modelId),
-                    model.predictionRevision,
-                )
-            )
-            if prefix == model.predictionOutputPrefix:
-                expected[ArtifactKind.GPKG].add(
-                    str(
-                        PurePosixPath(
-                            prefix,
-                            ArtifactTypes.BUILDING_PREDICTIONS_GPKG.value.substitute(
-                                modelName=str(model.modelId)
-                            )
-                            + ".gpkg",
-                        )
-                    )
-                )
-        elif (
             model.modelType == "embedding"
             and model.status == "Processed"
             and model.embeddingJob is not None
@@ -394,7 +377,21 @@ class PublishingSourceResolver:
                 + ".gpkg"
             )
             expected[ArtifactKind.GPKG].add(
-                str(PurePosixPath(project_prefix, file_name))
+                str(
+                    PurePosixPath(
+                        project_prefix,
+                        *(
+                            (
+                                "predictions",
+                                str(model.modelId),
+                                model.predictionRevision,
+                            )
+                            if model.predictionRevision
+                            else ()
+                        ),
+                        file_name,
+                    )
+                )
             )
         elif model.currentInferenceTaskId:
             current_jobs = [
@@ -414,11 +411,7 @@ class PublishingSourceResolver:
             ):
                 file_name = model.predictionGpkgFilename or (
                     ArtifactTypes.INFERENCE_GPKG.value.substitute(
-                        modelName=(
-                            _slugify_model_name(model.name)
-                            if model.predictionRevision
-                            else str(model.name)
-                        )
+                        modelName=str(model.name)
                     )
                     + ".gpkg"
                 )
