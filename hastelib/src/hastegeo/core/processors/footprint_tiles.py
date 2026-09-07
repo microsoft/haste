@@ -489,6 +489,8 @@ class FootprintTilesPreprocessor:
             file_pattern=f"${BATCH_JOB_WORKDIR}/outputs/*.*",
             command=command,
             image_name=self.config.get_azure_batch_config()["docker_image"],
+            # Per-CPU temporary files exceed the default file limit on large hosts.
+            env_vars={"TIPPECANOE_MAX_THREADS": "8"},
         )
         self.image_layer.footprintTilesJob = TrainingJob(
             jobId=job_id,

@@ -284,6 +284,13 @@ class TestRequestPreparation(FootprintTestCase):
         self.run_request(requestId="recovery")
         self.runner.add_task.assert_called_once()
 
+    def test_tiling_job_bounds_temporary_file_parallelism(self) -> None:
+        self.run_request(requestId="bounded-tiling")
+        self.assertEqual(
+            self.runner.add_task.call_args.kwargs["env_vars"],
+            {"TIPPECANOE_MAX_THREADS": "8"},
+        )
+
     def test_ambiguous_send_failure_does_not_overwrite_fast_consumer(
         self,
     ) -> None:
