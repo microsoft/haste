@@ -19,7 +19,6 @@ from hastegeo.core.models.loading import ActiveJobs
 from hastegeo.core.models.prediction_results import (
     BuildingPredictionsRequest,
     ModelArtifactRequest,
-    ModelCancellationRequest,
     ResultsRequest,
 )
 from hastegeo.core.models.projects import (
@@ -49,22 +48,16 @@ from hastegeo.core.processors.assessment import AssessmentReportProcessor
 from hastegeo.core.processors.embedding import EmbeddingPreprocessor
 from hastegeo.core.processors.footprint_tiles import FOOTPRINT_TILE_FIELDS
 from hastegeo.core.processors.imagery import ImageryPreProcessor
-from hastegeo.core.processors.inference import (
-    InferencePreprocessor,
-    should_cancel_inference,
-)
+from hastegeo.core.processors.inference import InferencePreprocessor
 from hastegeo.core.processors.loading import (
     ActiveJobsProcessor,
     LabelingWorkspaceProcessor,
 )
 from hastegeo.core.processors.metadata import MetadataProcessor
-from hastegeo.core.processors.prediction_generations import (
-    PredictionGenerationRepository,
-    PredictionSupersededError,
-)
 from hastegeo.core.processors.prediction_results import (
     PredictionRequestError,
     PredictionResultsProcessor,
+    PredictionSupersededError,
     read_result_artifact,
 )
 from hastegeo.core.processors.project_details import ProjectDetailsProcessor
@@ -1283,11 +1276,27 @@ async def DeleteLayer(req: func.HttpRequest) -> func.HttpResponse:
             if model["imageLayerId"] == image_layer_id:
                 try:
                     await asyncio.to_thread(
-                        PredictionGenerationRepository(
-                            config
-                        ).delete_model_metadata,
-                        project_id,
+                        MetadataProcessor(
+                            data_type=config.get_metadata_types().MODEL.value,
+                            partition_key=project_id,
+                        ).delete,
                         model["modelId"],
+                    )
+                    await asyncio.to_thread(
+                        MetadataProcessor(
+                            data_type=config.get_metadata_types().EXPERIMENT_CONFIG.value,
+                            partition_key=project_id,
+                        ).delete,
+                        model["modelId"],
+                        "yaml",
+                    )
+                    await asyncio.to_thread(
+                        MetadataProcessor(
+                            data_type=config.get_metadata_types().TRAIN_LABELS.value,
+                            partition_key=project_id,
+                        ).delete,
+                        model["modelId"],
+                        "geojson",
                     )
                 except Exception as e:
                     if "BlobNotFound" in str(e):
@@ -1382,10 +1391,39 @@ async def DeleteModel(req: func.HttpRequest) -> func.HttpResponse:
         return _bad_request("Invalid model deletion request")
     try:
         await asyncio.to_thread(
-            PredictionGenerationRepository(config).delete_model_metadata,
-            project_id,
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).delete,
             model_id,
         )
+        try:
+            await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().EXPERIMENT_CONFIG.value,
+                    partition_key=project_id,
+                ).delete,
+                model_id,
+                "yaml",
+            )
+            await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().TRAIN_LABELS.value,
+                    partition_key=project_id,
+                ).delete,
+                model_id,
+                "geojson",
+            )
+            await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().MODEL_ARTIFACTS.value,
+                    partition_key=project_id,
+                ).delete,
+                model_id,
+            )
+        except Exception as error:
+            if "BlobNotFound" not in str(error):
+                raise
 
         request = StatsPreProcessor(
             request=StatsRequest(
@@ -1405,8 +1443,6 @@ async def DeleteModel(req: func.HttpRequest) -> func.HttpResponse:
     except FileNotFoundError as e:
         logger.error(f"Model not found: {e}\n{traceback.format_exc()}")
         return func.HttpResponse("Model not found.", status_code=404)
-    except LeaseUnavailableError:
-        return func.HttpResponse("Model is busy.", status_code=409)
     except Exception as error:
         logger.error("Error deleting model (%s)", type(error).__name__)
         return func.HttpResponse("Error deleting model.", status_code=500)
@@ -2481,18 +2517,11 @@ async def PutRunInferenceQueueMessage(
     try:
         req_body = req.get_json()
         output = Model.model_validate(req_body)
-        if output.creationDate is None:
-            output.creationDate = MetadataUtils.get_timestamp()
-
         output = await asyncio.to_thread(
             InferencePreprocessor(output).send_to_queue
         )
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
-    except (PredictionSupersededError, LeaseUnavailableError):
-        return func.HttpResponse(
-            "Inference is already active.", status_code=409
-        )
     except FileNotFoundError:
         return func.HttpResponse("Model not found.", status_code=404)
     except ValidationError:
@@ -2901,30 +2930,37 @@ async def PutCancelModelQueueMessage(
         "PutCancelModelQueueMessage HTTP trigger function processed a request."
     )
     try:
-        model_cancel_req = ModelCancellationRequest.model_validate(
-            req.get_json()
-        )
+        model_cancel_req = req.get_json()
     except ValueError:
         return _bad_request("Invalid model cancellation request")
     try:
         try:
             existing_model_data = await asyncio.to_thread(
-                PredictionGenerationRepository(config).load,
-                model_cancel_req.projectId,
-                model_cancel_req.modelId,
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().MODEL.value,
+                    partition_key=model_cancel_req["projectId"],
+                ).load,
+                model_cancel_req["modelId"],
             )
         except FileNotFoundError:
             existing_model_data = None
 
         if existing_model_data is None:
-            logger.info(
-                f"Model {model_cancel_req.modelId} not found, likely deleted, skipping canceling"
-            )
             return func.HttpResponse(json.dumps({}), status_code=200)
+        existing_model_data = Model(**existing_model_data)
 
-        if should_cancel_inference(existing_model_data, config):
+        if (
+            existing_model_data.status
+            == config.get_status_types().COMPLETED.value
+            and existing_model_data.inferenceStatus
+            not in (
+                config.get_status_types().COMPLETED.value,
+                config.get_status_types().FAILED.value,
+            )
+        ):
             logger.info(
-                "Cancelling inference for model %s", model_cancel_req.modelId
+                "Cancelling inference for model %s",
+                model_cancel_req["modelId"],
             )
             output = await asyncio.to_thread(
                 InferencePreprocessor(
@@ -2932,9 +2968,7 @@ async def PutCancelModelQueueMessage(
                 ).send_to_queue,
                 status=config.get_status_types().CANCELLED.value,
             )
-            # The processor persisted intent before publishing. A fast
-            # consumer may already have acknowledged cancellation; do not
-            # overwrite its mirror with this pre-publication snapshot.
+            # The queue producer saved its Model before sending the message.
             return func.HttpResponse(
                 output.model_dump_json(),
                 status_code=200,
@@ -2945,7 +2979,7 @@ async def PutCancelModelQueueMessage(
             == config.get_status_types().FAILED.value
         ):
             logger.info(
-                f"Training for model {model_cancel_req.modelId} already failed, no action taken"
+                f"Training for model {model_cancel_req['modelId']} already failed, no action taken"
             )
             output = existing_model_data
             output.statusMessage = MetadataUtils.append_status_message(
@@ -2957,7 +2991,7 @@ async def PutCancelModelQueueMessage(
             == config.get_status_types().COMPLETED.value
         ):
             logger.info(
-                f"Inference for model {model_cancel_req.modelId} already completed, no action taken"
+                f"Inference for model {model_cancel_req['modelId']} already completed, no action taken"
             )
             output = existing_model_data
             output.inferenceStatusMessage = (
@@ -2971,7 +3005,7 @@ async def PutCancelModelQueueMessage(
             == config.get_status_types().FAILED.value
         ):
             logger.info(
-                f"Inference for model {model_cancel_req.modelId} already failed, no action taken"
+                f"Inference for model {model_cancel_req['modelId']} already failed, no action taken"
             )
             output = existing_model_data
             output.inferenceStatusMessage = (
@@ -3000,13 +3034,6 @@ async def PutCancelModelQueueMessage(
 
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
-    except PredictionSupersededError:
-        return func.HttpResponse(
-            "Inference changed before cancellation. Refresh and try again.",
-            status_code=409,
-        )
-    except LeaseUnavailableError:
-        return func.HttpResponse("Model is busy.", status_code=409)
     except Exception as error:
         logger.error(
             "Error cancelling model task (%s)",
@@ -4090,12 +4117,18 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         project_id = source_request.projectId
         image_layer_id = source_request.imageLayerId
 
-        # Reports consume raw readiness, not viewer sidecars or layer tiles.
-        model, image_layer = await asyncio.to_thread(
-            PredictionResultsProcessor(config).raw_context, source_request
+        model_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).load,
+            source_request.modelId,
         )
-        model_data = model.model_dump()
-        gpkg_url = model.gpkgUrl
+        gpkg_url = model_data.get("gpkgUrl")
+        if not gpkg_url or model_data.get("predictedBuildingCount") == 0:
+            return func.HttpResponse(
+                "Raw report source unavailable.", status_code=404
+            )
 
         # ── 2. Load labels from the Building Validation store ──────────────────
         # The report always reads the layer-scoped Building Validation labels,
@@ -4168,7 +4201,14 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         # ── 3. Load image layer to get buildingFootprintsUrl ──────────────────
-        footprints_url = image_layer.buildingFootprintsUrl
+        image_layer_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=project_id,
+            ).load,
+            image_layer_id,
+        )
+        footprints_url = image_layer_data.get("buildingFootprintsUrl")
         if not footprints_url:
             return func.HttpResponse(
                 json.dumps(
@@ -4392,12 +4432,26 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
                 "minAreaM2 must be >= 0.", status_code=400
             )
 
-        model, image_layer = await asyncio.to_thread(
-            PredictionResultsProcessor(config).raw_context, source_request
+        model_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().MODEL.value,
+                partition_key=project_id,
+            ).load,
+            source_request.modelId,
         )
-        model_data = model.model_dump()
-        gpkg_url = model.gpkgUrl
-        footprints_url = image_layer.buildingFootprintsUrl
+        gpkg_url = model_data.get("gpkgUrl")
+        if not gpkg_url or model_data.get("predictedBuildingCount") == 0:
+            return func.HttpResponse(
+                "Raw report source unavailable.", status_code=404
+            )
+        image_layer_data = await asyncio.to_thread(
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=project_id,
+            ).load,
+            image_layer_id,
+        )
+        footprints_url = image_layer_data.get("buildingFootprintsUrl")
         if not footprints_url:
             return func.HttpResponse(
                 json.dumps(

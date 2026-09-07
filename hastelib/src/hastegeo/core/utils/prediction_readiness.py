@@ -20,28 +20,7 @@ def _readiness(ready: bool, reason: str, detail: str) -> dict[str, Any]:
 def raw_predictions_readiness(model: Model) -> dict[str, Any]:
     if model.predictedBuildingCount == 0:
         return _readiness(False, "empty", "No saved building predictions.")
-    if model.predictionRevision:
-        if (
-            model.predictionState != "ready"
-            or model.predictionReadyRevision != model.predictionRevision
-        ):
-            return _readiness(
-                False,
-                model.predictionState or "generation_mismatch",
-                "The current prediction generation is not available.",
-            )
-    else:
-        status = (
-            model.status
-            if model.modelType == "embedding"
-            else model.inferenceStatus
-        )
-        if status != "Processed":
-            return _readiness(
-                False,
-                "not_processed",
-                "Model must be Processed before predictions are available.",
-            )
+    # A new run does not invalidate the last successful output pair.
     if not model.gpkgUrl:
         return _readiness(
             False, "missing_predictions", "Run predictions or inference."
@@ -58,12 +37,6 @@ def results_readiness(model: Model, layer: ImageLayer) -> dict[str, Any]:
             False,
             "missing_attributes",
             "Rerun predictions or inference to create result attributes.",
-        )
-    if model.predictionReadyRevision != model.predictionRevision:
-        return _readiness(
-            False,
-            "generation_mismatch",
-            "Prediction attributes are out of date.",
         )
     if not layer.footprintPmtilesUrl:
         return _readiness(

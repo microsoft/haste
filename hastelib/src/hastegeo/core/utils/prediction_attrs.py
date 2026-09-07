@@ -6,29 +6,81 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+from numbers import Integral, Real
 from typing import Any
 
+import fiona
+
+from .gdal_security import harden_gdal
 from .logs import Logger
-from .predictions import (
-    FootprintPredictionMismatchError,
-    prediction_layer,
-    raw_prediction_class,
-    read_predictions,
-)
 
-# Public re-exports retain the reference builder's utility/error interfaces.
-__all__ = [
-    "FootprintPredictionMismatchError",
-    "attrs_artifact_name",
-    "build_prediction_attrs",
-    "prediction_layer",
-    "write_prediction_attrs",
-]
-
+harden_gdal()
 SCHEMA_VERSION = 1
+EMBEDDING_FLAVOR = "embedding"
+INFERENCE_FLAVOR = "inference"
 logger = Logger.get_logger(__name__)
+
+
+class FootprintPredictionMismatchError(ValueError):
+    """Prediction rows do not match the immutable cached footprints."""
+
+
+def source_id(value: Any) -> str:
+    """Normalize source identifiers without inventing missing IDs."""
+    if isinstance(value, bool) or not isinstance(value, (str, Integral)):
+        raise FootprintPredictionMismatchError("Source IDs must be non-null.")
+    result = str(value)
+    if not result or result != result.strip():
+        raise FootprintPredictionMismatchError(
+            "Source IDs must be nonempty without surrounding whitespace."
+        )
+    return result
+
+
+def normalize_fraction(value: Any) -> float | None:
+    """NULL/non-finite scores are unscored, not undamaged."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise ValueError(
+            "Prediction scores must be numeric fractions or null."
+        )
+    result = float(value)
+    if not math.isfinite(result):
+        return None
+    if not 0 <= result <= 1:
+        raise ValueError("Prediction scores must be between zero and one.")
+    return result
+
+
+def binary_damage(value: Any) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, Integral)
+        or value not in (0, 1)
+    ):
+        raise ValueError("damaged must be the integer zero or one.")
+    return int(value)
+
+
+def read_footprint_ids(footprints_path: str) -> list[str]:
+    """Read the unique source IDs in the order used by the layer's tiles."""
+    with fiona.open(footprints_path) as src:
+        if not src.crs:
+            raise ValueError("Footprint GeoPackage must declare a CRS.")
+        if "id" not in src.schema["properties"]:
+            raise FootprintPredictionMismatchError(
+                "Missing footprint id column."
+            )
+        ids = [source_id(row["properties"]["id"]) for row in src]
+    if len(set(ids)) != len(ids):
+        raise FootprintPredictionMismatchError(
+            "Duplicate footprint source IDs."
+        )
+    return ids
 
 
 def build_prediction_attrs(
@@ -55,22 +107,72 @@ def build_prediction_attrs(
         or not footprint_fingerprint.strip()
     ):
         raise ValueError("footprint_fingerprint must be a nonempty string.")
-    predictions = read_predictions(
-        predictions_path, footprints_path, flavor=flavor
-    )
-    rows = predictions.rows
+    footprint_ids = read_footprint_ids(footprints_path)
+    layers = fiona.listlayers(predictions_path)
+    if not layers:
+        raise ValueError("Prediction GeoPackage has no layers.")
+    layer = "predictions" if "predictions" in layers else layers[0]
     payload = {
         "schemaVersion": SCHEMA_VERSION,
         "predictionRevision": prediction_revision,
-        "flavor": predictions.flavor,
-        "n": len(rows),
-        "ids": [row.row_index for row in rows],
-        "overtureIds": [row.overture_id for row in rows],
-        "damage": [row.damage_fraction for row in rows],
-        "unknown": [row.unknown_fraction for row in rows],
-        "damaged": [row.damaged for row in rows],
-        "classes": [raw_prediction_class(row) for row in rows],
+        "n": len(footprint_ids),
+        "ids": [],
+        "overtureIds": footprint_ids,
+        "damage": [],
+        "unknown": [],
+        "damaged": [],
+        "classes": [],
     }
+    with fiona.open(predictions_path, layer=layer) as src:
+        if not src.crs:
+            raise ValueError("Prediction GeoPackage must declare a CRS.")
+        fields = set(src.schema["properties"])
+        required = {
+            "id",
+            "overture_id",
+            "damage_pct_0m",
+            "unknown_pct",
+            "damaged",
+        }
+        if not required.issubset(fields):
+            raise ValueError("Prediction GeoPackage is missing columns.")
+        schema_flavor = (
+            EMBEDDING_FLAVOR
+            if layer == "predictions" and "area" in fields
+            else INFERENCE_FLAVOR
+        )
+        if flavor is not None and flavor != schema_flavor:
+            raise ValueError("Prediction flavor does not match its schema.")
+        payload["flavor"] = schema_flavor
+        for index, feature in enumerate(src):
+            props = feature["properties"]
+            row_id = props["id"]
+            if (
+                isinstance(row_id, bool)
+                or not isinstance(row_id, Integral)
+                or row_id != index
+                or index >= len(footprint_ids)
+                or source_id(props["overture_id"]) != footprint_ids[index]
+            ):
+                raise FootprintPredictionMismatchError(
+                    "Prediction IDs and Overture IDs must match source row order."
+                )
+            damage = normalize_fraction(props["damage_pct_0m"])
+            unknown = normalize_fraction(props["unknown_pct"])
+            damaged = binary_damage(props["damaged"])
+            if damage is None or unknown is None or unknown > 0:
+                classification = "Unknown"
+            else:
+                classification = "Damaged" if damaged else "NotDamaged"
+            payload["ids"].append(int(row_id))
+            payload["damage"].append(damage)
+            payload["unknown"].append(unknown)
+            payload["damaged"].append(damaged)
+            payload["classes"].append(classification)
+    if len(payload["ids"]) != len(footprint_ids):
+        raise FootprintPredictionMismatchError(
+            "Prediction and footprint row counts must match."
+        )
     if footprint_fingerprint is not None:
         payload["footprintFingerprint"] = footprint_fingerprint
     return payload

@@ -445,10 +445,6 @@ class Model(BaseModel):
     predictedAt: Optional[str] = Field(default=None)
     # Raw generation identity, never an edited version number.
     predictionRevision: Optional[str] = Field(default=None)
-    predictionReadyRevision: Optional[str] = Field(default=None)
-    predictionState: Optional[str] = Field(default=None)
-    predictionOutputPrefix: Optional[str] = Field(default=None)
-    predictionSourceTaskId: Optional[str] = Field(default=None)
     predictionGpkgFilename: Optional[str] = Field(default=None)
     labelsUrl: Optional[str] = Field(default=None)
     # ── Building labeling workflow (embedding sub-row) ──────────────────

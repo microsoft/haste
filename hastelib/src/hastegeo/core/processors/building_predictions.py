@@ -22,14 +22,14 @@ from pyproj import Transformer
 from shapely.geometry import shape
 from shapely.ops import transform
 
-from ..utils.prediction_attrs import write_prediction_attrs
-from ..utils.predictions import (
+from ..utils.prediction_attrs import (
     EMBEDDING_FLAVOR,
     FootprintPredictionMismatchError,
     binary_damage,
     normalize_fraction,
     read_footprint_ids,
     source_id,
+    write_prediction_attrs,
 )
 
 
