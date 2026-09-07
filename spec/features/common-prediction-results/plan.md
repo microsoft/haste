@@ -4,15 +4,15 @@
 
 | Task | Agent | Stories | Status |
 |---|---|---|---|
-| Define stack boundaries and eager artifact contract | `backend-dev` | CR-1 to CR-5 | complete |
-| Implement shared sidecar generation and standard inference output | `gis` | CR-2, CR-3 | complete |
-| Wire interactive save, model readiness, and artifact API | `backend-dev` | CR-2 to CR-5 | complete |
-| Adapt shared read-only results from #136 without prep machinery | `ui` | CR-1, CR-3 to CR-5 | complete |
-| Exercise producers, payloads, and error cases | `backend-validation` | CR-2 to CR-5 | complete |
-| Exercise shared map and unavailable states | `ui-validation` | CR-1, CR-3 to CR-5 | complete |
+| Remove shadow metadata/lifecycle machinery; retain direct Model result writes | `backend-dev` | CR-2 to CR-5 | complete |
+| Consolidate raw attribute/GeoPackage helpers without weakening identity checks | `gis` | CR-2, CR-3 | complete |
+| Preserve the shared viewer and protected downloads | `ui` | CR-1, CR-4, CR-5 | complete |
+| Validate paired writes, clear/failure/freshness, ownership, and existing inference wiring | `backend-validation` | CR-2 to CR-5 | complete |
+| Confirm unchanged viewer contracts, cancellation and download behavior | `ui-validation` | CR-1, CR-4, CR-5 | complete |
 
 ## Delivery
 
-Create the feature branch from the reviewed #183 head and open its PR with
-that branch as the base. Do not include the editor stage in this diff.
-Update status only against observable validation results.
+Keep #200 based on #183 and restack #201 after simplification. Compare actual
+production/test/diff sizes with the original +8,705 lines; reduction must come
+from removing unnecessary architecture and redundant scaffolding, not weakened
+feature coverage. Run targeted native/API/Node regressions and the UI build.

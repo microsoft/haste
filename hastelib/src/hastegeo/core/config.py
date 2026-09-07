@@ -433,7 +433,6 @@ class Config:
             USERS = "users"
             CONFIG = "config"
             MODEL = "model"
-            PREDICTION_RESULTS = "prediction_results"
             MODEL_CATALOG = "model_catalog"
             PUBLISHED_DATASET = "published_dataset"
             MODEL_ARTIFACTS = "artifacts_model"
