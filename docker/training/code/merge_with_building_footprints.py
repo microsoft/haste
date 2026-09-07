@@ -13,7 +13,7 @@ import pyproj
 import rasterio
 import rasterio.mask
 import shapely.geometry
-from hastegeo.core.utils.predictions import read_footprint_ids
+from hastegeo.core.utils.prediction_attrs import read_footprint_ids
 from tqdm import tqdm
 
 

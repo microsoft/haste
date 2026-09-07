@@ -6,7 +6,6 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from threading import Lock
-from typing import Any
 
 import yaml
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
@@ -277,14 +276,7 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
     ):
         self.save(data, identifier, data_type, data_file_path, data_format)
 
-    def load(
-        self,
-        identifier: str,
-        data_type: str,
-        data_format: str = "json",
-        *,
-        strict: bool = False,
-    ) -> Any:
+    def load(self, identifier, data_type, data_format="json"):
         blob_name = self.get_file_path(identifier, data_type, data_format)
         blob_client = self.container_client.get_blob_client(blob_name)
         try:
