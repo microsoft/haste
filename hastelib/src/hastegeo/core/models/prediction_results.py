@@ -60,24 +60,6 @@ class ResultsRequest(BaseModel):
         return value
 
 
-class ModelCancellationRequest(BaseModel):
-    """Only identifiers from the existing cancellation body are trusted."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    projectId: Guid
-    modelId: ModelId
-
-
-class InferenceQueueRequest(ResultsRequest):
-    # Legacy model snapshots may contain URLs. Ignore those fields and load
-    # only authoritative metadata; messages without a generation cannot win.
-    model_config = ConfigDict(extra="ignore")
-
-    predictionRevision: Revision | None = None
-    currentInferenceTaskId: Revision | None = None
-
-
 class BuildingPrediction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

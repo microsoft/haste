@@ -62,16 +62,12 @@ class StandardEditTestCase(EditTestCase):
                 "modelType": "trained",
                 "inferenceStatus": "Processed",
                 "predictionRevision": revision,
-                "predictionReadyRevision": revision,
-                "predictionState": "ready",
                 "gpkgUrl": url("raw.gpkg"),
                 "predictionAttrsUrl": url("attrs.json"),
                 "predictedBuildingCount": len(scores),
             }
         )
         self.save_record("model", MODEL_ID, model.model_dump(mode="json"))
-        with self.repository.lock(PROJECT_ID, MODEL_ID) as lease:
-            self.repository.save_locked(model, lease)
         self.save_record(
             "imagelayer",
             LAYER_ID,
@@ -171,12 +167,16 @@ class TestVersionedPredictionReports(
         self,
     ) -> None:
         saved = self.edited()
-        with self.repository.lock(PROJECT_ID, MODEL_ID) as lease:
-            model = self.current()
-            self.repository.initialize(
-                model, MetadataUtils.generate_id(), clear=True
-            )
-            self.repository.save_locked(model, lease)
+        self.save_record(
+            "model",
+            MODEL_ID,
+            {
+                "gpkgUrl": None,
+                "predictionAttrsUrl": None,
+                "predictionRevision": MetadataUtils.generate_id(),
+                "predictedBuildingCount": 0,
+            },
+        )
         self.save_record("imagelayer", LAYER_ID, {"footprintPmtilesUrl": None})
         with self.assertRaises(FileNotFoundError):
             await AssessmentReportProcessor(self.config).generate(
@@ -200,9 +200,7 @@ class TestVersionedPredictionReports(
 
         with self.assertRaises(PredictionRequestError):
             self.edit(baseVersion=saved.version, threshold=0.2)
-        self.assertEqual(
-            self.current().predictionEditVersionCounter, saved.version
-        )
+        self.assertEqual(len(self.current().editedPredictions), 1)
         result = VisualizerProcessor(self.config).load(
             PredictionSelectionRequest(
                 projectId=PROJECT_ID,
@@ -262,4 +260,4 @@ class TestEditingWireValidation(EditTestCase):
 
         with self.assertRaises(PredictionRequestError):
             self.edit(threshold=0.1)
-        self.assertEqual(self.current().predictionEditVersionCounter, 0)
+        self.assertEqual(self.current().editedPredictions, [])

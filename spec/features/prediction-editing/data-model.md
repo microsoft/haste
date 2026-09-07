@@ -18,11 +18,15 @@ generation does not delete or reuse earlier version numbers. Historical
 versions remain explicitly readable, but do not become the default edited
 result for a different raw generation.
 
-The existing `prediction_results` authority owns confirmed history, a monotonic
-allocation counter, and compact request receipts for idempotent saves. Raw
-regeneration preserves them; deletion barriers discard the deleted model's
-private history. A failed reservation is not a visible version and can leave a
-numbering gap. Existing artifact paths are never overwritten to fill a gap.
+`Model.editedPredictions` is the history; there is no shadow authority, mirror,
+reservation counter, or receipt ledger. A small per-model lock serializes edit
+saves and cooperating result publications. The next visible version is one
+greater than the maximum confirmed version.
+
+Each upload attempt has a unique artifact namespace. Failed attempts remain
+unreferenced; retrying does not overwrite their files or require a reserved
+version record. A confirmed entry stores `clientRequestId` and its canonical
+request fingerprint so an identical retry returns the same version.
 
 `editedCount` counts effective classes changed from the original model, not
 simply the number of explicit assignments. Model-class pins can therefore be

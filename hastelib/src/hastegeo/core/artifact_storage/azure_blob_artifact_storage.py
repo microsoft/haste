@@ -419,20 +419,6 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
             raise FileNotFoundError(artifact_path)
         return blob_client.get_blob_properties().size
 
-    def read_artifact_bytes(self, artifact_path: str, max_bytes: int) -> bytes:
-        if max_bytes < 1:
-            raise ValueError("max_bytes must be positive")
-        relative_path = self.resolve_artifact_path(artifact_path)
-        blob_client = self.container_client.get_blob_client(relative_path)
-        if blob_client.get_blob_properties().size > max_bytes:
-            raise ValueError("Artifact exceeds the download limit")
-        data = bytearray()
-        for chunk in blob_client.download_blob().chunks():
-            data.extend(chunk)
-            if len(data) > max_bytes:
-                raise ValueError("Artifact exceeds the download limit")
-        return bytes(data)
-
     def get_artifact_etag(self, artifact_path: str) -> str:
         relative_path = self.resolve_artifact_path(artifact_path)
         blob_client = self.container_client.get_blob_client(relative_path)

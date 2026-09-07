@@ -1,15 +1,9 @@
 # Feature: Common Prediction Results
 
-**Contents:** [Summary](#summary) - [Scope](#scope) -
-[Success criteria](#success-criteria) - [Components](#components) -
-[Documents](#documents)
-
 **Status:** implemented
 **Date:** 2026-09-06
 **Priority:** P0
 **Work items:** [#183](https://github.com/microsoft/haste/pull/183), [#136](https://github.com/microsoft/haste/pull/136)
-
-## Summary
 
 Standard inference and interactive labeling share the existing View Results
 page. Both produce the prediction-attribute sidecar when they create predictions,
@@ -18,31 +12,13 @@ PMTiles introduced in #183.
 
 ## Scope
 
-This is the middle change in a three-PR stack: footprint review fixes, common
-read-only results, then versioned prediction editing. Retain #136's vector-first
-swipe-map design without its prediction-preparation queue or first-open work.
-No additional queue, polling-based sidecar preparation, or automatic historical
-backfill is introduced.
-
-## Success Criteria
-
-- Interactive prediction saves and standard inference produce matching sidecars.
-- Both workflows expose View Results with consistent footprint classes.
-- Opening results only reads artifacts; missing artifacts have explicit guidance.
-- Empty interactive predictions do not enable results or publishing.
-- Existing project data and the running development stack are not migrated.
-
-## Components
-
-| Component | Responsibility |
-|---|---|
-| `hastelib` | Prediction artifacts, readiness, visualizer payload |
-| `api/hastefuncapi` | Thin prediction-save and artifact/read wrappers |
-| `docker/training/code` | Eager sidecars during inference |
-| `ui` | Shared read-only results and PMTiles protocol |
+Keep this change to the attribute writer, two existing producer paths, protected
+artifact reads, and the shared viewer. `Model` holds result pointers and output
+identity. No shadow metadata store, raw-result lease framework, cancellation/
+deletion redesign, new queue, first-open generation, or automatic backfill.
+Versioned editing is the separate PR stacked on this one.
 
 ## Documents
 
-[Design](design.md), [stories](user-stories.md), [plan](plan.md),
-[data model](data-model.md), [tests](test-plan.md),
-[impact](impact-analysis.md), [rollout](rollout.md).
+[Design and compatibility](design.md), [acceptance criteria](user-stories.md),
+and [implementation/validation plan](plan.md).

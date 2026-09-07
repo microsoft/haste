@@ -58,9 +58,6 @@ class FakeTypes:
     class MODEL:
         value = "model"
 
-    class PREDICTION_RESULTS:
-        value = "prediction_results"
-
 
 class FakeConfig:
     artifact_storage_type = "local"
@@ -96,8 +93,6 @@ class FakeMetadataProcessor:
             return self.records[(self.data_type, self.partition_key, key)]
         except KeyError as error:
             raise FileNotFoundError(key) from error
-
-    load_strict = load
 
 
 class FakeArtifactStorage:

@@ -3,7 +3,6 @@
 import json
 import os
 import shutil
-import tempfile
 
 import yaml
 
@@ -163,21 +162,8 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
                 with open(dst_file_path, "wb") as file:
                     file.write(data)
             elif self.is_json(data):
-                # Readers must see either complete metadata generation, never
-                # half of a JSON document during guarded result publication.
-                temporary_path = None
-                try:
-                    with tempfile.NamedTemporaryFile(
-                        mode="w", dir=dir_path, delete=False
-                    ) as file:
-                        temporary_path = file.name
-                        json.dump(data, file)
-                        file.flush()
-                        os.fsync(file.fileno())
-                    os.replace(temporary_path, dst_file_path)
-                finally:
-                    if temporary_path and os.path.exists(temporary_path):
-                        os.unlink(temporary_path)
+                with open(dst_file_path, "w") as file:
+                    json.dump(data, file)
             else:
                 raise ValueError(
                     f"{self.__class__.__name__}.save: Unsupported data format. Only json and bytes are supported."
@@ -332,9 +318,9 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
                         )
                     if not entry.is_file(follow_symlinks=False):
                         continue
-                    if not entry.name.startswith(
-                        f"{data_type}_"
-                    ) or not entry.name.endswith(f".{data_format}"):
+                    if not entry.name.startswith(f"{data_type}_") or not entry.name.endswith(
+                        f".{data_format}"
+                    ):
                         continue
                     with open(entry.path, "r") as file:
                         records.append(

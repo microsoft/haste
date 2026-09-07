@@ -27,6 +27,13 @@ Save immutable numbered GeoPackages and matching sidecars together. Append
 metadata only after both writes succeed. Preserve raw pointers and protect
 existing versions from replacement.
 
+Keep history on `Model.editedPredictions`. Serialize editor saves with a small
+per-model lock using the existing lease/local-file primitives; cooperating raw
+publication uses the same lock in this editor change. No separate raw-result
+authority, mirrors, tombstones, counters, or reservation ledger is introduced.
+Store replay identity on confirmed version entries and use unique per-attempt
+artifact paths so failed uploads need no reservation state.
+
 Version selection is request-local, not a mutable shared model pointer.
 Visualizer/reports default to latest edited; explicit zero requests raw.
 Artifact downloads use explicit raw/version numbers. Reports allow independent

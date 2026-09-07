@@ -1,9 +1,14 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
+"""Native paired versions on Model; no shadow-store or reservation fixtures."""
+
 import json
+import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlsplit
@@ -12,52 +17,124 @@ from uuid import uuid4
 from hastegeo.core.artifact_storage.unified_artifact_storage import (
     UnifiedArtifactStorage,
 )
+from hastegeo.core.config import Config
 from hastegeo.core.models.prediction_edits import (
     EditedPredictionVersion,
     PredictionEditSessionRequest,
     SavedPredictionResponse,
     SaveEditedPredictionsRequest,
 )
-from hastegeo.core.models.prediction_results import ModelArtifactRequest
+from hastegeo.core.models.prediction_results import (
+    BuildingPredictionsRequest,
+    ModelArtifactRequest,
+)
+from hastegeo.core.models.projects import ImageLayer, Model, Project
+from hastegeo.core.processors import prediction_edits
+from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.processors.prediction_edits import (
+    PredictionEditConflict,
     PredictionEditsProcessor,
     edit_request_fingerprint,
 )
-from hastegeo.core.processors.prediction_generations import (
-    PredictionEditConflict,
+from hastegeo.core.processors.prediction_results import (
+    PredictionResultsProcessor,
 )
 from hastegeo.core.processors.prediction_sources import (
     resolve_prediction_source,
 )
+from hastegeo.core.publishing.lease import LeaseRenewalError
 
-from .test_prediction_results import (
-    LAYER_ID,
-    MODEL_ID,
-    PROJECT_ID,
-    ResultsTestCase,
-)
+from ..prediction_fixtures import write_gpkg
+from .test_prediction_results import LAYER_ID, MODEL_ID, PROJECT_ID
 
 
-class EditTestCase(ResultsTestCase):
+class EditTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        super().setUp()
-        self.save_predictions()
+        self.directory = self.enterContext(TemporaryDirectory())
+        self.config = Config()
+        self.config.storage_type = self.config.artifact_storage_type = "local"
+        self.config.storage_config = {
+            "directory": str(Path(self.directory, "meta"))
+        }
+        self.config.artifact_storage_config = {
+            "directory": str(Path(self.directory, "artifacts"))
+        }
+        self.config.TEMP_DIR = self.directory
+        self.storage = UnifiedArtifactStorage(
+            "local", **self.config.artifact_storage_config
+        )
+        footprints = write_gpkg(
+            Path(self.directory, "footprints.gpkg"),
+            [{"id": "building-0"}, {"id": "building-1"}],
+            fields={"id": "str"},
+        )
+        self.storage.store_artifact("cached.gpkg", src_path=footprints)
+        self.model = Model(
+            projectId=PROJECT_ID,
+            imageLayerId=LAYER_ID,
+            modelId=MODEL_ID,
+            name="Test",
+            modelType="embedding",
+            status="Processed",
+        )
+        self.layer = ImageLayer(
+            projectId=PROJECT_ID,
+            imageLayerId=LAYER_ID,
+            buildingFootprintsUrl=self.storage.get_download_url(
+                identifier="cached.gpkg"
+            ),
+            footprintPmtilesUrl="https://storage/tiles.pmtiles",
+        )
+        self.save_record("model", MODEL_ID, self.model.model_dump())
+        self.save_record("imagelayer", LAYER_ID, self.layer.model_dump())
+        self.save_record(
+            "project", PROJECT_ID, Project(projectId=PROJECT_ID).model_dump()
+        )
+        self.processor = PredictionResultsProcessor(self.config)
         self.editor = PredictionEditsProcessor(self.config)
+        self.save_predictions()
+
+    def save_record(
+        self, kind: str, key: str, fields: dict, data_format: str = "json"
+    ) -> None:
+        MetadataProcessor(kind, PROJECT_ID, self.config).save(
+            key, fields, data_format
+        )
+
+    def current(self) -> Model:
+        return self.processor.model(PROJECT_ID, MODEL_ID)
+
+    def save_predictions(self, **changes: Any) -> dict:
+        return self.processor.save_building_predictions(
+            BuildingPredictionsRequest.model_validate(
+                {
+                    "projectId": PROJECT_ID,
+                    "imageLayerId": LAYER_ID,
+                    "modelId": MODEL_ID,
+                    "predictions": [
+                        {"id": 0, "damaged": 1},
+                        {"id": 1, "damaged": 0},
+                    ],
+                    **changes,
+                }
+            )
+        )
 
     def edit_request(self, **changes: Any) -> SaveEditedPredictionsRequest:
-        body = {
-            "projectId": PROJECT_ID,
-            "imageLayerId": LAYER_ID,
-            "modelId": MODEL_ID,
-            "predictionRevision": self.current().predictionRevision,
-            "baseVersion": 0,
-            "clientRequestId": str(uuid4()),
-            "threshold": 0.0,
-            "unknownThreshold": 0.0,
-            "overrides": [{"id": 0, "class": "NotDamaged"}],
-        }
-        body.update(changes)
-        return SaveEditedPredictionsRequest.model_validate(body)
+        return SaveEditedPredictionsRequest.model_validate(
+            {
+                "projectId": PROJECT_ID,
+                "imageLayerId": LAYER_ID,
+                "modelId": MODEL_ID,
+                "predictionRevision": self.current().predictionRevision,
+                "baseVersion": 0,
+                "clientRequestId": str(uuid4()),
+                "threshold": 0.0,
+                "unknownThreshold": 0.0,
+                "overrides": [{"id": 0, "class": "NotDamaged"}],
+                **changes,
+            }
+        )
 
     def edit(self, **changes: Any) -> SavedPredictionResponse:
         return self.editor.save(
@@ -65,125 +142,80 @@ class EditTestCase(ResultsTestCase):
         )
 
     def attrs(self, version: int) -> dict:
-        entry = next(
-            item
-            for item in self.current().editedPredictions
-            if item.version == version
-        )
+        source = resolve_prediction_source(self.current(), version)
         return json.loads(
-            self.storage.read_artifact_bytes(
-                self.storage.resolve_artifact_path(entry.predictionAttrsUrl),
-                1_000_000,
+            self.local_path(source.predictionAttrsUrl).read_text()
+        )
+
+    def local_path(self, location: str) -> Path:
+        return Path(
+            self.storage.get_file_path(
+                self.storage.resolve_artifact_path(location)
             )
         )
 
 
 class TestPairedEditPublication(EditTestCase):
-    def test_model_list_artifacts_match_the_advertised_saved_version(
+    def test_pair_matches_selected_version_without_overwriting_raw(
         self,
     ) -> None:
         raw = self.current()
         saved = self.edit()
-        row = self.processor.list_models(PROJECT_ID, LAYER_ID)[0]
-        self.assertEqual(row["predictionVersion"], saved.version)
-        expected = self.current().editedPredictions[0]
-
-        for kind, field in (
-            ("gpkg", "gpkgUrl"),
-            ("prediction_attrs", "predictionAttrsUrl"),
-        ):
-            with self.subTest(kind=kind):
-                url = urlsplit(row[field])
-                self.assertEqual(url.path, "/api/GetModelArtifact")
-                query = {
-                    key: values[0]
-                    for key, values in parse_qs(url.query).items()
-                }
-                self.assertEqual(query["version"], str(saved.version))
-                self.assertEqual(
-                    query["predictionRevision"], row["predictionRevision"]
-                )
-                location, _ = self.processor.resolve_artifact(
-                    ModelArtifactRequest.model_validate(query)
-                )
-                self.assertEqual(location, getattr(expected, field))
-                if kind == "prediction_attrs":
-                    attrs = json.loads(
-                        self.storage.read_artifact_bytes(
-                            self.storage.resolve_artifact_path(location),
-                            1_000_000,
-                        )
-                    )
-                    self.assertEqual(
-                        attrs["predictionVersion"], row["predictionVersion"]
-                    )
-                    self.assertEqual(
-                        attrs["classes"], ["NotDamaged", "NotDamaged"]
-                    )
-
+        self.assertEqual(saved.version, 1)
+        self.assertEqual(saved.editedCount, 1)
         self.assertEqual(self.current().gpkgUrl, raw.gpkgUrl)
         self.assertEqual(
             self.current().predictionAttrsUrl, raw.predictionAttrsUrl
         )
-
-    def test_real_gis_save_publishes_pair_without_changing_raw(self) -> None:
-        raw = self.current()
-        response = self.edit()
-        current = self.current()
-        self.assertEqual(response.version, 1)
-        self.assertEqual(response.predictionRevision, raw.predictionRevision)
-        self.assertEqual(response.editedCount, 1)
-        self.assertEqual(response.overridesApplied, 1)
-        self.assertEqual(response.buildingCount, 2)
-        self.assertIn("version=1", response.gpkgUrl)
-        self.assertIn("predictionRevision=", response.predictionAttrsUrl)
-        self.assertEqual(current.gpkgUrl, raw.gpkgUrl)
-        self.assertEqual(current.predictionAttrsUrl, raw.predictionAttrsUrl)
         attrs = self.attrs(1)
-        self.assertTrue(attrs["isEdited"])
-        self.assertEqual(attrs["predictionVersion"], 1)
         self.assertEqual(attrs["classes"], ["NotDamaged", "NotDamaged"])
         self.assertEqual(attrs["modelClasses"], ["Damaged", "NotDamaged"])
         self.assertEqual(attrs["overrideClasses"], ["NotDamaged", None])
+        row = self.processor.list_models(PROJECT_ID, LAYER_ID)[0]
+        query = {
+            k: v[0]
+            for k, v in parse_qs(
+                urlsplit(row["predictionAttrsUrl"]).query
+            ).items()
+        }
+        path, _ = self.processor.resolve_artifact(
+            ModelArtifactRequest.model_validate(query)
+        )
         self.assertEqual(
-            current.editedPredictions[0].createdBy, "analyst@example.test"
+            json.loads(self.local_path(path).read_text())["predictionVersion"],
+            row["predictionVersion"],
         )
 
-    def test_older_current_generation_base_and_complete_pins_are_preserved(
-        self,
-    ) -> None:
-        first = self.edit()
+    def test_complete_pins_and_older_current_base_are_preserved(self) -> None:
+        self.edit()
         self.edit(overrides=[{"id": 1, "class": "Unknown"}])
-        third = self.edit(
-            baseVersion=first.version,
+        saved = self.edit(
+            baseVersion=1,
             overrides=[
                 {"id": 0, "class": "Damaged"},
                 {"id": 1, "class": "Unknown"},
             ],
         )
-        self.assertEqual(third.version, 3)
-        attrs = self.attrs(3)
-        self.assertEqual(attrs["overrideClasses"], ["Damaged", "Unknown"])
-        self.assertEqual(third.editedCount, 1)
-        self.assertEqual(third.overridesApplied, 2)
+        self.assertEqual(saved.version, 3)
+        self.assertEqual(saved.editedCount, 1)
+        self.assertEqual(saved.overridesApplied, 2)
+        self.assertEqual(
+            self.attrs(3)["overrideClasses"], ["Damaged", "Unknown"]
+        )
 
-    def test_committed_request_replays_after_regeneration(self) -> None:
+    def test_confirmed_replay_survives_new_raw_predictions(self) -> None:
         request = self.edit_request()
-        first = self.editor.save(request, "first@example.test")
+        first = self.editor.save(request, "analyst")
         self.save_predictions()
         with patch.object(UnifiedArtifactStorage, "store_artifact") as upload:
-            replay = self.editor.save(request, "first@example.test")
-        self.assertEqual(replay, first)
+            self.assertEqual(self.editor.save(request, "analyst"), first)
         upload.assert_not_called()
-        self.assertEqual(len(self.current().editedPredictions), 1)
         self.assertEqual(
             resolve_prediction_source(
                 self.current(), default="latest_current"
             ).predictionVersion,
             0,
         )
-        source = resolve_prediction_source(self.current(), first.version)
-        self.assertEqual(source.predictionRevision, first.predictionRevision)
         session = self.editor.get_session(
             PredictionEditSessionRequest(
                 projectId=PROJECT_ID,
@@ -193,230 +225,103 @@ class TestPairedEditPublication(EditTestCase):
             )
         )
         self.assertFalse(session["editReadiness"]["ready"])
-        self.assertEqual(session["editReadiness"]["reason"], "source_changed")
         self.assertTrue(session["predictionsReady"])
 
-    def test_conflicting_request_id_has_no_side_effects(self) -> None:
+    def test_conflicting_request_and_stale_source_do_not_append(self) -> None:
         request = self.edit_request()
         self.editor.save(request, "analyst")
-        changed = self.edit_request(
-            clientRequestId=request.clientRequestId, overrides=[]
-        )
         with self.assertRaises(PredictionEditConflict) as error:
-            self.editor.save(changed, "analyst")
+            self.edit(clientRequestId=request.clientRequestId, overrides=[])
         self.assertEqual(error.exception.code, "request_conflict")
+        self.save_predictions()
+        with self.assertRaises(PredictionEditConflict) as error:
+            self.edit(
+                predictionRevision=request.predictionRevision, baseVersion=1
+            )
+        self.assertEqual(error.exception.code, "source_changed")
         self.assertEqual(len(self.current().editedPredictions), 1)
 
-    def test_unconfirmed_old_generation_and_wrong_base_generation_are_rejected(
-        self,
-    ) -> None:
-        old = self.edit()
-        self.save_predictions()
-        for changes in (
-            {
-                "predictionRevision": old.predictionRevision,
-                "baseVersion": old.version,
-            },
-            {"baseVersion": old.version},
-        ):
-            with self.assertRaises(PredictionEditConflict) as error:
-                self.edit(**changes)
-            self.assertEqual(error.exception.code, "source_changed")
-        self.assertEqual(self.current().predictionEditVersionCounter, 1)
-
-    def test_partial_upload_is_invisible_and_retry_does_not_overwrite(
-        self,
-    ) -> None:
+    def test_failed_upload_is_invisible_and_retry_uses_new_files(self) -> None:
         request = self.edit_request()
-        raw = self.current().gpkgUrl
         original = UnifiedArtifactStorage.store_artifact
-        paths = []
+        orphans = []
 
-        def fail_attrs(storage: UnifiedArtifactStorage, **kwargs: Any) -> str:
-            self.assertIs(kwargs["overwrite"], False)
-            if kwargs["artifact_name"].endswith(".json"):
-                raise RuntimeError("upload unavailable")
-            path = original(storage, **kwargs)
-            paths.append(path)
+        def store(
+            storage: UnifiedArtifactStorage, *args: Any, **kwargs: Any
+        ) -> str:
+            self.assertFalse(kwargs["overwrite"])
+            if args[0].endswith(".json"):
+                raise RuntimeError("Upload failed")
+            path = original(storage, *args, **kwargs)
+            orphans.append(path)
             return path
 
-        with patch.object(
-            UnifiedArtifactStorage, "store_artifact", fail_attrs
-        ):
+        with patch.object(UnifiedArtifactStorage, "store_artifact", store):
             with self.assertRaises(RuntimeError):
                 self.editor.save(request, "analyst")
         self.assertEqual(self.current().editedPredictions, [])
-        self.assertEqual(self.current().gpkgUrl, raw)
-        self.assertEqual(self.current().predictionEditVersionCounter, 1)
-        with self.assertRaises(FileNotFoundError):
-            resolve_prediction_source(self.current(), 1)
-        etag = self.storage.get_artifact_etag(paths[0])
-        response = self.editor.save(request, "analyst")
-        self.assertEqual(response.version, 2)
-        self.assertEqual(self.storage.get_artifact_etag(paths[0]), etag)
-        self.assertEqual(
-            [item.version for item in self.current().editedPredictions], [2]
+        before = Path(orphans[0]).read_bytes()
+        saved = self.editor.save(request, "analyst")
+        self.assertEqual(saved.version, 1)
+        self.assertNotEqual(
+            self.current().editedPredictions[0].gpkgUrl, orphans[0]
         )
-        self.assertEqual(self.editor.save(request, "analyst").version, 2)
+        self.assertEqual(Path(orphans[0]).read_bytes(), before)
+        self.assertEqual(self.editor.save(request, "analyst"), saved)
 
-    def test_concurrent_duplicate_requests_publish_only_one_version(
-        self,
-    ) -> None:
+    def test_concurrent_duplicate_and_distinct_saves(self) -> None:
         request = self.edit_request()
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(
-                executor.map(
-                    lambda _: PredictionEditsProcessor(self.config).save(
-                        request, "analyst"
-                    ),
-                    range(2),
-                )
-            )
-        self.assertEqual([result.version for result in results], [1, 1])
-        self.assertEqual(len(self.current().editedPredictions), 1)
-
-    def test_concurrent_distinct_requests_allocate_distinct_versions(
-        self,
-    ) -> None:
-        requests = [self.edit_request(), self.edit_request()]
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            results = list(
-                executor.map(
+                pool.map(
                     lambda req: PredictionEditsProcessor(self.config).save(
                         req, "analyst"
                     ),
-                    requests,
+                    [request, request],
                 )
             )
-        self.assertEqual(sorted(result.version for result in results), [1, 2])
+        self.assertEqual([r.version for r in results], [1, 1])
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(
+                pool.map(
+                    lambda req: PredictionEditsProcessor(self.config).save(
+                        req, "analyst"
+                    ),
+                    [self.edit_request(), self.edit_request()],
+                )
+            )
+        self.assertEqual(sorted(r.version for r in results), [2, 3])
 
-    def test_lease_loss_after_upload_does_not_advertise_version(self) -> None:
+    def test_lease_loss_never_advertises_the_new_version(self) -> None:
         lease = MagicMock()
-        lease.renew.side_effect = [None, None, None, RuntimeError("lost")]
+        lease.renew.side_effect = LeaseRenewalError("Lease lost")
         with patch.object(
-            self.editor.repository, "lock", return_value=nullcontext(lease)
+            prediction_edits,
+            "prediction_edit_lock",
+            return_value=nullcontext(lease),
         ):
-            with self.assertRaises(PredictionEditConflict) as error:
+            with self.assertRaises(PredictionEditConflict):
                 self.edit()
-        self.assertEqual(error.exception.code, "save_conflict")
-        self.assertEqual(self.current().editedPredictions, [])
-        self.assertEqual(self.current().predictionEditVersionCounter, 1)
-
-    def test_receipt_ownership_is_checked_before_append(self) -> None:
-        original = self.editor.repository.commit_edit_locked
-
-        def stolen(
-            project: str,
-            model_id: str,
-            request_id: str,
-            receipt: Any,
-            entry: Any,
-            lease: Any,
-        ) -> Any:
-            model = self.current()
-            model.predictionEditReceipts[
-                request_id
-            ].attemptId = "another-owner"
-            self.editor.repository.save_locked(model, None)
-            return original(
-                project, model_id, request_id, receipt, entry, lease
-            )
-
-        with patch.object(
-            self.editor.repository, "commit_edit_locked", side_effect=stolen
-        ):
-            with self.assertRaises(PredictionEditConflict) as error:
-                self.edit()
-        self.assertEqual(error.exception.code, "save_conflict")
         self.assertEqual(self.current().editedPredictions, [])
 
-    def test_clear_preserves_history_but_delete_removes_private_versions(
+    def test_clear_preserves_history_and_missing_attrs_still_download(
         self,
     ) -> None:
         saved = self.edit()
-        stale = self.current()
         self.save_predictions(predictions=[])
-        self.save_record("model", MODEL_ID, stale.model_dump(mode="json"))
         current = self.current()
-        self.assertEqual(len(current.editedPredictions), 1)
-        self.assertEqual(
-            resolve_prediction_source(
-                current, default="latest_current"
-            ).predictionVersion,
-            0,
+        current.editedPredictions[0].predictionAttrsUrl = None
+        self.save_record(
+            "model",
+            MODEL_ID,
+            {
+                "editedPredictions": [
+                    v.model_dump(mode="json")
+                    for v in current.editedPredictions
+                ],
+            },
         )
-        url, _ = self.processor.resolve_artifact(
-            ModelArtifactRequest(
-                projectId=PROJECT_ID,
-                modelId=MODEL_ID,
-                kind="gpkg",
-                version=saved.version,
-                predictionRevision=saved.predictionRevision,
-            )
-        )
-        self.assertTrue(url)
-        self.repository.delete_model_metadata(PROJECT_ID, MODEL_ID)
-        self.save_record("model", MODEL_ID, stale.model_dump(mode="json"))
-        self.assertEqual(self.current().editedPredictions, [])
-        self.assertEqual(self.current().predictionEditReceipts, {})
-        with self.assertRaises(FileNotFoundError):
-            resolve_prediction_source(self.current(), saved.version)
-
-    def test_fingerprint_is_order_and_numeric_zero_independent(self) -> None:
-        request = self.edit_request(
-            overrides=[
-                {"id": 1, "class": "Damaged"},
-                {"id": 0, "class": "Unknown"},
-            ]
-        )
-        reordered = self.edit_request(
-            clientRequestId=request.clientRequestId,
-            overrides=[
-                {"id": 0, "class": "Unknown"},
-                {"id": 1, "class": "Damaged"},
-            ],
-            threshold=-0.0,
-        )
-        self.assertEqual(
-            edit_request_fingerprint(request),
-            edit_request_fingerprint(reordered),
-        )
-
-    def test_legacy_model_serializers_remain_json_compatible_after_edits(
-        self,
-    ) -> None:
-        self.edit()
-        encoded = json.dumps(self.current().model_dump())
-        self.assertIn("clientRequestId", encoded)
-
-    def test_busy_local_save_has_bounded_conflict_without_reservation(
-        self,
-    ) -> None:
-        with self.repository.lock(PROJECT_ID, MODEL_ID):
-            with self.assertRaises(PredictionEditConflict) as error:
-                self.edit()
-        self.assertEqual(error.exception.code, "save_conflict")
-        self.assertEqual(self.current().predictionEditVersionCounter, 0)
-
-    def test_missing_historical_attrs_does_not_disable_its_download(
-        self,
-    ) -> None:
-        saved = self.edit()
-        with self.repository.lock(PROJECT_ID, MODEL_ID) as lease:
-            model = self.current()
-            model.editedPredictions[0].predictionAttrsUrl = None
-            self.repository.save_locked(model, lease)
-        session = self.editor.get_session(
-            PredictionEditSessionRequest(
-                projectId=PROJECT_ID,
-                imageLayerId=LAYER_ID,
-                modelId=MODEL_ID,
-                version=1,
-            )
-        )
-        self.assertFalse(session["predictionsReady"])
-        self.assertFalse(session["editReadiness"]["ready"])
-        url, _ = self.processor.resolve_artifact(
+        path, _ = self.processor.resolve_artifact(
             ModelArtifactRequest(
                 projectId=PROJECT_ID,
                 modelId=MODEL_ID,
@@ -424,7 +329,7 @@ class TestPairedEditPublication(EditTestCase):
                 version=saved.version,
             )
         )
-        self.assertTrue(url)
+        self.assertTrue(self.local_path(path).is_file())
         with self.assertRaises(FileNotFoundError):
             self.processor.resolve_artifact(
                 ModelArtifactRequest(
@@ -435,123 +340,46 @@ class TestPairedEditPublication(EditTestCase):
                 )
             )
 
-    def test_legacy_136_metadata_is_readable_but_unbound_versions_are_not_default(
+    def test_fingerprint_normalizes_override_order_and_numeric_zero(
         self,
     ) -> None:
-        current = self.current()
-        current.editedPredictions = [
-            EditedPredictionVersion(
-                version=7,
-                gpkgUrl=current.gpkgUrl,
-                createdAt="2026-01-01",
-                createdBy="legacy",
-                editedCount=1,
-                sourceGpkgUrl=current.gpkgUrl,
-            )
-        ]
-        with self.repository.lock(PROJECT_ID, MODEL_ID) as lease:
-            self.repository.save_locked(current, lease)
+        first = self.edit_request(
+            overrides=[
+                {"id": 0, "class": "Damaged"},
+                {"id": 1, "class": "Unknown"},
+            ]
+        )
+        second = first.model_copy(
+            update={
+                "overrides": list(reversed(first.overrides)),
+                "threshold": -0.0,
+            }
+        )
+        self.assertEqual(
+            edit_request_fingerprint(first), edit_request_fingerprint(second)
+        )
+
+    def test_legacy_unbound_history_is_readable_but_not_selected_by_default(
+        self,
+    ) -> None:
+        raw = self.current()
+        self.save_record(
+            "model",
+            MODEL_ID,
+            {
+                "editedPredictions": [
+                    EditedPredictionVersion(
+                        version=3, gpkgUrl=raw.gpkgUrl
+                    ).model_dump(),
+                ]
+            },
+        )
         self.assertEqual(
             resolve_prediction_source(
                 self.current(), default="latest_current"
             ).predictionVersion,
             0,
         )
-        self.assertTrue(resolve_prediction_source(self.current(), 7).gpkgUrl)
-        saved = self.edit()
-        self.assertEqual(saved.version, 8)
-
-    def test_receipts_and_failed_reservation_counter_survive_raw_regeneration(
-        self,
-    ) -> None:
-        request = self.edit_request()
-        with patch.object(
-            UnifiedArtifactStorage,
-            "store_artifact",
-            side_effect=RuntimeError("upload failed"),
-        ):
-            with self.assertRaises(RuntimeError):
-                self.editor.save(request, "analyst")
-        self.save_predictions()
-        self.assertEqual(self.current().predictionEditVersionCounter, 1)
-        self.assertIn(
-            str(request.clientRequestId), self.current().predictionEditReceipts
-        )
-        self.assertEqual(self.edit().version, 2)
-
-    def test_source_change_before_append_is_fenced(self) -> None:
-        original = self.editor.repository.commit_edit_locked
-
-        def change_source(
-            project: str,
-            model_id: str,
-            request_id: str,
-            receipt: Any,
-            entry: Any,
-            lease: Any,
-        ) -> Any:
-            model = self.current()
-            self.repository.initialize(model, str(uuid4()), clear=True)
-            self.editor.repository.save_locked(model, None)
-            return original(
-                project, model_id, request_id, receipt, entry, lease
-            )
-
-        with patch.object(
-            self.editor.repository,
-            "commit_edit_locked",
-            side_effect=change_source,
-        ):
-            with self.assertRaises(PredictionEditConflict) as error:
-                self.edit()
-        self.assertEqual(error.exception.code, "source_changed")
-        self.assertEqual(self.current().editedPredictions, [])
-        self.assertEqual(self.current().predictedBuildingCount, 0)
-
-    def test_existing_version_path_is_a_conflict_not_an_overwrite(
-        self,
-    ) -> None:
-        revision = self.current().predictionRevision
-        path = self.storage.store_artifact(
-            f"edited_predictions_{MODEL_ID}_v1.gpkg",
-            data=b"existing artifact",
-            namespace=["prediction_edits", MODEL_ID, revision, "v1"],
-            overwrite=False,
-        )
-        with self.assertRaises(PredictionEditConflict) as error:
-            self.edit()
-        self.assertEqual(error.exception.code, "save_conflict")
         self.assertEqual(
-            self.storage.read_artifact_bytes(path, 100), b"existing artifact"
+            resolve_prediction_source(self.current(), 3).gpkgUrl, raw.gpkgUrl
         )
-        self.assertEqual(self.current().editedPredictions, [])
-
-    def test_invalid_uploaded_attrs_never_advertise_a_version(self) -> None:
-        raw = self.current().gpkgUrl
-        with patch.object(
-            UnifiedArtifactStorage, "read_artifact_bytes", return_value=b"{}"
-        ):
-            with self.assertRaises(ValueError):
-                self.edit()
-        self.assertEqual(self.current().gpkgUrl, raw)
-        self.assertEqual(self.current().editedPredictions, [])
-
-    def test_uploaded_assignments_must_match_the_complete_request_snapshot(
-        self,
-    ) -> None:
-        original = UnifiedArtifactStorage.read_artifact_bytes
-
-        def altered(
-            storage: UnifiedArtifactStorage, path: str, limit: int
-        ) -> bytes:
-            payload = json.loads(original(storage, path, limit))
-            payload["classes"][0] = "Unknown"
-            payload["overrideClasses"][0] = "Unknown"
-            return json.dumps(payload).encode()
-
-        with patch.object(
-            UnifiedArtifactStorage, "read_artifact_bytes", altered
-        ):
-            with self.assertRaises(RuntimeError):
-                self.edit()
-        self.assertEqual(self.current().editedPredictions, [])

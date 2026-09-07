@@ -85,6 +85,8 @@ newest saved version. `predictionRevision` is a generation precondition.
 `clientRequestId` identifies a save attempt so a lost-response retry does not
 create duplicate visible versions. Return structured 409 errors for a changed
 source, write contention, or reuse of a request ID for a different payload.
+Replay identity is stored on the confirmed `Model.editedPredictions` entry,
+not in a separate receipt store. Each attempt writes unique artifact paths.
 
 ## Versions and Reports
 

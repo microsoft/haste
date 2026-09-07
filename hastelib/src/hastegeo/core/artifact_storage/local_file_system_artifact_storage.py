@@ -246,17 +246,6 @@ class LocalFileSystemArtifactStorage(AbstractArtifactStorage):
             raise FileNotFoundError(artifact_path)
         return path.stat().st_size
 
-    def read_artifact_bytes(self, artifact_path: str, max_bytes: int) -> bytes:
-        if max_bytes < 1:
-            raise ValueError("max_bytes must be positive")
-        relative_path = self.resolve_artifact_path(artifact_path)
-        path = Path(self.directory, relative_path)
-        with path.open("rb") as source:
-            data = source.read(max_bytes + 1)
-        if len(data) > max_bytes:
-            raise ValueError("Artifact exceeds the download limit")
-        return data
-
     def get_artifact_etag(self, artifact_path: str) -> str:
         relative_path = self.resolve_artifact_path(artifact_path)
         path = Path(self.directory, relative_path)

@@ -235,7 +235,9 @@ pins. Both artifacts exist before the version is advertised.
 Retry the identical logical save with the same `clientRequestId` to recover a
 lost response. A confirmed replay returns its original saved version, even if
 raw predictions subsequently changed. A changed logical save uses a new UUID.
-Failed reservations are not selectable versions and may leave numbering gaps.
+Failed attempts remain unreferenced artifacts in unique paths; they do not
+reserve visible versions. Replay identity lives on the confirmed Model history
+entry, not in a separate metadata authority or receipt ledger.
 
 New edit endpoints use structured errors:
 

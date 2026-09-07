@@ -9,20 +9,16 @@ from hastegeo.core.runners.unified_runner import UnifiedRunner
 from ..artifact_storage.unified_artifact_storage import UnifiedArtifactStorage
 from ..config import Config
 from ..data_layer.unified import UnifiedDataLayer
-from ..models.prediction_results import InferenceQueueRequest, ResultsRequest
 from ..models.projects import ImageLayer, InferenceJob, Model, ModelArtifacts
 from ..models.training import ExperimentConfig, Inference
 from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.prediction_attrs import attrs_artifact_name
+from ..utils.prediction_edit_lock import prediction_edit_lock
 from ..utils.queues import AzureQueueHandler
 from .artifacts import ArtifactProcessor, _slugify_model_name
 from .metadata import MetadataProcessor
-from .prediction_generations import (
-    PredictionGenerationRepository,
-    PredictionSupersededError,
-)
 from .prediction_results import validate_uploaded_pair
 
 # Do not prefix with '$' here. This string will be replaced
@@ -31,86 +27,97 @@ BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 INFERENCE_PREFIX = "inf"
 
 
-def inference_queue_message(model: Model) -> str:
-    return InferenceQueueRequest(
-        projectId=model.projectId,
-        imageLayerId=model.imageLayerId,
-        modelId=model.modelId,
-        predictionRevision=model.predictionRevision,
-        currentInferenceTaskId=model.currentInferenceTaskId,
-    ).model_dump_json()
-
-
-def should_cancel_inference(model: Model, config: Config) -> bool:
-    """An authoritative active inference outranks stale training mirrors."""
-    if model.predictionRevision and model.predictionState == "pending":
-        return True
-    return (
-        model.status == config.get_status_types().COMPLETED.value
-        and model.inferenceStatus
-        not in (
-            config.get_status_types().COMPLETED.value,
-            config.get_status_types().FAILED.value,
-        )
-    )
-
-
 def process_inference_request(
-    request: InferenceQueueRequest, config: Config | None = None
+    request: Model, config: Config | None = None
 ) -> Model | None:
-    """Advance only the authoritative task/generation, then persist and poll."""
+    """Use the stored Model, not the queued snapshot, and reject old task IDs.
+
+    The final re-read is an ordinary freshness check, not metadata CAS.
+    """
     config = config or Config()
-    repository = PredictionGenerationRepository(config)
-    with repository.lock(request.projectId, request.modelId) as lease:
+    metadata = MetadataProcessor("model", request.projectId, config)
+    try:
+        record = metadata.load(request.modelId)
+    except FileNotFoundError:
+        return None
+    if not record:
+        return None
+    model = Model.model_validate(record)
+    if (
+        request.currentInferenceTaskId != model.currentInferenceTaskId
+        or request.imageLayerId != model.imageLayerId
+    ):
+        return None
+    if model.inferenceStatus in (
+        config.get_status_types().COMPLETED.value,
+        config.get_status_types().FAILED.value,
+    ):
+        return None
+    task_id, status, revision = (
+        model.currentInferenceTaskId,
+        model.inferenceStatus,
+        model.predictionRevision,
+    )
+    if status == config.get_status_types().CANCELLED.value:
+        processor = InferencePostprocessor(model, config=config)
+        output = processor.cancel()
+    else:
+        layer = ImageLayer.model_validate(
+            MetadataProcessor(
+                config.get_metadata_types().IMAGELAYER.value,
+                model.projectId,
+                config,
+            ).load(model.imageLayerId)
+        )
+        if (
+            layer.projectId != model.projectId
+            or layer.imageLayerId != model.imageLayerId
+        ):
+            raise ValueError("Inference layer does not match its model")
+        experiment = ExperimentConfig.model_validate(
+            MetadataProcessor(
+                config.get_metadata_types().EXPERIMENT_CONFIG.value,
+                model.projectId,
+                config,
+            ).load(model.modelId, data_format="yaml")
+        )
+        processor = InferencePostprocessor(model, layer, experiment, config)
+        output = processor.process()
+    with prediction_edit_lock(config, model.projectId, model.modelId) as lease:
         try:
-            model = repository.load(request.projectId, request.modelId)
+            latest = Model.model_validate(metadata.load(model.modelId))
         except FileNotFoundError:
             return None
         if (
-            not request.predictionRevision
-            or request.predictionRevision != model.predictionRevision
-            or request.imageLayerId != model.imageLayerId
-            or (
-                request.currentInferenceTaskId
-                and request.currentInferenceTaskId
-                != model.predictionSourceTaskId
-            )
-            or model.predictionState != "pending"
-        ):
+            latest.currentInferenceTaskId,
+            latest.inferenceStatus,
+            latest.predictionRevision,
+        ) != (task_id, status, revision):
             return None
-        if model.inferenceStatus == config.get_status_types().CANCELLED.value:
-            processor = InferencePostprocessor(model, config=config)
-            output = processor.cancel()
-            output.predictionState = "cancelled"
-        else:
-            layer = ImageLayer.model_validate(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().IMAGELAYER.value,
-                    partition_key=model.projectId,
-                    config=config,
-                ).load_strict(model.imageLayerId)
+        fields = {
+            key: value
+            for key, value in output.model_dump().items()
+            if key.startswith("inference")
+            or key in ("currentInferenceTaskId", "predictionGpkgFilename")
+        }
+        if output.inferenceStatus == config.get_status_types().COMPLETED.value:
+            fields.update(
+                output.model_dump(
+                    include={
+                        "gpkgUrl",
+                        "predictionAttrsUrl",
+                        "predictionRevision",
+                        "predictedBuildingCount",
+                        "predictedAt",
+                        "predictedDamageLayerUrl",
+                    }
+                )
             )
-            if (
-                layer.projectId != model.projectId
-                or layer.imageLayerId != model.imageLayerId
-            ):
-                raise ValueError("Inference layer does not match its model")
-            experiment = ExperimentConfig.model_validate(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().EXPERIMENT_CONFIG.value,
-                    partition_key=model.projectId,
-                    config=config,
-                ).load_strict(model.modelId, data_format="yaml")
-            )
-            processor = InferencePostprocessor(
-                model, layer, experiment, config
-            )
-            output = processor.process()
-        if output.inferenceStatus == config.get_status_types().FAILED.value:
-            output.predictionState = "failed"
-        repository.save_locked(output, lease)
+        if lease is not None:
+            lease.renew()
+        metadata.save(output.modelId, fields)
     if output.inferenceStatus == config.get_status_types().IN_PROGRESS.value:
-        processor.queue_client.put_message(inference_queue_message(output))
+        processor.queue_client.put_message(output.model_dump_json())
     return output
 
 
@@ -183,11 +190,6 @@ class BaseInferenceProcessor:
 
 class InferencePreprocessor:
     def __init__(self, model: Model, config: Config = None):
-        ResultsRequest(
-            projectId=model.projectId,
-            imageLayerId=model.imageLayerId,
-            modelId=model.modelId,
-        )
         if config is None:
             config = Config()
         self.queue_client = AzureQueueHandler(
@@ -199,91 +201,63 @@ class InferencePreprocessor:
         self.config = config
 
     def send_to_queue(self, status: str | None = None) -> Model:
-        repository = PredictionGenerationRepository(self.config)
-        with repository.lock(
-            self.model_data.projectId, self.model_data.modelId
-        ) as lease:
-            model = repository.load(
-                self.model_data.projectId, self.model_data.modelId
+        metadata = MetadataProcessor(
+            "model", self.model_data.projectId, self.config
+        )
+        record = metadata.load(self.model_data.modelId)
+        if not record:
+            raise FileNotFoundError("Model not found")
+        model = Model.model_validate(record)
+        if model.imageLayerId != self.model_data.imageLayerId:
+            raise ValueError("Inference request does not match its model")
+        fields = {
+            "inferenceStatus": status
+            or self.config.get_status_types().PENDING.value
+        }
+        if status != self.config.get_status_types().CANCELLED.value:
+            fields.update(
+                currentInferenceTaskId=f"{INFERENCE_PREFIX}-{MetadataUtils.generate_id()}",
+                predictionGpkgFilename=self.config.get_artifact_types().INFERENCE_GPKG.value.substitute(
+                    modelName=_slugify_model_name(model.name)
+                )
+                + ".gpkg",
+                inferenceCurrentStep=0,
+                inferenceTotalSteps=7,
+                inferenceProgressPct=0.0,
+                inferenceOutputPath=None,
+                inferenceStatusMessage=MetadataUtils.append_status_message(
+                    "", "Queued for inference"
+                ),
             )
-            if model.imageLayerId != self.model_data.imageLayerId:
-                raise ValueError(
-                    "Inference request does not match the model's layer"
-                )
-            if status == self.config.get_status_types().CANCELLED.value:
-                if (
-                    model.predictionRevision
-                    != self.model_data.predictionRevision
-                ):
-                    raise PredictionSupersededError(
-                        "Inference changed before cancellation"
-                    )
-                if model.inferenceStatus not in (
-                    self.config.get_status_types().PENDING.value,
-                    self.config.get_status_types().IN_PROGRESS.value,
-                    self.config.get_status_types().CANCELLED.value,
-                ) or (
-                    model.predictionRevision
-                    and model.predictionState != "pending"
-                ):
-                    # Completion/cancellation may have won since the HTTP
-                    # handler loaded the model. Do not undo that transition.
-                    return model
-                if not model.predictionRevision:
-                    # Explicit cancellation of a legacy active task needs a
-                    # control revision so the guarded worker can consume it.
-                    repository.initialize(model, MetadataUtils.generate_id())
-                    model.predictionSourceTaskId = model.currentInferenceTaskId
-                    model.inferenceCurrentStep = (
-                        model.inferenceCurrentStep or 0
-                    )
-                    model.inferenceTotalSteps = model.inferenceTotalSteps or 7
-                model.inferenceStatus = status
-            else:
-                if (
-                    model.modelType == "embedding"
-                    or model.status
-                    != self.config.get_status_types().COMPLETED.value
-                ):
-                    raise ValueError("A processed trained model is required")
-                if (
-                    model.predictionRevision
-                    and model.predictionState == "pending"
-                ):
-                    raise PredictionSupersededError(
-                        "Inference is already active"
-                    )
-                repository.initialize(model, MetadataUtils.generate_id())
-                model.predictionGpkgFilename = (
-                    self.config.get_artifact_types().INFERENCE_GPKG.value.substitute(
-                        modelName=_slugify_model_name(model.name)
-                    )
-                    + ".gpkg"
-                )
-                model.currentInferenceTaskId = None
-                model.inferenceOutputPath = None
-                model.inferenceStatus = (
-                    self.config.get_status_types().PENDING.value
-                )
-                model.inferenceCurrentStep = 0
-                model.inferenceTotalSteps = 7
-                model.inferenceProgressPct = 0.0
-                model.inferenceStatusMessage = (
-                    MetadataUtils.append_status_message(
-                        "", "Queued for inference"
-                    )
-                )
-            repository.save_locked(model, lease)
-            self.model_data = model
+        with prediction_edit_lock(
+            self.config, model.projectId, model.modelId
+        ) as lease:
+            if lease is not None:
+                lease.renew()
+            metadata.save(model.modelId, fields)
+        self.model_data = model.model_copy(update=fields)
         try:
-            self.queue_client.put_message(inference_queue_message(model))
+            self.queue_client.put_message(self.model_data.model_dump_json())
         except Exception:
-            if status != self.config.get_status_types().CANCELLED.value:
-                repository.fail(
-                    model.projectId, model.modelId, model.predictionRevision
-                )
-            # A failed cancel-message send must preserve the intent. An old
-            # queued request/poll (or a retried cancel) can still stop the job.
+            with prediction_edit_lock(
+                self.config, model.projectId, model.modelId
+            ) as lease:
+                latest = metadata.load(model.modelId)
+                if (
+                    latest
+                    and status
+                    != self.config.get_status_types().CANCELLED.value
+                    and latest.get("currentInferenceTaskId")
+                    == self.model_data.currentInferenceTaskId
+                ):
+                    if lease is not None:
+                        lease.renew()
+                    metadata.save(
+                        model.modelId,
+                        {
+                            "inferenceStatus": self.config.get_status_types().FAILED.value
+                        },
+                    )
             raise
         return self.model_data
 
@@ -388,7 +362,6 @@ class InferencePostprocessor(BaseInferenceProcessor):
                     self.model_data.inferenceStatus = (
                         self.config.get_status_types().FAILED.value
                     )
-                    self.model_data.predictionState = "failed"
                     inference_job.status = self.model_data.inferenceStatus
                     inference_job.completedDate = MetadataUtils.get_timestamp()
                     self._update_inference_progress(
@@ -463,6 +436,17 @@ class InferencePostprocessor(BaseInferenceProcessor):
                 f"Adding task for model inference {self.model_data.modelId}"
             )
             # Prepare the input files and experiment config for the inference task
+            task_id = (
+                self.model_data.currentInferenceTaskId
+                or f"{INFERENCE_PREFIX}-{MetadataUtils.generate_id()}"
+            )
+            self.model_data.currentInferenceTaskId = task_id
+            self.model_data.predictionGpkgFilename = self.model_data.predictionGpkgFilename or (
+                self.config.get_artifact_types().INFERENCE_GPKG.value.substitute(
+                    modelName=_slugify_model_name(self.model_data.name)
+                )
+                + ".gpkg"
+            )
             inference_input_files = self._create_inference_config()
             # Multiple inference outputs are stored, but the visualizer imagery is set to the last completed job
             command = (
@@ -477,9 +461,6 @@ class InferencePostprocessor(BaseInferenceProcessor):
             ]
             # Trim job_id to 64 characters to comply with Azure Batch limits
             job_id = job_id[:64]
-            task_id = (
-                f"{INFERENCE_PREFIX}-{self.model_data.predictionRevision}"
-            )
             inference_output_prefix = f"{MetadataUtils.hash_string(self.model_data.projectId)}/{task_id}"
 
             job_id, task_id = self.runner.add_task(
@@ -510,7 +491,6 @@ class InferencePostprocessor(BaseInferenceProcessor):
                 )
             )
             self.model_data.currentInferenceTaskId = task_id
-            self.model_data.predictionSourceTaskId = task_id
             self.model_data.inferenceStatus = (
                 self.config.get_status_types().IN_PROGRESS.value
             )
@@ -538,62 +518,42 @@ class InferencePostprocessor(BaseInferenceProcessor):
 
     def _complete_prediction_artifacts(self, task_id: str) -> None:
         storage = UnifiedArtifactStorage(
-            storage_type=self.config.artifact_storage_type,
-            partition_key=self.model_data.projectId,
+            self.config.artifact_storage_type,
             **self.config.artifact_storage_config,
         )
-        namespace = [task_id]
+        namespace = [
+            MetadataUtils.hash_string(self.model_data.projectId),
+            task_id,
+        ]
         if self.config.runner_type == "local":
             namespace.append("inference")
-        gpkg_name = self.model_data.predictionGpkgFilename
-        if not gpkg_name:
-            raise ValueError("Inference generation has no GeoPackage filename")
-        attrs_name = attrs_artifact_name(self.model_data.modelId)
-        gpkg_path = storage.get_file_path(gpkg_name, namespace)
-        attrs_path = storage.get_file_path(attrs_name, namespace)
-        attributes = validate_uploaded_pair(
-            storage,
-            gpkg_path,
-            attrs_path,
-            self.model_data.predictionRevision,
-            "inference",
-        )
-        gpkg_url = storage.get_download_url(
-            identifier=gpkg_name, extra_partition_keys=namespace
-        )
-        attrs_url = storage.get_download_url(
-            identifier=attrs_name, extra_partition_keys=namespace
-        )
-        visualizer_name = (
-            self.config.get_artifact_types().VISUALIZER.value.substitute(
+        names = {
+            "gpkgUrl": self.model_data.predictionGpkgFilename,
+            "predictionAttrsUrl": attrs_artifact_name(self.model_data.modelId),
+            "predictedDamageLayerUrl": self.config.get_artifact_types().VISUALIZER.value.substitute(
                 projectId=self.model_data.projectId,
                 imageLayerId=self.model_data.imageLayerId,
             )
-            + ".tif"
+            + ".tif",
+        }
+        attributes = validate_uploaded_pair(
+            storage,
+            storage.get_file_path(names["gpkgUrl"], namespace),
+            storage.get_file_path(names["predictionAttrsUrl"], namespace),
+            task_id,
+            "inference",
         )
-        visualizer_path = storage.get_file_path(visualizer_name, namespace)
-        visualizer_url = (
-            storage.get_download_url(
-                identifier=visualizer_name, extra_partition_keys=namespace
+        urls = {
+            field: storage.get_download_url(
+                identifier=name, extra_partition_keys=namespace
             )
-            if storage.artifact_exists(visualizer_path)
-            else None
-        )
-        self.model_data.gpkgUrl = gpkg_url
-        self.model_data.predictionAttrsUrl = attrs_url
+            for field, name in names.items()
+        }
+        for field, url in urls.items():
+            setattr(self.model_data, field, url)
         self.model_data.predictedBuildingCount = attributes.n
         self.model_data.predictedAt = MetadataUtils.get_timestamp()
-        self.model_data.predictionReadyRevision = (
-            self.model_data.predictionRevision
-        )
-        self.model_data.predictionState = "ready"
-        self.model_data.predictionOutputPrefix = "/".join(
-            [
-                MetadataUtils.hash_string(self.model_data.projectId),
-                *namespace,
-            ]
-        )
-        self.model_data.predictedDamageLayerUrl = visualizer_url
+        self.model_data.predictionRevision = task_id
 
     def _create_inference_config(self):
         # Hard requirement: every layer that goes through inference must have
@@ -666,15 +626,7 @@ class InferencePostprocessor(BaseInferenceProcessor):
         }
 
         # Load the experiment config that was saved during training
-        inference_config_id = (
-            f"{self.model_data.modelId}-{self.model_data.predictionRevision}"
-        )
-        config_filepath = self.storage.get_file_remote_path(
-            inference_config_id,
-            self.config.get_metadata_types().EXPERIMENT_CONFIG.value,
-            data_format="yaml",
-        )
-
+        inference_config_id = f"{self.model_data.modelId}-{self.model_data.currentInferenceTaskId}"
         # Create a copy of the existing experiment config and update inference configuration
         updated_experiment_config = self.experiment_config.model_dump()
 
@@ -694,7 +646,7 @@ class InferencePostprocessor(BaseInferenceProcessor):
             prediction_attrs_filename=attrs_artifact_name(
                 self.model_data.modelId
             ),
-            prediction_revision=self.model_data.predictionRevision,
+            prediction_revision=self.model_data.currentInferenceTaskId,
         )
 
         # Update inference settings for the inference run
@@ -705,6 +657,11 @@ class InferencePostprocessor(BaseInferenceProcessor):
             identifier=inference_config_id,
             data=updated_experiment_config,
             data_type=self.config.get_metadata_types().EXPERIMENT_CONFIG.value,
+            data_format="yaml",
+        )
+        config_filepath = self.storage.get_file_remote_path(
+            inference_config_id,
+            self.config.get_metadata_types().EXPERIMENT_CONFIG.value,
             data_format="yaml",
         )
         inference_input_files["config"] = {
@@ -806,7 +763,9 @@ class InferencePostprocessor(BaseInferenceProcessor):
             None,
         )
         if job is None:
-            raise RuntimeError("Current inference task reference is missing")
+            return  # A queued task may not have been submitted yet.
+        job.status = self.config.get_status_types().CANCELLED.value
+        job.completedDate = MetadataUtils.get_timestamp()
         try:
             self.runner.cancel_task(
                 job_id=job.jobId,
@@ -817,8 +776,4 @@ class InferencePostprocessor(BaseInferenceProcessor):
                 "Inference task cancellation failed (%s)",
                 type(error).__name__,
             )
-            raise RuntimeError(
-                f"Inference task cancellation failed ({type(error).__name__})"
-            ) from None
-        job.status = self.config.get_status_types().CANCELLED.value
-        job.completedDate = MetadataUtils.get_timestamp()
+            raise RuntimeError("Inference task cancellation failed") from None

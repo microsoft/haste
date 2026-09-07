@@ -32,6 +32,9 @@ standalone editor or a new preparation pipeline.
 Backend models/processors/API, prediction attribute utilities, Visualizer,
 model-result download controls, Validation/Assessment modals, and keyboard help.
 There is no additional Azure queue, service, or automatic first-open backfill.
+History stays on `Model`; only a small editor-save lock and per-version replay
+fingerprint are added. The discarded raw-result metadata framework is not
+relocated here.
 
 ## Documents
 

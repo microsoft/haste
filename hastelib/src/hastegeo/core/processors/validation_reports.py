@@ -101,7 +101,7 @@ class ValidationReportProcessor(AssessmentReportProcessor):
                 data_type=self.config.get_metadata_types().VALIDATION.value,
                 partition_key=request.projectId,
                 config=self.config,
-            ).load_strict,
+            ).load,
             request.imageLayerId,
         )
         labels = (raw_labels or {}).get("labels") or {}

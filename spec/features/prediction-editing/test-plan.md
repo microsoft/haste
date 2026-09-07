@@ -35,11 +35,10 @@ The editing PR diff contains only this stage above the common-results base.
 
 ## Observed Evidence
 
-The combined backend/native regression gate passed 322 cases. Independent
-review also exercised concurrent/idempotent saves, lost responses, source
-changes, protected version selection, and 324 categorical report combinations.
-Legacy raw report compatibility and model-list source/URL consistency have
-native regression coverage.
+The simplified stack's combined backend/native regression gate passed 248
+cases. Model-only edit tests cover concurrent/idempotent saves, partial uploads,
+source changes, historical versions, protected downloads and reports. Tests for
+the removed shadow authority, reservation counters and receipt ledger are gone.
 
 The final merged editor's Node suite passed 206 cases, including the parent's
 additional raw-download tests. Real Chrome/Azure Maps SDK/WebGL fixtures covered
@@ -47,5 +46,8 @@ gestures, complete pins, version selection, report/download choices, navigation
 guards, and failure recovery. After 39 passing cases in the last broad pass,
 six targeted notice cases closed its remaining failures, retaining the 650 ms
 delayed-error reproduction and ordinary pointer hit-testing at 1440px and 390px.
+Six direct real-browser smoke checks also passed against the simplified public
+serializers: editing controls, save/version adoption, saved pins, lost-response
+retry, historical results after clear, and reports. The UI bundle is unchanged.
 All reported browser findings are closed. Fixture authentication and service
 responses are not a claim of live Azure authentication or basemap validation.

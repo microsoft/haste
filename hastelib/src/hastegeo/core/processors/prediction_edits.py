@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-"""Explicit, paired, immutable edit saves. No preparation queues or GET writes."""
+"""Versioned artifacts and Model history, serialized only for edit publication."""
 
 import hashlib
 import json
@@ -11,6 +11,7 @@ from typing import Any
 
 from azure.core.exceptions import ResourceExistsError
 
+from ..artifact_storage.unified_artifact_storage import UnifiedArtifactStorage
 from ..models.prediction_edits import (
     EditedPredictionAttributes,
     EditedPredictionVersion,
@@ -22,15 +23,15 @@ from ..models.prediction_edits import (
 from ..models.projects import Model
 from ..publishing.lease import LeaseRenewalError, LeaseUnavailableError
 from ..utils.metadata import MetadataUtils
+from ..utils.prediction_edit_lock import prediction_edit_lock
 from ..utils.prediction_readiness import (
     artifact_api_url,
     raw_predictions_readiness,
 )
-from .prediction_generations import PredictionEditConflict
 from .prediction_results import (
-    MAX_ATTRIBUTES_BYTES,
     PredictionRequestError,
     PredictionResultsProcessor,
+    fetch_prediction_file,
 )
 from .prediction_sources import (
     find_edited_version,
@@ -41,56 +42,47 @@ from .prediction_sources import (
 )
 
 
+class PredictionEditConflict(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 def edit_request_fingerprint(request: SaveEditedPredictionsRequest) -> str:
     data = request.model_dump(
         mode="json", by_alias=True, exclude={"clientRequestId"}
     )
-    data["overrides"] = sorted(data["overrides"], key=lambda item: item["id"])
-    # JSON spellings 0 and -0.0 are the same logical threshold.
+    data["overrides"] = sorted(data["overrides"], key=lambda row: row["id"])
     data["threshold"] = request.threshold or 0.0
     data["unknownThreshold"] = request.unknownThreshold or 0.0
-    canonical = json.dumps(
-        data, sort_keys=True, separators=(",", ":"), allow_nan=False
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def download_prediction_input(
     processor: PredictionResultsProcessor, location: str, directory: str
 ) -> str:
-    """Fetch trusted input through configured storage, supporting Local/Blob."""
-    storage = processor.storage()
-    relative = storage.resolve_artifact_path(location)
-    if not storage.artifact_exists(relative):
-        raise FileNotFoundError("Prediction source artifact is missing")
-    Path(directory).mkdir(parents=True, exist_ok=True)
-    if processor.config.artifact_storage_type == "local":
-        storage.fetch_artifact(
-            src_path=storage.get_file_path(relative), dst_path=directory
-        )
-        path = Path(directory, Path(relative).name)
-    else:
-        storage.fetch_artifact(src_path=relative, dst_path=directory)
-        path = Path(directory, relative)
-    if not path.is_file():
-        raise FileNotFoundError("Prediction source artifact is missing")
-    return str(path)
+    storage = UnifiedArtifactStorage(
+        processor.config.artifact_storage_type,
+        **processor.config.artifact_storage_config,
+    )
+    return str(fetch_prediction_file(storage, location, directory))
 
 
 class PredictionEditsProcessor(PredictionResultsProcessor):
     def list_versions(
         self, request: PredictionVersionsRequest
     ) -> dict[str, Any]:
-        model = self.repository.load(request.projectId, request.modelId)
+        model = self.model(request.projectId, request.modelId)
         if request.imageLayerId and request.imageLayerId != model.imageLayerId:
-            raise PredictionRequestError(
-                "Model does not belong to the requested layer"
-            )
-        layer = self.layer(request.projectId, model.imageLayerId)
+            raise PredictionRequestError("Model does not belong to this layer")
         return {
             "modelId": model.modelId,
             "currentPredictionRevision": model.predictionRevision,
-            "versions": prediction_versions(model, layer),
+            "versions": prediction_versions(
+                model, self.layer(model.projectId, model.imageLayerId)
+            ),
         }
 
     def get_session(
@@ -111,7 +103,7 @@ class PredictionEditsProcessor(PredictionResultsProcessor):
             edit_readiness.update(
                 ready=False,
                 reason="source_changed",
-                detail="This version belongs to an older or unknown raw generation.",
+                detail="This version belongs to an older raw output.",
             )
         elif not raw_predictions_readiness(model)["ready"]:
             edit_readiness.update(
@@ -153,14 +145,6 @@ class PredictionEditsProcessor(PredictionResultsProcessor):
     def saved_response(model: Model, version: int) -> SavedPredictionResponse:
         entry = find_edited_version(model, version)
         source = resolve_prediction_source(model, version)
-        if (
-            not entry.predictionAttrsUrl
-            or entry.buildingCount is None
-            or not source.predictionRevision
-        ):
-            raise RuntimeError(
-                "Confirmed edit receipt has incomplete version metadata"
-            )
         return SavedPredictionResponse(
             version=entry.version,
             predictionRevision=source.predictionRevision,
@@ -177,221 +161,137 @@ class PredictionEditsProcessor(PredictionResultsProcessor):
         self, request: SaveEditedPredictionsRequest, created_by: str | None
     ) -> SavedPredictionResponse:
         fingerprint = edit_request_fingerprint(request)
-        request_id = str(request.clientRequestId)
         try:
-            with self.repository.lock(
-                request.projectId, request.modelId, wait_timeout_seconds=2
+            with prediction_edit_lock(
+                self.config, request.projectId, request.modelId
             ) as lease:
-                model = self.repository.load(
-                    request.projectId, request.modelId
-                )
-                if model.imageLayerId != request.imageLayerId:
-                    raise PredictionRequestError(
-                        "Model does not belong to the requested layer"
-                    )
-                previous = model.predictionEditReceipts.get(request_id)
-                if previous:
-                    if previous.fingerprint != fingerprint:
-                        raise PredictionEditConflict(
-                            "request_conflict",
-                            "Request ID was used for a different save.",
-                        )
-                    if previous.state == "committed":
-                        # Replay is not a new edit, even after raw regeneration.
-                        return self.saved_response(model, previous.version)
-                elif any(
-                    str(item.clientRequestId) == request_id
-                    for item in model.editedPredictions or []
-                ):
-                    raise RuntimeError("Confirmed edit has no request receipt")
-                if (
-                    model.predictionRevision != request.predictionRevision
-                    or not raw_predictions_readiness(model)["ready"]
-                ):
-                    raise PredictionEditConflict(
-                        "source_changed",
-                        "Raw predictions changed; reopen the edit session.",
-                    )
-                source = resolve_prediction_source(model, request.baseVersion)
-                if source.predictionRevision != request.predictionRevision:
-                    raise PredictionEditConflict(
-                        "source_changed",
-                        "The base version belongs to another raw generation.",
-                    )
-                if request.baseVersion and (
-                    request.threshold != source.threshold
-                    or request.unknownThreshold != source.unknownThreshold
-                ):
-                    raise PredictionRequestError(
-                        "Select raw predictions before changing thresholds"
-                    )
-                if source.flavor == "embedding" and (
-                    request.threshold != 0 or request.unknownThreshold != 0
-                ):
-                    raise PredictionRequestError(
-                        "Embedding predictions do not support score thresholds"
-                    )
-                if model.predictedBuildingCount is not None and any(
-                    row.id >= model.predictedBuildingCount
-                    for row in request.overrides
-                ):
-                    raise PredictionRequestError(
-                        "Override row ID is outside the raw prediction source"
-                    )
-                layer = self.layer(request.projectId, request.imageLayerId)
+                model, layer = self.context(request)
+                for entry in model.editedPredictions or []:
+                    if entry.clientRequestId == str(request.clientRequestId):
+                        if entry.requestFingerprint != fingerprint:
+                            raise PredictionEditConflict(
+                                "request_conflict",
+                                "Request ID was used for a different save.",
+                            )
+                        return self.saved_response(model, entry.version)
+                self._validate_source(model, request)
                 if not layer.buildingFootprintsUrl:
-                    raise FileNotFoundError(
-                        "Cached building footprints are missing"
+                    raise FileNotFoundError("Cached footprints are missing")
+                source = resolve_prediction_source(model, request.baseVersion)
+                version = (
+                    max(
+                        (
+                            entry.version
+                            for entry in model.editedPredictions or []
+                        ),
+                        default=0,
                     )
-                receipt = self.repository.reserve_edit_locked(
-                    model, request_id, fingerprint, created_by, lease
+                    + 1
                 )
+                storage = UnifiedArtifactStorage(
+                    self.config.artifact_storage_type,
+                    **self.config.artifact_storage_config,
+                )
+                # Each attempt has its own files. Failed attempts need neither
+                # reservations nor an overwrite when the same request retries.
+                namespace = [
+                    MetadataUtils.hash_string(model.projectId),
+                    "prediction_edits",
+                    model.modelId,
+                    MetadataUtils.generate_id(),
+                ]
                 with TemporaryDirectory(dir=self.config.TEMP_DIR) as directory:
-                    raw_path = download_prediction_input(
+                    raw = download_prediction_input(
                         self, model.gpkgUrl, str(Path(directory, "raw"))
                     )
-                    footprints_path = download_prediction_input(
+                    footprints = download_prediction_input(
                         self,
                         layer.buildingFootprintsUrl,
                         str(Path(directory, "footprints")),
                     )
-                    # GIS owns all class/geometry processing. Import lazily so
-                    # read-only metadata paths do not initialize geospatial I/O.
                     from ..utils.prediction_edits import (
                         PredictionOverride,
                         apply_prediction_edits,
                     )
 
                     gpkg_name = (
-                        self.config.get_artifact_types().EDITED_PREDICTIONS_GPKG.value.substitute(
-                            modelId=model.modelId, version=receipt.version
-                        )
-                        + ".gpkg"
+                        f"edited_predictions_{model.modelId}_v{version}.gpkg"
                     )
                     attrs_name = (
-                        self.config.get_artifact_types().PREDICTION_ATTRS_VERSION.value.substitute(
-                            modelId=model.modelId, version=receipt.version
-                        )
-                        + ".json"
+                        f"prediction_attrs_{model.modelId}_v{version}.json"
                     )
-                    try:
-                        artifacts = apply_prediction_edits(
-                            raw_path,
-                            footprints_path,
-                            str(Path(directory, gpkg_name)),
-                            str(Path(directory, attrs_name)),
-                            prediction_revision=request.predictionRevision,
-                            version=receipt.version,
-                            flavor=source.flavor,
-                            threshold=request.threshold,
-                            unknown_threshold=request.unknownThreshold,
-                            overrides=[
-                                PredictionOverride(row.id, row.edited_class)
-                                for row in request.overrides
-                            ],
-                        )
-                    except ValueError:
-                        raise PredictionRequestError(
-                            "Edits do not match the raw prediction source"
-                        ) from None
-                    self.repository.renew_edit_lease(lease)
-                    namespace = [
-                        "prediction_edits",
-                        model.modelId,
-                        request.predictionRevision,
-                        f"v{receipt.version}",
-                    ]
-                    storage = self.storage(model.projectId)
-                    gpkg_path = storage.store_artifact(
-                        artifact_name=gpkg_name,
-                        src_path=artifacts.gpkg_path,
-                        namespace=namespace,
-                        overwrite=False,
-                    )
-                    attrs_path = storage.store_artifact(
-                        artifact_name=attrs_name,
-                        src_path=artifacts.attrs_path,
-                        namespace=namespace,
-                        overwrite=False,
-                    )
-                    if (
-                        not storage.artifact_exists(gpkg_path)
-                        or storage.get_artifact_size(gpkg_path) <= 0
-                    ):
-                        raise RuntimeError(
-                            "Edited GeoPackage upload is missing"
-                        )
-                    attrs = EditedPredictionAttributes.model_validate_json(
-                        storage.read_artifact_bytes(
-                            attrs_path, MAX_ATTRIBUTES_BYTES
-                        )
-                    )
-                    assignments = {
-                        row.id: row.edited_class for row in request.overrides
-                    }
-                    if (
-                        attrs.predictionRevision != request.predictionRevision
-                        or attrs.predictionVersion != receipt.version
-                        or attrs.flavor != source.flavor
-                        or attrs.n != artifacts.count
-                        or attrs.n != artifacts.summary.total_rows
-                        or attrs.threshold != request.threshold
-                        or attrs.unknownThreshold != request.unknownThreshold
-                        or artifacts.summary.changed_from_model
-                        != sum(
-                            effective != baseline
-                            for effective, baseline in zip(
-                                attrs.classes, attrs.modelClasses
-                            )
-                        )
-                        or artifacts.summary.overrides_applied
-                        != sum(
-                            value is not None
-                            for value in attrs.overrideClasses
-                        )
-                        or not assignments.keys() <= set(attrs.ids)
-                        or any(
-                            override != assignments.get(row_id)
-                            for row_id, override in zip(
-                                attrs.ids, attrs.overrideClasses
-                            )
-                        )
-                    ):
-                        raise RuntimeError(
-                            "Uploaded edit attributes do not match the save"
-                        )
-                    entry = EditedPredictionVersion(
-                        version=receipt.version,
-                        gpkgUrl=storage.get_download_url(
-                            identifier=gpkg_name,
-                            extra_partition_keys=namespace,
-                        ),
-                        predictionAttrsUrl=storage.get_download_url(
-                            identifier=attrs_name,
-                            extra_partition_keys=namespace,
-                        ),
-                        sourcePredictionRevision=request.predictionRevision,
-                        sourceGpkgUrl=model.gpkgUrl,
-                        baseVersion=request.baseVersion,
-                        clientRequestId=request.clientRequestId,
-                        createdAt=MetadataUtils.get_timestamp(),
-                        createdBy=receipt.createdBy,
-                        threshold=request.threshold,
-                        unknownThreshold=request.unknownThreshold,
-                        buildingCount=attrs.n,
-                        editedCount=artifacts.summary.changed_from_model,
-                        overridesApplied=artifacts.summary.overrides_applied,
+                    artifacts = apply_prediction_edits(
+                        raw,
+                        footprints,
+                        str(Path(directory, gpkg_name)),
+                        str(Path(directory, attrs_name)),
+                        prediction_revision=request.predictionRevision,
+                        version=version,
                         flavor=source.flavor,
+                        threshold=request.threshold,
+                        unknown_threshold=request.unknownThreshold,
+                        overrides=[
+                            PredictionOverride(row.id, row.edited_class)
+                            for row in request.overrides
+                        ],
                     )
-                    committed = self.repository.commit_edit_locked(
-                        model.projectId,
-                        model.modelId,
-                        request_id,
-                        receipt,
-                        entry,
-                        lease,
+                    attrs = EditedPredictionAttributes.model_validate(
+                        artifacts.payload
                     )
-                    return self.saved_response(committed, entry.version)
+                    for name, path in (
+                        (gpkg_name, artifacts.gpkg_path),
+                        (attrs_name, artifacts.attrs_path),
+                    ):
+                        stored = storage.store_artifact(
+                            name,
+                            src_path=path,
+                            namespace=namespace,
+                            overwrite=False,
+                        )
+                        if (
+                            not storage.artifact_exists(stored)
+                            or storage.get_artifact_size(stored) <= 0
+                        ):
+                            raise RuntimeError("Edited artifact upload failed")
+                current = self.model(model.projectId, model.modelId)
+                self._validate_source(current, request)
+                if lease is not None:
+                    lease.renew()
+                entry = EditedPredictionVersion(
+                    version=version,
+                    gpkgUrl=storage.get_download_url(
+                        identifier=gpkg_name, extra_partition_keys=namespace
+                    ),
+                    predictionAttrsUrl=storage.get_download_url(
+                        identifier=attrs_name, extra_partition_keys=namespace
+                    ),
+                    sourcePredictionRevision=request.predictionRevision,
+                    sourceGpkgUrl=model.gpkgUrl,
+                    baseVersion=request.baseVersion,
+                    clientRequestId=str(request.clientRequestId),
+                    requestFingerprint=fingerprint,
+                    createdAt=MetadataUtils.get_timestamp(),
+                    createdBy=created_by,
+                    threshold=request.threshold,
+                    unknownThreshold=request.unknownThreshold,
+                    buildingCount=attrs.n,
+                    editedCount=artifacts.summary.changed_from_model,
+                    overridesApplied=artifacts.summary.overrides_applied,
+                    flavor=source.flavor,
+                )
+                versions = [*(current.editedPredictions or []), entry]
+                self.metadata(model.projectId).save(
+                    model.modelId,
+                    {
+                        "editedPredictions": [
+                            item.model_dump(mode="json") for item in versions
+                        ]
+                    },
+                )
+                return self.saved_response(
+                    current.model_copy(update={"editedPredictions": versions}),
+                    version,
+                )
         except (
             LeaseUnavailableError,
             LeaseRenewalError,
@@ -399,6 +299,41 @@ class PredictionEditsProcessor(PredictionResultsProcessor):
             FileExistsError,
         ):
             raise PredictionEditConflict(
-                "save_conflict",
-                "The save is busy or its artifact path is already occupied.",
+                "save_conflict", "The save is busy; please retry."
             ) from None
+
+    @staticmethod
+    def _validate_source(
+        model: Model, request: SaveEditedPredictionsRequest
+    ) -> None:
+        if (
+            model.imageLayerId != request.imageLayerId
+            or model.predictionRevision != request.predictionRevision
+            or not raw_predictions_readiness(model)["ready"]
+        ):
+            raise PredictionEditConflict(
+                "source_changed", "Raw predictions changed; reopen editing."
+            )
+        source = resolve_prediction_source(model, request.baseVersion)
+        if source.predictionRevision != request.predictionRevision:
+            raise PredictionEditConflict(
+                "source_changed",
+                "The base version belongs to older predictions.",
+            )
+        if request.baseVersion and (
+            request.threshold != source.threshold
+            or request.unknownThreshold != source.unknownThreshold
+        ):
+            raise PredictionRequestError(
+                "Select raw predictions before changing thresholds"
+            )
+        if source.flavor == "embedding" and (
+            request.threshold or request.unknownThreshold
+        ):
+            raise PredictionRequestError("Embedding scores have no thresholds")
+        if model.predictedBuildingCount is None or any(
+            row.id >= model.predictedBuildingCount for row in request.overrides
+        ):
+            raise PredictionRequestError(
+                "Override IDs must match raw predictions"
+            )
