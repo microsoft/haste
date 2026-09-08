@@ -141,9 +141,8 @@ def footprints_to_tiling_geojson(
 ) -> int:
     """Write a tiling-ready EPSG:4326 GeoJSON of the footprints.
 
-    Emits exactly two attributes per feature: an integer ``id`` equal to
-    the footprint's row index (the positional join key) and the Overture
-    string id as ``overture_id``.
+    Emits a native integer feature ``id`` equal to the footprint's row index
+    and the Overture string id as ``overture_id``.
 
     Args:
         footprints_path: Building-footprints GeoPackage for the layer.
@@ -192,7 +191,14 @@ def footprints_to_tiling_geojson(
         geometry=footprints.geometry.values,
         crs=TILING_CRS,
     )
-    tiles_gdf.to_file(geojson_path, driver="GeoJSON")
+    # An attribute-only zero is dropped by tippecanoe's ID promotion. Emit
+    # native GeoJSON IDs so row zero also retains its vector-tile identity.
+    tiles_gdf.to_file(
+        geojson_path,
+        driver="GeoJSON",
+        ID_FIELD=TILE_ID_FIELD,
+        ID_TYPE="Integer",
+    )
     logger.info(
         "Wrote %d footprints to %s for tiling",
         len(tiles_gdf),
