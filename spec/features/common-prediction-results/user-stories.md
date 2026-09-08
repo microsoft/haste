@@ -4,7 +4,7 @@
 
 | Story | Analyst outcome | Acceptance criteria |
 |---|---|---|
-| CR-1 | View either workflow's predictions | Both model rows navigate to the same Visualizer; matching vectors appear on both swipe panes. |
+| CR-1 | View either workflow's predictions | Both model rows navigate to the same Visualizer; matching vectors appear on both swipe panes. Both viewing and interactive labeling fetch footprint tiles by HTTP range, never by preloading the full archive. |
 | CR-2 | Results ready when predictions complete | Interactive save generates attributes; standard inference emits and uploads attributes in its existing job. |
 | CR-3 | Trust classes and identity | Row/count mismatches fail explicitly; binary standard-model scores do not change its flavor; repeat prediction uses fresh attributes. |
 | CR-4 | Understand unavailable results | Cleared/empty interactive predictions disable results; old missing sidecars show actionable guidance without queuing work. |

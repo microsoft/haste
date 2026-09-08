@@ -9,6 +9,9 @@
 | Preserve the shared viewer and protected downloads | `ui` | CR-1, CR-4, CR-5 | complete |
 | Validate paired writes, clear/failure/freshness, ownership, and existing inference wiring | `backend-validation` | CR-2 to CR-5 | complete |
 | Confirm unchanged viewer contracts, cancellation and download behavior | `ui-validation` | CR-1, CR-4, CR-5 | complete |
+| Replace full PMTiles downloads with shared range loading and expose local response headers | `ui`, `backend-dev` | CR-1, CR-5 | complete |
+| Confirm partial reads, cache sharing, failures and cancellation in both screens | `ui-validation`, `backend-validation` | CR-1, CR-4, CR-5 | complete locally |
+| Confirm range responses through deployed SWA | `backend-validation` | CR-5 | blocked: authenticated deployment access required |
 
 ## Delivery
 
