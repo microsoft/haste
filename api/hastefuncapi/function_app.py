@@ -49,6 +49,7 @@ from hastegeo.core.models.users import User
 from hastegeo.core.processors.artifacts import ArtifactProcessor
 from hastegeo.core.processors.assessment import AssessmentReportProcessor
 from hastegeo.core.processors.embedding import EmbeddingPreprocessor
+from hastegeo.core.processors.footprint_tiles import FOOTPRINT_TILE_FIELDS
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
 from hastegeo.core.processors.metadata import MetadataProcessor
@@ -1055,7 +1056,13 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         req_body = req.get_json()
-        image_data = ImageLayer(**req_body)
+        image_data = ImageLayer(
+            **{
+                key: value
+                for key, value in req_body.items()
+                if key not in FOOTPRINT_TILE_FIELDS
+            }
+        )
 
         url_error = validate_image_layer_imagery_urls(image_data)
         if url_error:
@@ -1089,6 +1096,9 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
 
         if existing_image_layer:
             # This is an edit
+            stored_layer = ImageLayer.model_validate(existing_image_layer)
+            for field in FOOTPRINT_TILE_FIELDS:
+                setattr(image_data, field, getattr(stored_layer, field))
             output = image_data
         else:
             output = await asyncio.to_thread(
@@ -1101,7 +1111,7 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
                 partition_key=output.projectId,
             ).save,
             output.imageLayerId,
-            output.dict(),
+            output.model_dump(exclude=FOOTPRINT_TILE_FIELDS),
         )
 
         # Repeating the check because we want to save stats after the image layer, if new, is saved
@@ -1436,15 +1446,20 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
             PredictionRequestError("Invalid artifact request.")
         )
     try:
+        processor = PredictionResultsProcessor(config)
         blob_url, generation_scoped = await asyncio.to_thread(
-            PredictionResultsProcessor(config).resolve_artifact, request
+            processor.resolve_artifact, request
+        )
+        filename = (
+            await asyncio.to_thread(processor.download_filename, request)
+            if request.kind == "gpkg"
+            else None
         )
     except (PredictionRequestError, FileNotFoundError) as error:
         return _prediction_edit_error_response(error)
     except Exception as error:
         return _prediction_edit_error_response(error)
     kind = request.kind
-    model_id = request.modelId
 
     try:
         offset, length, is_range = parse_byte_range(req.headers.get("Range"))
@@ -1474,10 +1489,7 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
     # interactive labeler's other artifacts are fetched by range and parsed
     # in-browser, so they must NOT be forced as downloads).
     if kind == "gpkg":
-        suffix = f"v{request.version}" if request.version else "raw"
-        headers[
-            "Content-Disposition"
-        ] = f'attachment; filename="building_predictions_{model_id}_{suffix}.gpkg"'
+        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
     if result.etag:
         headers["ETag"] = (
             result.etag if result.etag.startswith('"') else f'"{result.etag}"'

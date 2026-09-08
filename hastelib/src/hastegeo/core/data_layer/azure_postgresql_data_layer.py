@@ -115,6 +115,35 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
                 )
                 connection.commit()
 
+    def merge_json(
+        self, identifier: str, data_type: str, fields: dict
+    ) -> dict:
+        with psycopg2.connect(
+            host=self.server_name,
+            dbname=self.database_name,
+            user=self.postgres_user,
+            password=self.token,
+            sslmode="require",
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {} AS target "
+                        "(identifier, data_type, partition_key, data) "
+                        "VALUES (%s, %s, %s, %s) "
+                        "ON CONFLICT (identifier, data_type) DO UPDATE "
+                        "SET data = COALESCE(target.data, '{{}}'::jsonb) "
+                        "|| EXCLUDED.data RETURNING data"
+                    ).format(self._table_identifier()),
+                    (
+                        identifier,
+                        data_type,
+                        self.partition_key or identifier,
+                        json.dumps(fields),
+                    ),
+                )
+                return cursor.fetchone()[0]
+
     def save_chunk(
         self,
         identifier,

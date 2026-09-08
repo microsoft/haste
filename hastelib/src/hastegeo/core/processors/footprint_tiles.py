@@ -245,8 +245,7 @@ def _initialize_request(
 
 
 def _save_tiles(metadata: MetadataProcessor, image_layer: ImageLayer) -> None:
-    # MetadataProcessor merges top-level fields. Do not overwrite imagery
-    # or label work with a snapshot taken by the footprint consumer.
+    # ImageLayer top-level fields merge atomically at the storage boundary.
     metadata.save(
         image_layer.imageLayerId,
         image_layer.model_dump(include=FOOTPRINT_TILE_FIELDS),
@@ -263,9 +262,9 @@ def process_tiles_request(
     and stale polls are discarded. Invalid requests (including layers with
     no cached footprints) raise; deleted layers are a no-op.
 
-    Metadata uses the existing read/merge/write contract, not CAS. Ordering
-    prevents our own fast consumers/stale outer saves from losing state;
-    this is not a cross-worker lock or an atomic Batch/metadata transaction.
+    Metadata merges preserve fields owned by other layer processors.
+    Deterministic runner identities recover an accepted submission when
+    its subsequent metadata save failed.
     """
     if config is None:
         config = Config()
@@ -326,6 +325,17 @@ def process_tiles_request(
         # A failed send propagates for queue retry. The saved task reference
         # makes that retry a poll rather than a second task submission.
         processor.queue_client.put_message(processor._poll_message())
+    elif output.footprintTilesJob:
+        try:
+            processor.runner.cleanup_task(
+                job_id=output.footprintTilesJob.jobId,
+                task_id=output.footprintTilesJob.taskId,
+            )
+        except Exception as error:
+            processor.logger.warning(
+                "Footprint task cleanup failed after terminal save (%s)",
+                type(error).__name__,
+            )
     return output
 
 
@@ -445,7 +455,6 @@ class FootprintTilesPreprocessor:
                 job.status = self.image_layer.footprintTilesStatus
                 job.completedDate = MetadataUtils.get_timestamp()
                 self._replay_friendly_logs()
-                self.runner.cleanup_task(job_id=job.jobId, task_id=job.taskId)
 
             elif task_status == statuses.FAILED.value:
                 self.image_layer.footprintTilesStatus = task_status
@@ -453,7 +462,6 @@ class FootprintTilesPreprocessor:
                 job.completedDate = MetadataUtils.get_timestamp()
                 self._replay_friendly_logs()
                 self._update_progress("Footprint tile job failed")
-                self.runner.cleanup_task(job_id=job.jobId, task_id=job.taskId)
             else:
                 # A queued Batch task is still an active submission, not
                 # a fresh PENDING layer that should be submitted again.
@@ -474,10 +482,12 @@ class FootprintTilesPreprocessor:
             "&& python -m hastegeo.workflows.prepare_footprint_tiles "
             f'--config ${BATCH_JOB_WORKDIR}/{config_path}"'
         )
-        job_id = self.config.get_azure_batch_config()["training_batch_job_id"][
-            :64
-        ]
-        task_id = f"{FOOTPRINT_TILES_PREFIX}-{MetadataUtils.generate_id()}"
+        identity = MetadataUtils.hash_string(
+            f"{self.project_id}/{self.layer_id}/"
+            f"{self.image_layer.footprintTilesRequestId}"
+        )[:40]
+        task_id = f"{FOOTPRINT_TILES_PREFIX}-{identity}"
+        job_id = task_id
         output_prefix = (
             f"{MetadataUtils.hash_string(self.project_id)}/{task_id}"
         )
@@ -491,6 +501,7 @@ class FootprintTilesPreprocessor:
             image_name=self.config.get_azure_batch_config()["docker_image"],
             # Per-CPU temporary files exceed the default file limit on large hosts.
             env_vars={"TIPPECANOE_MAX_THREADS": "8"},
+            idempotent=True,
         )
         self.image_layer.footprintTilesJob = TrainingJob(
             jobId=job_id,

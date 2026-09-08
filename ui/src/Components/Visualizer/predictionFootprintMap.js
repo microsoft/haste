@@ -147,7 +147,8 @@ export function createPredictionRenderer({ atlas, maps, archiveKey, attrs, onErr
         const row = byId.get(feature.id);
         if (row === undefined) throw new Error("Footprint and prediction row IDs do not match.");
         const overtureId = feature.properties?.overture_id;
-        if (overtureId != null && overtureId !== attrs.overtureIds[row]) {
+        if (typeof overtureId !== "string" || !overtureId.trim() ||
+            overtureId !== attrs.overtureIds[row]) {
           throw new Error("Footprint and prediction Overture IDs do not match.");
         }
         if (!locations.has(feature.id)) {
