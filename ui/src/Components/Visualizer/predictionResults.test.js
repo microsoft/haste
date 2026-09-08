@@ -111,6 +111,14 @@ test("server readiness gates both workflows, independently from a downloadable r
   }
 });
 
+test("saved versions with sidecars still require complete server readiness", () => {
+  const entry = { version: 1, predictionAttrsUrl: "/attrs", gpkgUrl: "/gpkg", buildingCount: 12 };
+  assert.equal(canViewResults(entry), false);
+  assert.equal(canViewResults({ ...entry, predictionsReady: false }), false);
+  assert.equal(canViewResults({ ...entry, predictionsReady: true }), true);
+  assert.equal(canViewResults({ ...entry, predictionsReady: true, buildingCount: 0 }), false);
+});
+
 test("missing, invalid and empty results cannot retain a ready footprint status", () => {
   assert.equal(resolveFootprintStatus({ results: null }), "loading");
   assert.equal(resolveFootprintStatus({ results: sampleResults(), loaded: true, layersReady: false }), "loading");
