@@ -13,7 +13,6 @@ html {
 
 
 .visualizer-container {
-  --prediction-editor-width: clamp(300px, 25vw, 360px);
   position: relative;
   isolation: isolate;
   flex: 1 1 auto;
