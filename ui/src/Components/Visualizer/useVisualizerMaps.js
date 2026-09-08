@@ -4,6 +4,7 @@
 // events, optional rasters and SwipeMap disposal before disposing either map.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getAzureMapsAuthOptions, isAzureMapsPlaceholder } from "../../util/azureMapsAuth";
+import { isOptionalAzureBasemapAuthError } from "../../util/azureMapsErrors.js";
 import { waitForMapReady } from "../InteractiveLabeler/interactiveLabelerLoading.js";
 import { hasRasterLayer, visualizerSceneKey } from "./predictionResults.js";
 
@@ -46,9 +47,19 @@ export default function useVisualizerMaps({ results, routeKey, primaryContainerR
     let swipe;
     let zoom;
     let disposed = false;
+    let basemapWarning = "";
     const containers = [primaryContainerRef.current, secondaryContainerRef.current];
     const reportError = (event) => {
       if (!controller.signal.aborted) {
+        if (isOptionalAzureBasemapAuthError(event)) {
+          if (!basemapWarning) {
+            basemapWarning = "Azure basemap unavailable. Showing your available imagery and prediction layers.";
+            setState((current) => ({
+              ...(current?.key === key ? current : {}), key, basemapWarning,
+            }));
+          }
+          return;
+        }
         setState({
           key,
           error: event?.error?.message || event?.message || "Azure Maps failed to load.",
@@ -87,6 +98,7 @@ export default function useVisualizerMaps({ results, routeKey, primaryContainerR
           map.events.add("error", onError);
           const promise = waitForMapReady(map, {
             signal: controller.signal,
+            ignoreError: isOptionalAzureBasemapAuthError,
             onReady: () => {
               map.setUserInteraction({
                 dragRotateInteraction: false, scrollZoomInteraction: true,
@@ -114,7 +126,7 @@ export default function useVisualizerMaps({ results, routeKey, primaryContainerR
         swipe = new atlas.SwipeMap(maps[0], maps[1]);
         zoom = new atlas.control.ZoomControl();
         maps[0].controls.add(zoom, { position: "bottom-left" });
-        setState({ key, maps, swipe, zoom, registerCleanup });
+        setState({ key, maps, swipe, zoom, registerCleanup, basemapWarning });
       } catch (error) {
         if (!controller.signal.aborted) {
           reportError(error);

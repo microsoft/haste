@@ -286,6 +286,9 @@ export default function Visualizer({ setModalComponent }) {
           loading={loadingVersion}
           editing={editor.isEditMode}
         />}
+        {scene.basemapWarning && <MessageBar intent="info" layout="multiline" className={styles.notice}>
+          <MessageBarBody className={styles.noticeBody}>{scene.basemapWarning}</MessageBarBody>
+        </MessageBar>}
         {switchState?.error && <MessageBar intent="error" className={styles.notice}><MessageBarBody>
           {versionLabel(switchState.version)} could not be loaded ({switchState.phase}).
           The map still shows {versionLabel(results?.predictionVersion ?? 0)}{editor.isEditMode ? " with the local edit preview" : ""}. {switchState.error}

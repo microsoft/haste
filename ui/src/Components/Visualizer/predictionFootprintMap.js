@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 // Renderer helpers adapted from PR136. No React, SDK import or DOM at module scope.
 import { CLASS_DAMAGED, CLASS_NOT_DAMAGED, CLASS_UNKNOWN, indexById } from "./predictionClassify.js";
+import { isOptionalAzureBasemapAuthError } from "../../util/azureMapsErrors.js";
 
 export const PMTILES_SOURCE_LAYER = "buildings";
 export const CLASS_CODES = { [CLASS_DAMAGED]: 1, [CLASS_NOT_DAMAGED]: 2, [CLASS_UNKNOWN]: 3 };
@@ -232,7 +233,10 @@ export function createPredictionRenderer({ atlas, maps, archiveKey, attrs, onErr
         key: index === 0 ? "primary" : "secondary",
       };
       panes.push(pane);
-      const onRendererError = (event) => fail(event.error || new Error("Map tile loading failed."));
+      const onRendererError = (event) => {
+        if (isOptionalAzureBasemapAuthError(event)) return;
+        fail(event.error || new Error("Map tile loading failed."));
+      };
       for (const [event, handler] of [
         ["sourcedata", scheduleHydrate], ["moveend", scheduleHydrate],
         ["idle", scheduleHydrate], ["error", onRendererError],

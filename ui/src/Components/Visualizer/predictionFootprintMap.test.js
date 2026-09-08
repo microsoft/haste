@@ -177,6 +177,29 @@ test("native tile errors fail the renderer instead of leaving a ready grey map",
   assert.equal(operations.filter(([op]) => op === "removeSource").length, 2);
 });
 
+test("optional Azure basemap 401 does not dispose ready prediction sources", async (t) => {
+  const { create, maps, errors, operations } = fixture(t);
+  const renderer = create();
+  await renderer.ready;
+  maps[0].map.emit("error", {
+    error: {
+      status: 401,
+      url: "https://atlas.microsoft.com/map/tileset?tilesetId=microsoft.base",
+    },
+  });
+  assert.equal(errors.length, 0);
+  assert.equal(operations.filter(([op]) => op === "removeSource").length, 0);
+  assert.equal(renderer.getPanes().length, 2);
+  maps[0].map.emit("error", {
+    error: {
+      status: 401,
+      url: "http://localhost/api/GetModelArtifact?kind=footprint_pmtiles",
+      message: "Prediction archive unauthorized",
+    },
+  });
+  assert.match(errors[0].message, /Prediction archive unauthorized/);
+});
+
 test("feature-state failures and mismatched source IDs surface visible errors", async (t) => {
   const { create, maps, errors } = fixture(t);
   maps[0].map.setFeatureState = () => { throw new Error("renderer rejected feature-state"); };

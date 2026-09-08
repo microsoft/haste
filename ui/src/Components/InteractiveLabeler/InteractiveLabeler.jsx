@@ -43,6 +43,7 @@ import {
   getAzureMapsAuthOptions,
   isAzureMapsPlaceholder,
 } from "../../util/azureMapsAuth";
+import { isOptionalAzureBasemapAuthError } from "../../util/azureMapsErrors.js";
 import { toBrowserTitilerUrl } from "../../util/blobUrl";
 import { AppContext } from "../../AppContext.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
@@ -899,7 +900,7 @@ const InteractiveLabeler = () => {
     });
     mapRef.current = map;
 
-    await waitForMapReady(map, { signal, onReady: () => {
+    await waitForMapReady(map, { signal, ignoreError: isOptionalAzureBasemapAuthError, onReady: () => {
       map.setUserInteraction({
         dragRotateInteraction: false,
         scrollZoomInteraction: true,
