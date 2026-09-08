@@ -10,6 +10,7 @@ import {
   throwFootprintTilesLoadError,
   waitForMapReady,
 } from "./interactiveLabelerLoading.js";
+import { isOptionalAzureBasemapAuthError } from "../../util/azureMapsErrors.js";
 
 // Deterministic stand-in for a streamed fetch response. `msPerChunk` advances
 // the injected clock on every read so throttling can be asserted without
@@ -125,6 +126,19 @@ test("waitForMapReady rejects an Azure Maps error", async () => {
   events.emit("error", { error: new Error("authentication failed") });
 
   await assert.rejects(result, /authentication failed/);
+});
+
+test("waitForMapReady can wait through an optional basemap auth failure", async () => {
+  const events = createMapEvents();
+  const result = waitForMapReady(
+    { events },
+    { timeoutMs: 100, ignoreError: isOptionalAzureBasemapAuthError }
+  );
+  events.emit("error", {
+    error: "AJAXError: (401): https://atlas.microsoft.com/map/tileset?tilesetId=microsoft.base",
+  });
+  events.emit("ready");
+  await result;
 });
 
 test("waitForMapReady rejects when loading times out", async () => {
