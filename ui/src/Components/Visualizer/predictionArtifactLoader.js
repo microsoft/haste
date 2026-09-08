@@ -4,14 +4,12 @@
 import { readResponseBuffer } from "../InteractiveLabeler/interactiveLabelerLoading.js";
 import { normalizeAttrs } from "./predictionClassify.js";
 import { resolvePredictionArtifacts, validateResultsMetadata } from "./predictionResults.js";
-import { PMTiles } from "pmtiles";
-import { getPmtilesProtocol, InMemoryPMTilesSource } from "../../util/pmtiles.js";
+import { loadFootprintArchive } from "../../util/pmtiles.js";
 
 export const MAX_ATTRIBUTES_BYTES = 64 * 1024 * 1024;
-export const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 120000;
 
-export async function fetchArtifactBuffer(url, { signal, maxBytes = MAX_ARCHIVE_BYTES } = {}) {
+export async function fetchArtifactBuffer(url, { signal, maxBytes = MAX_ATTRIBUTES_BYTES } = {}) {
   const controller = new AbortController();
   const cancel = () => controller.abort(signal.reason);
   signal?.throwIfAborted();
@@ -59,18 +57,9 @@ export async function loadPredictionAttributes(results, buildUrl, signal) {
 
 export async function loadPredictionArtifacts(results, buildUrl, signal) {
   const { attrs, archiveUrl } = await loadPredictionAttributes(results, buildUrl, signal);
-  const protocol = getPmtilesProtocol();
-  let archive = protocol.get(archiveUrl);
-  if (!archive) {
-    const buffer = await fetchArtifactBuffer(archiveUrl, { signal });
-    signal?.throwIfAborted();
-    archive = new PMTiles(new InMemoryPMTilesSource(archiveUrl, buffer));
-  }
-  const header = await archive.getHeader();
-  signal?.throwIfAborted();
-  protocol.add(archive);
+  const { archiveKey, header } = await loadFootprintArchive(archiveUrl, signal);
   return {
-    attrs, archiveKey: archiveUrl,
+    attrs, archiveKey,
     bounds: [header.minLon, header.minLat, header.maxLon, header.maxLat],
   };
 }

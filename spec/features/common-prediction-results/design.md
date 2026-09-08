@@ -42,8 +42,21 @@ add unsupported cache-busting parameters.
 
 Both workflows use the same Visualizer route, shared PMTiles protocol and
 two-pane feature-state renderer. Keep optional standard rasters, legends,
-theme/mobile controls and cancellation handling. Bound downloads (64 MiB JSON,
-1 GiB PMTiles); clear old feature state before replacing sources.
+theme/mobile controls and cancellation handling. Bound JSON downloads to 64 MiB;
+clear old feature state before replacing sources.
+
+Both the Visualizer and Interactive Labeler read PMTiles through the standard
+HTTP-backed source: fetch the header/root directory, then the directories and
+tiles needed by the viewport. Never preload the whole archive or fall back to a
+full download when byte serving fails. Cache archives by the protected
+project/layer URL, independent of model ID or query parameter order. Keep
+initial-load cancellation and per-range timeouts.
+
+The artifact endpoint supports `Range`, `206 Partial Content`, `Content-Range`
+and `ETag`. Same-origin SWA routing keeps its existing authentication. Local
+cross-origin API access must allow `Range` and expose `Content-Range`, `ETag`,
+`Accept-Ranges` and `Content-Length` to browser JavaScript. Do not assume a SWA
+range limitation; verify the deployed proxy with an authenticated range GET.
 
 ## Boundaries and Rollout
 
