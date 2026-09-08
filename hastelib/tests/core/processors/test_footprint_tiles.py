@@ -58,6 +58,15 @@ class FootprintTestCase(unittest.TestCase):
             self.record = deepcopy(kwargs["data"])
 
         self.storage.save.side_effect = save
+
+        def merge(identifier: str, data_type: str, fields: dict) -> dict:
+            data = {**self.record, **fields}
+            self.storage.save(
+                identifier=identifier, data_type=data_type, data=data
+            )
+            return deepcopy(self.record)
+
+        self.storage.merge_json.side_effect = merge
         self.enterContext(
             patch(
                 "hastegeo.core.processors.metadata.UnifiedDataLayer",
@@ -498,6 +507,45 @@ class TestProcessTilesRequest(FootprintTestCase):
         )
         self.queue.put_message.assert_not_called()
 
+    def test_retry_after_accepted_submission_reuses_deterministic_identity(
+        self,
+    ) -> None:
+        self.record["footprintTilesStatus"] = STATUSES.PENDING.value
+        self.record["footprintTilesRequestId"] = "request-1"
+        save = self.storage.save.side_effect
+        self.storage.save.side_effect = RuntimeError("metadata unavailable")
+        with self.assertRaises(RuntimeError):
+            self.run_request()
+        first = self.runner.add_task.call_args.kwargs
+        self.storage.save.side_effect = save
+        self.run_request()
+        second = self.runner.add_task.call_args.kwargs
+        self.assertEqual(first["task_id"], second["task_id"])
+        self.assertEqual(first["job_id"], second["job_id"])
+        self.assertTrue(first["idempotent"])
+
+    def test_terminal_state_is_saved_before_best_effort_cleanup(self) -> None:
+        self.run_request()
+        self.complete_task()
+        save = self.storage.save.side_effect
+        self.storage.save.side_effect = RuntimeError("metadata unavailable")
+        with self.assertRaises(RuntimeError):
+            self.run_request(taskId="ftl-task")
+        self.runner.cleanup_task.assert_not_called()
+        self.storage.save.side_effect = save
+
+        def cleanup(**kwargs: Any) -> None:
+            self.assertEqual(
+                self.record["footprintTilesStatus"], STATUSES.COMPLETED.value
+            )
+            raise RuntimeError("cleanup unavailable")
+
+        self.runner.cleanup_task.side_effect = cleanup
+        self.run_request(taskId="ftl-task")
+        self.assertEqual(
+            self.record["footprintTilesStatus"], STATUSES.COMPLETED.value
+        )
+
     def test_failed_metadata_save_does_not_publish_poll(self) -> None:
         self.record["footprintTilesStatus"] = STATUSES.PENDING.value
         self.record["footprintTilesRequestId"] = "request-1"
@@ -587,7 +635,7 @@ class TestTaskOutputFallback(FootprintTestCase):
             extra_partition_keys="ftl-task",
             data_format="json",
         )
-        self.runner.cleanup_task.assert_called_once()
+        self.runner.cleanup_task.assert_not_called()
 
     def test_missing_manifest_in_both_places_fails_visibly(self) -> None:
         self.runner.get_task_status.return_value = STATUSES.COMPLETED.value

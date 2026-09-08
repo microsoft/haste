@@ -60,6 +60,11 @@ class UnifiedDataLayer:
             data_format=data_format,
         )
 
+    def merge_json(
+        self, identifier: str, data_type: str, fields: dict
+    ) -> dict:
+        return self.data_layer.merge_json(identifier, data_type, fields)
+
     def save_chunk(
         self,
         identifier,
