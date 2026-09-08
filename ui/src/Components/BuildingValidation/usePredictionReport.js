@@ -19,14 +19,16 @@ export default function usePredictionReport(action, ids) {
   const key = `${endpoint}:${attempt}`;
   useEffect(() => {
     const controller = new AbortController();
-    requestPredictionJson(buildUrl(endpoint), { signal: controller.signal }).then((report) => {
+    requestPredictionJson(buildUrl(endpoint), {
+      signal: controller.signal, allowPartialAssessment: action === "GetAssessmentReport",
+    }).then((report) => {
       validateSelectedSource(report, selectedVersion);
       if (!controller.signal.aborted) setState({ key, report });
     }).catch((error) => {
       if (!controller.signal.aborted) setState({ key, error: error.message });
     });
     return () => controller.abort();
-  }, [endpoint, key, selectedVersion]);
+  }, [action, endpoint, key, selectedVersion]);
   const current = state?.key === key ? state : {};
   return {
     report: current.report, error: current.error, loading: state?.key !== key,

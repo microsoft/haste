@@ -233,6 +233,37 @@ test("unknown-version 404 and 500/network errors never become successful raw rep
   await assert.rejects(requestPredictionJson("/api/results", { fetchResponse: async () => { throw new TypeError("Network failed"); } }), /Network/);
 });
 
+test("Assessment retains aggregates and its diagnostic only on an explicit successful report read", async () => {
+  const partial = {
+    error: "No sure-labeled buildings matched known predictions.",
+    predictions: { total: 12 }, populationEstimate: { N: 12 },
+    predictionVersion: 0,
+  };
+  const options = { allowPartialAssessment: true, fetchResponse: async () => Response.json(partial) };
+  assert.deepEqual(await requestPredictionJson("/api/GetAssessmentReport", options), partial);
+  await assert.rejects(requestPredictionJson("/api/other", {
+    fetchResponse: options.fetchResponse,
+  }), /No sure-labeled/);
+  await assert.rejects(requestPredictionJson("/api/PutEditedPredictions", {
+    ...options, body: {},
+  }), /No sure-labeled/);
+  for (const status of [400, 404, 500]) {
+    await assert.rejects(requestPredictionJson("/api/GetAssessmentReport", {
+      ...options, fetchResponse: async () => Response.json(partial, { status }),
+    }), { status });
+  }
+  for (const invalid of [
+    { error: "Failure" },
+    { ...partial, predictions: null },
+    { ...partial, populationEstimate: {} },
+    { ...partial, error: { message: "Failure" } },
+  ]) {
+    await assert.rejects(requestPredictionJson("/api/GetAssessmentReport", {
+      ...options, fetchResponse: async () => Response.json(invalid),
+    }));
+  }
+});
+
 test("confirmed save reloads the RETURNED version and generation, not the prior selection", async () => {
   const events = [];
   const body = buildSavePayload(ids, source, initialDraft(rawAttrs(), session()), "same-id");

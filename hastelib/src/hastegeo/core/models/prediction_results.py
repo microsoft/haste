@@ -139,7 +139,10 @@ class ModelArtifactRequest(BaseModel):
 
     @model_validator(mode="after")
     def required_owner(self) -> "ModelArtifactRequest":
-        if self.version and self.kind not in ("gpkg", "prediction_attrs"):
+        if self.version is not None and self.kind not in (
+            "gpkg",
+            "prediction_attrs",
+        ):
             raise ValueError(
                 "This artifact kind does not have prediction versions"
             )
