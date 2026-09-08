@@ -38,7 +38,7 @@ import {
 import { FluentIcon } from "../../util/icons";
 import { PMTiles } from "pmtiles";
 import { apiGet, buildUrl } from "../../util/api";
-import { getPmtilesProtocol, InMemoryPMTilesSource } from "../../util/pmtiles.js";
+import { footprintArchiveUrl, getPmtilesProtocol, InMemoryPMTilesSource } from "../../util/pmtiles.js";
 import {
   getAzureMapsAuthOptions,
   isAzureMapsPlaceholder,
@@ -786,10 +786,10 @@ const InteractiveLabeler = () => {
     // identity. This keeps the browser off the firewalled storage account —
     // a direct *.blob SAS URL only works from allowlisted IPs, so
     // remote/mobile labelers hit a 403.
-    const browserPmtilesUrl = buildUrl(
+    const browserPmtilesUrl = footprintArchiveUrl(buildUrl(
       `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
         `&imageLayerId=${imageLayerId}&kind=footprint_pmtiles`
-    );
+    ));
     const browserSidecarUrl = buildUrl(
       `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
         `&kind=sidecar`
@@ -805,14 +805,17 @@ const InteractiveLabeler = () => {
     let pmtilesHeader = null;
     setInitialLoad({ step: 2, loaded: 0, total: null });
     try {
-      const pmtilesBuffer = await fetchArtifactBuffer(
-        browserPmtilesUrl,
-        (loaded, total) => setInitialLoad({ step: 2, loaded, total }),
-        signal
-      );
-      const pm = new PMTiles(
-        new InMemoryPMTilesSource(browserPmtilesUrl, pmtilesBuffer)
-      );
+      let pm = getPmtilesProtocol().get(browserPmtilesUrl);
+      if (!pm) {
+        const pmtilesBuffer = await fetchArtifactBuffer(
+          browserPmtilesUrl,
+          (loaded, total) => setInitialLoad({ step: 2, loaded, total }),
+          signal
+        );
+        pm = new PMTiles(
+          new InMemoryPMTilesSource(browserPmtilesUrl, pmtilesBuffer)
+        );
+      }
       // Pre-register so the protocol can serve tile reads from the same handle.
       getPmtilesProtocol().add(pm);
       // Read the header so we can place the camera over the archive's bounds

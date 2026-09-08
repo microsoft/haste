@@ -1423,8 +1423,14 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
     except ValueError:
         return _bad_request("Invalid artifact request")
     try:
+        processor = PredictionResultsProcessor(config)
         blob_url, generation_scoped = await asyncio.to_thread(
-            PredictionResultsProcessor(config).resolve_artifact, request
+            processor.resolve_artifact, request
+        )
+        filename = (
+            await asyncio.to_thread(processor.download_filename, request)
+            if request.kind == "gpkg"
+            else None
         )
     except PredictionRequestError:
         return _bad_request("Invalid artifact request")
@@ -1438,7 +1444,6 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
         logger.error("Artifact resolution failed (%s)", type(error).__name__)
         return func.HttpResponse("Error resolving artifact.", status_code=500)
     kind = request.kind
-    model_id = request.modelId
 
     try:
         offset, length, is_range = parse_byte_range(req.headers.get("Range"))
@@ -1476,9 +1481,7 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
     # interactive labeler's other artifacts are fetched by range and parsed
     # in-browser, so they must NOT be forced as downloads).
     if kind == "gpkg":
-        headers[
-            "Content-Disposition"
-        ] = f'attachment; filename="building_predictions_{model_id}.gpkg"'
+        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
     if result.etag:
         headers["ETag"] = (
             result.etag if result.etag.startswith('"') else f'"{result.etag}"'

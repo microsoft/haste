@@ -189,6 +189,18 @@ test("unknown footprint row IDs are rejected rather than painted with fallback c
   await assert.rejects(create().ready, /row IDs do not match/);
 });
 
+test("both panes require exact non-empty Overture identity before any feature-state write", async (t) => {
+  for (const value of [undefined, null, "", " ", 0, "other-building"]) {
+    const { create, maps, operations } = fixture(t);
+    const query = maps[1].map.queryRenderedFeatures;
+    maps[1].map.queryRenderedFeatures = (...args) => query(...args).map((feature) => ({
+      ...feature, properties: { overture_id: value },
+    }));
+    await assert.rejects(create().ready, /Overture IDs do not match/);
+    assert.equal(operations.filter(([op]) => op === "state").length, 0);
+  }
+});
+
 test("both panes clear state before removing layers/sources and detach listeners", async (t) => {
   const { create, operations, maps } = fixture(t);
   const renderer = create();
