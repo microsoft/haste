@@ -815,7 +815,11 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
                         # This is a noop until the export method is properly
                         # implemented
                         model["labelsUrl"] = None
-                image_layer["models"] = match_models
+                layer = ImageLayer.model_validate(image_layer)
+                image_layer["models"] = [
+                    PredictionResultsProcessor.model_view(model, layer)
+                    for model in match_models
+                ]
                 image_layer["modelCount"] = len(match_models)
             label_projects = await asyncio.to_thread(
                 MetadataProcessor(
@@ -1262,7 +1266,11 @@ async def GetLayerDetailView(req: func.HttpRequest) -> func.HttpResponse:
             for model in models
             if model["imageLayerId"] == image_layer_id
         ]
-        image_layer["models"] = match_models
+        layer = ImageLayer.model_validate(image_layer)
+        image_layer["models"] = [
+            PredictionResultsProcessor.model_view(model, layer)
+            for model in match_models
+        ]
         image_layer["modelCount"] = len(match_models)
         return func.HttpResponse(json.dumps(image_layer), status_code=200)
     except FileNotFoundError as e:

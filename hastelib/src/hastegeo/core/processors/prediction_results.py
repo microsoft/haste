@@ -283,41 +283,43 @@ class PredictionResultsProcessor:
     ) -> list[dict[str, Any]]:
         layer = self.layer(project_id, layer_id)
         records = self.metadata(project_id).load_all_from_partition()
-        output = []
-        for raw in records:
-            if raw.get("imageLayerId") != layer_id:
-                continue
-            model = Model.model_validate(raw)
-            data = model.model_dump()
-            data.update(self.response(model, layer))
-            selected = resolve_prediction_source(
-                model, default="latest_current"
+        return [
+            self.model_view(raw, layer)
+            for raw in records
+            if raw.get("imageLayerId") == layer_id
+        ]
+
+    @classmethod
+    def model_view(
+        cls, raw: dict[str, Any], layer: ImageLayer
+    ) -> dict[str, Any]:
+        """Project result readiness without losing artifact/label row details."""
+        model = Model.model_validate(raw)
+        if (
+            model.projectId != layer.projectId
+            or model.imageLayerId != layer.imageLayerId
+        ):
+            raise PredictionRequestError("Model does not belong to this layer")
+        selected = resolve_prediction_source(model, default="latest_current")
+        readiness = source_readiness(model, layer, selected)
+        return {
+            **raw,
+            **cls.response(model, layer),
+            **selected.descriptor(),
+            "gpkgUrl": prediction_source_url(model, selected, "gpkg")
+            if selected.gpkgUrl
+            else None,
+            "predictionAttrsUrl": prediction_source_url(
+                model, selected, "prediction_attrs"
             )
-            readiness = source_readiness(model, layer, selected)
-            data.update(
-                {
-                    **selected.descriptor(),
-                    "gpkgUrl": (
-                        prediction_source_url(model, selected, "gpkg")
-                        if selected.gpkgUrl
-                        else None
-                    ),
-                    "predictionAttrsUrl": (
-                        prediction_source_url(
-                            model, selected, "prediction_attrs"
-                        )
-                        if selected.predictionAttrsUrl
-                        else None
-                    ),
-                    "buildingCount": selected.buildingCount,
-                    "predictionsReady": readiness["ready"],
-                    "predictionsReadiness": readiness,
-                    "editedPredictions": prediction_versions(model, layer),
-                    "hasEditedPredictions": bool(model.editedPredictions),
-                }
-            )
-            output.append(data)
-        return output
+            if selected.predictionAttrsUrl
+            else None,
+            "buildingCount": selected.buildingCount,
+            "predictionsReady": readiness["ready"],
+            "predictionsReadiness": readiness,
+            "editedPredictions": prediction_versions(model, layer),
+            "hasEditedPredictions": bool(model.editedPredictions),
+        }
 
     def resolve_artifact(
         self, request: ModelArtifactRequest

@@ -5,7 +5,7 @@ import json
 import os
 import unittest
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import azure.functions as func
 
@@ -28,6 +28,82 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.enterContext(patch.object(function_app, "config", self.config))
+
+    def detail_metadata(self) -> tuple[dict, list[dict]]:
+        layer = self.layer.model_dump()
+        layer["creationDate"] = "2026-09-07T00:00:00Z"
+        models = [
+            {
+                **self.record,
+                "modelId": key,
+                "modelType": kind,
+                "creationDate": "2026-09-07T00:00:00Z",
+            }
+            for key, kind in ((MODEL_ID, "trained"), ("0043", "embedding"))
+        ]
+
+        def metadata(data_type: str, **_kwargs: Any) -> MagicMock:
+            store = MagicMock()
+            if data_type == "project":
+                store.load.return_value = {"projectId": PROJECT_ID}
+            elif data_type == "imagelayer":
+                store.load.return_value = layer
+                store.load_all_from_partition.return_value = [layer]
+            elif data_type == "model":
+                store.load_all_from_partition.return_value = models
+            elif (
+                data_type
+                == self.config.get_metadata_types().MODEL_ARTIFACTS.value
+            ):
+                store.load.return_value = {"trainingZipUrl": "existing.zip"}
+            elif data_type == "labels":
+                store.load_all_from_partition.return_value = []
+            elif data_type == "validation":
+                store.load.return_value = {"labels": {}}
+            else:
+                store.export.return_value = "existing-labels.geojson"
+            return store
+
+        self.enterContext(
+            patch.object(
+                function_app, "MetadataProcessor", side_effect=metadata
+            )
+        )
+        return layer, models
+
+    async def test_project_rows_include_readiness_for_both_workflows(
+        self,
+    ) -> None:
+        self.detail_metadata()
+        response = await function_app.GetProjectDetails(
+            self.http(includeModels="True")
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = json.loads(response.get_body())["imageLayer"][0]["models"]
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertTrue(row["predictionsReady"])
+            self.assertEqual(row["buildingCount"], 2)
+            self.assertEqual(row["predictionRevision"], "old")
+            self.assertEqual(
+                row["artifacts"]["trainingZipUrl"], "existing.zip"
+            )
+
+    async def test_layer_detail_uses_complete_readiness_not_url_presence(
+        self,
+    ) -> None:
+        self.detail_metadata()
+        response = await function_app.GetLayerDetailView(self.http())
+        self.assertEqual(response.status_code, 200)
+        rows = json.loads(response.get_body())["models"]
+        self.assertTrue(all(row["predictionsReady"] for row in rows))
+
+        self.layer.footprintPmtilesUrl = None
+        self.detail_metadata()
+        response = await function_app.GetLayerDetailView(self.http())
+        rows = json.loads(response.get_body())["models"]
+        self.assertTrue(all(not row["predictionsReady"] for row in rows))
+        self.assertTrue(all(row["rawPredictionsReady"] for row in rows))
 
     def http(self, body: Any = None, **params: str) -> func.HttpRequest:
         return func.HttpRequest(
