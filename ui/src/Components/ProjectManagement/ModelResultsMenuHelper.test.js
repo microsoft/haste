@@ -64,11 +64,6 @@ for (const workflow of ["inference", "embedding"]) {
     assert.equal(item(pending, "assessmentReport").disabled, workflow === "inference");
   });
 
-  test(`test_download_in_flight_${workflow}_only_disables_download`, () => {
-    const items = menu(workflow, ready, { downloading: true });
-    assert.deepEqual(items.filter((entry) => entry.disabled).map((entry) => entry.key), ["downloadGeopackage"]);
-  });
-
   test(`test_actions_${workflow}_navigate_download_and_select_the_correct_modal`, async () => {
     const calls = [];
     const items = menu(workflow, ready, {
@@ -184,7 +179,8 @@ test("test_rows_delegate_modals_and_preserve_layout_hooks", async () => {
   }
   assert.match(shared, /currentRevision = currentPredictionRevision\(model\)/);
   assert.match(shared, /onDismiss=\{dismiss\}/);
-  assert.match(shared, /if \(outcome\.error\) setDialog\("Download failed", outcome\.error\)/);
+  assert.match(shared, /onDownload: \(\) => setModal\("download"\)/);
+  assert.doesNotMatch(shared, /downloadOperation|ModelResultsDownloadHelper|useRawPredictionDownload|buildVisualizerResultsUrl/);
   assert.match(shared, /navigate\("\/published-datasets"\)/);
   const standard = await read("ModelResultsButton.jsx");
   const embedding = await read("EmbeddingModelRow.jsx");

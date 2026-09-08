@@ -3,19 +3,15 @@
 //
 // Azure Maps Interactive Labeler — PMTiles edition.
 //
-// Footprints are streamed from a PMTiles archive (built by the embedding
-// workflow) via Azure Maps' addProtocol hook, so only the tiles in the
+// Footprints are streamed from the image layer's shared PMTiles archive
+// via Azure Maps' addProtocol hook, so only the tiles in the
 // current viewport are fetched, following an initial header/root range read.
 // Per-building coloring is driven by feature-state on the internal renderer;
 // feature vectors come from a separate HFTR sidecar, downloaded in full in
 // parallel with the archive header for local training and prediction.
 //
-// A separate "Predict all buildings" button downloads the full embeddings
-// GeoJSON once and batches the trained model across every footprint with
-// a progress modal, then persists the predictions so the Validation and
-// Assessment reports cover the whole layer.
-//
-// Implementation notes live in `AZURE_MAPS_INTERACTIVE_LABELER.md`.
+// "Predict all buildings" batches the trained model across the sidecar,
+// then persists predictions for layer-wide Validation and Assessment.
 import { useContext, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -890,12 +886,8 @@ const InteractiveLabeler = () => {
         );
       }
 
-      // Footprints come from the PMTiles archive (tippecanoe -l buildings,
-      // with --use-attribute-for-id=id so each MVT feature carries the
-      // native integer feature id needed by setFeatureState).
-      // Footprints come from the PMTiles archive (tippecanoe -l buildings,
-      // with --use-attribute-for-id=id so each MVT feature carries the
-      // native integer feature id needed by setFeatureState).
+      // Each MVT feature carries the native integer row ID needed by
+      // setFeatureState; the source layer is "buildings".
       //
       // Deliberately do NOT pass minSourceZoom/maxSourceZoom here: the
       // pmtiles.js protocol handler advertises the archive's actual zoom

@@ -6,86 +6,51 @@ import { readFile } from "node:fs/promises";
 import { requestPredictionJson } from "./predictionHttp.js";
 import { buildVersionGpkgUrl, validateSelectedSource, validateVersionManifest, versionEndpoint } from "./predictionVersions.js";
 import { downloadPrediction } from "./predictionDownload.js";
-import { buildRawGpkgUrl, buildVisualizerResultsUrl } from "./predictionResults.js";
-import { createModelResultsDownload } from "../ProjectManagement/ModelResultsDownloadHelper.js";
+import { modelResultsItems } from "../ProjectManagement/ModelResultsMenuHelper.js";
 
-test("both rows delegate fresh discovery to the shared Results menu", async () => {
+test("both rows open the existing download dialog through the shared menu with no preflight", async () => {
   for (const file of ["EmbeddingModelRow.jsx", "ModelResultsButton.jsx"]) {
     const source = await readFile(new URL(`../ProjectManagement/${file}`, import.meta.url), "utf8");
     assert.match(source, /ModelResultsMenu/);
     assert.doesNotMatch(source, /DownloadPredictionsDialog|fileDownload\(buildUrl/);
   }
   const shared = await readFile(new URL("../ProjectManagement/ModelResultsMenu.jsx", import.meta.url), "utf8");
-  assert.match(shared, /createModelResultsDownload/);
-  assert.match(shared, /downloadOperation\.run\(buildUrl\(buildVisualizerResultsUrl\(ids\)\)\)/);
-  assert.match(shared, /downloadOperation\.cancel\(\)/);
+  assert.match(shared, /onDownload: \(\) => setModal\("download"\)/);
+  assert.match(shared, /modal === "download"/);
+  assert.match(shared, /<DownloadPredictionsDialog/);
+  assert.doesNotMatch(shared, /buildVisualizerResultsUrl|buildRawGpkgUrl|requestPredictionJson|downloadOperation|ModelResultsDownloadHelper|useRawPredictionDownload/);
+  const dialog = await readFile(new URL("../OtherComponents/DownloadPredictionsDialog.jsx", import.meta.url), "utf8");
+  assert.equal((dialog.match(/usePredictionVersionManifest\(ids\)/g) || []).length, 1);
+  assert.equal((dialog.match(/useVisualizerResults\(ids\)/g) || []).length, 1);
+  assert.match(dialog, /buildVersionGpkgUrl/);
+  assert.match(dialog, /predictionRevision: version === 0 \? defaults\.results\?\.predictionRevision/);
+  assert.match(dialog, /controllerRef\.current\?\.abort\(\)/);
 });
 
-for (const serverVersion of [0, 2]) {
-  test(`test_fresh_version_${serverVersion}_uses_raw_download_or_version_dialog_without_trusting_cached_rows`, async () => {
-    const ids = { projectId: "project", imageLayerId: "layer", modelId: "1001" };
-    const rawUrl = `/api/${buildRawGpkgUrl(ids)}`;
-    const resultsUrl = `/api/${buildVisualizerResultsUrl(ids)}`;
-    const requests = [];
-    const actions = [];
-    const operation = createModelResultsDownload({
-      rawUrl, onChange() {},
-      onChooseVersion: () => actions.push("dialog"),
-      fetchResponse: async (url, options) => {
-        requests.push(url);
-        assert.equal(options.method, "GET");
-        return Response.json({
-          predictionVersion: serverVersion, predictionRevision: "current",
-          predictionVersions: serverVersion
-            ? [{ version: serverVersion, gpkgUrl: "/api/edited", predictionRevision: "current" }] : [],
-        });
-      },
-      download: async (url, version, { signal }) => {
-        assert.equal(url, rawUrl);
-        assert.equal(version, 0);
-        assert.equal(signal.aborted, false);
-        actions.push("raw");
-      },
-    });
-    assert.deepEqual(await operation.run(resultsUrl), { ok: true });
-    assert.deepEqual(requests, [resultsUrl]);
-    assert.deepEqual(actions, [serverVersion ? "dialog" : "raw"]);
+for (const workflow of ["inference", "embedding"]) {
+  test(`test_${workflow}_raw_and_saved_actions_only_open_the_dialog`, async (t) => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => { throw new Error("Unexpected preflight"); });
+    const opened = [];
+    for (const hasEditedPredictions of [false, true]) {
+      const items = modelResultsItems({
+        workflow,
+        model: { rawPredictionsReady: !hasEditedPredictions, hasEditedPredictions },
+        onDownload: () => opened.push("download"),
+      });
+      const action = items.find((entry) => entry.key === "downloadGeopackage");
+      assert.equal(action.disabled, false);
+      await action.onClick();
+    }
+    assert.deepEqual(opened, ["download", "download"]);
+    assert.equal(fetch.mock.callCount(), 0);
   });
 }
 
-test("test_discovery_failure_does_not_silently_download_raw", async () => {
-  let acted = false;
-  const operation = createModelResultsDownload({
-    rawUrl: "/api/raw", onChange() {},
-    onChooseVersion: () => { acted = true; },
-    download: async () => { acted = true; },
-    fetchResponse: async () => Response.json({ error: "Discovery failed" }, { status: 500 }),
-  });
-  assert.deepEqual(await operation.run("/api/results"), { error: "Discovery failed" });
-  assert.equal(acted, false);
-});
-
-test("test_unmount_cancellation_and_duplicate_clicks_cover_discovery_too", async () => {
-  let acted = false;
-  let calls = 0;
-  const operation = createModelResultsDownload({
-    rawUrl: "/api/raw", onChange() {},
-    onChooseVersion: () => { acted = true; },
-    download: async () => { acted = true; },
-    fetchResponse: async (_url, { signal }) => {
-      calls++;
-      return new Promise((_resolve, reject) => {
-        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-      });
-    },
-  });
-  const first = operation.run("/api/results");
-  assert.equal(operation.run("/api/results"), first);
-  await Promise.resolve();
-  operation.cancel();
-  assert.deepEqual(await first, { cancelled: true });
-  assert.equal(calls, 1);
-  assert.equal(acted, false);
+test("test_version_dialog_remains_the_only_discovery_owner", async () => {
+  await assert.rejects(
+    readFile(new URL("../ProjectManagement/ModelResultsDownloadHelper.js", import.meta.url), "utf8"),
+    { code: "ENOENT" },
+  );
 });
 
 for (const serverVersion of [0, 1]) {
@@ -109,6 +74,7 @@ for (const serverVersion of [0, 1]) {
       }
       assert.equal(parsed.pathname, "/api/GetModelArtifact");
       assert.equal(parsed.searchParams.get("version"), String(serverVersion));
+      assert.equal(parsed.searchParams.get("predictionRevision"), "generation");
       assert.deepEqual([...parsed.searchParams.keys()].sort(), ["imageLayerId", "kind", "modelId", "predictionRevision", "projectId", "version"]);
       return new Response("gpkg", {
         headers: { "content-disposition": `attachment; filename=predictions_${serverVersion ? "v1" : "raw"}.gpkg` },
@@ -132,6 +98,8 @@ for (const serverVersion of [0, 1]) {
     });
     assert.equal(filename, serverVersion ? "predictions_v1.gpkg" : "predictions_raw.gpkg");
     assert.equal(requests.length, 3);
+    assert.equal(requests.filter((url) => url.pathname.endsWith("GetVisualizerResults")).length, 1);
+    assert.equal(requests.filter((url) => url.pathname.endsWith("GetEditedPredictionVersions")).length, 1);
     assert.deepEqual(cachedRow, { hasEdits: false, editedPredictions: [] });
     t.mock.timers.tick(1000);
   });

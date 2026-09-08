@@ -1,21 +1,18 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Button, Menu, MenuTrigger, MenuPopover, MenuList, MenuItem, Tooltip,
 } from "@fluentui/react-components";
 import { useNavigate } from "react-router-dom";
 import { AppContext } from "../../AppContext";
-import { buildUrl } from "../../util/api";
 import { FluentIcon } from "../../util/icons";
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
 import DownloadPredictionsDialog from "../OtherComponents/DownloadPredictionsDialog";
 import PublishDatasetModal from "../PublishDatasetModal";
-import { buildRawGpkgUrl, buildVisualizerResultsUrl } from "../Visualizer/predictionResults.js";
 import { currentPredictionRevision, modelResultsItems } from "./ModelResultsMenuHelper.js";
-import { createModelResultsDownload } from "./ModelResultsDownloadHelper.js";
 
 // Common results actions only. Row layout, ZIP downloads and job-status
 // indicators stay with their workflow. Version discovery and report/download
@@ -27,27 +24,16 @@ export default function ModelResultsMenu({
   const { appParams, setDialog } = useContext(AppContext);
   const navigate = useNavigate();
   const [modal, setModal] = useState(null);
-  const modelId = model.modelId;
-  const ids = { projectId, imageLayerId, modelId };
-  const routeKey = `${projectId}/${imageLayerId}/${modelId}`;
+  const ids = { projectId, imageLayerId, modelId: model.modelId };
   const currentRevision = currentPredictionRevision(model);
-  const [downloadState, setDownloadState] = useState(null);
-  const downloadOperation = useMemo(() => createModelResultsDownload({
-    rawUrl: buildUrl(buildRawGpkgUrl({ projectId, imageLayerId, modelId })),
-    onChooseVersion: () => setModal("download"),
-    onChange: (next) => setDownloadState({ routeKey, ...next }),
-  }), [projectId, imageLayerId, modelId, routeKey]);
-  useEffect(() => () => downloadOperation.cancel(), [downloadOperation]);
   const dismiss = () => setModal(null);
   const items = modelResultsItems({
     model, workflow, validationLabelCount, artifactItems,
     publishingEnabled: appParams.publishingEnabled,
-    downloading: downloadState?.routeKey === routeKey && !!downloadState.loading,
     onView: () => navigate(`/visualizer/${projectId}/${imageLayerId}/${model.modelId}`),
-    onDownload: async () => {
-      const outcome = await downloadOperation.run(buildUrl(buildVisualizerResultsUrl(ids)));
-      if (outcome.error) setDialog("Download failed", outcome.error);
-    },
+    // The existing dialog owns fresh history/default discovery, revision
+    // pinning, download errors and cancellation—even for cached raw-only rows.
+    onDownload: () => setModal("download"),
     openModal: setModal,
   });
 

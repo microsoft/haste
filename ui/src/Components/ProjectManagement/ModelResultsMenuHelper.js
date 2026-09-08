@@ -28,7 +28,7 @@ export function currentPredictionRevision(model) {
 
 export function modelResultsItems({
   model, workflow, validationLabelCount = 0, publishingEnabled = false,
-  downloading = false, artifactItems = [], onView, onDownload, openModal,
+  artifactItems = [], onView, onDownload, openModal,
 }) {
   const rawReady = hasRawPredictions(model);
   const editedReady = hasEditedPredictions(model);
@@ -48,7 +48,7 @@ export function modelResultsItems({
     },
     {
       key: "downloadGeopackage", text: "Download Geopackage (.gpkg)", icon: "download",
-      disabled: (!rawReady && !editedReady) || downloading, onClick: onDownload,
+      disabled: !rawReady && !editedReady, onClick: onDownload,
     },
     ...artifactItems,
     {
