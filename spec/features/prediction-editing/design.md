@@ -122,3 +122,11 @@ Handle conflict responses without claiming a new version was saved. An older
 saved version without attributes remains downloadable, but its map selection
 is disabled with explicit missing-artifact guidance; opening it does not enqueue
 a backfill. This implementation does not migrate the user's local projects.
+
+Assessment may return a successful partial report with aggregate predictions,
+a population estimate, and a diagnostic explaining unavailable label-based
+metrics. Display those aggregates and the diagnostic together; HTTP failures
+and error-only responses remain errors. Validation uses the API's
+`excludedUnknownPredictions` count. Publication descriptions explicitly request
+raw version zero, matching the raw-only published dataset. Results menus enable
+saved-version viewing only when the server reports complete readiness.

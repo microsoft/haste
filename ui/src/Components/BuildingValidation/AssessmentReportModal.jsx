@@ -239,6 +239,9 @@ const AssessmentReportModal = ({
 
             {!loading && report && !error && (
               <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                {report.error && <MessageBar intent="warning">
+                  <MessageBarBody>{report.error}</MessageBarBody>
+                </MessageBar>}
                 {/* Predictions — 2 columns, 2 per row */}
                 <div>
                   <SectionTitle>Predictions</SectionTitle>

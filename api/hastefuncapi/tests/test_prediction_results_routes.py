@@ -222,3 +222,13 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
                 response.headers["Content-Disposition"],
                 f'attachment; filename="{expected}"',
             )
+
+    async def test_nonversioned_artifact_kinds_reject_explicit_raw_zero(
+        self,
+    ) -> None:
+        for kind in ("sidecar", "geojson", "footprint_pmtiles"):
+            for version in ("0", "1"):
+                response = await function_app.GetModelArtifact(
+                    self.http(kind=kind, version=version)
+                )
+                self.assertEqual(response.status_code, 400)
