@@ -43,6 +43,7 @@ from hastegeo.core.models.users import User
 from hastegeo.core.processors.artifacts import ArtifactProcessor
 from hastegeo.core.processors.assessment import AssessmentReportProcessor
 from hastegeo.core.processors.embedding import EmbeddingPreprocessor
+from hastegeo.core.processors.footprint_tiles import FOOTPRINT_TILE_FIELDS
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
 from hastegeo.core.processors.metadata import MetadataProcessor
@@ -1038,7 +1039,13 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         req_body = req.get_json()
-        image_data = ImageLayer(**req_body)
+        image_data = ImageLayer(
+            **{
+                key: value
+                for key, value in req_body.items()
+                if key not in FOOTPRINT_TILE_FIELDS
+            }
+        )
 
         url_error = validate_image_layer_imagery_urls(image_data)
         if url_error:
@@ -1072,6 +1079,9 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
 
         if existing_image_layer:
             # This is an edit
+            stored_layer = ImageLayer.model_validate(existing_image_layer)
+            for field in FOOTPRINT_TILE_FIELDS:
+                setattr(image_data, field, getattr(stored_layer, field))
             output = image_data
         else:
             output = await asyncio.to_thread(
@@ -1084,7 +1094,7 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
                 partition_key=output.projectId,
             ).save,
             output.imageLayerId,
-            output.dict(),
+            output.model_dump(exclude=FOOTPRINT_TILE_FIELDS),
         )
 
         # Repeating the check because we want to save stats after the image layer, if new, is saved

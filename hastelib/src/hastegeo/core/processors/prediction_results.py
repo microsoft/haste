@@ -22,6 +22,7 @@ from ..models.prediction_results import (
 )
 from ..models.projects import ImageLayer, Model
 from ..utils.blob import BlobRange, read_blob_range
+from ..utils.footprint_artifacts import validate_layer_footprint_url
 from ..utils.metadata import MetadataUtils
 from ..utils.prediction_attrs import attrs_artifact_name
 from ..utils.prediction_readiness import (
@@ -293,9 +294,15 @@ class PredictionResultsProcessor:
         ):
             raise PredictionRequestError("Model does not belong to this layer")
         if request.kind == "footprint_pmtiles":
-            url = self.layer(
+            layer = self.layer(
                 request.projectId, request.imageLayerId or model.imageLayerId
-            ).footprintPmtilesUrl
+            )
+            url = layer.footprintPmtilesUrl
+            if url:
+                try:
+                    validate_layer_footprint_url(url, layer, self.config)
+                except ValueError as error:
+                    raise PredictionRequestError(str(error)) from error
         else:
             if request.kind in ("gpkg", "prediction_attrs"):
                 if (
