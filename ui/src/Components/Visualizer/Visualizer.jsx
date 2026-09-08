@@ -42,8 +42,8 @@ const useStyles = makeStyles({
     "@media (max-width: 1100px)": { top: "66px" },
   },
   editingStack: {
-    left: "10px", top: "66px", transform: "none", width: "calc(100% - 390px)",
-    "@media (max-width: 700px)": { left: "16px", width: "calc(100% - 32px)" },
+    left: "10px", top: "66px", transform: "none", width: "min(560px, calc(100% - 390px))",
+    "@media (max-width: 700px)": { left: "16px", width: "min(560px, calc(100% - 32px))" },
   },
   notice: { pointerEvents: "auto", minWidth: 0, maxWidth: "100%" },
   noticeBody: { minWidth: 0, overflowWrap: "anywhere" },
@@ -286,9 +286,6 @@ export default function Visualizer({ setModalComponent }) {
           loading={loadingVersion}
           editing={editor.isEditMode}
         />}
-        {scene.basemapWarning && <MessageBar intent="info" layout="multiline" className={styles.notice}>
-          <MessageBarBody className={styles.noticeBody}>{scene.basemapWarning}</MessageBarBody>
-        </MessageBar>}
         {switchState?.error && <MessageBar intent="error" className={styles.notice}><MessageBarBody>
           {versionLabel(switchState.version)} could not be loaded ({switchState.phase}).
           The map still shows {versionLabel(results?.predictionVersion ?? 0)}{editor.isEditMode ? " with the local edit preview" : ""}. {switchState.error}
@@ -307,10 +304,9 @@ export default function Visualizer({ setModalComponent }) {
           <MessageBarBody className={styles.noticeBody}>
             {editor.confirmed.error || `Version ${editor.confirmed.result.version} saved. ${editor.confirmed.pending || loadingVersion ? "Loading the saved version…" : `${editor.confirmed.result.editedCount ?? 0} buildings changed from model.`}`}
           </MessageBarBody>
-          <MessageBarActions className={styles.noticeActions}>
-            {editor.confirmed.pending && !editor.busy && <Button onClick={editor.retrySaved}>Retry displaying saved version</Button>}
-            <Button disabled={!!downloadBusy} onClick={() => onDownload(editor.confirmed.result.version, editor.confirmed.result.predictionRevision)}>Download saved version</Button>
-          </MessageBarActions>
+          {editor.confirmed.pending && !editor.busy && <MessageBarActions className={styles.noticeActions}>
+            <Button onClick={editor.retrySaved}>Retry displaying saved version</Button>
+          </MessageBarActions>}
         </MessageBar>}
         {downloadState?.routeKey === routeKey && downloadState.error && <MessageBar intent="error" className={styles.notice}><MessageBarBody>{downloadState.error}</MessageBarBody></MessageBar>}
         {downloadBusy && <MessageBar intent="info" layout="multiline" className={styles.notice}>

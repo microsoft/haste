@@ -47,19 +47,9 @@ export default function useVisualizerMaps({ results, routeKey, primaryContainerR
     let swipe;
     let zoom;
     let disposed = false;
-    let basemapWarning = "";
     const containers = [primaryContainerRef.current, secondaryContainerRef.current];
     const reportError = (event) => {
-      if (!controller.signal.aborted) {
-        if (isOptionalAzureBasemapAuthError(event)) {
-          if (!basemapWarning) {
-            basemapWarning = "Azure basemap unavailable. Showing your available imagery and prediction layers.";
-            setState((current) => ({
-              ...(current?.key === key ? current : {}), key, basemapWarning,
-            }));
-          }
-          return;
-        }
+      if (!controller.signal.aborted && !isOptionalAzureBasemapAuthError(event)) {
         setState({
           key,
           error: event?.error?.message || event?.message || "Azure Maps failed to load.",
@@ -126,7 +116,7 @@ export default function useVisualizerMaps({ results, routeKey, primaryContainerR
         swipe = new atlas.SwipeMap(maps[0], maps[1]);
         zoom = new atlas.control.ZoomControl();
         maps[0].controls.add(zoom, { position: "bottom-left" });
-        setState({ key, maps, swipe, zoom, registerCleanup, basemapWarning });
+        setState({ key, maps, swipe, zoom, registerCleanup });
       } catch (error) {
         if (!controller.signal.aborted) {
           reportError(error);
