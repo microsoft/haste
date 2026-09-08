@@ -5,7 +5,7 @@
 // per-building vectors over two Azure Maps panes. Results GETs never start work.
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Button, MessageBar, MessageBarActions, MessageBarBody, makeStyles, tokens } from "@fluentui/react-components";
+import { Button, MessageBar, MessageBarActions, MessageBarBody, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import { useParams } from "react-router-dom";
 import { AppContext } from "../../AppContext";
 import { useTheme } from "../../util/ThemeContext.jsx";
@@ -42,8 +42,10 @@ const useStyles = makeStyles({
     "@media (max-width: 1100px)": { top: "66px" },
   },
   editingStack: {
-    left: "10px", top: "66px", transform: "none", width: "min(560px, calc(100% - 390px))",
-    "@media (max-width: 700px)": { left: "16px", width: "min(560px, calc(100% - 32px))" },
+    left: "calc((100% - var(--prediction-editor-width) - 10px) / 2)",
+    top: "66px",
+    width: "min(560px, calc(100% - var(--prediction-editor-width) - 30px))",
+    "@media (max-width: 700px)": { left: "50%", width: "min(560px, calc(100% - 32px))" },
   },
   notice: { pointerEvents: "auto", minWidth: 0, maxWidth: "100%" },
   noticeBody: { minWidth: 0, overflowWrap: "anywhere" },
@@ -278,7 +280,7 @@ export default function Visualizer({ setModalComponent }) {
         onToggleEditMode={toggleEdit}
         busy={editor.busy}
       />
-      <div className={`${styles.topStack} ${editor.isEditMode ? styles.editingStack : ""}`}>
+      <div className={mergeClasses(styles.topStack, editor.isEditMode && styles.editingStack)}>
         {results && <PredictionVersionControls
           versions={results.predictionVersions || []} source={results}
           onSelectVersion={selectVersion} onDownload={onDownload}
