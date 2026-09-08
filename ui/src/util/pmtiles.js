@@ -19,6 +19,16 @@ export function getPmtilesProtocol(atlas = globalThis.window?.atlas) {
   return protocolInstance;
 }
 
+export function footprintArchiveUrl(url) {
+  const [path, query] = url.split("?");
+  const params = new URLSearchParams(query);
+  if (params.get("kind") !== "footprint_pmtiles" ||
+      !params.has("projectId") || !params.has("imageLayerId")) return url;
+  params.delete("modelId");
+  params.sort();
+  return `${path}?${params}`;
+}
+
 // SWA's API proxy does not reliably honor ranges. Fetch a bounded archive
 // once, then satisfy pmtiles' byte reads from memory.
 export class InMemoryPMTilesSource {
