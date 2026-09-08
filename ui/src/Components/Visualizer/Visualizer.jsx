@@ -35,13 +35,12 @@ import "../../assets/css/visualizer.css";
 
 const useStyles = makeStyles({
   topStack: {
-    position: "absolute", top: "66px", transform: "translateX(-50%)",
-    left: "calc((100% - var(--prediction-editor-width) - 10px) / 2)",
-    width: "min(560px, calc(100% - var(--prediction-editor-width) - 30px))",
-    zIndex: 950, boxSizing: "border-box",
+    position: "absolute", top: "10px", left: "50%", transform: "translateX(-50%)",
+    width: "min(560px, calc(100% - 32px))",
+    zIndex: 1001, boxSizing: "border-box",
     pointerEvents: "none", display: "flex", flexDirection: "column",
     gap: tokens.spacingVerticalS,
-    "@media (max-width: 700px)": { left: "50%", width: "min(560px, calc(100% - 32px))" },
+    "@media (max-width: 1100px)": { top: "66px" },
   },
   notice: { pointerEvents: "auto", minWidth: 0, maxWidth: "100%" },
   noticeBody: { minWidth: 0, overflowWrap: "anywhere" },

@@ -19,7 +19,7 @@ const FILTERS = { all: "All buildings", Damaged: "Damaged only", NotDamaged: "No
 const useStyles = makeStyles({
   panel: {
     position: "absolute", top: "10px", right: "10px", bottom: "10px", zIndex: 1000,
-    boxSizing: "border-box", width: "var(--prediction-editor-width)", maxWidth: "calc(100% - 20px)",
+    boxSizing: "border-box", width: "clamp(300px, 25vw, 360px)", maxWidth: "calc(100% - 20px)",
     padding: tokens.spacingHorizontalL, display: "flex", flexDirection: "column",
     color: tokens.colorNeutralForeground1, backgroundColor: tokens.colorNeutralBackground1,
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
