@@ -5,6 +5,7 @@ import json
 import os
 import traceback
 import unittest
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -34,6 +35,15 @@ from hastelib.tests.core.processors.test_footprint_tiles import (  # noqa: E402
 
 
 class TestFootprintQueueHandler(unittest.IsolatedAsyncioTestCase):
+    def test_host_retries_transient_failures_before_poisoning(self) -> None:
+        host = json.loads(
+            (Path(function_app.__file__).parent / "host.json").read_text()
+        )
+        self.assertEqual(host["extensions"]["queues"]["maxDequeueCount"], 5)
+        self.assertEqual(
+            host["extensions"]["queues"]["visibilityTimeout"], "00:00:30"
+        )
+
     def setUp(self) -> None:
         self.logger = self.enterContext(patch.object(function_app, "logger"))
         self.process = self.enterContext(

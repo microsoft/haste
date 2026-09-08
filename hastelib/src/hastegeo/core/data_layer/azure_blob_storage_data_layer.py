@@ -20,6 +20,7 @@ from azure.storage.blob import (
 )
 
 from .abstract_data_layer import AbstractDataLayer
+from .json_merge import merge_blob_json
 
 _INITIALIZED_CONTAINERS = set()
 _INITIALIZED_CONTAINERS_LOCK = Lock()
@@ -203,6 +204,16 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
             raise ValueError(
                 f"{self.__class__.__name__}.save: Unsupported data format. Only json, yaml and bytes are supported."
             )
+
+    def merge_json(
+        self, identifier: str, data_type: str, fields: dict
+    ) -> dict:
+        blob = self.container_client.get_blob_client(
+            self.get_file_path(identifier, data_type, "json")
+        )
+        return merge_blob_json(
+            blob, fields, lambda data: self._index_metadata(data_type, data)
+        )
 
     def save_chunk(
         self,
