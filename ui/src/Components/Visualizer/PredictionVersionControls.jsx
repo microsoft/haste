@@ -8,7 +8,7 @@ import { predictionSourceOptions, versionLabel } from "./predictionVersions.js";
 
 const useStyles = makeStyles({
   root: {
-    width: "100%", boxSizing: "border-box", padding: tokens.spacingHorizontalS,
+    width: "100%", boxSizing: "border-box", padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
     borderRadius: tokens.borderRadiusMedium, pointerEvents: "auto",
     display: "flex", alignItems: "center", gap: tokens.spacingHorizontalS, flexWrap: "wrap",
   },
