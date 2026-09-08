@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PMTiles } from "pmtiles";
-import { getPmtilesProtocol, InMemoryPMTilesSource } from "./pmtiles.js";
+import { footprintArchiveUrl, getPmtilesProtocol, InMemoryPMTilesSource } from "./pmtiles.js";
 
 test("labeling and results share one protocol and archive cache", () => {
   const registrations = [];
@@ -22,6 +22,17 @@ test("protocol registration waits for a usable SDK and can register a later SDK 
   assert.throws(() => getPmtilesProtocol(null), /does not support/);
   const atlas = { addProtocol() {} };
   assert.ok(getPmtilesProtocol(atlas));
+});
+
+test("footprint cache keys are layer-scoped and independent of query order", () => {
+  const labeler = footprintArchiveUrl("/api/GetModelArtifact?projectId=p&modelId=1&imageLayerId=l&kind=footprint_pmtiles");
+  const viewer = footprintArchiveUrl("/api/GetModelArtifact?projectId=p&imageLayerId=l&modelId=2&kind=footprint_pmtiles");
+  assert.equal(labeler, viewer);
+  assert.doesNotMatch(viewer, /modelId/);
+  const protocol = getPmtilesProtocol({ addProtocol() {} });
+  const archive = new PMTiles(new InMemoryPMTilesSource(labeler, new ArrayBuffer(16)));
+  protocol.add(archive);
+  assert.equal(protocol.get(viewer), archive);
 });
 
 test("in-memory range reads preserve bytes and clamp the initial header read", async () => {

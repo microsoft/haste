@@ -39,6 +39,11 @@ an error. GETs do not generate artifacts or enqueue work. The viewer receives
 protected URLs, flavor, count, revision and readiness, with zero-default
 classification thresholds. Downloads never fall back to direct blob URLs or
 add unsupported cache-busting parameters.
+Raw GeoPackage downloads preserve the model's authoritative inference basename
+when safe for a response header, with a model-specific fallback. Rendered
+footprints require an exact, non-empty Overture ID match before any feature
+state is written. Both labeling and results canonicalize the protected
+footprint URL by project/layer, independent of model ID and query ordering.
 
 Both workflows use the same Visualizer route, shared PMTiles protocol and
 two-pane feature-state renderer. Keep optional standard rasters, legends,

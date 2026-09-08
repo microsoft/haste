@@ -38,7 +38,7 @@ import {
 import { FluentIcon } from "../../util/icons";
 import { PMTiles } from "pmtiles";
 import { apiGet, buildUrl } from "../../util/api";
-import { getPmtilesProtocol, InMemoryPMTilesSource } from "../../util/pmtiles.js";
+import { footprintArchiveUrl, getPmtilesProtocol, InMemoryPMTilesSource } from "../../util/pmtiles.js";
 import {
   getAzureMapsAuthOptions,
   isAzureMapsPlaceholder,
@@ -776,10 +776,10 @@ const InteractiveLabeler = () => {
     // identity. This keeps the browser off the firewalled storage account —
     // a direct *.blob SAS URL only works from allowlisted IPs, so
     // remote/mobile labelers hit a 403.
-    const browserPmtilesUrl = buildUrl(
+    const browserPmtilesUrl = footprintArchiveUrl(buildUrl(
       `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
         `&imageLayerId=${imageLayerId}&kind=footprint_pmtiles`
-    );
+    ));
     const browserSidecarUrl = buildUrl(
       `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
         `&kind=sidecar`
@@ -796,30 +796,32 @@ const InteractiveLabeler = () => {
     let pmtilesDone = false;
     const { pmtilesHeader, sidecar } = await loadInteractiveArtifacts({
       signal,
-      loadPmtiles: (artifactSignal) =>
-        fetchArtifactBuffer(
-          browserPmtilesUrl,
-          (loaded, total) => setInitialLoad({ step: 2, loaded, total }),
-          artifactSignal
-        )
-          .then(async (pmtilesBuffer) => {
-            const pm = new PMTiles(
+      loadPmtiles: async (artifactSignal) => {
+        try {
+          let pm = getPmtilesProtocol().get(browserPmtilesUrl);
+          if (!pm) {
+            const pmtilesBuffer = await fetchArtifactBuffer(
+              browserPmtilesUrl,
+              (loaded, total) => setInitialLoad({ step: 2, loaded, total }),
+              artifactSignal
+            );
+            pm = new PMTiles(
               new InMemoryPMTilesSource(browserPmtilesUrl, pmtilesBuffer)
             );
-            getPmtilesProtocol().add(pm);
-            return pm.getHeader();
-          })
-          .catch((e) => {
-            // Without the footprint tiles there are no buildings to label, so an
-            // empty map is the one thing this must not silently become. The
-            // archive belongs to the image layer and is built once its footprints
-            // are cached, so the usual cause is that job not having finished yet.
-            throwFootprintTilesLoadError(e);
-          })
-          .finally(() => {
-            pmtilesDone = true;
-            setInitialLoad({ step: 3, loaded: 0, total: null });
-          }),
+          }
+          getPmtilesProtocol().add(pm);
+          return await pm.getHeader();
+        } catch (e) {
+          // Without the footprint tiles there are no buildings to label, so an
+          // empty map is the one thing this must not silently become. The
+          // archive belongs to the image layer and is built once its footprints
+          // are cached, so the usual cause is that job not having finished yet.
+          throwFootprintTilesLoadError(e);
+        } finally {
+          pmtilesDone = true;
+          setInitialLoad({ step: 3, loaded: 0, total: null });
+        }
+      },
       loadSidecar: (artifactSignal) =>
         fetchFeaturesSidecar(
           browserSidecarUrl,
