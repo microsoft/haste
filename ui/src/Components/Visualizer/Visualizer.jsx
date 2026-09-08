@@ -5,7 +5,7 @@
 // per-building vectors over two Azure Maps panes. Results GETs never start work.
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Button, MessageBar, MessageBarActions, MessageBarBody, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
+import { Button, MessageBar, MessageBarActions, MessageBarBody, makeStyles, tokens } from "@fluentui/react-components";
 import { useParams } from "react-router-dom";
 import { AppContext } from "../../AppContext";
 import { useTheme } from "../../util/ThemeContext.jsx";
@@ -35,16 +35,12 @@ import "../../assets/css/visualizer.css";
 
 const useStyles = makeStyles({
   topStack: {
-    position: "absolute", top: "10px", left: "50%", transform: "translateX(-50%)",
-    zIndex: 950, boxSizing: "border-box", width: "min(560px, calc(100% - 32px))",
+    position: "absolute", top: "66px", transform: "translateX(-50%)",
+    left: "calc((100% - var(--prediction-editor-width) - 10px) / 2)",
+    width: "min(560px, calc(100% - var(--prediction-editor-width) - 30px))",
+    zIndex: 950, boxSizing: "border-box",
     pointerEvents: "none", display: "flex", flexDirection: "column",
     gap: tokens.spacingVerticalS,
-    "@media (max-width: 1100px)": { top: "66px" },
-  },
-  editingStack: {
-    left: "calc((100% - var(--prediction-editor-width) - 10px) / 2)",
-    top: "66px",
-    width: "min(560px, calc(100% - var(--prediction-editor-width) - 30px))",
     "@media (max-width: 700px)": { left: "50%", width: "min(560px, calc(100% - 32px))" },
   },
   notice: { pointerEvents: "auto", minWidth: 0, maxWidth: "100%" },
@@ -280,7 +276,7 @@ export default function Visualizer({ setModalComponent }) {
         onToggleEditMode={toggleEdit}
         busy={editor.busy}
       />
-      <div className={mergeClasses(styles.topStack, editor.isEditMode && styles.editingStack)}>
+      <div className={styles.topStack}>
         {results && <PredictionVersionControls
           versions={results.predictionVersions || []} source={results}
           onSelectVersion={selectVersion} onDownload={onDownload}
