@@ -4,6 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { PMTiles } from "pmtiles";
 import { normalizeAttrs, indexById, classifyAll } from "./predictionClassify.js";
 import {
   buildRawGpkgUrl, buildVisualizerResultsUrl, canViewResults, DEFAULT_THRESHOLD,
@@ -14,7 +15,7 @@ import {
 import {
   dividerPositionForKey, isMobileResultsLayout, RESULTS_DESKTOP_MIN_WIDTH, swipeLeftPaneLabel,
 } from "./visualizerSwipe.js";
-import { fetchArtifactBuffer, loadPredictionAttributes } from "./predictionArtifactLoader.js";
+import { fetchArtifactBuffer, loadPredictionArtifacts, loadPredictionAttributes } from "./predictionArtifactLoader.js";
 import { readResponseBuffer } from "../InteractiveLabeler/interactiveLabelerLoading.js";
 
 function sampleAttrs(overrides = {}) {
@@ -221,6 +222,22 @@ test("protected attribute loading is GET-only and validates the response revisio
   );
 });
 
+test("results load attributes and the PMTiles header without prefetching archive geometry", async (t) => {
+  globalThis.window = { atlas: { addProtocol() {} } };
+  t.after(() => { delete globalThis.window; });
+  const fetch = t.mock.method(globalThis, "fetch", async () => Response.json(sampleAttrs()));
+  const header = t.mock.method(PMTiles.prototype, "getHeader", async () => ({
+    minLon: 1, minLat: 2, maxLon: 3, maxLat: 4,
+  }));
+  const loaded = await loadPredictionArtifacts(sampleResults(), (url) => `/api/${url}`);
+  assert.equal(loaded.attrs.n, 3);
+  assert.deepEqual(loaded.bounds, [1, 2, 3, 4]);
+  assert.match(loaded.archiveKey, /kind=footprint_pmtiles/);
+  assert.equal(header.mock.callCount(), 1);
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.match(fetch.mock.calls[0].arguments[0], /kind=prediction_attrs/);
+});
+
 test("attribute 404 is actionable and does not issue another request", async (t) => {
   const fetch = t.mock.method(globalThis, "fetch", async () => new Response("", { status: 404 }));
   await assert.rejects(loadPredictionAttributes(sampleResults(), (url) => url), /Rerun inference/);
@@ -278,8 +295,7 @@ test("shared artifact hooks stay read-only while the results page gains an edito
     assert.doesNotMatch(row, /fileDownload\(buildUrl\(buildRawGpkgUrl/);
   }
   const menu = await readFile(new URL("../ProjectManagement/ModelResultsMenu.jsx", import.meta.url), "utf8");
-  assert.match(menu, /buildRawGpkgUrl/);
-  assert.match(menu, /createModelResultsDownload/);
+  assert.match(menu, /onDownload: \(\) => setModal\("download"\)/);
   assert.match(menu, /DownloadPredictionsDialog/);
-  assert.doesNotMatch(menu, /fileDownload|model\.gpkgUrl/);
+  assert.doesNotMatch(menu, /fileDownload|model\.gpkgUrl|buildRawGpkgUrl|buildVisualizerResultsUrl|createModelResultsDownload/);
 });
