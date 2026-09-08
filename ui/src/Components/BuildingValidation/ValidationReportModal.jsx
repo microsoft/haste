@@ -277,7 +277,7 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, cu
                       <MetricCard label="Damaged labels" value={report.labelCounts?.Damaged ?? 0} accent={tokens.colorDangerForeground1} />
                       <MetricCard label="Not Damaged labels" value={report.labelCounts?.NotDamaged ?? 0} accent={tokens.colorSuccessForeground1} />
                       <MetricCard label="Unknown labels (excluded)" value={report.labelCounts?.Unknown ?? 0} accent={tokens.colorNeutralForeground3} />
-                      <MetricCard label="Labeled Unknown predictions (excluded, not Not Damaged)" value={report.labeledUnknownPredictions ?? 0} accent={tokens.colorNeutralForeground3} />
+                      <MetricCard label="Labeled Unknown predictions (excluded, not Not Damaged)" value={report.excludedUnknownPredictions ?? 0} accent={tokens.colorNeutralForeground3} />
                       <MetricCard label="Matched to predictions" value={report.matched} />
                     </div>
                   </div>

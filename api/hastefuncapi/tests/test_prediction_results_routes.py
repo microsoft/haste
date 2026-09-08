@@ -192,3 +192,43 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(response.status_code, 206)
         self.assertIn("attachment", response.headers["Content-Disposition"])
+
+    async def test_download_preserves_safe_authoritative_inference_basename(
+        self,
+    ) -> None:
+        for stored, expected in (
+            ("inference/run-42.gpkg", "run-42.gpkg"),
+            ("", f"building_predictions_{MODEL_ID}_raw.gpkg"),
+            (
+                'bad"\r\nInjected: true.gpkg',
+                f"building_predictions_{MODEL_ID}_raw.gpkg",
+            ),
+        ):
+            self.record["predictionGpkgFilename"] = stored
+            with patch.object(
+                function_app,
+                "read_result_artifact",
+                new=AsyncMock(
+                    return_value=BlobRange(
+                        b"gpkg", 4, "application/geopackage+sqlite3", None
+                    )
+                ),
+            ):
+                response = await function_app.GetModelArtifact(
+                    self.http(kind="gpkg")
+                )
+            self.assertEqual(response.status_code, 206)
+            self.assertEqual(
+                response.headers["Content-Disposition"],
+                f'attachment; filename="{expected}"',
+            )
+
+    async def test_nonversioned_artifact_kinds_reject_explicit_raw_zero(
+        self,
+    ) -> None:
+        for kind in ("sidecar", "geojson", "footprint_pmtiles"):
+            for version in ("0", "1"):
+                response = await function_app.GetModelArtifact(
+                    self.http(kind=kind, version=version)
+                )
+                self.assertEqual(response.status_code, 400)

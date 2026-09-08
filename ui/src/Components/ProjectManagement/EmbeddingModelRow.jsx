@@ -86,7 +86,7 @@ const EmbeddingModelRow = ({
 
   const isProcessed = model.status === "Processed";
   const hasVersions = model.hasEdits === true || (model.editedPredictions || []).some((entry) => entry.gpkgUrl);
-  const hasViewableVersion = (model.editedPredictions || []).some((entry) => entry.predictionAttrsUrl);
+  const hasViewableVersion = (model.editedPredictions || []).some(canViewResults);
   const hasPredictions = !!model.gpkgUrl || hasVersions;
   const createdDate = model.creationDate
     ? `${model.creationDate.substring(0, 10)} ${model.creationDate.substring(

@@ -3,7 +3,7 @@
 // Feature-scoped HTTP semantics. Do not change legacy apiGet/apiPut behavior.
 import { readResponseBuffer } from "../InteractiveLabeler/interactiveLabelerLoading.js";
 
-export async function requestPredictionJson(url, { body, signal, fetchResponse = globalThis.fetch } = {}) {
+export async function requestPredictionJson(url, { body, signal, fetchResponse = globalThis.fetch, allowPartialAssessment = false } = {}) {
   signal?.throwIfAborted();
   const timeout = AbortSignal.timeout(120000);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
@@ -16,7 +16,11 @@ export async function requestPredictionJson(url, { body, signal, fetchResponse =
   requestSignal.throwIfAborted();
   let data;
   try { data = JSON.parse(new TextDecoder().decode(buffer)); } catch { /* handled below */ }
-  if (!response.ok || data?.error) {
+  const assessmentDiagnostic = allowPartialAssessment && body === undefined &&
+    typeof data?.error === "string" &&
+    Number.isFinite(data.predictions?.total) && data.predictions.total >= 0 &&
+    Number.isFinite(data.populationEstimate?.N) && data.populationEstimate.N >= 0;
+  if (!response.ok || (data?.error && !assessmentDiagnostic)) {
     const detail = data?.error;
     const message = typeof detail === "string" ? detail : detail?.message || data?.message;
     const error = new Error(message || `Prediction request failed (HTTP ${response.status}).`);

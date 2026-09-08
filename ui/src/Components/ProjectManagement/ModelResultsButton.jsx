@@ -42,7 +42,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
   const [showPublishDataset, setShowPublishDataset] = useState(false);
   const [showDownloadPredictions, setShowDownloadPredictions] = useState(false);
   const hasVersions = model.hasEdits === true || (model.editedPredictions || []).some((entry) => entry.gpkgUrl);
-  const hasViewableVersion = (model.editedPredictions || []).some((entry) => entry.predictionAttrsUrl);
+  const hasViewableVersion = (model.editedPredictions || []).some(canViewResults);
 
   function handleDownload(url) {
     try {
