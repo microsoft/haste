@@ -4,6 +4,7 @@
 import { readResponseBuffer } from "../InteractiveLabeler/interactiveLabelerLoading.js";
 import { normalizeAttrs } from "./predictionClassify.js";
 import { resolvePredictionArtifacts, validateResultsMetadata } from "./predictionResults.js";
+import { footprintArchiveUrl } from "../../util/pmtiles.js";
 
 export const MAX_ATTRIBUTES_BYTES = 64 * 1024 * 1024;
 export const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
@@ -50,5 +51,5 @@ export async function loadPredictionAttributes(results, buildUrl, signal) {
   }
   signal?.throwIfAborted();
   const attrs = normalizeAttrs(JSON.parse(new TextDecoder().decode(buffer)), results);
-  return { attrs, archiveUrl: buildUrl(urls.footprintTilesUrl) };
+  return { attrs, archiveUrl: footprintArchiveUrl(buildUrl(urls.footprintTilesUrl)) };
 }

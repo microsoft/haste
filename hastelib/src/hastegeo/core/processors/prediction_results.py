@@ -25,6 +25,7 @@ from ..utils.blob import BlobRange, read_blob_range
 from ..utils.footprint_artifacts import validate_layer_footprint_url
 from ..utils.metadata import MetadataUtils
 from ..utils.prediction_attrs import attrs_artifact_name
+from ..utils.prediction_download import prediction_download_filename
 from ..utils.prediction_readiness import (
     artifact_api_url,
     raw_predictions_readiness,
@@ -278,6 +279,15 @@ class PredictionResultsProcessor:
                     }
                 )
         return [row for row in rows if row.get("imageLayerId") == layer_id]
+
+    def download_filename(self, request: ModelArtifactRequest) -> str:
+        model = self.model(request.projectId, request.modelId)
+        if (
+            request.predictionRevision
+            and request.predictionRevision != model.predictionRevision
+        ):
+            raise FileNotFoundError("Prediction output is no longer current")
+        return prediction_download_filename(model)
 
     def resolve_artifact(
         self, request: ModelArtifactRequest
