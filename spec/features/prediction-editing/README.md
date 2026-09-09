@@ -20,8 +20,9 @@ standalone editor or a new preparation pipeline.
 
 - The pencil or E opens the editor on the existing swipe map.
 - Colored class selection and click/Ctrl-drag painting provide direct editing.
-  A compact Review filter, arrow navigation, and 1/2/3 labeling support rapid
-  review without a detailed inspector or separate navigation/apply buttons.
+  A Review filter, Previous/Next buttons, position indicator, arrow navigation,
+  and 1/2/3 labeling support rapid review without a detailed inspector or separate
+  apply controls.
 - Raw and saved standard-model results support a damage slider that preserves
   manual assignments; interactive models use discrete class choices.
 - Saving writes a versioned GeoPackage and matching sidecar without replacing

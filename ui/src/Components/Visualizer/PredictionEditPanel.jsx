@@ -49,6 +49,10 @@ const useStyles = makeStyles({
     width: "100%", minHeight: "40px", justifyContent: "space-between",
     fontWeight: tokens.fontWeightSemibold,
   },
+  reviewButtons: {
+    display: "flex", gap: tokens.spacingHorizontalS,
+    "& > button": { flex: 1 },
+  },
   sliderValue: { display: "flex", justifyContent: "space-between", fontSize: tokens.fontSizeBase200 },
   actions: {
     flexShrink: 0, paddingTop: tokens.spacingVerticalS, marginTop: tokens.spacingVerticalS,
@@ -65,6 +69,17 @@ export default function PredictionEditPanel({ editor, onExit, onReviewClassChang
   const { attrs, draft, source, activeClass } = state;
   const thresholdEnabled = canAdjustThresholds(source);
   const version = source.predictionVersion ?? 0;
+  const reviewCount = editor.rows.length;
+  const reviewPosition = editor.rows.indexOf(state.selectedIndex);
+  const reviewDisabled = editor.disabled || reviewCount === 0 ||
+    ["source_changed", "request_conflict"].includes(editor.errorCode);
+  const reviewProgress = reviewCount === 0
+    ? "No buildings in this category."
+    : reviewPosition >= 0
+      ? `Building ${(reviewPosition + 1).toLocaleString()} of ${reviewCount.toLocaleString()}`
+      : editor.selectedId !== undefined
+        ? `Reclassified · ${reviewCount.toLocaleString()} remaining in this category`
+        : `${reviewCount.toLocaleString()} ${reviewCount === 1 ? "building" : "buildings"} in this category`;
   return (
     <section id="predictionEditPanel" aria-label="Edit predictions" className={`${styles.panel} labeling-tool-surface`}>
       <div className={styles.header}>
@@ -118,9 +133,19 @@ export default function PredictionEditPanel({ editor, onExit, onReviewClassChang
             {Object.entries(REVIEW_CLASSES).map(([value, label]) => <Option key={value} value={value}>{label}</Option>)}
           </Dropdown>
         </Field>
+        <Text id="predictionReviewProgress" role="status" aria-live="polite" aria-atomic="true" weight="semibold" block>
+          {reviewProgress}
+        </Text>
+        <div className={styles.reviewButtons}>
+          <Button icon={<FluentIcon name="ChevronLeft" />} disabled={reviewDisabled} onClick={() => editor.navigate(-1)}>
+            Previous
+          </Button>
+          <Button icon={<FluentIcon name="ChevronRight" />} iconPosition="after" disabled={reviewDisabled} onClick={() => editor.navigate(1)}>
+            Next
+          </Button>
+        </div>
         <div className={styles.subtle}>
-          {editor.rows.length.toLocaleString()} buildings in this group.
-          {" "}Use ←/→ to highlight a building, then 1/2/3 to label it.
+          Use Previous/Next or ←/→ to highlight a building, then 1/2/3 to label it.
           {editor.selectedId !== undefined && <Text block weight="semibold">
             Highlighted: {CLASS_LABELS[classification.classes[state.selectedIndex]]}
           </Text>}
