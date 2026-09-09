@@ -5,7 +5,7 @@
 | Story | Outcome | Acceptance criteria |
 |---|---|---|
 | PE-1 | Edit on the existing results map | Pencil/E toggles edit mode; no separate route or row-level editor button; both workflows supported. |
-| PE-2 | Correct buildings efficiently | Colored choices and click/Ctrl+box painting work on both panes. A compact Review filter and Left/Right arrows visit each class group; 1/2/3 annotate the highlighted building without changing that group. Keep reset/undo, without separate navigation/apply buttons or a detailed inspector. |
+| PE-2 | Correct buildings efficiently | Colored choices and click/Ctrl+box painting work on both panes. A Review filter, Previous/Next buttons and Left/Right arrows visit each class group with a "Building X of Y" indicator; 1/2/3 annotate the highlight without changing that group. Empty categories disable navigation. Keep reset/undo, without separate apply buttons or a detailed inspector. |
 | PE-3 | Adjust valid thresholds | Raw and saved standard models expose one damage slider, including binary-score datasets. Manual assignments remain fixed, the loaded unknown threshold is preserved, and saving creates a new version. Embedding models have no slider. |
 | PE-4 | Save auditable versions | New numbered GeoPackage plus sidecar; raw unchanged; no overwrite of a prior version; failures do not advertise success. Save is disabled for unchanged drafts. |
 | PE-5 | Select and download exact versions | Raw/saved selection switches both panes; post-save selection follows the returned version; proxy filenames identify versions. |
