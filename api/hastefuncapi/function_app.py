@@ -14,7 +14,6 @@ from azure.core.exceptions import ResourceNotFoundError
 from hastegeo.core.config import Config
 from hastegeo.core.models.admin import AdminConfig
 from hastegeo.core.models.prediction_edits import (
-    PredictionEditSessionRequest,
     PredictionReportRequest,
     PredictionSelectionRequest,
     PredictionVersionsRequest,
@@ -2536,30 +2535,6 @@ def _prediction_edit_error_response(
 
 
 @app.route(
-    route="GetPredictionEditSession", auth_level=AUTH_LEVEL, methods=["GET"]
-)
-async def GetPredictionEditSession(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        request = PredictionEditSessionRequest.model_validate(dict(req.params))
-    except ValueError:
-        return _prediction_edit_error_response(
-            PredictionRequestError("Invalid edit-session parameters.")
-        )
-    try:
-        result = await asyncio.to_thread(
-            PredictionEditsProcessor(config).get_session, request
-        )
-        return func.HttpResponse(
-            json.dumps(result),
-            status_code=200,
-            mimetype="application/json",
-            headers={"Cache-Control": "private, no-store"},
-        )
-    except Exception as error:
-        return _prediction_edit_error_response(error)
-
-
-@app.route(
     route="GetEditedPredictionVersions", auth_level=AUTH_LEVEL, methods=["GET"]
 )
 async def GetEditedPredictionVersions(
@@ -3550,20 +3525,23 @@ async def GetBuildingFootprintsGeoJSON(
         sample (int, optional): Maximum number of buildings to return
             (default 200). Clamped to the inclusive range [1, 2000] to bound
             response size and server-side memory.
+        buildingId (str, optional): Return only this building's WGS84
+            representative point and source row ID, without sampling.
     """
     logger.info(
         "GetBuildingFootprintsGeoJSON HTTP trigger function processed a request."
     )
     tmp_path = None
     try:
-        import geopandas as gpd
-
-        # Imported here rather than at module scope: footprints pulls in
-        # geopandas, which is too heavy for the function app's cold start.
-        from hastegeo.core.utils.footprints import sample_indices
-
         project_id = req.params.get("projectId")
         image_layer_id = req.params.get("imageLayerId")
+        building_id = req.params.get("buildingId")
+        if building_id is not None and (
+            not building_id
+            or building_id != building_id.strip()
+            or len(building_id) > 1024
+        ):
+            return _bad_request("Invalid buildingId")
         try:
             requested_sample = int(
                 req.params.get("sample", DEFAULT_VALIDATION_SAMPLE)
@@ -3597,6 +3575,23 @@ async def GetBuildingFootprintsGeoJSON(
         tmp_path = await download_blob_to_tempfile(
             footprints_url, suffix=".gpkg"
         )
+
+        if building_id is not None:
+            from hastegeo.core.utils.footprint_location import (
+                footprint_location,
+            )
+
+            location = await asyncio.to_thread(
+                footprint_location, tmp_path, building_id
+            )
+            return func.HttpResponse(
+                json.dumps(location),
+                status_code=200,
+                mimetype="application/json",
+            )
+
+        import geopandas as gpd
+        from hastegeo.core.utils.footprints import sample_indices
 
         gdf = await asyncio.to_thread(gpd.read_file, tmp_path)
 

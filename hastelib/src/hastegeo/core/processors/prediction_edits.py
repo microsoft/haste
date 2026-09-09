@@ -15,7 +15,6 @@ from ..artifact_storage.unified_artifact_storage import UnifiedArtifactStorage
 from ..models.prediction_edits import (
     EditedPredictionAttributes,
     EditedPredictionVersion,
-    PredictionEditSessionRequest,
     PredictionVersionsRequest,
     SavedPredictionResponse,
     SaveEditedPredictionsRequest,
@@ -24,10 +23,7 @@ from ..models.projects import Model
 from ..publishing.lease import LeaseRenewalError, LeaseUnavailableError
 from ..utils.metadata import MetadataUtils
 from ..utils.prediction_edit_lock import prediction_edit_lock
-from ..utils.prediction_readiness import (
-    artifact_api_url,
-    raw_predictions_readiness,
-)
+from ..utils.prediction_readiness import raw_predictions_readiness
 from .prediction_results import (
     PredictionRequestError,
     PredictionResultsProcessor,
@@ -38,7 +34,6 @@ from .prediction_sources import (
     prediction_source_url,
     prediction_versions,
     resolve_prediction_source,
-    source_readiness,
 )
 
 
@@ -83,62 +78,6 @@ class PredictionEditsProcessor(PredictionResultsProcessor):
             "versions": prediction_versions(
                 model, self.layer(model.projectId, model.imageLayerId)
             ),
-        }
-
-    def get_session(
-        self, request: PredictionEditSessionRequest
-    ) -> dict[str, Any]:
-        model, layer = self.context(request)
-        source = resolve_prediction_source(
-            model,
-            request.version,
-            prediction_revision=request.predictionRevision,
-        )
-        readiness = source_readiness(model, layer, source)
-        edit_readiness = dict(readiness)
-        if (
-            source.predictionRevision is None
-            or source.predictionRevision != model.predictionRevision
-        ):
-            edit_readiness.update(
-                ready=False,
-                reason="source_changed",
-                detail="This version belongs to an older raw output.",
-            )
-        elif not raw_predictions_readiness(model)["ready"]:
-            edit_readiness.update(
-                ready=False,
-                reason="missing_raw_source",
-                detail="The raw baseline is unavailable for editing.",
-            )
-        return {
-            "projectId": model.projectId,
-            "imageLayerId": model.imageLayerId,
-            "modelId": model.modelId,
-            **source.descriptor(),
-            "supportsThreshold": source.flavor == "inference"
-            and not source.is_edited,
-            "defaultThreshold": 0.0,
-            "defaultUnknownThreshold": 0.0,
-            "buildingCount": source.buildingCount,
-            "editedCount": source.editedCount,
-            "predictionsReady": readiness["ready"],
-            "predictionsReadiness": readiness,
-            "editReadiness": edit_readiness,
-            "tilesReady": readiness["tilesReady"],
-            "attrsReady": readiness["attrsReady"],
-            "footprintTilesUrl": artifact_api_url(model, "footprint_pmtiles")
-            if layer.footprintPmtilesUrl
-            else None,
-            "gpkgUrl": prediction_source_url(model, source, "gpkg")
-            if source.gpkgUrl
-            else None,
-            "predictionAttrsUrl": prediction_source_url(
-                model, source, "prediction_attrs"
-            )
-            if source.predictionAttrsUrl
-            else None,
-            "versions": prediction_versions(model, layer),
         }
 
     @staticmethod
@@ -320,12 +259,12 @@ class PredictionEditsProcessor(PredictionResultsProcessor):
                 "source_changed",
                 "The base version belongs to older predictions.",
             )
-        if request.baseVersion and (
-            request.threshold != source.threshold
-            or request.unknownThreshold != source.unknownThreshold
+        if (
+            request.baseVersion
+            and request.unknownThreshold != source.unknownThreshold
         ):
             raise PredictionRequestError(
-                "Select raw predictions before changing thresholds"
+                "Preserve the saved version's unknown threshold"
             )
         if source.flavor == "embedding" and (
             request.threshold or request.unknownThreshold

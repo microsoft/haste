@@ -59,7 +59,6 @@ All functions are defined in `function_app.py` as a single Azure Functions app. 
 | GET | `GetVisualizerResults` | Shared vector-first results for standard inference and interactive labeling, including imagery and protected artifact URLs. Requires `projectId`, `imageLayerId`, and `modelId`. |
 | GET | `GetModelArtifact` | Stream protected model/layer artifacts, including `gpkg`, `prediction_attrs`, and `footprint_pmtiles`. |
 | PUT | `PutBuildingPredictions` | Replace interactive predictions and eagerly publish their GeoPackage and matching results sidecar; an empty list clears predictions. |
-| GET | `GetPredictionEditSession` | Read edit readiness and metadata for an explicit raw/saved prediction version. |
 | GET | `GetEditedPredictionVersions` | List confirmed saved versions and the current raw-generation identity. |
 | PUT | `PutEditedPredictions` | Save a new numbered GeoPackage/sidecar pair without overwriting raw predictions. |
 | PUT | `PutArtifactsZipQueueMessage` | Queue a job to zip model artifacts for download. |
@@ -181,20 +180,29 @@ for the sidecar schema, generation lifecycle, and deployment requirements.
 ## Versioned Prediction Editing
 
 Editing uses the same authentication and project/model/layer ownership rules
-as common results. No edit-session read creates artifacts or queues work.
+as common results. Reads do not create artifacts or queue work.
 
-### Read a session and version history
+### Read edit readiness and version history
 
-`GET /api/GetPredictionEditSession` requires `projectId`, `imageLayerId`,
-`modelId`, and explicit integer `version=0|N`. Its response includes
+`GET /api/GetVisualizerResults` accepts `projectId`, `imageLayerId`,
+`modelId`, and optional integer `version=0|N`. Its response includes
 `predictionVersion`, the selected `predictionRevision`, the
-`currentPredictionRevision`, flavor, count, thresholds, artifact URLs, `versions`,
+`currentPredictionRevision`, flavor, count, thresholds, artifact URLs, `predictionVersions`,
 and `editReadiness` with `ready`, `reason`, and `detail`.
 
-Raw trained-model sessions support threshold changes, including models whose
-scores happen to be binary. Embedding models and saved versions do not expose
-threshold controls. Historical versions remain readable but cannot be edited
-against a different current raw generation.
+There is no separate edit-session endpoint. Raw and saved trained-model results
+support damage-threshold changes, including models whose scores are binary.
+Manual class assignments remain fixed as the threshold changes, and saved
+versions retain their unknown threshold. Embedding models have no threshold
+control. Historical versions remain readable but cannot be edited against a
+different current raw generation. Saves revalidate the generation and source.
+
+For keyboard review of an unloaded building, `GetBuildingFootprintsGeoJSON`
+accepts `projectId`, `imageLayerId`, and `buildingId` (the exact Overture/source
+ID). It returns one GeoJSON Point in WGS84 with `properties.id` and the
+zero-based `properties.rowId`. This lookup is not sampled and does not create
+an artifact or queue work. Omitting `buildingId` retains the existing sampled
+polygon response.
 
 `GET /api/GetEditedPredictionVersions` requires `projectId` and `modelId`;
 optional `imageLayerId` must match the model. It returns

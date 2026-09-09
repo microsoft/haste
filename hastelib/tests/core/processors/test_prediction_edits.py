@@ -20,7 +20,7 @@ from hastegeo.core.artifact_storage.unified_artifact_storage import (
 from hastegeo.core.config import Config
 from hastegeo.core.models.prediction_edits import (
     EditedPredictionVersion,
-    PredictionEditSessionRequest,
+    PredictionSelectionRequest,
     SavedPredictionResponse,
     SaveEditedPredictionsRequest,
 )
@@ -42,6 +42,7 @@ from hastegeo.core.processors.prediction_results import (
 from hastegeo.core.processors.prediction_sources import (
     resolve_prediction_source,
 )
+from hastegeo.core.processors.visualizer import VisualizerProcessor
 from hastegeo.core.publishing.lease import LeaseRenewalError
 
 from ..prediction_fixtures import write_gpkg
@@ -216,16 +217,16 @@ class TestPairedEditPublication(EditTestCase):
             ).predictionVersion,
             0,
         )
-        session = self.editor.get_session(
-            PredictionEditSessionRequest(
+        view = VisualizerProcessor(self.config).load(
+            PredictionSelectionRequest(
                 projectId=PROJECT_ID,
                 imageLayerId=LAYER_ID,
                 modelId=MODEL_ID,
                 version=1,
             )
         )
-        self.assertFalse(session["editReadiness"]["ready"])
-        self.assertTrue(session["predictionsReady"])
+        self.assertFalse(view.editReadiness["ready"])
+        self.assertTrue(view.predictionsReady)
 
     def test_conflicting_request_and_stale_source_do_not_append(self) -> None:
         request = self.edit_request()

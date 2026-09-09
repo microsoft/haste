@@ -19,7 +19,10 @@ there is no prediction-preparation queue, route, or first-open job.
 ## Interaction
 
 Enter edit mode using the pencil beside Back or E, without changing routes.
-Use #136's Fluent UI class-picker panel and vector-first Azure Maps swipe view.
+Use a compact Fluent UI class-picker panel and vector-first Azure Maps swipe
+view. Class choices use the same semantic colors as the prediction legend and
+map. Keep the existing version selector and download control outside the editor;
+do not duplicate version history inside the panel.
 
 | Input | Behavior |
 |---|---|
@@ -27,18 +30,33 @@ Use #136's Fluent UI class-picker panel and vector-first Azure Maps swipe view.
 | Click footprint | Apply the active class |
 | Ctrl+drag box | Paint buildings inside the box |
 | Right-click footprint | Restore that building's model-predicted class |
-| Arrow keys | Step through the review selection |
-| Enter | Apply the active class to the selected building |
-| Raw standard-model threshold sliders | Reclassify locally using damage/cloud scores |
+| Review filter and Left/Right arrows | Highlight and center each building in the chosen class group |
+| 1/2/3 with a highlighted building | Annotate it as Damaged/NotDamaged/Unknown without changing the review group |
+| Damage threshold slider | Reclassify unassigned buildings in raw or saved standard-model results |
 | Embedding model | No threshold sliders; discrete class editing remains available |
 
-Both swipe panes share classes and selection. Disable double-click zoom only
+Both swipe panes share classes and manual assignments. Disable double-click zoom only
 while editing; preserve panning and wheel zoom. Use the same responsive layout,
 dark-mode Fluent tokens, and non-shrinking scroll-panel controls as #136.
 Retain the results page's removal of imagery-adjustment sliders.
-Saved versions keep their effective classes; show #136's guidance to select
-raw results before changing score thresholds rather than displaying ineffective
-sliders on a saved version.
+Saved standard-model versions can be used as the starting point for a new damage
+threshold. Recompute only buildings without explicit manual assignments, using
+their preserved model scores. Keep the loaded unknown/cloud threshold unchanged;
+there is no separate cloud-threshold control. Undo restores the loaded draft,
+including its thresholds and assignments. Save creates a new version and never
+changes the version used as its base.
+
+The panel contains class choices with counts, the standard-model damage slider,
+a compact Review filter, one undo action, and Save/Done. There are no separate
+Previous/Next buttons, selected-building inspector, or Apply/Reset-selected
+controls. Class buttons choose the mouse-painting class and clear the keyboard
+highlight. Review navigation is independent of that painting class.
+
+Review uses cached tile locations where available. An unloaded building is
+located by an exact, single-building request through the existing footprint
+GeoJSON endpoint; verify its row and Overture IDs before centering it. Never
+sample the review group, skip unloaded buildings, or fetch the whole PMTiles
+archive for navigation.
 
 ## API
 
@@ -47,10 +65,9 @@ plain-data operations in `hastegeo`, not in HTTP wrappers.
 
 | Endpoint | Request | Response |
 |---|---|---|
-| `GET /api/GetPredictionEditSession` | Project, layer, model identifiers and explicit `version=0\|N` | Authoritative readiness, thresholds, identity and version/session metadata |
 | `PUT /api/PutEditedPredictions` | Identifiers, generation/base version, request ID, thresholds, unique row-ID/class overrides | Saved version number, GeoPackage URL, attribute URL, edited count |
 | `GET /api/GetEditedPredictionVersions` | Project/model identifiers | Saved version metadata, newest first |
-| `GET /api/GetVisualizerResults` | Optional `version` | Selected raw/edited artifact URLs and available versions |
+| `GET /api/GetVisualizerResults` | Optional `version` | Selected raw/edited artifacts, thresholds, available versions, and `editReadiness` |
 | `GET /api/GetModelArtifact` | `kind=gpkg` or `prediction_attrs`, optional `version` | Protected artifact stream and unambiguous filename |
 | `GET /api/GetValidationReport` | Optional `version` | Metrics for the selected prediction source |
 | `GET /api/GetAssessmentReport` | Optional `version` | Assessment for the selected prediction source |
@@ -82,6 +99,11 @@ Example save request:
 
 `baseVersion` identifies the displayed source, not a requirement that it be the
 newest saved version. `predictionRevision` is a generation precondition.
+There is no separate edit session or edit-session endpoint. Entering edit mode
+uses the already-loaded visualizer metadata and validated attributes. The save
+endpoint revalidates the current generation, ownership and source availability.
+The UI disables Save until thresholds or explicit assignments differ from the
+loaded draft; merely choosing an active class does not make a draft dirty.
 `clientRequestId` identifies a save attempt so a lost-response retry does not
 create duplicate visible versions. Return structured 409 errors for a changed
 source, write contention, or reuse of a request ID for a different payload.

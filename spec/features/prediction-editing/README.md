@@ -19,10 +19,14 @@ standalone editor or a new preparation pipeline.
 ## Success Criteria
 
 - The pencil or E opens the editor on the existing swipe map.
-- Class selection, click/box painting, reset, keyboard review, and standard-only
-  threshold sliders match #136.
+- Colored class selection and click/Ctrl-drag painting provide direct editing.
+  A compact Review filter, arrow navigation, and 1/2/3 labeling support rapid
+  review without a detailed inspector or separate navigation/apply buttons.
+- Raw and saved standard-model results support a damage slider that preserves
+  manual assignments; interactive models use discrete class choices.
 - Saving writes a versioned GeoPackage and matching sidecar without replacing
-  raw predictions or an existing saved version.
+  raw predictions or an existing saved version. Unchanged drafts cannot be saved
+  from the UI, and editing uses visualizer readiness rather than a separate session.
 - Map selection, download selection, and post-save selection agree.
 - Reports default to the latest saved version and allow explicit raw/older
   selections; assessment respects the analyst's class overrides.

@@ -164,6 +164,28 @@ def source_readiness(
     }
 
 
+def edit_readiness(
+    model: Model, layer: ImageLayer, source: PredictionSource
+) -> dict[str, Any]:
+    readiness = source_readiness(model, layer, source)
+    if (
+        source.predictionRevision is None
+        or source.predictionRevision != model.predictionRevision
+    ):
+        readiness.update(
+            ready=False,
+            reason="source_changed",
+            detail="This version belongs to an older raw output.",
+        )
+    elif not raw_predictions_readiness(model)["ready"]:
+        readiness.update(
+            ready=False,
+            reason="missing_raw_source",
+            detail="The raw baseline is unavailable for editing.",
+        )
+    return readiness
+
+
 def prediction_versions(
     model: Model, layer: ImageLayer | None = None
 ) -> list[dict[str, Any]]:

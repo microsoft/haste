@@ -3,7 +3,9 @@
 
 import json
 import os
+import shutil
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import azure.functions as func
@@ -87,18 +89,13 @@ class TestPredictionEditingRoutes(
         self.assertEqual(
             self.current().editedPredictions[0].createdBy, "development@local"
         )
-        session = await function_app.GetPredictionEditSession(
-            self.http(version="1")
-        )
-        payload = json.loads(session.get_body())
-        self.assertEqual(payload["predictionVersion"], 1)
-        self.assertEqual(
-            payload["predictionRevision"], saved["predictionRevision"]
-        )
-        self.assertTrue(payload["editReadiness"]["ready"])
         visualizer = await function_app.GetVisualizerResults(self.http())
         view = json.loads(visualizer.get_body())
         self.assertEqual(view["predictionVersion"], 1)
+        self.assertTrue(view["editReadiness"]["ready"])
+        self.assertEqual(
+            view["predictionRevision"], saved["predictionRevision"]
+        )
         self.assertEqual(
             view["predictionVersions"][0]["predictionRevision"],
             saved["predictionRevision"],
@@ -120,7 +117,6 @@ class TestPredictionEditingRoutes(
         self,
     ) -> None:
         for handler in (
-            function_app.GetPredictionEditSession,
             function_app.GetVisualizerResults,
             function_app.GetValidationReport,
             function_app.GetAssessmentReport,
@@ -139,12 +135,7 @@ class TestPredictionEditingRoutes(
             ).status_code,
             404,
         )
-        self.assertEqual(
-            (
-                await function_app.GetPredictionEditSession(self.http())
-            ).status_code,
-            400,
-        )
+        self.assertFalse(hasattr(function_app, "GetPredictionEditSession"))
 
     async def test_malformed_save_is_400_before_execution(self) -> None:
         body = self.edit_request().model_dump(mode="json", by_alias=True)
@@ -161,6 +152,42 @@ class TestPredictionEditingRoutes(
                 "invalid_request",
             )
         self.assertEqual(self.current().editedPredictions, [])
+
+    async def test_exact_building_location_uses_existing_footprint_endpoint(
+        self,
+    ) -> None:
+        path = Path(self.directory, "location-input.gpkg")
+        shutil.copyfile(
+            self.local_path(self.layer.buildingFootprintsUrl), path
+        )
+        with patch.object(
+            function_app, "MetadataProcessor"
+        ) as metadata, patch.object(
+            function_app,
+            "download_blob_to_tempfile",
+            new=AsyncMock(return_value=str(path)),
+        ):
+            metadata.return_value.load.return_value = self.layer.model_dump()
+            response = await function_app.GetBuildingFootprintsGeoJSON(
+                self.http(buildingId="building-1", sample="1")
+            )
+        self.assertEqual(response.status_code, 200)
+        features = json.loads(response.get_body())["features"]
+        self.assertEqual(len(features), 1)
+        self.assertEqual(
+            features[0]["properties"], {"id": "building-1", "rowId": 1}
+        )
+        self.assertEqual(features[0]["geometry"]["type"], "Point")
+        self.assertFalse(path.exists())
+
+    async def test_invalid_building_lookup_does_not_read_storage(self) -> None:
+        with patch.object(function_app, "MetadataProcessor") as metadata:
+            for building_id in ("", " leading", "x" * 1025):
+                response = await function_app.GetBuildingFootprintsGeoJSON(
+                    self.http(buildingId=building_id)
+                )
+                self.assertEqual(response.status_code, 400)
+            metadata.assert_not_called()
 
     async def test_conflicts_keep_status_and_machine_readable_code(
         self,
@@ -200,7 +227,6 @@ class TestPredictionEditingRoutes(
     ) -> None:
         self.edit()
         handlers = (
-            function_app.GetPredictionEditSession,
             function_app.GetEditedPredictionVersions,
             function_app.GetVisualizerResults,
             function_app.GetValidationReport,
@@ -233,14 +259,7 @@ class TestPredictionEditingRoutes(
         view = json.loads(historical.get_body())
         self.assertEqual(view["predictionVersion"], 1)
         self.assertTrue(view["predictionsReady"])
-        session = json.loads(
-            (
-                await function_app.GetPredictionEditSession(
-                    self.http(version="1")
-                )
-            ).get_body()
-        )
-        self.assertFalse(session["editReadiness"]["ready"])
+        self.assertFalse(view["editReadiness"]["ready"])
         default = json.loads(
             (await function_app.GetVisualizerResults(self.http())).get_body()
         )

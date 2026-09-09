@@ -45,6 +45,7 @@ class Visualizer(BaseModel):
     buildingCount: Optional[int] = Field(default=None)
     predictionsReady: bool = Field(default=False)
     predictionsReadiness: dict = Field(default_factory=dict)
+    editReadiness: dict = Field(default_factory=dict)
     rawPredictionsReady: bool = Field(default=False)
     sourceTypePreEvent: Optional[str] = Field(default=None)
     sourceTypePostEvent: Optional[str] = Field(default=None)
