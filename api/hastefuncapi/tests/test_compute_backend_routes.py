@@ -43,6 +43,7 @@ with redirect_stderr(io.StringIO()):
     from api.hastefuncapi import function_app
 
 from hastegeo.core.models.projects import Model, ModelArtifacts  # noqa: E402
+from hastegeo.core.processors.imagery import ImageryPreProcessor  # noqa: E402
 
 PROJECT_ID = "123e4567-e89b-12d3-a456-426614174000"
 
@@ -637,6 +638,122 @@ class ImageLayerRouteTestCase(unittest.IsolatedAsyncioTestCase):
         body.update(overrides)
         return body
 
+    def _ui_create_body(self, normalization_factor: str | float) -> dict:
+        return {
+            "projectId": PROJECT_ID,
+            "name": "New image layer",
+            "description": "",
+            "workflowType": "standard",
+            "preEventImageryUrls": [],
+            "postEventImageryUrls": [
+                "https://imagery.blob.core.windows.net/data/post.tif"
+            ],
+            "format": "tif",
+            "sourceTypePreEvent": "n/a",
+            "sourceTypePostEvent": "rgb/no_processing",
+            "normalizationFactor": normalization_factor,
+            "imageryCaptureDatePreEvent": "",
+            "imageryCaptureDatePostEvent": "2023-08-12T00:00:00.000Z",
+            "userBuildingFootprintsUrl": None,
+            "clipBbox": None,
+            "sourceImageryReferences": [],
+            "userId": "analyst@example.com",
+        }
+
+    async def test_ui_create_normalization_reaches_queue_and_storage(
+        self,
+    ) -> None:
+        self.pre.side_effect = ImageryPreProcessor
+        with patch(
+            "hastegeo.core.processors.imagery.AzureQueueHandler"
+        ) as queue:
+            for factor in ("0", 0, "10000", 10000):
+                for supplied_id in (None, self._body()["imageLayerId"]):
+                    with self.subTest(factor=factor, supplied_id=supplied_id):
+                        self.pre.reset_mock()
+                        self.meta.return_value.save.reset_mock()
+                        queue.reset_mock()
+                        body = self._ui_create_body(factor)
+                        if supplied_id:
+                            body["imageLayerId"] = supplied_id
+
+                        response = await function_app.PutLayer(
+                            make_request(body)
+                        )
+
+                        self.assertEqual(response.status_code, 200)
+                        self.pre.assert_called_once()
+                        queue.return_value.put_message.assert_called_once()
+                        self.meta.return_value.save.assert_called_once()
+                        queued = json.loads(
+                            queue.return_value.put_message.call_args.args[0]
+                        )
+                        saved = self._saved_payload()
+                        returned = json.loads(response.get_body())
+                        for record in (queued, saved, returned):
+                            self.assertEqual(
+                                record["normalizationFactor"], float(factor)
+                            )
+                            self.assertEqual(record["projectId"], PROJECT_ID)
+                            self.assertEqual(
+                                record["postEventImageryUrls"],
+                                body["postEventImageryUrls"],
+                            )
+                            self.assertTrue(record["imageLayerId"])
+                            self.assertTrue(record["preprocessJob"]["taskId"])
+                            self.assertIsNone(
+                                record["preprocessJob"]["computeJob"]
+                            )
+                            self.assertIsNone(record["computeBackend"])
+                        self.assertEqual(
+                            queued["imageLayerId"], saved["imageLayerId"]
+                        )
+                        self.assertEqual(
+                            queued["preprocessJob"],
+                            json.loads(json.dumps(saved["preprocessJob"])),
+                        )
+                        if supplied_id:
+                            self.assertEqual(
+                                returned["imageLayerId"], supplied_id
+                            )
+
+    async def test_create_normalization_does_not_allow_workflow_state(
+        self,
+    ) -> None:
+        fields = {
+            "status": "Processed",
+            "currentStep": 4,
+            "normalizationMeans": [1, 2, 3],
+            "normalizationStds": [1, 1, 1],
+            "buildingFootprintsUrl": "https://example.com/forged.gpkg",
+        }
+        for field, value in fields.items():
+            for supplied_id in (None, self._body()["imageLayerId"]):
+                with self.subTest(field=field, supplied_id=supplied_id):
+                    body = self._ui_create_body("0")
+                    body[field] = value
+                    if supplied_id:
+                        body["imageLayerId"] = supplied_id
+
+                    response = await function_app.PutLayer(make_request(body))
+
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn(
+                        "Workflow-owned", response.get_body().decode("utf-8")
+                    )
+                    self.pre.assert_not_called()
+                    self.meta.return_value.save.assert_not_called()
+
+    async def test_invalid_create_normalization_is_rejected(self) -> None:
+        response = await function_app.PutLayer(
+            make_request(self._ui_create_body("not-a-number"))
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_body(), b"Validation error.")
+        self.pre.assert_not_called()
+        self.meta.return_value.save.assert_not_called()
+
     async def test_client_supplied_preprocess_handle_is_discarded(self):
         # Create path: nothing is stored yet, so the client's own handle
         # is dropped before the preprocessor records the pending job.
@@ -750,7 +867,7 @@ class ImageLayerRouteTestCase(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn(forged, saved_text)
 
     async def test_edit_cannot_rewrite_runtime_or_workflow_state(self):
-        self._stored_layer()
+        self._stored_layer(normalizationFactor=10000)
         body = self._body(
             status="Processed",
             statusMessage="\n2026-01-01: totally finished",
@@ -760,6 +877,7 @@ class ImageLayerRouteTestCase(unittest.IsolatedAsyncioTestCase):
             postEventMosaicCogImageryUrl="https://evil/post.tif",
             buildingFootprintsUrl="https://evil/f.gpkg",
             normalizationMeans=[9, 9, 9],
+            normalizationFactor="0",
         )
 
         response = await function_app.PutLayer(make_request(body))
@@ -779,6 +897,7 @@ class ImageLayerRouteTestCase(unittest.IsolatedAsyncioTestCase):
             saved["buildingFootprintsUrl"], "https://acct/c/hash/f.gpkg"
         )
         self.assertEqual(saved["normalizationMeans"], [1, 2, 3])
+        self.assertEqual(saved["normalizationFactor"], 10000)
         self.assertNotIn("https://evil", json.dumps(saved))
 
     async def test_edit_still_honors_editable_fields_and_backend_intent(self):

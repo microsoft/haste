@@ -67,6 +67,10 @@
 | IT-002 | existing training launch endpoint | POST | Explicit `azure_ml` selection | AML enabled for training | 200, `computeJob.requestedBackend=azure_ml` persisted | US-003 |
 | IT-003 | existing training launch endpoint | POST | Explicit backend not configured | none | 400, actionable configuration error | US-003 |
 | IT-004 | existing training launch endpoint | POST | Client supplies `computeJob` runtime state | none | 400, or field silently ignored per API contract | US-004, US-008 |
+| IT-005 | `PutLayer` | PUT | Real UI creation payload with string or numeric `normalizationFactor`, including zero | New layer; test both omitted and supplied IDs | 200; real preprocessor queues the validated factor and metadata saves it | US-001, US-003 |
+| IT-006 | `PutLayer` | PUT | Creation supplies normalization plus workflow-owned status, statistics, or output paths | New layer | 400 before queueing or saving; normalization exception does not admit workflow state | US-004, US-008 |
+| IT-007 | `PutLayer` | PUT | Edit supplies a different normalization factor | Existing layer with stored workflow state | 200; stored factor and runtime state preserved; no preprocessing launch | US-004 |
+| IT-008 | `PutLayer` | PUT | Creation supplies a nonnumeric normalization factor | New layer | 400 model-validation error before queueing or saving | US-001 |
 
 ### Queue Worker Tests
 

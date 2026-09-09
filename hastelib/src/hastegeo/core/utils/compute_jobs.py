@@ -236,10 +236,12 @@ IMAGE_LAYER_WORKFLOW_OWNED_FIELDS = (
     "buildingFootprintsUrl",
     "validAreaMaskUrl",
 )
+# Normalization is a creation input, but its stored workflow value is
+# authoritative on edits just like the other fields above.
 IMAGE_LAYER_CLIENT_FORBIDDEN_CREATE_FIELDS = tuple(
     name
     for name in IMAGE_LAYER_WORKFLOW_OWNED_FIELDS
-    if name != "preprocessJob"
+    if name not in ("preprocessJob", "normalizationFactor")
 )
 
 
