@@ -17,6 +17,10 @@ export function canViewResults(model) {
   return model?.predictionsReady === true && model?.buildingCount !== 0;
 }
 
+export function canEditResults(results) {
+  return canViewResults(results) && results.editReadiness?.ready === true;
+}
+
 export function buildVisualizerResultsUrl({ projectId, imageLayerId, modelId, version }) {
   const params = new URLSearchParams({ projectId, imageLayerId, modelId });
   if (version !== undefined && version !== null) params.set("version", String(version));

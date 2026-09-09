@@ -21,9 +21,14 @@ Use the existing Node runner for classification, version-selection, URL and
 map-state helpers. Cover the post-save transition to the returned version,
 raw downloads through the API, both panes' source/state reset, cancellation,
 and the absence of preparation requests.
+Assert that unchanged drafts cannot submit saves, selecting a class alone is not
+an edit, and entering/rebinding editing performs no separate session request.
+Cover class-filtered arrow traversal after reclassification, direct 1/2/3
+annotation of the highlight, and exact location lookup for an unloaded building.
 
 Exercise the actual UI in isolated browser fixtures: pencil/E, click, Ctrl+box,
-right-click reset, arrows/Enter, standard-only sliders, save failures, version
+right-click reset, class-choice colors, a standard-only damage slider on raw and
+saved versions, preserved manual assignments, undo, save failures, version
 switch/download/report selection, dark mode and narrow layout. Do not modify
 production authentication or the user's running stack to create fixtures.
 

@@ -96,10 +96,6 @@ class PredictionSelectionRequest(ResultsRequest):
     predictionRevision: Revision | None = None
 
 
-class PredictionEditSessionRequest(PredictionSelectionRequest):
-    version: QueryVersion
-
-
 class PredictionVersionsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

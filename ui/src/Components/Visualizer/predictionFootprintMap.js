@@ -36,7 +36,9 @@ export function featureCentroid(geometry) {
   const ring = geometry?.type === "Polygon" ? geometry.coordinates?.[0] :
     geometry?.type === "MultiPolygon" ? geometry.coordinates?.[0]?.[0] : null;
   if (!ring?.length) return null;
-  return ring.reduce((sum, point) => [sum[0] + point[0] / ring.length, sum[1] + point[1] / ring.length], [0, 0]);
+  const center = ring.reduce((sum, point) =>
+    [sum[0] + point[0] / ring.length, sum[1] + point[1] / ring.length], [0, 0]);
+  return center.every(Number.isFinite) ? center : null;
 }
 
 export function findGlMap(atlasMap) {
@@ -284,6 +286,7 @@ export function createPredictionRenderer({ atlas, maps, archiveKey, attrs, onErr
       return disposed ? [] : panes.map((pane) => ({ key: pane.key, map: pane.map, fillLayer: pane.fill }));
     },
     getKnownLocation(id) { return locations.get(id); },
+    rememberLocation(id, coordinates) { locations.set(id, coordinates); },
     query(paneKey, box) {
       if (disposed || !ready) return [];
       const pane = panes.find((value) => value.key === paneKey);
