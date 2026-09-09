@@ -62,16 +62,12 @@ class StandardEditTestCase(EditTestCase):
                 "modelType": "trained",
                 "inferenceStatus": "Processed",
                 "predictionRevision": revision,
-                "predictionReadyRevision": revision,
-                "predictionState": "ready",
                 "gpkgUrl": url("raw.gpkg"),
                 "predictionAttrsUrl": url("attrs.json"),
                 "predictedBuildingCount": len(scores),
             }
         )
         self.save_record("model", MODEL_ID, model.model_dump(mode="json"))
-        with self.repository.lock(PROJECT_ID, MODEL_ID) as lease:
-            self.repository.save_locked(model, lease)
         self.save_record(
             "imagelayer",
             LAYER_ID,
@@ -171,12 +167,16 @@ class TestVersionedPredictionReports(
         self,
     ) -> None:
         saved = self.edited()
-        with self.repository.lock(PROJECT_ID, MODEL_ID) as lease:
-            model = self.current()
-            self.repository.initialize(
-                model, MetadataUtils.generate_id(), clear=True
-            )
-            self.repository.save_locked(model, lease)
+        self.save_record(
+            "model",
+            MODEL_ID,
+            {
+                "gpkgUrl": None,
+                "predictionAttrsUrl": None,
+                "predictionRevision": MetadataUtils.generate_id(),
+                "predictedBuildingCount": 0,
+            },
+        )
         self.save_record("imagelayer", LAYER_ID, {"footprintPmtilesUrl": None})
         with self.assertRaises(FileNotFoundError):
             await AssessmentReportProcessor(self.config).generate(
@@ -190,19 +190,51 @@ class TestVersionedPredictionReports(
         )
         self.assertEqual(report["predictionVersion"], saved.version)
 
-    async def test_saved_threshold_mutation_is_rejected_without_allocation(
+    async def test_saved_damage_threshold_creates_new_version_preserving_manual_assignments(
         self,
     ) -> None:
+        self.install_raw([0.8, 0.4, None], [0.0, 0.0, None])
+        pins = [
+            {"id": 0, "class": "NotDamaged"},
+            {"id": 2, "class": "Damaged"},
+        ]
+        saved = self.edit(threshold=0.5, overrides=pins)
+        before = self.attrs(saved.version)
+        changed = self.edit(
+            baseVersion=saved.version,
+            threshold=0.2,
+            overrides=pins,
+        )
+        after = self.attrs(changed.version)
+        self.assertEqual(
+            after["classes"], ["NotDamaged", "Damaged", "Damaged"]
+        )
+        self.assertEqual(after["overrideClasses"], before["overrideClasses"])
+        self.assertEqual(after["modelClasses"], before["modelClasses"])
+        self.assertEqual(after["unknownThreshold"], before["unknownThreshold"])
+        self.assertEqual(self.attrs(saved.version), before)
+        self.assertEqual(len(self.current().editedPredictions), 2)
+        result = VisualizerProcessor(self.config).load(
+            PredictionSelectionRequest(
+                projectId=PROJECT_ID,
+                imageLayerId=LAYER_ID,
+                modelId=MODEL_ID,
+                version=changed.version,
+            )
+        )
+        self.assertTrue(result.supportsThreshold)
+        self.assertTrue(result.editReadiness["ready"])
+        self.assertEqual(result.threshold, 0.2)
+
+    async def test_saved_unknown_threshold_stays_fixed(self) -> None:
         saved = self.edited()
         from hastegeo.core.processors.prediction_results import (
             PredictionRequestError,
         )
 
         with self.assertRaises(PredictionRequestError):
-            self.edit(baseVersion=saved.version, threshold=0.2)
-        self.assertEqual(
-            self.current().predictionEditVersionCounter, saved.version
-        )
+            self.edit(baseVersion=saved.version, unknownThreshold=0.2)
+        self.assertEqual(len(self.current().editedPredictions), 1)
         result = VisualizerProcessor(self.config).load(
             PredictionSelectionRequest(
                 projectId=PROJECT_ID,
@@ -211,7 +243,7 @@ class TestVersionedPredictionReports(
             )
         )
         self.assertEqual(result.predictionVersion, saved.version)
-        self.assertFalse(result.supportsThreshold)
+        self.assertTrue(result.supportsThreshold)
         self.assertEqual(result.threshold, 0.1)
 
     async def test_raw_binary_inference_keeps_threshold_support(self) -> None:
@@ -262,4 +294,4 @@ class TestEditingWireValidation(EditTestCase):
 
         with self.assertRaises(PredictionRequestError):
             self.edit(threshold=0.1)
-        self.assertEqual(self.current().predictionEditVersionCounter, 0)
+        self.assertEqual(self.current().editedPredictions, [])

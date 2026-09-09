@@ -17,8 +17,9 @@ import useVisualizerResults from "./useVisualizerResults";
 import useVisualizerMaps, { validBounds } from "./useVisualizerMaps";
 import usePredictionArtifacts from "./usePredictionArtifacts";
 import usePredictionFootprints from "./usePredictionFootprints";
+import { findGlMap } from "./predictionFootprintMap.js";
 import {
-  FOOTPRINTS_LOADING, FOOTPRINTS_UNAVAILABLE, readinessDetail,
+  canEditResults, FOOTPRINTS_LOADING, FOOTPRINTS_UNAVAILABLE, readinessDetail,
   resolveFootprintStatus, visualizerLayerOptions,
 } from "./predictionResults.js";
 import { dividerPositionForKey, isMobileResultsLayout } from "./visualizerSwipe.js";
@@ -66,6 +67,7 @@ export default function Visualizer({ setModalComponent }) {
   const primaryContainerRef = useRef(null);
   const secondaryContainerRef = useRef(null);
   const selectionBoxRef = useRef(null);
+  const noticeStackRef = useRef(null);
   const positionedScene = useRef(null);
   const confirmationRef = useRef(null);
   const downloadAbortRef = useRef(null);
@@ -87,6 +89,21 @@ export default function Visualizer({ setModalComponent }) {
   });
   const editor = usePredictionEditor({
     ids, results, artifacts, renderer: footprints.renderer, layersReady: footprints.layersReady, loadVersion,
+    focusBuilding: (location) => {
+      const map = footprints.renderer.getPanes()[0].map;
+      map.setCamera({ center: location, zoom: Math.max(map.getCamera().zoom, 17.5), duration: 0 });
+      const canvas = map.getCanvasContainer().getBoundingClientRect();
+      const panel = containerRef.current.querySelector("#predictionEditPanel").getBoundingClientRect();
+      const bottomPanel = window.innerWidth <= 700;
+      const bottom = bottomPanel ? panel.top : canvas.bottom;
+      const top = Math.min(noticeStackRef.current.getBoundingClientRect().bottom + 10, bottom);
+      const target = [
+        bottomPanel ? canvas.width / 2 : (panel.left - canvas.left) / 2,
+        (top + bottom) / 2 - canvas.top,
+      ];
+      const pixel = map.positionsToPixels([location])[0];
+      findGlMap(map).panBy([pixel[0] - target[0], pixel[1] - target[1]], { duration: 0 });
+    },
   });
   usePredictionEditorMap({
     renderer: footprints.renderer, enabled: editor.isEditMode && !!editor.state,
@@ -219,17 +236,16 @@ export default function Visualizer({ setModalComponent }) {
         if (!event.repeat) toggleEdit();
         return;
       }
+      if (editor.isEditMode && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
+        event.preventDefault();
+        if (!editor.disabled) editor.navigate(event.key === "ArrowLeft" ? -1 : 1);
+        return;
+      }
       if (editor.isEditMode && !editor.disabled) {
         const cls = { 1: "Damaged", 2: "NotDamaged", 3: "Unknown" }[event.key];
         if (cls) {
-          editor.setActiveClass(cls);
-          containerRef.current.focus({ preventScroll: true });
-          return;
-        }
-        if (event.key === "Enter") { event.preventDefault(); editor.applySelected(); return; }
-        if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
-          event.preventDefault();
-          editor.navigate(event.key === "ArrowLeft" ? -1 : 1);
+          if (editor.selectedId !== undefined) editor.assignHighlighted(cls);
+          else editor.setActiveClass(cls);
           containerRef.current.focus({ preventScroll: true });
           return;
         }
@@ -249,7 +265,7 @@ export default function Visualizer({ setModalComponent }) {
 
   const changeVisibility = (key, visible) => setVisibility((previous) => ({ ...previous, [key]: visible }));
   const historical = results?.currentPredictionRevision && results.currentPredictionRevision !== results.predictionRevision;
-  const canEdit = footprints.layersReady && !historical && !editor.confirmed?.pending;
+  const canEdit = footprints.layersReady && canEditResults(results) && !editor.confirmed?.pending;
   const loadingVersion = editor.busy || (status === FOOTPRINTS_LOADING && !!results);
   const retryResults = () => {
     if (editor.busy) return;
@@ -271,11 +287,11 @@ export default function Visualizer({ setModalComponent }) {
         onLayerVisibilityChange={changeVisibility}
         isEditMode={editor.isEditMode}
         canEdit={canEdit}
-        editTooltip={historical ? "Historical generations are read-only. Select current raw predictions to edit." : canEdit ? "Edit these predictions and save a new version (E)" : "Load a valid prediction source before editing."}
+        editTooltip={historical ? "Historical generations are read-only. Select current raw predictions to edit." : canEdit ? "Edit these predictions and save a new version (E)" : results?.editReadiness?.detail || "Load a valid prediction source before editing."}
         onToggleEditMode={toggleEdit}
         busy={editor.busy}
       />
-      <div className={styles.topStack}>
+      <div className={styles.topStack} ref={noticeStackRef}>
         {results && <PredictionVersionControls
           versions={results.predictionVersions || []} source={results}
           onSelectVersion={selectVersion} onDownload={onDownload}
@@ -318,8 +334,11 @@ export default function Visualizer({ setModalComponent }) {
           onRetry={editor.busy ? undefined : retryResults}
         />
       </div>
-      {editor.isEditMode && <PredictionEditPanel editor={editor} versions={results?.predictionVersions || []}
-        onExit={toggleEdit} onDownload={onDownload} downloadBusy={!!downloadBusy}
+      {editor.isEditMode && <PredictionEditPanel editor={editor} onExit={toggleEdit}
+        onReviewClassChange={(value) => {
+          editor.setReviewClass(value);
+          requestAnimationFrame(() => containerRef.current?.focus({ preventScroll: true }));
+        }}
         swipeStateMobile={swipeStateMobile} setSwipeStateMobile={setSwipeStateMobile} onReloadCurrent={() => selectVersion(0)} />}
       {confirmation && <PredictionDiscardDialog blocked={confirmation.blocked} onAnswer={answerDiscard} />}
     </div>

@@ -14,6 +14,7 @@ from ..utils.prediction_readiness import artifact_api_url
 from .metadata import MetadataProcessor
 from .prediction_results import PredictionResultsProcessor
 from .prediction_sources import (
+    edit_readiness,
     prediction_source_url,
     prediction_versions,
     resolve_prediction_source,
@@ -103,11 +104,12 @@ def build_visualizer(
         else None,
         **source.descriptor(),
         predictionVersions=prediction_versions(model, layer),
-        supportsThreshold=flavor == "inference" and not source.is_edited,
+        supportsThreshold=flavor == "inference",
         buildingCount=source.buildingCount,
         editedCount=source.editedCount,
         predictionsReady=readiness["ready"],
         predictionsReadiness=readiness,
+        editReadiness=edit_readiness(model, layer, source),
         rawPredictionsReady=results["rawPredictionsReady"],
         sourceTypePreEvent=layer.sourceTypePreEvent,
         sourceTypePostEvent=layer.sourceTypePostEvent,

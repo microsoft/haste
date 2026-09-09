@@ -4,15 +4,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizeAttrs } from "./predictionClassify.js";
 import {
-  buildSavePayload, canAdjustThresholds, classifyDraft, deriveClass, filteredRows,
-  initialDraft, isDraftDirty, modelClassAt, nextReviewIndex, overrideList, saveAttempt,
-  setOverrides, validateEditSession, countManualChanges, undoManualChanges,
+  buildSavePayload, canAdjustThresholds, classifyDraft, deriveClass,
+  initialDraft, isDraftDirty, modelClassAt, nextReviewIndex, overrideList,
+  reviewLocation, reviewRows, saveAttempt, setOverrides,
 } from "./predictionEditing.js";
 import {
   buildVersionGpkgUrl, defaultPredictionVersion, predictionSourceOptions,
   validateSelectedSource, validateVersionManifest, versionEndpoint,
 } from "./predictionVersions.js";
-import { predictionRenderKey, visualizerSceneKey } from "./predictionResults.js";
+import { canEditResults, predictionRenderKey, visualizerSceneKey } from "./predictionResults.js";
 import { requestPredictionJson, predictionErrorMessage } from "./predictionHttp.js";
 import { publishPredictionEdit } from "./predictionEditWorkflow.js";
 import { buildAssessmentSummary } from "../../util/assessmentSummary.js";
@@ -21,6 +21,7 @@ const ids = { projectId: "project", imageLayerId: "layer", modelId: "model" };
 const source = {
   flavor: "inference", supportsThreshold: true, predictionRevision: "raw-generation",
   predictionVersion: 0, buildingCount: 3, defaultThreshold: 0, defaultUnknownThreshold: 0,
+  predictionsReady: true, editReadiness: { ready: true }, threshold: 0, unknownThreshold: 0,
 };
 function rawAttrs() {
   return {
@@ -38,7 +39,7 @@ function editedAttrs() {
     overrideClasses: ["NotDamaged", null, "Damaged"],
   };
 }
-function session(version = 0) {
+function editingSource(version = 0) {
   return {
     ...source, predictionVersion: version, currentPredictionRevision: source.predictionRevision,
     threshold: version ? 0.5 : 0, unknownThreshold: 0, editReadiness: { ready: true },
@@ -50,12 +51,13 @@ const saved = {
   predictionAttrsUrl: "GetModelArtifact?kind=prediction_attrs&version=3",
 };
 
-test("raw classes do not imply editing; only raw standard models have sliders", () => {
+test("standard models support damage thresholds on raw and saved versions", () => {
   const attrs = normalizeAttrs(rawAttrs(), source);
   assert.equal(modelClassAt(attrs, 2), "Unknown");
   assert.equal(canAdjustThresholds(source), true);
   assert.equal(canAdjustThresholds({ ...source, flavor: "embedding", supportsThreshold: false }), false);
-  assert.equal(canAdjustThresholds({ ...source, predictionVersion: 2 }), false);
+  assert.equal(canAdjustThresholds({ ...source, predictionVersion: 2 }), true);
+  assert.equal(canAdjustThresholds({ ...source, predictionVersion: 2, flavor: "embedding" }), false);
   attrs.damage = [1, 0, null];
   assert.equal(canAdjustThresholds(source), true);
 });
@@ -73,21 +75,19 @@ test("edited sidecars validate effective classes separately from null-score mode
   assert.throws(() => normalizeAttrs({ ...rawAttrs(), isEdited: true }), /raw output/);
 });
 
-test("session must identify the exact displayed version, source generation and readiness", () => {
-  assert.equal(validateEditSession(session(), source, rawAttrs()).predictionVersion, 0);
-  for (const changes of [
-    { predictionVersion: undefined, version: 0 }, { predictionVersion: 1 },
-    { buildingCount: 4 }, { supportsThreshold: false },
-  ]) assert.throws(() => validateEditSession({ ...session(), ...changes }, source, rawAttrs()), /does not match/);
-  assert.throws(() => validateEditSession({ ...session(), editReadiness: { ready: false, detail: "Cannot edit" } }, source, rawAttrs()), /Cannot edit/);
-  assert.throws(() => validateEditSession({ ...session(), currentPredictionRevision: "new" }, source, rawAttrs()), { code: "source_changed" });
-  assert.throws(() => validateEditSession({ ...session(), predictionRevision: "new" }, source, rawAttrs()), { code: "source_changed" });
-  assert.throws(() => validateEditSession({ ...session(), threshold: null }, source, rawAttrs()), /thresholds/);
+test("editing uses visualizer readiness and validated source thresholds", () => {
+  assert.equal(canEditResults(source), true);
+  for (const change of [
+    { predictionsReady: false }, { buildingCount: 0 },
+    { editReadiness: undefined }, { editReadiness: { ready: false, reason: "source_changed" } },
+  ]) assert.equal(canEditResults({ ...source, ...change }), false);
+  assert.throws(() => initialDraft(rawAttrs(), { ...source, threshold: null }), /thresholds/);
+  assert.throws(() => initialDraft(editedAttrs(), { ...editingSource(2), threshold: 0.2 }), /thresholds do not match/);
 });
 
 test("saved draft preserves thresholds and the complete explicit assignment snapshot", () => {
   const attrs = editedAttrs();
-  const draft = initialDraft(attrs, session(2));
+  const draft = initialDraft(attrs, editingSource(2));
   assert.equal(draft.threshold, 0.5);
   assert.deepEqual(overrideList(draft.overrides), [{ id: 0, class: "NotDamaged" }, { id: 2, class: "Damaged" }]);
   const payload = buildSavePayload(ids, { ...source, predictionVersion: 2 }, draft, "request-id");
@@ -99,7 +99,7 @@ test("saved draft preserves thresholds and the complete explicit assignment snap
 
 test("right-click model reset is an explicit pin, even against different selected thresholds", () => {
   const attrs = editedAttrs();
-  const baseline = initialDraft(attrs, session(2));
+  const baseline = initialDraft(attrs, editingSource(2));
   const draft = {
     ...baseline,
     overrides: setOverrides(baseline.overrides, [1], modelClassAt(attrs, 1)),
@@ -115,7 +115,7 @@ test("right-click model reset is an explicit pin, even against different selecte
 
 test("raw sliders update local classes immediately; manual pins and null Unknown win", () => {
   const attrs = rawAttrs();
-  const baseline = initialDraft(attrs, session());
+  const baseline = initialDraft(attrs, editingSource());
   const draft = { ...baseline, threshold: 0.5, overrides: { 1: "Damaged" } };
   const classes = classifyDraft(attrs, source, draft, baseline);
   assert.deepEqual(classes.classes, ["Damaged", "Damaged", "Unknown"]);
@@ -128,27 +128,72 @@ test("raw sliders update local classes immediately; manual pins and null Unknown
 });
 
 test("pins equal to current derived classes are not minimized away", () => {
-  const baseline = initialDraft(rawAttrs(), session());
+  const baseline = initialDraft(rawAttrs(), editingSource());
   const draft = { ...baseline, overrides: { 0: "Damaged" } };
   assert.equal(isDraftDirty(draft, baseline), true);
   assert.deepEqual(overrideList(draft.overrides), [{ id: 0, class: "Damaged" }]);
   assert.deepEqual(baseline.overrides, {});
 });
 
-test("undo manual changes preserves thresholds and inherited saved assignments", () => {
-  const baseline = initialDraft(editedAttrs(), session(2));
-  const draft = { ...baseline, threshold: 0.7, overrides: { ...baseline.overrides, 1: "Unknown" } };
-  assert.equal(countManualChanges(draft, baseline), 1);
-  const undone = undoManualChanges(draft, baseline);
-  assert.equal(undone.threshold, 0.7);
-  assert.deepEqual(undone.overrides, baseline.overrides);
-  assert.notEqual(undone.overrides, baseline.overrides);
+test("saved thresholds reclassify only unassigned buildings and preserve manual null-score assignments", () => {
+  const attrs = editedAttrs(), base = editingSource(2);
+  const baseline = initialDraft(attrs, base);
+  const changed = { ...baseline, threshold: 0.1 };
+  assert.deepEqual(classifyDraft(attrs, base, changed, baseline).classes,
+    ["NotDamaged", "Damaged", "Damaged"]);
+  assert.deepEqual(changed.overrides, baseline.overrides);
+  assert.equal(changed.unknownThreshold, baseline.unknownThreshold);
+  assert.deepEqual(classifyDraft(attrs, base, baseline, baseline).classes, attrs.classes);
+});
+
+test("unchanged and restored drafts are not dirty, including existing manual assignments", () => {
+  const baseline = initialDraft(editedAttrs(), editingSource(2));
+  assert.equal(isDraftDirty({ ...baseline }, baseline), false);
+  assert.equal(isDraftDirty({
+    ...baseline, overrides: setOverrides(baseline.overrides, [0], "NotDamaged"),
+  }, baseline), false);
+  assert.equal(isDraftDirty({ ...baseline, activeClass: "Unknown" }, baseline), false);
+  assert.equal(isDraftDirty({ ...baseline, threshold: 0.1 }, baseline), true);
+  assert.equal(isDraftDirty(baseline, baseline), false);
+});
+
+test("class review continues in row order after reclassifying the highlighted building", () => {
+  const attrs = rawAttrs(), baseline = initialDraft(attrs, editingSource());
+  const first = classifyDraft(attrs, source, baseline, baseline);
+  assert.deepEqual(reviewRows(attrs, first, "Damaged"), [0, 1]);
+  assert.equal(nextReviewIndex([0, 1], -1, 1), 0);
+  const draft = { ...baseline, overrides: { 0: "NotDamaged" } };
+  const updated = reviewRows(attrs, classifyDraft(attrs, source, draft, baseline), "Damaged");
+  assert.deepEqual(updated, [1]);
+  assert.equal(nextReviewIndex(updated, 0, 1), 1);
+  assert.equal(nextReviewIndex(updated, 1, 1), 1);
+  assert.equal(nextReviewIndex([0, 2, 4], 3, 1), 4);
+  assert.equal(nextReviewIndex([0, 2, 4], 3, -1), 2);
+  assert.equal(nextReviewIndex([0, 2], -1, -1), 2);
+  assert.equal(nextReviewIndex([], 2, 1), null);
+  assert.deepEqual(reviewRows(attrs, first, "Unknown"), [2]);
+  assert.deepEqual(reviewRows(attrs, first, "all"), [0, 1, 2]);
+});
+
+test("fallback review locations require the exact source identity and valid WGS84 coordinates", () => {
+  const feature = {
+    properties: { rowId: 0, id: "a" },
+    geometry: { type: "Point", coordinates: [-122, 47] },
+  };
+  assert.deepEqual(reviewLocation({ features: [feature] }, 0, "a"), [-122, 47]);
+  for (const bad of [
+    { features: [] }, { features: [feature, feature] },
+    { features: [{ ...feature, properties: { rowId: "0", id: "a" } }] },
+    { features: [{ ...feature, properties: { rowId: 0, id: "other" } }] },
+    { features: [{ ...feature, geometry: { type: "Point", coordinates: [181, 47] } }] },
+    { features: [{ ...feature, geometry: { type: "Point", coordinates: [null, 47] } }] },
+  ]) assert.throws(() => reviewLocation(bad, 0, "a"), /does not match/);
 });
 
 test("retry reuses the exact body and UUID; changed logical payload creates a new attempt", () => {
   let count = 0;
   const uuid = () => `request-${++count}`;
-  const draft = initialDraft(rawAttrs(), session());
+  const draft = initialDraft(rawAttrs(), editingSource());
   const first = saveAttempt(null, ids, source, draft, uuid);
   const retry = saveAttempt(first, ids, source, { ...draft, overrides: {} }, uuid);
   assert.equal(retry, first);
@@ -156,19 +201,6 @@ test("retry reuses the exact body and UUID; changed logical payload creates a ne
   const next = saveAttempt(first, ids, source, { ...draft, overrides: { 2: "Unknown" } }, uuid);
   assert.equal(next.body.clientRequestId, "request-2");
   assert.equal(count, 2);
-});
-
-test("review traversal/filtering preserves selected-class semantics and wraps", () => {
-  const attrs = rawAttrs(), baseline = initialDraft(attrs, session());
-  const classification = classifyDraft(attrs, source, { ...baseline, overrides: { 0: "Unknown" } }, baseline);
-  assert.deepEqual(filteredRows(attrs, classification, "Unknown"), [0, 2]);
-  assert.deepEqual(filteredRows(attrs, classification, "edited"), [0]);
-  assert.equal(nextReviewIndex([0, 2], 2, 1), 0);
-  assert.equal(nextReviewIndex([0, 2], 0, -1), 2);
-  assert.equal(nextReviewIndex([0, 2, 4], 3, 1), 4);
-  assert.equal(nextReviewIndex([0, 2, 4], 3, -1), 2);
-  assert.equal(nextReviewIndex([0, 1, 2], -1, 1, (id) => id === 2), 2);
-  assert.equal(nextReviewIndex([], -1, 1), null);
 });
 
 test("versions default to current generation but keep historical downloads/reports selectable", () => {
@@ -266,7 +298,7 @@ test("Assessment retains aggregates and its diagnostic only on an explicit succe
 
 test("confirmed save reloads the RETURNED version and generation, not the prior selection", async () => {
   const events = [];
-  const body = buildSavePayload(ids, source, initialDraft(rawAttrs(), session()), "same-id");
+  const body = buildSavePayload(ids, source, initialDraft(rawAttrs(), editingSource()), "same-id");
   const candidate = { results: { ...source, predictionVersion: 3 }, attrs: { ...editedAttrs(), predictionVersion: 3 } };
   const outcome = await publishPredictionEdit(body, {
     write: async (value) => { events.push(["put", value]); return saved; },
