@@ -33,20 +33,23 @@ local experiment is compatibility evidence, not production approval.
 
 ## Local results
 
-The candidate built successfully on Linux AMD64 using an approved internal Python
-feed supplied as a temporary build secret. Python 3.11.16, GDAL 3.9.2,
+The initial candidate built successfully on Linux AMD64 using an approved internal
+Python feed supplied as a temporary build secret. Python 3.11.16, GDAL 3.9.2,
 rasterio 1.3.11, and OpenCV 4.10.0 load in the isolated worker environment.
 The original dependency pins are unchanged and `pip check` passes.
 
 The non-root image entrypoint passed 31 tests, including six real native raster,
 COG, reprojection, JPEG, vector, and driver-restriction tests. Network access was
 disabled for runtime tests. The build-time feed configuration was not retained.
-GitHub Actions/ACR compatibility and an authenticated Batch run remain unverified;
-this local image has not been pushed or deployed.
+The first ACR test subsequently passed the Ubuntu package and virtualenv steps
+but rejected the BuildKit-only secret mount. The follow-up keeps remote defaults
+and supports the unauthenticated local index through a non-secret build argument.
+No application deployment or authenticated Batch validation has occurred.
 
-The same runtime passed the 31 tests with this upstream checkout mounted
-read-only over the application source. Its 23 dependency-guard tests also passed;
-the existing AML-backend tests and requirements were preserved during transfer.
+The same runtime passed the 31 tests with upstream source mounted read-only.
+The original AML-backend checkout also passed its 23 dependency guards; that work
+was not copied into the prediction-editing branch. Remote-builder compatibility
+has dedicated regressions alongside the Python-version guards.
 
 ## Agent assignment map
 

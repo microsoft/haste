@@ -30,8 +30,10 @@ COPY --chown=appuser:appgroup docker/imageryprep/scripts /app/scripts/
 COPY --chown=appuser:appgroup docker/imageryprep/requirements.txt /app/
 
 # Install dependencies (no need to install haste package since we copy source directly)
-RUN --mount=type=secret,id=pip_config,target=/etc/pip.conf \
-    python -m pip install --no-cache-dir -r /app/requirements.txt \
+# Optional unauthenticated index override for managed developer machines.
+# Build arguments are visible in build metadata; never pass credentials here.
+ARG PIP_INDEX_URL
+RUN python -m pip install --no-cache-dir -r /app/requirements.txt \
     && python -m pip check
 
 # Provide CLI entrypoints expected by the workflows without requiring a separate package install

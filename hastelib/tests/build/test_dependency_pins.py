@@ -258,6 +258,23 @@ class ReactPinScriptTests(unittest.TestCase):
         )
 
 
+class ImageryBuildCompatibilityTests(unittest.TestCase):
+    def test_pip_install_remains_compatible_with_acr_quick_build(self) -> None:
+        dockerfile = _read("docker/imageryprep/Dockerfile")
+
+        self.assertNotRegex(dockerfile, r"(?m)^RUN\s+--mount=")
+        self.assertIn("RUN python -m pip install --no-cache-dir", dockerfile)
+        self.assertIn("&& python -m pip check", dockerfile)
+
+    def test_local_index_override_has_no_default_or_runtime_setting(
+        self,
+    ) -> None:
+        dockerfile = _read("docker/imageryprep/Dockerfile")
+
+        self.assertRegex(dockerfile, r"(?m)^ARG PIP_INDEX_URL$")
+        self.assertNotRegex(dockerfile, r"(?m)^ENV\s+PIP_INDEX_URL(?:=|\s)")
+
+
 class ImagePythonScriptTests(unittest.TestCase):
     def test_mcr_python_reference_formats(self) -> None:
         cases = (
