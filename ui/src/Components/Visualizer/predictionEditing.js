@@ -9,15 +9,23 @@ export function deriveClass(damage, unknown, threshold = 0, unknownThreshold = 0
   return damage > threshold ? CLASS_DAMAGED : CLASS_NOT_DAMAGED;
 }
 export const canAdjustThresholds = (source) =>
-  (source.predictionVersion ?? 0) === 0 && source.flavor === "inference" && source.supportsThreshold === true;
+  source.flavor === "inference" && source.supportsThreshold === true;
 
-export function initialDraft(attrs, session) {
+export function initialDraft(attrs, source) {
+  for (const name of ["threshold", "unknownThreshold"]) {
+    if (!Number.isFinite(source[name]) || source[name] < 0 || source[name] > 1) {
+      throw new Error("The prediction source contains invalid thresholds.");
+    }
+    if (attrs.predictionVersion > 0 && attrs[name] !== source[name]) {
+      throw new Error("The prediction source thresholds do not match this version.");
+    }
+  }
   const overrides = {};
   if (attrs.predictionVersion > 0) {
     attrs.overrideClasses.forEach((cls, index) => { if (cls !== null) overrides[attrs.ids[index]] = cls; });
   }
   return {
-    threshold: session.threshold, unknownThreshold: session.unknownThreshold, overrides,
+    threshold: source.threshold, unknownThreshold: source.unknownThreshold, overrides,
   };
 }
 export function setOverrides(overrides, ids, cls) {
@@ -55,14 +63,6 @@ export function draftFingerprint(draft) {
   return JSON.stringify([draft.threshold, draft.unknownThreshold, overrideList(draft.overrides)]);
 }
 export const isDraftDirty = (draft, baseline) => draftFingerprint(draft) !== draftFingerprint(baseline);
-export function countManualChanges(draft, baseline) {
-  const ids = new Set([...Object.keys(draft.overrides), ...Object.keys(baseline.overrides)]);
-  return [...ids].filter((id) => draft.overrides[id] !== baseline.overrides[id]).length;
-}
-export function undoManualChanges(draft, baseline) {
-  return { ...draft, overrides: { ...baseline.overrides } };
-}
-
 export function buildSavePayload(ids, source, draft, clientRequestId) {
   return {
     ...ids, predictionRevision: source.predictionRevision,
@@ -80,54 +80,31 @@ export function saveAttempt(previous, ids, source, draft, uuid) {
   };
 }
 
-export function filteredRows(attrs, classification, filter) {
-  return attrs.ids.map((_id, i) => i).filter((i) =>
-    filter === "all" || (filter === "edited" ? classification.editedIds.has(attrs.ids[i]) : classification.classes[i] === filter),
+export function reviewRows(attrs, classification, filter) {
+  return attrs.ids.map((_id, index) => index).filter((index) =>
+    filter === "all" || classification.classes[index] === filter,
   );
 }
-export function nextReviewIndex(rows, current, direction, hasLocation = () => true) {
+
+export function nextReviewIndex(rows, current, direction) {
   if (!rows.length) return null;
   const position = rows.indexOf(current);
-  let start = position;
-  if (position < 0) {
-    // Painting can move the selected building out of the active filter. Keep
-    // walking from its insertion point rather than restarting at the first row.
-    if (direction > 0) start = rows.reduce((before, row, i) => row < current ? i : before, -1);
-    else {
-      const after = rows.findIndex((row) => row > current);
-      start = after < 0 ? rows.length : after;
-    }
+  if (position >= 0) return rows[(position + direction + rows.length) % rows.length];
+  if (direction > 0) return rows.find((row) => row > current) ?? rows[0];
+  for (let index = rows.length - 1; index >= 0; index--) {
+    if (rows[index] < current) return rows[index];
   }
-  let fallback;
-  for (let step = 1; step <= rows.length; step++) {
-    const row = rows[(start + step * direction + rows.length * 2) % rows.length];
-    fallback ??= row;
-    if (hasLocation(row)) return row;
-  }
-  return fallback;
+  return rows[rows.length - 1];
 }
 
-export function validateEditSession(session, source, attrs) {
-  if (session.predictionRevision !== source.predictionRevision ||
-      (session.currentPredictionRevision && session.currentPredictionRevision !== session.predictionRevision)) {
-    const error = new Error("The prediction source changed after these results were loaded.");
-    error.code = "source_changed";
-    throw error;
+export function reviewLocation(data, id, overtureId) {
+  const feature = data?.features?.length === 1 ? data.features[0] : null;
+  const coordinates = feature?.geometry?.coordinates;
+  if (feature?.properties?.rowId !== id || feature?.properties?.id !== overtureId ||
+      feature?.geometry?.type !== "Point" || !Array.isArray(coordinates) ||
+      coordinates.length !== 2 || !coordinates.every(Number.isFinite) ||
+      Math.abs(coordinates[0]) > 180 || Math.abs(coordinates[1]) > 90) {
+    throw new Error("The building location does not match these predictions.");
   }
-  if (session.predictionVersion !== (source.predictionVersion ?? 0) ||
-      session.buildingCount !== attrs.n ||
-      session.flavor !== source.flavor || session.supportsThreshold !== source.supportsThreshold) {
-    throw new Error("The edit session does not match the displayed predictions.");
-  }
-  if (session.editReadiness?.ready !== true) {
-    throw new Error(session.editReadiness?.detail || "These predictions are not available for editing.");
-  }
-  for (const name of ["threshold", "unknownThreshold"]) {
-    if (!Number.isFinite(session[name]) || session[name] < 0 || session[name] > 1) throw new Error("The edit session contains invalid thresholds.");
-  }
-  if (attrs.predictionVersion > 0 &&
-      (attrs.threshold !== session.threshold || attrs.unknownThreshold !== session.unknownThreshold)) {
-    throw new Error("The edit session thresholds do not match this version.");
-  }
-  return session;
+  return coordinates;
 }

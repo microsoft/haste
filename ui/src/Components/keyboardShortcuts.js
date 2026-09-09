@@ -10,9 +10,8 @@ export const VISUALIZER_SHORTCUTS = [
 ];
 
 export const PREDICTION_EDIT_SHORTCUTS = [
-  { keys: ["1", "2", "3"], description: "Choose Damaged / Not Damaged / Unknown" },
-  { keys: ["Enter"], description: "Apply the chosen class to the selected building" },
-  { keys: ["←", "→"], description: "Previous / next building in the current filter" },
+  { keys: ["1", "2", "3"], description: "Label the highlighted building, or choose a painting class when none is highlighted" },
+  { keys: ["←", "→"], description: "Review the previous / next building in the selected class group" },
   { keys: ["Click"], description: "Paint the chosen class" },
   { keys: ["Ctrl", "drag"], separator: " + ", description: "Box-select and paint footprints on either pane" },
   { keys: ["Right-click"], description: "Restore the building's original model class" },

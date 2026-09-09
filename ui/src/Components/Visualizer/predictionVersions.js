@@ -63,7 +63,3 @@ export function validateSelectedSource(data, version, revision) {
   if (revision && data.predictionRevision !== revision) throw new Error("The server returned a different prediction generation.");
   return data;
 }
-
-export function savedClassNote(version) {
-  return `Version ${version} stores the class each building was saved with. Switch to raw model output to work from the model's scores again.`;
-}
