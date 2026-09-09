@@ -30,7 +30,7 @@ do not duplicate version history inside the panel.
 | Click footprint | Apply the active class |
 | Ctrl+drag box | Paint buildings inside the box |
 | Right-click footprint | Restore that building's model-predicted class |
-| Review filter and Left/Right arrows | Highlight and center each building in the chosen class group |
+| Review filter, Previous/Next buttons and Left/Right arrows | Highlight and center each building in the chosen class group |
 | 1/2/3 with a highlighted building | Annotate it as Damaged/NotDamaged/Unknown without changing the review group |
 | Damage threshold slider | Reclassify unassigned buildings in raw or saved standard-model results |
 | Embedding model | No threshold sliders; discrete class editing remains available |
@@ -47,10 +47,13 @@ including its thresholds and assignments. Save creates a new version and never
 changes the version used as its base.
 
 The panel contains class choices with counts, the standard-model damage slider,
-a compact Review filter, one undo action, and Save/Done. There are no separate
-Previous/Next buttons, selected-building inspector, or Apply/Reset-selected
-controls. Class buttons choose the mouse-painting class and clear the keyboard
-highlight. Review navigation is independent of that painting class.
+a compact Review filter with Previous/Next buttons and a one-based "Building X
+of Y" indicator, one undo action, and Save/Done. The total is the selected
+category's current size. Empty categories disable navigation; a highlighted
+building moved to another category is identified as reclassified until the next
+navigation. There is no detailed inspector or separate Apply/Reset-selected
+control. Class buttons choose the mouse-painting class and clear the highlight.
+Review navigation is independent of that painting class.
 
 Review uses cached tile locations where available. An unloaded building is
 located by an exact, single-building request through the existing footprint

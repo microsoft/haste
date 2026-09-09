@@ -25,6 +25,8 @@ Assert that unchanged drafts cannot submit saves, selecting a class alone is not
 an edit, and entering/rebinding editing performs no separate session request.
 Cover class-filtered arrow traversal after reclassification, direct 1/2/3
 annotation of the highlight, and exact location lookup for an unloaded building.
+Verify Previous/Next follows the same traversal, the position is one-based
+within the selected category, and empty categories disable both buttons.
 
 Exercise the actual UI in isolated browser fixtures: pencil/E, click, Ctrl+box,
 right-click reset, class-choice colors, a standard-only damage slider on raw and
