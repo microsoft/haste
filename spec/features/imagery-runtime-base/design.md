@@ -40,14 +40,20 @@ for the active worker environment before the build succeeds.
 
 ## Compatibility validation
 
-The user authorized a local Docker experiment, not publication or deployment.
-Use a unique local image tag and do not prune shared Docker state.
+Use a unique local image tag and do not prune shared Docker state. Remote image
+validation runs through the existing GitHub Actions workflows, not a local
+Azure deployment.
 
-For a managed development machine, pass its approved pip configuration using
-`docker build --secret id=pip_config,src=<existing-pip-config>`. The Dockerfile
-mounts this only during package installation, without embedding feed configuration
-or credentials in a layer. Do not commit machine-specific proxy URLs or use a
-public index as fallback for a blocked/quarantined package.
+The managed-machine feed restriction does not apply to the current remote build
+environment. Keep the existing remote index behavior. Managed local builds must
+explicitly supply their approved unauthenticated index using
+`--build-arg PIP_INDEX_URL=<approved-index>`. This has no source-controlled default
+and does not set a runtime `ENV` value.
+
+Build arguments can appear in build metadata: this input accepts a non-secret
+index URL, not credentials. Do not commit a device-proxy URL, place credentials
+in a build argument, or fall back to public PyPI when a managed local build is
+blocked. An authenticated feed would require a separate credential-safe design.
 
 Build with the existing requirements, then run offline native smoke tests as
 the non-root image user. Verify Python and GDAL versions, raster pixels/CRS,
@@ -64,12 +70,14 @@ hardcoded success.
 
 Local evidence does not deploy this candidate or resolve the release gate.
 Retain the previous production images. A later reviewed release must still use
-GitHub Actions and matching image provenance. Validate BuildKit secret-mount
-support in the selected CI/ACR build path and supply approved repository feed
-configuration there before promotion; the local build does not prove those
-pipeline prerequisites. This shared fix belongs in upstream HASTE; downstream
+GitHub Actions and matching image provenance. The initial remote test confirmed
+that ACR quick builds use the legacy Docker builder and reject `RUN --mount`.
+The compatible Dockerfile therefore uses ordinary `ARG`/`RUN` instructions;
+neither the manual image Action nor the default-branch RC publisher needs a
+builder migration. Validate the actual ACR image jobs rather than a skipped PR
+build gate. This shared fix belongs in upstream HASTE; downstream
 forks should receive it through synchronization rather than independent patches.
-No publication or deployment is part of this local experiment.
+Remote test publication is authorized; application deployment is not.
 
 ## Sources
 
