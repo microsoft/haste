@@ -2,40 +2,26 @@
 
 ## Contents
 
-- [Route Loading](#route-loading)
-- [Cancellation and Loading Ownership](#cancellation-and-loading-ownership)
+- [Architecture](#architecture)
 - [Session Bootstrap](#session-bootstrap)
-- [Security](#security)
 - [Published Datasets](#published-datasets)
-- [Active Jobs](#active-jobs)
+- [Route Loading](#route-loading)
 - [Labeling Workspace](#labeling-workspace)
-- [Interactive Labeler](#interactive-labeler)
+- [Active Jobs](#active-jobs)
+- [Cancellation and Loading Ownership](#cancellation-and-loading-ownership)
+- [Security](#security)
+- [Deferred Work](#deferred-work)
 
-## Route Loading
+## Architecture
 
-Route module import begins at the same time as map asset loading. Map control
-CSS and drawing CSS load in parallel with map-control JavaScript; drawing and
-swipe JavaScript load in parallel only after map control is available.
+```text
+SWA principal -> GetSessionBootstrap -> ACL processor -> bootstrap response
+React route   -> cached/conditional API reads -> route content
+Map route     -> route import || Maps CSS/control -> drawing || swipe -> map
+```
 
-The application shell remains visible under Suspense. Data routes render a
-stable loading state instead of an empty fragment. Help images use native lazy
-loading and videos use `preload="none"`.
-
-Independent Home, create/edit, and validation requests run concurrently while
-preserving required versus optional failure behavior.
-
-
-## Cancellation and Loading Ownership
-
-Route initialization uses route-local loading state. The global blocking
-overlay remains reserved for explicit user actions such as save, delete, and
-publish. A Suspense fallback is suppressed while that blocking overlay is
-visible so only one page-level status surface is exposed.
-
-GET helpers accept an `AbortSignal`. Dashboard, active-job, and Labeling Tool
-requests abort when their owning route unmounts. Late completions cannot clear
-another route's loading state or mutate an unmounted component.
-
+Business logic lives under `hastegeo`; `function_app.py` remains a thin HTTP
+boundary. Existing endpoints remain compatible during rollout.
 
 ## Session Bootstrap
 
@@ -70,20 +56,6 @@ Pending invitations remain blocked until an administrator runs the explicit
 user reconciliation workflow. Startup never writes the ACL or calls the Azure
 management plane.
 
-
-## Security
-
-- Identity comes only from the decoded SWA principal; no user ID is accepted
-  from query or body.
-- ACL status and deletion state are checked on every bootstrap request.
-- Client roles are intersected with ACL roles; role disagreement cannot grant
-  access.
-- Stable sessions do not write user state or call the management plane.
-- Caches store data representations, not authorization decisions.
-- Both additive read routes require an active ACL-backed application role.
-- Development fallback remains restricted to `DEVELOPMENT_MODE`.
-
-
 ## Published Datasets
 
 `GetPublishedDatasets` uses the existing bounded repository read behind a
@@ -95,22 +67,18 @@ The UI stores ETags by query, sends conditional requests, and polls only when a
 visible page contains active work and no request is in flight. Polling never
 overlaps and preserves the current query.
 
+## Route Loading
 
-## Active Jobs
+Route module import begins at the same time as map asset loading. Map control
+CSS and drawing CSS load in parallel with map-control JavaScript; drawing and
+swipe JavaScript load in parallel only after map control is available.
 
-### `GET /api/GetActiveJobs`
+The application shell remains visible under Suspense. Data routes render a
+stable loading state instead of an empty fragment. Help images use native lazy
+loading and videos use `preload="none"`.
 
-The route returns a compact list of active imagery, training, and inference
-jobs. It reads the project summary once, loads only image-layer and model
-partitions for candidate projects, and excludes labels, validation records,
-artifacts, and terminal work. A short process-local single-flight cache bounds
-repeat work; ETags support empty `304` responses.
-
-The Dashboard makes one conditional request instead of one
-`GetProjectDetails` request per project. Polls run only while visible, never
-overlap, and abort on route unmount. Dashboard content does not wait for the
-optional model catalog or active-jobs widget.
-
+Independent Home, create/edit, and validation requests run concurrently while
+preserving required versus optional failure behavior.
 
 ## Labeling Workspace
 
@@ -128,13 +96,49 @@ until data, map readiness, drawing controls, and the first stable map frame are
 ready. The map starts at the workspace bounds without an animated camera flight
 and is disposed if navigation interrupts initialization.
 
-## Interactive Labeler
+## Active Jobs
 
-Imagery, model metadata, and saved labels load concurrently. Model metadata is
-required; unavailable optional imagery or saved labels do not block startup.
-PMTiles and feature-sidecar transfers start together and both are required.
+### `GET /api/GetActiveJobs`
 
-If either required transfer fails, its sibling is aborted and allowed to settle
-before retry. Navigation aborts owned metadata and artifact work. The existing
-Interactive Labeler loader delegates presentation to the shared workspace loader
-without changing its stages or readiness contract.
+The route returns a compact list of active imagery, training, and inference
+jobs. It reads the project summary once, loads only image-layer and model
+partitions for candidate projects, and excludes labels, validation records,
+artifacts, and terminal work. A short process-local single-flight cache bounds
+repeat work; ETags support empty `304` responses.
+
+The Dashboard makes one conditional request instead of one
+`GetProjectDetails` request per project. Polls run only while visible, never
+overlap, and abort on route unmount. Dashboard content does not wait for the
+optional model catalog or active-jobs widget.
+
+## Cancellation and Loading Ownership
+
+Route initialization uses route-local loading state. The global blocking
+overlay remains reserved for explicit user actions such as save, delete, and
+publish. A Suspense fallback is suppressed while that blocking overlay is
+visible so only one page-level status surface is exposed.
+
+GET helpers accept an `AbortSignal`. Dashboard, active-job, and Labeling Tool
+requests abort when their owning route unmounts. Late completions cannot clear
+another route's loading state or mutate an unmounted component.
+
+## Security
+
+- Identity comes only from the decoded SWA principal; no user ID is accepted
+  from query or body.
+- ACL status and deletion state are checked on every bootstrap request.
+- Client roles are intersected with ACL roles; role disagreement cannot grant
+  access.
+- Stable sessions do not write user state or call the management plane.
+- Caches store data representations, not authorization decisions.
+- Both additive read routes require an active ACL-backed application role.
+- Development fallback remains restricted to `DEVELOPMENT_MODE`.
+
+## Deferred Work
+
+- Moving Blob container/access-policy initialization into deployment requires
+  separate SAS and provisioning coverage.
+- A materialized publishing index is deferred unless cached p95 remains above
+  1.5 seconds or the 1,000-record bound becomes material.
+- Distributed caching, push updates, Function capacity changes, and new
+  dependencies are out of scope.
