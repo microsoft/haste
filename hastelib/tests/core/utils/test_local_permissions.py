@@ -31,13 +31,13 @@ class TestLocalPermissions(unittest.TestCase):
 
     def test_never_changes_files_owned_by_another_uid(self) -> None:
         owner = self.task.stat().st_uid
-        with patch.object(Path, "chmod") as chmod:
+        with patch("hastegeo.core.utils.local_permissions.os.chmod") as chmod:
             prepare_local_task_permissions(
                 self.task, owner_uid=owner + 1, workspace_root=self.root
             )
         chmod.assert_not_called()
 
-    @unittest.skipUnless(os.name == "posix", "POSIX permission bits required")
+    @unittest.skipUnless(sys.platform == "linux", "Linux permissions required")
     def test_owned_directories_are_removable_and_files_remain_read_only(
         self,
     ) -> None:
@@ -54,7 +54,7 @@ class TestLocalPermissions(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(child.stat().st_mode), 0o777)
         self.assertEqual(stat.S_IMODE(weights.stat().st_mode), 0o644)
 
-    @unittest.skipUnless(os.name == "posix", "POSIX symlinks required")
+    @unittest.skipUnless(sys.platform == "linux", "Linux permissions required")
     def test_does_not_follow_links_outside_the_task(self) -> None:
         outside = self.root / "outside"
         outside.mkdir(mode=0o700)
@@ -65,7 +65,7 @@ class TestLocalPermissions(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o700)
 
     @unittest.skipUnless(
-        os.name == "posix" and getattr(os, "geteuid", lambda: -1)() == 0,
+        sys.platform == "linux" and getattr(os, "geteuid", lambda: -1)() == 0,
         "Root-owned Linux test container required to exercise distinct UIDs",
     )
     def test_worker_outputs_can_be_finalized_by_a_different_uid(self) -> None:

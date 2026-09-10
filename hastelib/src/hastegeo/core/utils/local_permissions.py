@@ -31,25 +31,41 @@ def prepare_local_task_permissions(
     def on_error(error: OSError) -> None:
         raise error
 
-    for directory, _, filenames in os.walk(
+    def prepare(path: Path) -> None:
+        attributes = path.lstat()
+        if attributes.st_uid != owner_uid:
+            return
+        mode = attributes.st_mode
+        if stat.S_ISDIR(mode):
+            required = stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO
+        elif stat.S_ISREG(mode):
+            required = stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH
+        else:
+            return
+        updated = stat.S_IMODE(mode) | required
+        if updated == stat.S_IMODE(mode):
+            return
+        # O_PATH binds the inode without following a final symlink or
+        # requiring read permission; procfd avoids optional lchmod support.
+        descriptor = os.open(path, os.O_PATH | os.O_NOFOLLOW)
+        try:
+            current = os.fstat(descriptor)
+            if (
+                current.st_dev != attributes.st_dev
+                or current.st_ino != attributes.st_ino
+                or current.st_uid != owner_uid
+            ):
+                raise ValueError("Local task path changed during preparation")
+            os.chmod(f"/proc/self/fd/{descriptor}", updated)
+        finally:
+            os.close(descriptor)
+
+    prepare(resolved_task)
+    for directory, directories, filenames in os.walk(
         resolved_task, followlinks=False, onerror=on_error
     ):
-        paths = [Path(directory)]
-        paths.extend(Path(directory) / name for name in filenames)
-        for path in paths:
-            attributes = path.lstat()
-            if attributes.st_uid != owner_uid:
-                continue
-            mode = attributes.st_mode
-            if stat.S_ISDIR(mode):
-                required = stat.S_IRWXG | stat.S_IRWXO
-            elif stat.S_ISREG(mode):
-                required = stat.S_IRGRP | stat.S_IROTH
-            else:
-                continue
-            updated = stat.S_IMODE(mode) | required
-            if updated != stat.S_IMODE(mode):
-                path.chmod(updated, follow_symlinks=False)
+        for name in directories + filenames:
+            prepare(Path(directory) / name)
 
 
 def main() -> None:
@@ -58,8 +74,8 @@ def main() -> None:
     )
     parser.add_argument("work_dir", type=Path)
     args = parser.parse_args()
-    if os.name != "posix":
-        parser.error("Local container permissions require POSIX")
+    if not hasattr(os, "O_PATH"):
+        parser.error("Local container permissions require Linux")
     try:
         prepare_local_task_permissions(args.work_dir, owner_uid=os.getuid())
     except (OSError, ValueError) as error:
