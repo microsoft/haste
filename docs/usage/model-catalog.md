@@ -4,10 +4,14 @@
 
 # Model Catalog
 
-The Model Catalog is a centralized registry of base models available for training. It
-provides a collection of pre-trained models, each tailored to specific project types and
-imagery sources, that serve as the foundation for fine-tuning with your own labeled
-data.
+The Model Catalog contains models for fine-tuning and for direct inference.
+Each model declares which operations it supports. Compatible HASTE-trained
+models can support both; DINOv2 and DINOv3 damage models support inference only.
+
+**Contents:** [Add a model](#add-a-model-to-catalog) -
+[Train](#use-the-model-catalog-train-a-new-model-using-a-base-model) -
+[Run inference](#run-inference-without-training) -
+[Remove a model](#remove-a-model-from-the-model-catalog)
 
 ## Add a Model to Catalog
 
@@ -41,6 +45,34 @@ The Base Model is a parameter of the model training process. For a complete guid
 training models, see [Train a new model](train-a-new-model).
 
 ![Using the model catalog when training](../_static/usage/modelCatalog/model-catalog-use-model-catalog.jpg)
+
+## Run Inference Without Training
+
+On a processed **standard** image layer, choose **Inference**, select a
+compatible catalog model, optionally name the run, and choose **Start inference**.
+This action is available in both project layouts and does not require training
+labels. It uses the layer's post-event imagery and cached building footprints.
+
+Each new submission creates an independent model row. It does not retrain the
+catalog model, replace earlier results, or change the source model. Track progress
+and cancel queued or running work from the new row; completed runs use the usual
+Results menu, downloads, and reports. Validation accuracy still requires labels.
+
+DINOv2 and DINOv3 require prepared three-band RGB8 imagery. Existing HASTE models require
+their original input channels and normalization recipe. Unavailable models show
+the compatibility reason instead of silently substituting settings. A model
+without a reproducible inference recipe can still be available for fine-tuning.
+
+The DINOv2 follow-up collection has six separately selectable checkpoints:
+**original only** and **source-balanced 50/50**, each with seeds **0, 1, and 2**.
+They were selected using validation within their predeclared configurations,
+not test results. HASTE does not automatically choose a best seed or ensemble.
+An operator must [import the approved assets](../../spec/features/pretrained-catalog-inference/rollout.md#dinov2-follow-up-options)
+before those choices appear; installing HASTE does not download model weights.
+
+Catalog loading failures show an error and Retry, rather than an empty list.
+If submission fails ambiguously, retry without changing the model or name to
+reuse the same request. Reopening the dialog starts a new intentional request.
 
 ## Remove a model from the Model Catalog
 

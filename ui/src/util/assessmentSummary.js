@@ -10,15 +10,33 @@ export function buildAssessmentSummary(report) {
   if (!predictions) return "";
 
   const edited = (report.predictionVersion ?? 0) > 0;
+  if (predictions.total === 0) {
+    return "There are no building footprints in the results, so no damage rate or validation metrics can be reported.";
+  }
+
   let summary =
-    `Out of a total of ${formatInteger(predictions.total)} building footprints in the study area, ` +
-    `${formatInteger(predictions.cloudy)} had Unknown or cloud-covered predictions; of the remaining ` +
-    `${formatInteger(predictions.knownNonCloudy)} known footprints, ` +
+    `Out of a total of ${formatInteger(predictions.total)} building footprints in the results, ` +
+    `${formatInteger(predictions.cloudy)} had Unknown or cloud-covered predictions and were excluded.`;
+
+  if ((predictions.unscored ?? 0) > 0) {
+    summary +=
+      ` Of these Unknown predictions, ${formatInteger(predictions.unscored)} had no raw observation (outside coverage or NoData); they are already included in the excluded total.`;
+  }
+
+  if (predictions.knownNonCloudy === 0) {
+    return summary + " No known predictions are available, so no damage rate or validation metrics can be reported.";
+  }
+
+  summary +=
+    ` Among the ${formatInteger(predictions.knownNonCloudy)} known footprints, ` +
     (edited ? `the saved analyst classes in version ${report.predictionVersion} identify ` : "the model predicted that ") +
     `${formatInteger(predictions.predictedDamaged)} ` +
     `(${predictions.predictedDamagedPctOfKnown ?? 0}%) ${edited ? "as damaged" : "were damaged to some extent"}.`;
 
   if ((report.matched ?? 0) <= 0) {
+    if ((report.totalLabels ?? 0) > 0) {
+      return summary + " No human validation labels could be matched to known predictions for this run; accuracy, precision, and recall are unavailable.";
+    }
     return (
       summary +
       " No human validation labels are available for this image layer yet — " +

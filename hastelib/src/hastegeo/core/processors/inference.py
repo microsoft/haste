@@ -43,6 +43,11 @@ def process_inference_request(
     if not record:
         return None
     model = Model.model_validate(record)
+    if model.modelType == "pretrained":
+        Logger.get_logger(__name__).warning(
+            "Ignoring catalog inference message without request identity"
+        )
+        return None
     if (
         request.currentInferenceTaskId != model.currentInferenceTaskId
         or request.imageLayerId != model.imageLayerId

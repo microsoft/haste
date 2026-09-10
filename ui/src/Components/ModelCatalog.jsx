@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 // Components
 import { useState, useEffect, useContext } from "react";
-import { Dropdown, Option, SearchBox, Tooltip } from "@fluentui/react-components";
+import { Button, Dropdown, MessageBar, MessageBarBody, Option, SearchBox, Spinner } from "@fluentui/react-components";
 import { setGuidedTourState, initGuidedTourState } from "./GuidedTourHelper";
 import { apiGet } from "../util/api";
 import { AppContext } from "../AppContext";
@@ -10,6 +10,7 @@ import ModelCatalogRow from "./ProjectManagement/ModelCatalogRow";
 import NoResultsMessage from "./NoResultsMessage";
 import { FluentIcon } from "../util/icons";
 import { updateUserSettings } from "../AppHelper";
+import { readModelCatalog } from "./ModelCatalogHelper";
 
 const PAGE_SIZE_OPTIONS = [5, 8, 10, 20, 50];
 
@@ -23,6 +24,8 @@ const ModelCatalog = () => {
   } = useContext(AppContext);
   const [modalComponent, setModalComponent] = useState();
   const [items, setItems] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -34,10 +37,13 @@ const ModelCatalog = () => {
   const [searchText, setSearchText] = useState("");
   const [sort, setSort] = useState({ key: "cataloguedDate", dir: "desc" });
 
-  useEffect(() => {
+  const savedPageSize = appParams.userSettings.itemsPerPageModelCatalog ?? 20;
+  const [previousSavedPageSize, setPreviousSavedPageSize] = useState(savedPageSize);
+  if (previousSavedPageSize !== savedPageSize) {
+    setPreviousSavedPageSize(savedPageSize);
     setCurrentPage(1);
-    setPageSize(appParams.userSettings.itemsPerPageModelCatalog ?? 20);
-  }, [appParams.userSettings.itemsPerPageModelCatalog]);
+    setPageSize(savedPageSize);
+  }
 
   useEffect(() => {
     initComponent();
@@ -51,35 +57,32 @@ const ModelCatalog = () => {
   }, []);
 
   async function initComponent() {
-    setIsLoading(true);
-    await apiGet("GetModelCatalog")
-      .then((response) => {
-        setItems(response);
-        setCurrentPage(1); // Reset to first page on reload
-        initGuidedTourState("modelCatalogGuide", appParams.guidedTourProperties);
-        initCurrentTour("modelCatalogGuide");
-        setAppHeaderRightButtons([
-          {
-            iconName: "help",
-            title: "Help",
-            id: "helpButton",
-            onClick: () =>
-              setGuidedTourState(false, initCurrentTour, "modelCatalogGuide", appParams.guidedTourProperties),
-          },
-        ]);
-      })
-      .catch((error) => {
-        console.error("Error fetching model catalog:", error);
-      });
-    setIsLoading(false);
-  }
-
-  if (!items) {
-    return null;
+    setLoading(true);
+    setError("");
+    try {
+      const modelCatalog = readModelCatalog(await apiGet("GetModelCatalog"));
+      setItems({ modelCatalog });
+      setCurrentPage(1); // Reset to first page on reload
+      initGuidedTourState("modelCatalogGuide", appParams.guidedTourProperties);
+      initCurrentTour("modelCatalogGuide");
+      setAppHeaderRightButtons([
+        {
+          iconName: "help",
+          title: "Help",
+          id: "helpButton",
+          onClick: () =>
+            setGuidedTourState(false, initCurrentTour, "modelCatalogGuide", appParams.guidedTourProperties),
+        },
+      ]);
+    } catch (err) {
+      setError(`Unable to load the model catalog. ${err.message || "Please try again."}`);
+    } finally {
+      setLoading(false);
+    }
   }
 
   // Filter models by searchText
-  const filteredModels = items.modelCatalog.filter((model) => {
+  const filteredModels = (items?.modelCatalog || []).filter((model) => {
     if (!searchText) return true;
     const lowerSearch = searchText.toLowerCase();
     return Object.keys(model).some((key) => {
@@ -148,7 +151,6 @@ const ModelCatalog = () => {
 
   return (
     <>
-      {items && (
         <div className="pgrid-page pgrid-page--model-catalog">
           <div className="pgrid-header">
             <div>
@@ -156,10 +158,23 @@ const ModelCatalog = () => {
                 Model Catalog
               </h1>
               <div className="pgrid-subtitle">
-                Browse and manage reusable base models for training workflows.
+                Browse and manage reusable models for training and catalog inference.
               </div>
             </div>
           </div>
+
+          {loading && <Spinner label="Loading model catalog..." />}
+          {error && (
+            <MessageBar intent="error">
+              <MessageBarBody>
+                {error} {items && "Showing the last successfully loaded catalog."}{" "}
+                <Button onClick={initComponent} disabled={loading}>Retry</Button>
+              </MessageBarBody>
+            </MessageBar>
+          )}
+          {!loading && !error && (
+            <Button onClick={initComponent}>Reload catalog</Button>
+          )}
 
           {!isEmpty && (
             <div className="pgrid-toolbar">
@@ -176,7 +191,7 @@ const ModelCatalog = () => {
             </div>
           )}
 
-          {isEmpty ? (
+          {items && (isEmpty ? (
             <div className="pgrid-empty">
               <FluentIcon name="ProductCatalog" style={{ fontSize: 32 }} />
               <div>No models in catalog yet.</div>
@@ -353,7 +368,7 @@ const ModelCatalog = () => {
                         <ModelCatalogRow
                           item={item}
                           index={(page - 1) * pageSize + index}
-                          key={item.modelId}
+                          key={item.baseModelName}
                           setModalComponent={setModalComponent}
                           fetchModels={initComponent}
                         />
@@ -414,9 +429,8 @@ const ModelCatalog = () => {
                 </div>
               </div>
             </>
-          )}
+          ))}
         </div>
-      )}
 
       {modalComponent}
     </>

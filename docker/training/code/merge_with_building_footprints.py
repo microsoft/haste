@@ -38,16 +38,26 @@ def metric_crs_for(predictions_crs: str, raster_bounds) -> str:
     ``predictions_crs``.
     """
     crs = pyproj.CRS.from_user_input(predictions_crs)
-    if not crs.is_geographic:
-        # Already metric — buffer distances in metres are correct as-is.
+    if crs.is_projected and all(
+        abs(axis.unit_conversion_factor - 1) < 1e-9
+        for axis in crs.axis_info[:2]
+    ):
+        # Projected does not necessarily mean metres (e.g. US survey feet).
         return predictions_crs
 
     left, bottom, right, top = raster_bounds
-    center_lon = (left + right) / 2.0
-    center_lat = (bottom + top) / 2.0
+    center_lon, center_lat = pyproj.Transformer.from_crs(
+        crs, "EPSG:4326", always_xy=True
+    ).transform((left + right) / 2.0, (bottom + top) / 2.0)
+    if not np.isfinite([center_lon, center_lat]).all():
+        raise ValueError("Cannot determine metric buffering CRS")
+    if center_lat >= 84:
+        return "EPSG:3413"
+    if center_lat <= -80:
+        return "EPSG:3031"
     # Standard UTM zone from the AOI centre. Northern hemisphere zones are
     # EPSG:326xx, southern EPSG:327xx.
-    zone = int((center_lon + 180) / 6) + 1
+    zone = min(60, max(1, int((center_lon + 180) / 6) + 1))
     epsg = (32600 if center_lat >= 0 else 32700) + zone
     return f"EPSG:{epsg}"
 
@@ -111,6 +121,11 @@ def set_up_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Overwrite existing files",
     )
+    parser.add_argument(
+        "--preserve_source_identity",
+        action="store_true",
+        help="Keep all source ids/rows and mark absent observations Unknown",
+    )
 
     return parser
 
@@ -142,6 +157,139 @@ def score_shape(
     return float(np.mean(values == 3)), float(np.mean(values == 4))
 
 
+def observation_stats(
+    src: rasterio.io.DatasetReader,
+    geometry: shapely.geometry.base.BaseGeometry,
+) -> tuple[float | None, float]:
+    """Catalog-only (damage, unknown) pixel-area fractions, not confidence.
+
+    Classes 1/2/3 are observations; class 4, NoData and masked pixels are
+    unknown. Outside-image footprint area contributes pixel-equivalent missing
+    coverage, without allocating a potentially enormous boundless raster.
+    In-grid fractions use pixel centres, matching legacy rasterization.
+    """
+    if geometry.is_empty:
+        return None, 1.0
+    try:
+        outside, _, window = rasterio.mask.raster_geometry_mask(
+            src, [geometry], crop=True
+        )
+    except ValueError:
+        return None, 1.0
+    data = src.read(1, window=window, masked=True)
+    selected = ~outside
+    observed = (
+        selected & ~np.ma.getmaskarray(data) & np.isin(data.data, [1, 2, 3])
+    )
+    n_observed = int(observed.sum())
+    if not n_observed:
+        return None, 1.0
+    grid = shapely.geometry.Polygon(
+        [
+            src.transform * (0, 0),
+            src.transform * (src.width, 0),
+            src.transform * (src.width, src.height),
+            src.transform * (0, src.height),
+        ]
+    )
+    outside_pixels = geometry.difference(grid).area / abs(
+        src.transform.determinant
+    )
+    total = max(n_observed, int(selected.sum()) + outside_pixels)
+    return (
+        float(np.count_nonzero(observed & (data.data == 3)) / n_observed),
+        float(np.clip(1 - n_observed / total, 0, 1)),
+    )
+
+
+def merge_preserving_identity(args: argparse.Namespace) -> None:
+    """Keep every input position plus its source identity, even without coverage.
+
+    ``id`` is the zero-based input position, not the output GPKG feature FID.
+    ``source_building_id`` and ``overture_id`` carry the source ``properties.id``
+    used by the layer's shared PMTiles and prediction attributes.
+    """
+    source_ids = read_footprint_ids(args.footprints_fn)
+    with rasterio.open(args.predictions_fn) as predictions, fiona.open(
+        args.footprints_fn
+    ) as footprints:
+        if predictions.crs is None or not footprints.crs:
+            raise ValueError("Predictions and footprints must both have a CRS")
+        if predictions.count != 1 or predictions.transform.determinant == 0:
+            raise ValueError(
+                "Expected a georeferenced single-band prediction raster"
+            )
+        predictions_crs = predictions.crs.to_string()
+        footprints_crs = footprints.crs.to_string()
+        metric = metric_crs_for(predictions_crs, predictions.bounds)
+        schema = {
+            "geometry": "MultiPolygon",
+            "properties": {
+                "id": "int",
+                "source_building_id": "str",
+                "overture_id": "str",
+                "damage_pct_0m": "float",
+                "damage_pct_10m": "float",
+                "damage_pct_20m": "float",
+                "damaged": "int",
+                "unknown_pct": "float",
+            },
+        }
+        if os.path.exists(args.output_fn):
+            fiona.remove(args.output_fn, driver="GPKG")
+        with fiona.open(
+            args.output_fn,
+            "w",
+            driver="GPKG",
+            crs=predictions_crs,
+            schema=schema,
+        ) as output:
+            for position, row in enumerate(tqdm(footprints)):
+                source_id = source_ids[position]
+                geom = None
+                damages, unknown = [None, None, None], 1.0
+                if row["geometry"] is not None:
+                    projected = fiona.transform.transform_geom(
+                        footprints_crs, predictions_crs, row["geometry"]
+                    )
+                    shape = shapely.geometry.shape(projected)
+                    if shape.geom_type == "Polygon":
+                        shape = shapely.geometry.MultiPolygon([shape])
+                    geom = shapely.geometry.mapping(shape)
+                    damages[0], unknown = observation_stats(
+                        predictions, shape.buffer(0)
+                    )
+                    # No observation on the building must not become "intact"
+                    # merely because its 10/20m buffer overlaps the raster.
+                    if damages[0] is not None:
+                        for index, distance in enumerate([10, 20], start=1):
+                            buffered = buffered_shape(
+                                geom, predictions_crs, metric, distance
+                            )
+                            damages[index], _ = observation_stats(
+                                predictions, buffered
+                            )
+                output.write(
+                    {
+                        "type": "Feature",
+                        "geometry": geom,
+                        "properties": {
+                            "id": position,
+                            "source_building_id": str(source_id),
+                            "overture_id": source_id,
+                            "damage_pct_0m": damages[0],
+                            "damage_pct_10m": damages[1],
+                            "damage_pct_20m": damages[2],
+                            "damaged": int(
+                                damages[0] is not None and damages[0] > 0
+                            ),
+                            "unknown_pct": unknown,
+                        },
+                    }
+                )
+    print(f"Identity-preserving output written to {args.output_fn}")
+
+
 def main(args: argparse.Namespace) -> None:
     """Write one prediction row for every cached source footprint."""
     if os.path.realpath(args.output_fn) in {
@@ -151,6 +299,8 @@ def main(args: argparse.Namespace) -> None:
         raise ValueError("Prediction output must not overwrite an input.")
     if os.path.exists(args.output_fn) and not args.overwrite:
         raise FileExistsError(args.output_fn)
+    if getattr(args, "preserve_source_identity", False):
+        return merge_preserving_identity(args)
 
     # Validate before creating any output; IDs must agree with layer tiles.
     overture_ids = read_footprint_ids(args.footprints_fn)

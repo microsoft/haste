@@ -30,6 +30,11 @@ on:
         required: false
         default: ""
         type: string
+      transformer_inference_image_tag:
+        description: "Transformer inference image tag. Blank = keep the image this environment already runs; required on its first deploy."
+        required: false
+        default: ""
+        type: string
       app_tag:
         description: "Application version; recorded as a tag on the Azure resources."
         required: true
@@ -104,6 +109,7 @@ jobs:
           VERSION: ${{ steps.hastegeo.outputs.version }}
           TRAINING_INPUT: ${{ inputs.training_image_tag }}
           IMAGEPREP_INPUT: ${{ inputs.imageprep_image_tag }}
+          TRANSFORMER_INFERENCE_INPUT: ${{ inputs.transformer_inference_image_tag }}
           # Only these components write the Batch image settings; titiler and
           # swa pass `false` for that block in deploy_apps.sh.
           NEEDS_IMAGES: ${{ inputs.component == 'all' || inputs.component == 'funcapi' || inputs.component == 'funcqueue' }}
@@ -114,21 +120,24 @@ jobs:
         run: |
           TRAINING_TAG="$TRAINING_INPUT"
           IMAGEPREP_TAG="$IMAGEPREP_INPUT"
+          TRANSFORMER_INFERENCE_TAG="$TRANSFORMER_INFERENCE_INPUT"
 
           # An RC publishes wheel and images together at one locked version, so
           # a blank input means that version and a mismatch is refused.
           if [[ "$VERSION" == *rc* ]]; then
             TRAINING_TAG="${TRAINING_TAG:-$VERSION}"
             IMAGEPREP_TAG="${IMAGEPREP_TAG:-$VERSION}"
+            TRANSFORMER_INFERENCE_TAG="${TRANSFORMER_INFERENCE_TAG:-$VERSION}"
             if [[ "$TRAINING_TAG" != "$VERSION" || \
-                  "$IMAGEPREP_TAG" != "$VERSION" ]]; then
+                  "$IMAGEPREP_TAG" != "$VERSION" || \
+                  "$TRANSFORMER_INFERENCE_TAG" != "$VERSION" ]]; then
               echo "::error::RC deployments require matching wheel and image tags"
               exit 1
             fi
           fi
 
           if [[ "$NEEDS_IMAGES" == "true" && \
-                ( -z "$TRAINING_TAG" || -z "$IMAGEPREP_TAG" ) ]]; then
+                ( -z "$TRAINING_TAG" || -z "$IMAGEPREP_TAG" || -z "$TRANSFORMER_INFERENCE_TAG" ) ]]; then
             # Read from the app actually being deployed, so "keep the running
             # image" is literally true. funcapi and funcqueue each carry their
             # own copy of these settings (deploy_apps.sh passes true for the
@@ -156,14 +165,15 @@ jobs:
             }
             TRAINING_TAG="${TRAINING_TAG:-$(read_tag AZURE_BATCH_DOCKER_IMAGE)}"
             IMAGEPREP_TAG="${IMAGEPREP_TAG:-$(read_tag AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE)}"
+            TRANSFORMER_INFERENCE_TAG="${TRANSFORMER_INFERENCE_TAG:-$(read_tag AZURE_BATCH_TRANSFORMER_INFERENCE_DOCKER_IMAGE)}"
           fi
 
           if [[ "$NEEDS_IMAGES" == "true" && \
-                ( -z "$TRAINING_TAG" || -z "$IMAGEPREP_TAG" ) ]]; then
+                ( -z "$TRAINING_TAG" || -z "$IMAGEPREP_TAG" || -z "$TRANSFORMER_INFERENCE_TAG" ) ]]; then
             echo "::error::No image tag given and none to inherit --" \
                  "${SOURCE_APP:-the target app} has no AZURE_BATCH_DOCKER_IMAGE" \
                  "yet, so this looks like a first deploy to this environment." \
-                 "Pass training_image_tag and imageprep_image_tag explicitly."
+                 "Pass training_image_tag, imageprep_image_tag, and transformer_inference_image_tag explicitly."
             exit 1
           fi
 
@@ -171,6 +181,7 @@ jobs:
           echo "Imageryprep image tag: ${IMAGEPREP_TAG:-<unused for this component>}"
           echo "training_tag=$TRAINING_TAG" >> "$GITHUB_OUTPUT"
           echo "imageprep_tag=$IMAGEPREP_TAG" >> "$GITHUB_OUTPUT"
+          echo "transformer_inference_tag=$TRANSFORMER_INFERENCE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Git LFS Pull
         run: git lfs pull
@@ -208,6 +219,7 @@ jobs:
           # reads it back yet -- a blank hastegeo_version still resolves to
           # latest stable.
           HASTEGEO_VERSION: ${{ steps.hastegeo.outputs.version }}
+          TRANSFORMER_INFERENCE_IMAGE_TAG: ${{ steps.artifacts.outputs.transformer_inference_tag }}
           # Batch pool wiring. All optional: unset reproduces the legacy
           # single-pool behavior. Stored as environment *secrets* (not
           # variables) so the values are masked in this repo's public

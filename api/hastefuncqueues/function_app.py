@@ -19,6 +19,9 @@ from hastegeo.core.models.projects import (
 from hastegeo.core.models.publishing import PublishQueueMessage
 from hastegeo.core.models.stats import ProjectsSummary, StatsRequest
 from hastegeo.core.processors.artifacts import ArtifactProcessor
+from hastegeo.core.processors.catalog_inference import (
+    CatalogInferenceProcessor,
+)
 from hastegeo.core.processors.embedding import EmbeddingPostprocessor
 from hastegeo.core.processors.footprint_tiles import process_tiles_request
 from hastegeo.core.processors.imagery import (
@@ -708,8 +711,19 @@ async def GetRunInferenceQueueMessage(msg: func.QueueMessage) -> None:
         6. Generate output files and visualization assets
         7. Update inference status and store results metadata
     """
+    payload = json.loads(msg.get_body().decode("utf-8"))
+    if payload.get("inferenceRequestId"):
+        # Catalog processors own their persisted state. Never pass a sparse
+        # catalog message through the legacy Model-shaped failure fallback.
+        await asyncio.to_thread(
+            CatalogInferenceProcessor(config).process,
+            payload["projectId"],
+            payload["modelId"],
+            payload["inferenceRequestId"],
+        )
+        return
     try:
-        request = Model.model_validate_json(msg.get_body())
+        request = Model.model_validate(payload)
         output = await asyncio.to_thread(
             process_inference_request, request, config=config
         )

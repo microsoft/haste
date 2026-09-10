@@ -169,3 +169,37 @@ test("does not report unchanged or nonterminal job states", () => {
 
   assert.deepEqual(findJobStatusTransitions(previous, current), []);
 });
+
+test("pretrained cancellation with unset training status reports inference only", () => {
+  const project = (inferenceStatus) => ({
+    imageLayer: [{
+      imageLayerId: "fixture-layer", status: "Processed",
+      models: [{
+        modelId: "catalog-run", modelType: "pretrained",
+        name: "Catalog inference fixture", status: null, trainingJob: null,
+        inferenceStatus,
+      }],
+    }],
+  });
+  const previous = collectProjectJobStates(project("Queued"));
+  const current = collectProjectJobStates(project("Cancelled"));
+
+  assert.equal(previous.has("training:catalog-run"), false);
+  assert.equal(hasActiveProjectJobs(previous), true);
+  assert.equal(hasActiveProjectJobs(current), false);
+  assert.deepEqual(findJobStatusTransitions(previous, current), [{
+    key: "inference:catalog-run", status: "Cancelled",
+    title: "Model inference", subject: "Catalog inference fixture",
+  }]);
+});
+
+test("pretrained polling never depends on a stale training status", () => {
+  const jobs = collectProjectJobStates({
+    imageLayer: [{
+      imageLayerId: "layer", status: "Processed",
+      models: [{ modelId: "catalog-run", modelType: "pretrained", status: "Queued", inferenceStatus: "Failed" }],
+    }],
+  });
+  assert.equal(jobs.has("training:catalog-run"), false);
+  assert.equal(hasActiveProjectJobs(jobs), false);
+});
