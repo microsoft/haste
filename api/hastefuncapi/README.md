@@ -20,6 +20,7 @@ All functions are defined in `function_app.py` as a single Azure Functions app. 
 | Method | Route | Description |
 |--------|-------|-------------|
 | GET | `GetDashboardData` | Aggregated dashboard stats: project summaries, layer info, model status, and system-wide metrics. |
+| GET | `GetActiveJobs` | Compact active imagery, training, and inference jobs. Supports `ETag`/`If-None-Match`. |
 | GET | `GetProjects` | All projects with aggregated layer and model counts. |
 | GET | `GetProjectDetails` | Project, layer, validation, and optional model details. Supports `ETag`/`If-None-Match`; requires `projectId`. |
 | PUT | `PutProject` | Create or update a project. Auto-generates `projectId` and `creationDate` if not provided. |
@@ -47,6 +48,12 @@ does not provide coherence across scaled-out Function workers. Performance heade
 | GET | `GetLayerModelsDetails` | Model status and model list for a given layer. Requires `projectId` and `imageLayerId`. |
 | GET | `GetLayerLabelingToolData` | Label tool data for a given layer. Requires `projectId` and `imageLayerId`. |
 | PUT | `PutLabelsFromLabelTool` | Save labels for a layer from the label tool. |
+
+#### Route Loading Endpoints
+
+`GetActiveJobs` requires an active contributor or administrator. It returns one
+compact job list from a process-local cache with a maximum five-second TTL.
+Clients send `If-None-Match`; unchanged responses return an empty `304`.
 
 ### File Upload
 
