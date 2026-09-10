@@ -1,12 +1,14 @@
 # App-Wide Loading Performance
 
-This branch contains slices 1 through 1 of the seven-part split of PR #194.
+This branch contains slices 1 through 2 of the seven-part split of PR #194.
 The remaining slices are planned, not included in this branch.
 
 ## Scope
 
 - Route Loading
 - Cancellation and Loading Ownership
+- Session Bootstrap
+- Security
 
 See [design](design.md) and [user stories](user-stories.md) for the applicable
 contracts and acceptance criteria. Each slice carries focused regression tests.
