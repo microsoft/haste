@@ -114,10 +114,14 @@ services:
       METADATA_STORAGE_TYPE: "blob"
       IMAGERY_STORAGE_TYPE: "blob"
       ARTIFACT_STORAGE_TYPE: "blob"
+      RUNNER_TYPE: "local"
+      AZURE_BATCH_DOCKER_IMAGE: "haste-training:latest"
+      AZURE_BATCH_TRANSFORMER_INFERENCE_DOCKER_IMAGE: "haste-transformerinference:latest"
       TITILER_ENDPOINT: "http://titiler:8000/"
       TITILER_PUBLIC_ENDPOINT: "http://${HOST_IP:-localhost}:7071/api/titiler/"
     volumes:
       - ../data:/app/data
+      - azurite-data:/shared/azurite  # Coordinate local cancellation with workers
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:
       - "${DOCKER_GID:-1001}"
@@ -167,6 +171,7 @@ services:
       AZURE_STORAGE_USE_EMULATOR: "true"
       AZURE_STORAGE_EMULATOR_HOST: "azurite:10000"
       AZURE_BATCH_DOCKER_IMAGE: "haste-training:latest"
+      AZURE_BATCH_TRANSFORMER_INFERENCE_DOCKER_IMAGE: "haste-transformerinference:latest"
       AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE: "haste-imageryprep:latest"
       HASTE_DEBUG_VERBOSE: "1"
       HASTE_OUTPUT_DIR: "/shared/azurite"
@@ -193,6 +198,7 @@ services:
       - azurite
       - data-init
       - training_image
+      - transformerinference_image
       - imageryprep_image
       - titiler
 
@@ -228,6 +234,14 @@ services:
       context: ..
       dockerfile: ./docker/training/Dockerfile
     image: haste-training
+
+  # Isolated ML dependency stack; never used for legacy training/inference.
+  transformerinference_image:
+    build:
+      context: ..
+      dockerfile: ./docker/training/Dockerfile
+      target: transformerinference-runtime
+    image: haste-transformerinference
 
   # Imagery preparation image
   imageryprep_image:

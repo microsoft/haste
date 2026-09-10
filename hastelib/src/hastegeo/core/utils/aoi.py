@@ -20,6 +20,7 @@ import numpy as np
 import rasterio
 import rasterio.features
 import shapely.geometry
+from rasterio.warp import transform_bounds
 
 from .gdal_security import harden_gdal
 
@@ -117,6 +118,25 @@ def aoi_bbox_from_cog(
     """Return the EPSG:4326 bounding box of the AOI polygon as (xmin, ymin, xmax, ymax)."""
     polygon = extract_aoi_polygon(cog_path)
     return polygon.bounds
+
+
+def raster_extent_feature(cog_path: str) -> dict:
+    """Build a display extent from COG headers, without reading its pixels."""
+    with rasterio.Env(
+        GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR", GDAL_HTTP_TIMEOUT="30"
+    ), rasterio.open(cog_path, driver="GTiff") as source:
+        if source.crs is None:
+            raise ValueError(
+                "Result raster has no coordinate reference system"
+            )
+        bounds = transform_bounds(source.crs, "EPSG:4326", *source.bounds)
+    if not np.isfinite(bounds).all():
+        raise ValueError("Result raster has invalid bounds")
+    return {
+        "type": "Feature",
+        "geometry": shapely.geometry.mapping(shapely.geometry.box(*bounds)),
+        "bbox": list(bounds),
+    }
 
 
 def save_polygon_as_geojson(

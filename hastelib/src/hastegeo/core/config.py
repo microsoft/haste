@@ -342,12 +342,8 @@ class Config:
     def get_publishing_config():
         """Get publishing feature and provider configuration."""
         return {
-            "publishing_enabled": _get_bool_env(
-                "PUBLISHING_ENABLED", True
-            ),
-            "pc_provider_enabled": _get_bool_env(
-                "PC_PROVIDER_ENABLED", False
-            ),
+            "publishing_enabled": _get_bool_env("PUBLISHING_ENABLED", True),
+            "pc_provider_enabled": _get_bool_env("PC_PROVIDER_ENABLED", False),
             "max_total_bytes": _get_bounded_int_env(
                 "PUBLISH_MAX_TOTAL_BYTES", 5 * 1024**3, 1
             ),
@@ -653,6 +649,9 @@ class Config:
             "docker_image": os.getenv(
                 "AZURE_BATCH_DOCKER_IMAGE",
                 "<registry-name>.azurecr.io/<training-image>:latest",
+            ),
+            "transformer_inference_docker_image": os.getenv(
+                "AZURE_BATCH_TRANSFORMER_INFERENCE_DOCKER_IMAGE"
             ),
             "docker_container_work_dir": os.getenv(
                 "AZURE_BATCH_DOCKER_CONTAINER_WORK_DIR", "/app"

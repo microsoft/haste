@@ -49,6 +49,9 @@ param acrLoginServer string
 @description('Training container image (tag included).')
 param trainingImage string
 
+@description('Transformer inference image including tag. Empty disables transformer model selection.')
+param transformerInferenceImage string = ''
+
 @description('Imageryprep container image (tag included).')
 param imageryprepImage string
 
@@ -169,6 +172,7 @@ var appConfigSettings = [
   { name: 'AZURE_BATCH_URL', value: 'https://${batchAccountName}.${batchAccountLocation}.batch.azure.com' }
   { name: 'AZURE_BATCH_ACCOUNT_KEY', value: batchAccountKey }
   { name: 'AZURE_BATCH_DOCKER_IMAGE', value: '${acrLoginServer}/${trainingImage}' }
+  { name: 'AZURE_BATCH_TRANSFORMER_INFERENCE_DOCKER_IMAGE', value: empty(transformerInferenceImage) ? '' : '${acrLoginServer}/${transformerInferenceImage}' }
   { name: 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', value: '${acrLoginServer}/${imageryprepImage}' }
   { name: 'AZURE_BATCH_OUTPUT_CONTAINER_URL', value: '${storageAccount.properties.primaryEndpoints.blob}data' }
   { name: 'AZURE_BATCH_TRAINING_POOL_ID', value: batchPoolName }

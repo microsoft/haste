@@ -9,10 +9,6 @@ import useModelCatalogImage from '../../assets/helpDocs/modelCatalog/model-catal
 import removeAModelFromCatalogImage from '../../assets/helpDocs/modelCatalog/model-catalog-remove-a-model-from-model-catalog.jpg';
 
 const HelpDocsModelCatalog = ({ anchor }) => {
-  HelpDocsModelCatalog.propTypes = {
-    anchor: PropTypes.string,
-  };
-
   useEffect(() => {
     if (anchor) {
       const element = document.getElementsByName(anchor)[0];
@@ -33,12 +29,17 @@ const HelpDocsModelCatalog = ({ anchor }) => {
       <h1 className="custom-text-color">Model Catalog</h1>
 
       <a name="introduction"></a>
-      <h2 className='pt-4'></h2>
 
       <p>
-        The Model Catalog is a centralized registry of base models available for training. It provides a collection of pre-trained models, each tailored to specific project types and imagery sources, that serve as the foundation for fine-tuning with your own labeled data.</p>
-
-
+        The Model Catalog contains models for fine-tuning and for direct inference.
+        Compatible HASTE-trained models can support both operations; the DINOv3 damage model supports inference only.
+      </p>
+      <p>
+        The training <strong className='fw-semibold'>Base Model</strong> list contains models that support training,
+        so inference-only models are not offered for fine-tuning. Older catalog entries without a capability
+        declaration retain their existing training behavior. Direct inference is available only when the
+        catalog model has a compatible, reproducible inference recipe for the target image layer.
+      </p>
 
       <hr className="mt-5" />
 
@@ -46,7 +47,6 @@ const HelpDocsModelCatalog = ({ anchor }) => {
       <h2 className='pt-4'>Add a Model to Catalog</h2>
       <p>Once a model has been trained and its inference has been fully processed, you can add it to the Model Catalog so it can be reused as a base model in future training runs. Follow the steps below:</p>
 
-      <p>
         <ol>
           <li><strong className='fw-semibold'>Navigate to the Models table:</strong> Go to your project page and locate the models table for the image layer whose model you want to catalog. Click on the three-dot menu icon next to the model you want to catalog. The &quot;Add Model to Catalog&quot; option will only be available for models whose inference status is &quot;Processed&quot;.
 
@@ -62,7 +62,6 @@ const HelpDocsModelCatalog = ({ anchor }) => {
           </li>
           <li><strong className='fw-semibold'>Submit:</strong> Click the &quot;Submit&quot; button to add the model to the catalog. The model&apos;s project type and imagery source will be automatically associated, so it appears as a base model option in matching future training runs.</li>
         </ol>
-      </p>
 
 
       <hr className="mt-5 pb-4" />
@@ -78,12 +77,65 @@ const HelpDocsModelCatalog = ({ anchor }) => {
 
       <hr className="mt-5 pb-4" />
 
+      <a name="run-inference-without-training"></a>
+      <h2 className='pt-4'>Run Inference Without Training</h2>
+
+      <p>
+        Catalog inference uses a processed <strong className='fw-semibold'>standard</strong> image layer&apos;s
+        post-event imagery and cached building footprints. It does not require training labels or fine-tuning.
+        Building/embedding layers continue to use their existing workflow.
+      </p>
+      <ol>
+        <li>
+          <strong className='fw-semibold'>Choose the image layer:</strong> On the project page, choose
+          <strong className='fw-semibold'> Inference</strong> on the image layer. This action is available
+          in both the list and card layouts once post-event imagery is prepared and building footprints are cached.
+        </li>
+        <li>
+          <strong className='fw-semibold'>Select a catalog model:</strong> Choose a compatible model and,
+          optionally, enter a run name. There are no training hyperparameters to configure.
+        </li>
+        <li>
+          <strong className='fw-semibold'>Start the run:</strong> Choose
+          <strong className='fw-semibold'> Start inference</strong>. Acceptance queues the run;
+          it does not mean inference has completed.
+        </li>
+        <li>
+          <strong className='fw-semibold'>Track the new model row:</strong> View inference progress and
+          cancel queued or running work from that row. Completed runs use the usual
+          <strong className='fw-semibold'> Results</strong> menu, downloads, and reports.
+          Validation accuracy still requires labels.
+        </li>
+      </ol>
+      <p>
+        Each new intentional run creates an independent model row. It does not retrain or change the
+        source catalog model, replace earlier results, or overwrite previous rows. To run inference
+        again, reopen <strong className='fw-semibold'>Inference</strong> on the image layer and submit a new run.
+      </p>
+      <p>
+        DINOv3 requires prepared three-band RGB8 imagery. Existing HASTE models require their original
+        input channels and normalization recipe. Unavailable models show the compatibility reason
+        instead of silently substituting settings. A model without a reproducible inference recipe
+        can still be available for fine-tuning.
+      </p>
+      <p>
+        Catalog loading failures show an error and <strong className='fw-semibold'>Retry</strong>,
+        rather than an empty list. If submission fails ambiguously, retry without changing the model
+        or name in the same open dialog to reuse the same request instead of creating another run.
+        Reopening the dialog starts a new intentional request.
+      </p>
+      <p>
+        If the run was accepted but model rows could not be refreshed, choose
+        <strong className='fw-semibold'> Retry refresh</strong>. This refreshes the rows without submitting another run.
+      </p>
+
+      <hr className="mt-5 pb-4" />
+
       <a name="remove-a-model-from-the-catalog"></a>
       <h2 className='pt-4'>Remove a model from the Model Catalog</h2>
 
-      <p>A model can be removed from the Model Catalog. This action does not delete the original trained model from your project — it only removes it from the shared catalog so it will no longer appear as a base model option.</p>
+      <p>A model can be removed from the Model Catalog. This action does not delete the original trained model from your project — it only removes it from the shared catalog so it is no longer available for new training or catalog inference runs.</p>
 
-      <p>
         <ol>
           <li><strong className='fw-semibold'>Navigate to the Model Catalog:</strong> Open the Model Catalog page from the main navigation. You will see a table listing all cataloged models with details such as name, description, source, event type, and cataloged date.</li>
           <li><strong className='fw-semibold'>Locate the model:</strong> Use the search bar to filter models by name, description, or any other field to quickly find the model you want to remove.</li>
@@ -95,11 +147,14 @@ const HelpDocsModelCatalog = ({ anchor }) => {
           <li><strong className='fw-semibold'>Confirm removal:</strong> A confirmation dialog will appear asking if you want to remove the model from the catalog. Click &quot;Yes&quot; to proceed or &quot;No&quot; to cancel.</li>
           <li><strong className='fw-semibold'>Wait for completion:</strong> The application will display a loading indicator while the model is being removed. Once complete, a success message will confirm the model has been removed.</li>
         </ol>
-      </p>
 
       <p><strong className='fw-semibold'>Important:</strong> This action requires Administrator privileges.</p>
     </>
   );
+};
+
+HelpDocsModelCatalog.propTypes = {
+  anchor: PropTypes.string,
 };
 
 export default HelpDocsModelCatalog;
