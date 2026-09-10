@@ -32,6 +32,10 @@ from hastegeo.core.models.compute import (
 )
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
+from hastegeo.core.utils.output_files import (
+    AmbiguousTaskOutputError,
+    resolve_task_output,
+)
 
 import docker
 
@@ -126,22 +130,19 @@ class LocalRunner(BaseRunner, ComputeRunner):
     def get_filecontent_from_task(
         self, job_id, task_id, filename, as_chunk=False
     ):
-        """Get file content from a completed local task."""
-        # For local runner, we can read directly from the work directory
+        """Read a live or completed output from this task's workspace."""
         job_dir = self.work_dir / job_id / task_id
-        file_path = job_dir / filename
-
-        # Also check outputs/ subdirectory where prepare_imagery writes files
-        if not file_path.exists():
-            outputs_file_path = job_dir / "outputs" / filename
-            if outputs_file_path.exists():
-                file_path = outputs_file_path
-        if not file_path.exists():
-            logs_file_path = job_dir / "logs" / filename
-            if logs_file_path.exists():
-                file_path = logs_file_path
-
-        if file_path.exists():
+        try:
+            file_path = resolve_task_output(job_dir, filename)
+        except AmbiguousTaskOutputError:
+            self.logger.warning(
+                "Output %s is ambiguous for job %s task %s; unavailable",
+                filename,
+                job_id,
+                task_id,
+            )
+            return None
+        if file_path is not None:
             if as_chunk:
                 # Return file content in chunks
                 def read_chunks():
@@ -154,7 +155,7 @@ class LocalRunner(BaseRunner, ComputeRunner):
 
                 return read_chunks()
             else:
-                with open(file_path, "r") as f:
+                with open(file_path, "r", encoding="utf-8") as f:
                     return f.read()
         else:
             self.logger.warning(

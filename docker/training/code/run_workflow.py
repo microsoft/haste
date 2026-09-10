@@ -28,20 +28,17 @@ def _resolve_job_workdir() -> str:
 
 
 def run_subprocess(command, step_name):
-    result = subprocess.run(command, capture_output=True, text=True)
+    log_progress(f"Starting {step_name}")
+    # Inherit the backend's streams instead of buffering an entire training run.
+    result = subprocess.run(command, text=True)
     if result.returncode != 0:
         log_progress(f"Error running {step_name}")
         print(f"Error running {step_name} (exit code: {result.returncode})")
-        if result.stdout:
-            print(f"[{step_name}] stdout:\n{result.stdout}")
-        if result.stderr:
-            print(f"[{step_name}] stderr:\n{result.stderr}")
         raise subprocess.CalledProcessError(
             result.returncode,
             result.args,
-            output=result.stdout,
-            stderr=result.stderr,
         )
+    log_progress(f"Completed {step_name}")
     return result
 
 
