@@ -4,6 +4,8 @@
 
 - [Route Loading](#route-loading)
 - [Cancellation and Loading Ownership](#cancellation-and-loading-ownership)
+- [Session Bootstrap](#session-bootstrap)
+- [Security](#security)
 
 ## Route Loading
 
@@ -29,3 +31,50 @@ visible so only one page-level status surface is exposed.
 GET helpers accept an `AbortSignal`. Dashboard, active-job, and Labeling Tool
 requests abort when their owning route unmounts. Late completions cannot clear
 another route's loading state or mutate an unmounted component.
+
+
+## Session Bootstrap
+
+### `GET /api/GetSessionBootstrap`
+
+The request accepts no identity parameters. It decodes the trusted SWA client
+principal and returns:
+
+```json
+{
+  "user": {
+    "userId": "user@example.com",
+    "identityId": "entra-object-id",
+    "userRoles": ["contributors"],
+    "settings": {},
+    "status": "Active"
+  },
+  "publishing": {
+    "publishingEnabled": true,
+    "providers": []
+  }
+}
+```
+
+A stable active session performs one ACL read and zero writes. It does not list
+SWA users through the Azure management plane. Existing inactive, pending, or
+deleted users receive a blocked session with no roles so the UI can retain its
+account-status page. The bootstrap response is not an authorization token;
+sensitive routes retain their own checks.
+
+Pending invitations remain blocked until an administrator runs the explicit
+user reconciliation workflow. Startup never writes the ACL or calls the Azure
+management plane.
+
+
+## Security
+
+- Identity comes only from the decoded SWA principal; no user ID is accepted
+  from query or body.
+- ACL status and deletion state are checked on every bootstrap request.
+- Client roles are intersected with ACL roles; role disagreement cannot grant
+  access.
+- Stable sessions do not write user state or call the management plane.
+- Caches store data representations, not authorization decisions.
+- Both additive read routes require an active ACL-backed application role.
+- Development fallback remains restricted to `DEVELOPMENT_MODE`.
