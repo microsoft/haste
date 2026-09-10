@@ -43,6 +43,13 @@ training:
 
 inference:
   output_subdir: "outputs/"
+  # Required for inference and the default train+infer workflow. The JSON
+  # basename is written beside the prediction GeoPackage in output_subdir.
+  prediction_attrs_filename: "prediction_attrs.json"
+  # REQUIRED: set a fresh generation token before EVERY prediction run.
+  # Intentionally blank so an unchanged template fails before starting work.
+  # See configs/README.md for generation and per-run output instructions.
+  prediction_revision: ""
   checkpoint_fn: "checkpoints/last.ckpt"  # should mirror training.checkpoint_subdir
   batch_size: 2
   gpu_id: 1

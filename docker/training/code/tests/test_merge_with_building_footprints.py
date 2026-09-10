@@ -1,235 +1,247 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-"""Tests for ``merge_with_building_footprints.py``.
-
-Focus: the CRS-aware metric buffering used when merging damage
-predictions with building footprints. The regression these tests guard
-against is buffering a *geographic* (EPSG:4326, degrees) prediction
-raster by a metre distance directly, which balloons the footprint by
-tens of degrees and either crashes or yields nonsensical damage
-fractions.
-
-The test builds tiny synthetic fixtures with rasterio / geopandas (no
-hand-rolled raster or vector bytes) and drives the script's ``main``
-entrypoint plus its pure helpers.
-"""
+"""Native metric-buffer, stable-row and empty-COG regression tests."""
 
 import argparse
-import os
+import json
 import sys
-import tempfile
-import unittest
+from pathlib import Path
 
 import fiona
-import geopandas as gpd
 import numpy as np
+import pytest
 import rasterio
-import shapely.geometry
+from hastegeo.core.utils.prediction_attrs import write_prediction_attrs
+from pyproj import Transformer
 from rasterio.transform import from_origin
+from shapely.geometry import box, mapping, shape
+from shapely.ops import transform as project
 
-# The script under test lives in the parent directory and is not installed
-# as a package, so make it importable by path.
-CODE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if CODE_DIR not in sys.path:
-    sys.path.insert(0, CODE_DIR)
+from hastelib.tests.core.prediction_fixtures import write_gpkg, write_raster
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import merge_with_building_footprints as merge  # noqa: E402
+import output2visualizer as visualizer  # noqa: E402
+
+TRANSFORM = from_origin(500000, 4170400, 10, 10)
+CORE = box(500190, 4170180, 500220, 4170210)
+OUTSIDE = box(500500, 4170100, 500520, 4170120)
 
 
-def _write_raster(path, arr, crs, transform):
-    """Write a single-band uint8 raster with rasterio."""
-    height, width = arr.shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=1,
-        dtype="uint8",
-        crs=crs,
-        transform=transform,
-        nodata=0,
-    ) as dst:
-        dst.write(arr, 1)
-
-
-def _damage_array():
-    """A 40x40 label array: class-2 ring around a class-3 damaged core.
-
-    The concentric layout means a *metrically correct* buffer picks up
-    progressively more class-2 pixels, so the damaged fraction strictly
-    decreases from 0 m -> 10 m -> 20 m. A degrees-based buffer instead
-    swallows the whole raster at both 10 and 20, collapsing those two
-    values to the same number -- which is exactly what the fix prevents.
-    """
-    arr = np.zeros((40, 40), dtype="uint8")
-    arr[15:26, 15:26] = 2  # surrounding (undamaged) pixels
-    arr[19:22, 19:22] = 3  # damaged core
-    return arr
-
-
-def _core_polygon(origin_x, origin_y, px, py):
-    """Polygon covering the 3x3 damaged core (rows/cols 19..21)."""
-    x0 = origin_x + 19 * px
-    x1 = origin_x + 22 * px
-    # ``py`` is the (positive) pixel height; rows increase downward.
-    y_top = origin_y - 19 * py
-    y_bot = origin_y - 22 * py
-    return shapely.geometry.box(x0, y_bot, x1, y_top)
-
-
-def _write_footprints(path, polygon, crs):
-    """Write a one-row footprints GeoPackage with geopandas."""
-    gdf = gpd.GeoDataFrame({"id": [0]}, geometry=[polygon], crs=crs)
-    gdf.to_file(path, driver="GPKG")
-
-
-def _read_output(path):
-    """Return the list of feature property dicts from an output GPKG."""
-    with fiona.open(path) as src:
-        return [dict(feat["properties"]) for feat in src]
-
-
-class MetricCrsForTest(unittest.TestCase):
-    """Unit tests for :func:`metric_crs_for`."""
-
-    def test_geographic_returns_utm(self):
-        # A point off the US west coast -> UTM zone 10N (EPSG:32610).
-        bounds = (-122.400, 37.698, -122.396, 37.702)
-        self.assertEqual(
-            merge.metric_crs_for("EPSG:4326", bounds), "EPSG:32610"
-        )
-
-    def test_geographic_southern_hemisphere_returns_326xx(self):
-        # Sydney-ish -> UTM zone 56S (EPSG:32756).
-        bounds = (151.20, -33.87, 151.22, -33.85)
-        self.assertEqual(
-            merge.metric_crs_for("EPSG:4326", bounds), "EPSG:32756"
-        )
-
-    def test_projected_returns_input_unchanged(self):
-        # Projected CRS units are already metres -> no round-trip needed.
-        bounds = (500000.0, 4170000.0, 500400.0, 4170400.0)
-        self.assertEqual(
-            merge.metric_crs_for("EPSG:32610", bounds), "EPSG:32610"
-        )
-
-
-class BufferedShapeTest(unittest.TestCase):
-    """Unit tests for :func:`buffered_shape`."""
-
-    def test_projected_matches_direct_shapely_buffer(self):
-        # When metric_crs == predictions_crs the helper must be a no-op
-        # wrapper around shapely.buffer -> zero behaviour change.
-        poly = shapely.geometry.box(0, 0, 10, 10)
-        geom = shapely.geometry.mapping(poly)
-        got = merge.buffered_shape(geom, "EPSG:32610", "EPSG:32610", 10)
-        expected = shapely.geometry.shape(geom).buffer(10)
-        self.assertTrue(got.equals(expected))
-
-    def test_geographic_buffer_is_metric(self):
-        # Buffer a ~10 m building by 20 m in EPSG:4326; the reprojected,
-        # buffered footprint should measure ~20 m of growth in UTM, not
-        # ~20 degrees.
-        poly = _core_polygon(-122.4000, 37.7020, 0.0001, 0.0001)
-        geom = shapely.geometry.mapping(poly)
-        metric = "EPSG:32610"
-        buffered = merge.buffered_shape(geom, "EPSG:4326", metric, 20)
-        # Reproject both to UTM and compare bounding-box growth.
-        base_m = gpd.GeoSeries([poly], crs="EPSG:4326").to_crs(metric)
-        buf_m = gpd.GeoSeries([buffered], crs="EPSG:4326").to_crs(metric)
-        b0 = base_m.total_bounds
-        b1 = buf_m.total_bounds
-        grow_left = b0[0] - b1[0]
-        grow_right = b1[2] - b0[2]
-        # ~20 m of growth per side (tolerate projection/rounding slack).
-        self.assertAlmostEqual(grow_left, 20.0, delta=3.0)
-        self.assertAlmostEqual(grow_right, 20.0, delta=3.0)
-
-    def test_geographic_buffer_zero_is_noop(self):
-        poly = _core_polygon(-122.4000, 37.7020, 0.0001, 0.0001)
-        geom = shapely.geometry.mapping(poly)
-        got = merge.buffered_shape(geom, "EPSG:4326", "EPSG:32610", 0)
-        expected = shapely.geometry.shape(geom).buffer(0)
-        self.assertTrue(got.equals(expected))
-
-
-class MainIntegrationTest(unittest.TestCase):
-    """End-to-end runs of :func:`main` for geographic and projected CRS."""
-
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-
-    def _run_main(self, predictions_fn, footprints_fn):
-        output_fn = os.path.join(self.tmp, "merged.gpkg")
-        args = argparse.Namespace(
-            footprints_fn=footprints_fn,
-            predictions_fn=predictions_fn,
-            output_fn=output_fn,
+def run_merge(
+    directory,
+    geometries,
+    values,
+    *,
+    transform=TRANSFORM,
+    crs="EPSG:32610",
+    footprint_crs="EPSG:32610",
+    nodata=0,
+    mask=None,
+):
+    fp = write_gpkg(
+        directory / "footprints.gpkg",
+        [{"id": f"building-{i}"} for i in range(len(geometries))],
+        fields={"id": "str"},
+        geometries=geometries,
+        crs=footprint_crs,
+    )
+    raster = write_raster(
+        directory / "raw.tif", values, transform, crs=crs, nodata=nodata
+    )
+    if mask is not None:
+        with rasterio.open(raster, "r+") as dst:
+            dst.write_mask(mask)
+    gpkg = str(directory / "merged.gpkg")
+    merge.main(
+        argparse.Namespace(
+            footprints_fn=fp,
+            predictions_fn=raster,
+            output_fn=gpkg,
             overwrite=True,
         )
-        merge.main(args)
-        return output_fn
-
-    def test_geographic_epsg4326_does_not_crash_and_computes(self):
-        # --- Fixture: EPSG:4326 raster + overlapping footprint. ---
-        arr = _damage_array()
-        west, north, px = -122.4000, 37.7020, 0.0001
-        transform = from_origin(west, north, px, px)
-        pred_fn = os.path.join(self.tmp, "pred_4326.tif")
-        _write_raster(pred_fn, arr, "EPSG:4326", transform)
-
-        poly = _core_polygon(west, north, px, px)
-        fp_fn = os.path.join(self.tmp, "fp_4326.gpkg")
-        _write_footprints(fp_fn, poly, "EPSG:4326")
-
-        # (a) does not crash
-        output_fn = self._run_main(pred_fn, fp_fn)
-
-        # (b) output produced with the one valid building geom
-        self.assertTrue(os.path.exists(output_fn))
-        rows = _read_output(output_fn)
-        self.assertEqual(len(rows), 1)
-
-        # (c) buffered damage percentages computed and metrically sane:
-        # 0 m fully damaged, then strictly decreasing as the metric buffer
-        # pulls in surrounding class-2 pixels. Under the (buggy) degrees
-        # buffer, 10 m and 20 m collapse to the same value.
-        props = rows[0]
-        d0 = props["damage_pct_0m"]
-        d10 = props["damage_pct_10m"]
-        d20 = props["damage_pct_20m"]
-        for val in (d0, d10, d20):
-            self.assertTrue(np.isfinite(val))
-        self.assertAlmostEqual(d0, 1.0, places=6)
-        self.assertLess(d10, d0)
-        self.assertLess(d20, d10)
-        self.assertIn("unknown_pct", props)
-
-    def test_projected_utm_unchanged(self):
-        # --- Fixture: EPSG:32610 (metre) raster + footprint. ---
-        arr = _damage_array()
-        origin_x, origin_y, px = 500000.0, 4170000.0, 10.0
-        transform = from_origin(origin_x, origin_y, px, px)
-        pred_fn = os.path.join(self.tmp, "pred_utm.tif")
-        _write_raster(pred_fn, arr, "EPSG:32610", transform)
-
-        poly = _core_polygon(origin_x, origin_y, px, px)
-        fp_fn = os.path.join(self.tmp, "fp_utm.gpkg")
-        _write_footprints(fp_fn, poly, "EPSG:32610")
-
-        output_fn = self._run_main(pred_fn, fp_fn)
-
-        self.assertTrue(os.path.exists(output_fn))
-        rows = _read_output(output_fn)
-        self.assertEqual(len(rows), 1)
-        props = rows[0]
-        self.assertAlmostEqual(props["damage_pct_0m"], 1.0, places=6)
-        self.assertLess(props["damage_pct_10m"], props["damage_pct_0m"])
-        self.assertLess(props["damage_pct_20m"], props["damage_pct_10m"])
+    )
+    payload = write_prediction_attrs(
+        gpkg,
+        fp,
+        str(directory / "attrs.json"),
+        prediction_revision="run-1",
+        flavor="inference",
+    )
+    assert json.loads((directory / "attrs.json").read_text()) == payload
+    return payload
 
 
-if __name__ == "__main__":
-    unittest.main()
+def run_visualizer(directory):
+    visualizer.main(
+        argparse.Namespace(
+            predictions_fn=str(directory / "raw.tif"),
+            merged_footprints_fn=str(directory / "merged.gpkg"),
+            output_fn=str(directory / "visualizer.tif"),
+            overwrite=True,
+        )
+    )
+    return rasterio.open(directory / "visualizer.tif")
+
+
+@pytest.mark.parametrize(
+    "crs,bounds,expected",
+    [
+        ("EPSG:4326", (-122.400, 37.698, -122.396, 37.702), "EPSG:32610"),
+        ("EPSG:4326", (151.20, -33.87, 151.22, -33.85), "EPSG:32756"),
+        ("EPSG:32610", (500000, 4170000, 500400, 4170400), "EPSG:32610"),
+    ],
+)
+def test_metric_crs_handles_both_hemispheres_and_projected_input(
+    crs, bounds, expected
+):
+    assert merge.metric_crs_for(crs, bounds) == expected
+
+
+def test_buffer_distances_are_metres_not_degrees():
+    polygon = box(-122.4, 37.7, -122.3999, 37.7001)
+    buffered = merge.buffered_shape(
+        mapping(polygon), "EPSG:4326", "EPSG:32610", 20
+    )
+    to_utm = Transformer.from_crs(4326, 32610, always_xy=True).transform
+    original_bounds = project(to_utm, polygon).bounds
+    buffered_bounds = project(to_utm, buffered).bounds
+    assert original_bounds[0] - buffered_bounds[0] == pytest.approx(20, abs=3)
+    assert buffered_bounds[2] - original_bounds[2] == pytest.approx(20, abs=3)
+    assert merge.buffered_shape(
+        mapping(polygon), "EPSG:4326", "EPSG:32610", 0
+    ).equals(polygon.buffer(0))
+    assert merge.buffered_shape(
+        mapping(CORE), "EPSG:32610", "EPSG:32610", 10
+    ).equals(CORE.buffer(10))
+
+
+@pytest.mark.parametrize(
+    "crs,transform",
+    [
+        ("EPSG:32610", TRANSFORM),
+        ("EPSG:4326", from_origin(-122.4000, 37.7020, 0.0001, 0.0001)),
+    ],
+)
+def test_native_merge_preserves_crs_and_metric_buffer_scores(
+    tmp_path, crs, transform
+):
+    values = np.zeros((40, 40), dtype="uint8")
+    values[15:26, 15:26] = 2
+    values[19:22, 19:22] = 3
+    left, top = transform * (19, 19)
+    right, bottom = transform * (22, 22)
+    polygon = box(left, bottom, right, top)
+    run_merge(
+        tmp_path,
+        [polygon],
+        values,
+        transform=transform,
+        crs=crs,
+        footprint_crs=crs,
+    )
+    with fiona.open(tmp_path / "merged.gpkg") as src:
+        assert src.crs.to_string() == crs
+        row = next(iter(src))
+        assert shape(row["geometry"]).equals(polygon)
+        props = row["properties"]
+        assert props["damage_pct_0m"] == pytest.approx(1)
+        assert 0 <= props["damage_pct_20m"] < props["damage_pct_10m"] < 1
+        assert props["unknown_pct"] == 0
+
+
+def test_outside_nodata_and_null_rows_never_shift_scored_identity(tmp_path):
+    values = np.full((40, 40), 2, dtype="uint8")
+    values[19:22, 19:22] = 3
+    values[30:, :10] = 0
+    payload = run_merge(
+        tmp_path,
+        [OUTSIDE, CORE, box(500000, 4170000, 500100, 4170100), None],
+        values,
+    )
+    assert payload["ids"] == [0, 1, 2, 3]
+    assert payload["overtureIds"] == [f"building-{i}" for i in range(4)]
+    assert payload["damage"] == [None, 1.0, None, None]
+    assert payload["unknown"] == [None, 0.0, None, None]
+    assert payload["classes"] == ["Unknown", "Damaged", "Unknown", "Unknown"]
+    with fiona.open(tmp_path / "merged.gpkg") as src:
+        rows = list(src)
+        assert src.crs.to_epsg() == 32610
+    assert [row["properties"]["id"] for row in rows] == [0, 1, 2, 3]
+    assert shape(rows[1]["geometry"]).equals(CORE)
+    assert rows[3]["geometry"] is None
+    for index in (0, 2, 3):
+        assert rows[index]["properties"]["damage_pct_10m"] is None
+        assert rows[index]["properties"]["damage_pct_20m"] is None
+    with run_visualizer(tmp_path) as src:
+        assert src.transform == TRANSFORM
+        assert src.crs.to_epsg() == 32610
+        assert src.read(4)[20, 20] == 255
+        assert src.read(4)[35, 5] == 0
+
+
+@pytest.mark.parametrize("masked", [False, True])
+def test_raster_masks_and_nonzero_nodata_remain_unscored(tmp_path, masked):
+    payload = run_merge(
+        tmp_path,
+        [CORE],
+        np.full((40, 40), 3 if masked else 255, dtype="uint8"),
+        nodata=0 if masked else 255,
+        mask=np.zeros((40, 40), dtype="uint8") if masked else None,
+    )
+    assert payload["damage"] == [None]
+    assert payload["classes"] == ["Unknown"]
+
+
+def test_reprojection_preserves_ids_and_actual_geometry(tmp_path):
+    geographic = project(
+        Transformer.from_crs(32610, 4326, always_xy=True).transform, CORE
+    )
+    payload = run_merge(
+        tmp_path,
+        [geographic],
+        np.full((40, 40), 3, dtype="uint8"),
+        footprint_crs="EPSG:4326",
+    )
+    assert payload["overtureIds"] == ["building-0"]
+    assert payload["classes"] == ["Damaged"]
+    with fiona.open(tmp_path / "merged.gpkg") as src:
+        assert src.crs.to_epsg() == 32610
+        assert (
+            shape(next(iter(src))["geometry"]).hausdorff_distance(CORE) < 0.001
+        )
+
+
+def test_empty_outputs_are_transparent_valid_cogs(tmp_path):
+    payload = run_merge(tmp_path, [], np.zeros((1024, 1024), dtype="uint8"))
+    assert payload["n"] == 0 and payload["classes"] == []
+    with run_visualizer(tmp_path) as src:
+        assert not src.read().any()
+        assert src.transform == TRANSFORM
+        assert src.crs.to_epsg() == 32610
+        assert src.tags(ns="IMAGE_STRUCTURE")["LAYOUT"] == "COG"
+        assert src.compression.value == "LZW"
+        assert src.block_shapes == [(512, 512)] * 4
+        assert src.overviews(1)
+
+
+def test_unscored_and_cloud_rows_are_transparent(tmp_path):
+    payload = run_merge(
+        tmp_path, [OUTSIDE, CORE], np.full((40, 40), 4, dtype="uint8")
+    )
+    assert payload["classes"] == ["Unknown", "Unknown"]
+    assert payload["unknown"] == [None, 1.0]
+    with run_visualizer(tmp_path) as src:
+        assert not src.read().any()
+
+
+def test_missing_and_mismatched_raster_crs_fail(tmp_path):
+    values = np.zeros((40, 40), dtype="uint8")
+    with pytest.raises(ValueError, match="CRS"):
+        run_merge(tmp_path, [CORE], values, crs=None)
+    assert not (tmp_path / "merged.gpkg").exists()
+    run_merge(tmp_path, [CORE], values)
+    write_raster(tmp_path / "raw.tif", values, TRANSFORM, crs="EPSG:3857")
+    with pytest.raises(ValueError, match="CRS differ"):
+        run_visualizer(tmp_path)

@@ -1,24 +1,157 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
-import json
 import os
 from typing import NamedTuple
 
+from azure.core.exceptions import ResourceNotFoundError
 from hastegeo.core.runners.unified_runner import UnifiedRunner
 
+from ..artifact_storage.unified_artifact_storage import UnifiedArtifactStorage
 from ..config import Config
 from ..data_layer.unified import UnifiedDataLayer
-from ..models.projects import ImageLayer, InferenceJob, Model
+from ..models.projects import ImageLayer, InferenceJob, Model, ModelArtifacts
 from ..models.training import ExperimentConfig, Inference
 from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
+from ..utils.prediction_attrs import attrs_artifact_name
 from ..utils.queues import AzureQueueHandler
+from .artifacts import ArtifactProcessor, _slugify_model_name
+from .metadata import MetadataProcessor
+from .prediction_results import validate_uploaded_pair
 
 # Do not prefix with '$' here. This string will be replaced
 # at runtime with the generated working directory for the task
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 INFERENCE_PREFIX = "inf"
+
+
+def process_inference_request(
+    request: Model, config: Config | None = None
+) -> Model | None:
+    """Use the stored Model, not the queued snapshot, and reject old task IDs.
+
+    The final re-read is an ordinary freshness check, not metadata CAS.
+    """
+    config = config or Config()
+    metadata = MetadataProcessor("model", request.projectId, config)
+    try:
+        record = metadata.load(request.modelId)
+    except FileNotFoundError:
+        return None
+    if not record:
+        return None
+    model = Model.model_validate(record)
+    if (
+        request.currentInferenceTaskId != model.currentInferenceTaskId
+        or request.imageLayerId != model.imageLayerId
+    ):
+        return None
+    if model.inferenceStatus in (
+        config.get_status_types().COMPLETED.value,
+        config.get_status_types().FAILED.value,
+    ):
+        return None
+    task_id, status, revision = (
+        model.currentInferenceTaskId,
+        model.inferenceStatus,
+        model.predictionRevision,
+    )
+    if status == config.get_status_types().CANCELLED.value:
+        processor = InferencePostprocessor(model, config=config)
+        output = processor.cancel()
+    else:
+        layer = ImageLayer.model_validate(
+            MetadataProcessor(
+                config.get_metadata_types().IMAGELAYER.value,
+                model.projectId,
+                config,
+            ).load(model.imageLayerId)
+        )
+        if (
+            layer.projectId != model.projectId
+            or layer.imageLayerId != model.imageLayerId
+        ):
+            raise ValueError("Inference layer does not match its model")
+        experiment = ExperimentConfig.model_validate(
+            MetadataProcessor(
+                config.get_metadata_types().EXPERIMENT_CONFIG.value,
+                model.projectId,
+                config,
+            ).load(model.modelId, data_format="yaml")
+        )
+        processor = InferencePostprocessor(model, layer, experiment, config)
+        output = processor.process()
+    try:
+        latest = Model.model_validate(metadata.load(model.modelId))
+    except FileNotFoundError:
+        return None
+    if (
+        latest.currentInferenceTaskId,
+        latest.inferenceStatus,
+        latest.predictionRevision,
+    ) != (task_id, status, revision):
+        return None
+    fields = {
+        key: value
+        for key, value in output.model_dump().items()
+        if key.startswith("inference")
+        or key in ("currentInferenceTaskId", "predictionGpkgFilename")
+    }
+    if output.inferenceStatus == config.get_status_types().COMPLETED.value:
+        fields.update(
+            output.model_dump(
+                include={
+                    "gpkgUrl",
+                    "predictionAttrsUrl",
+                    "predictionRevision",
+                    "predictedBuildingCount",
+                    "predictedAt",
+                    "predictedDamageLayerUrl",
+                }
+            )
+        )
+    metadata.save(output.modelId, fields)
+    if output.inferenceStatus == config.get_status_types().IN_PROGRESS.value:
+        processor.queue_client.put_message(output.model_dump_json())
+    return output
+
+
+def enqueue_inference_artifacts(model: Model, config: Config) -> None:
+    """Keep the existing zip follow-on, independent of result readiness."""
+    if (
+        model.inferenceStatus
+        not in (
+            config.get_status_types().COMPLETED.value,
+            config.get_status_types().FAILED.value,
+        )
+        or not model.inferenceOutputPath
+    ):
+        return
+    metadata = MetadataProcessor(
+        data_type=config.get_metadata_types().MODEL_ARTIFACTS.value,
+        partition_key=model.projectId,
+        config=config,
+    )
+    try:
+        record = metadata.load(model.modelId)
+    except FileNotFoundError:
+        record = None
+    artifacts = ModelArtifacts.model_validate(
+        record
+        or {
+            "projectId": model.projectId,
+            "imageLayerId": model.imageLayerId,
+            "modelId": model.modelId,
+        }
+    )
+    output = ArtifactProcessor(
+        partition_key=model.projectId,
+        config=config,
+        model=model,
+        model_artifacts=artifacts,
+    ).send_to_zip_queue()
+    metadata.save(model.modelId, output.model_dump())
 
 
 class BaseInferenceProcessor:
@@ -63,21 +196,53 @@ class InferencePreprocessor:
         self.model_data = model
         self.config = config
 
-    def send_to_queue(self):
-        self.model_data.inferenceStatus = (
-            self.config.get_status_types().PENDING.value
+    def send_to_queue(self, status: str | None = None) -> Model:
+        metadata = MetadataProcessor(
+            "model", self.model_data.projectId, self.config
         )
-        self.model_data.inferenceCurrentStep = 0
-        self.model_data.inferenceTotalSteps = 7
-        self.model_data.inferenceProgressPct = 0.0
-
-        self.model_data.inferenceStatusMessage = ""
-        self.model_data.inferenceStatusMessage = (
-            MetadataUtils.append_status_message(
-                self.model_data.inferenceStatusMessage, "Queued for inference"
+        record = metadata.load(self.model_data.modelId)
+        if not record:
+            raise FileNotFoundError("Model not found")
+        model = Model.model_validate(record)
+        if model.imageLayerId != self.model_data.imageLayerId:
+            raise ValueError("Inference request does not match its model")
+        fields = {
+            "inferenceStatus": status
+            or self.config.get_status_types().PENDING.value
+        }
+        if status != self.config.get_status_types().CANCELLED.value:
+            fields.update(
+                currentInferenceTaskId=f"{INFERENCE_PREFIX}-{MetadataUtils.generate_id()}",
+                predictionGpkgFilename=self.config.get_artifact_types().INFERENCE_GPKG.value.substitute(
+                    modelName=_slugify_model_name(model.name)
+                )
+                + ".gpkg",
+                inferenceCurrentStep=0,
+                inferenceTotalSteps=7,
+                inferenceProgressPct=0.0,
+                inferenceOutputPath=None,
+                inferenceStatusMessage=MetadataUtils.append_status_message(
+                    "", "Queued for inference"
+                ),
             )
-        )
-        self.queue_client.put_message(json.dumps(self.model_data.dict()))
+        metadata.save(model.modelId, fields)
+        self.model_data = model.model_copy(update=fields)
+        try:
+            self.queue_client.put_message(self.model_data.model_dump_json())
+        except Exception:
+            latest = metadata.load(model.modelId)
+            if (
+                status != self.config.get_status_types().CANCELLED.value
+                and latest.get("currentInferenceTaskId")
+                == self.model_data.currentInferenceTaskId
+            ):
+                metadata.save(
+                    model.modelId,
+                    {
+                        "inferenceStatus": self.config.get_status_types().FAILED.value
+                    },
+                )
+            raise
         return self.model_data
 
 
@@ -144,6 +309,8 @@ class InferencePostprocessor(BaseInferenceProcessor):
                     == self.model_data.currentInferenceTaskId
                 ):
                     break
+            else:
+                raise ValueError("Current inference task reference is missing")
 
             task_status = self.runner.get_task_status(
                 inference_job.jobId, inference_job.taskId
@@ -171,6 +338,20 @@ class InferencePostprocessor(BaseInferenceProcessor):
                 ].logs = self.model_data.inferenceStatusMessage
 
             if task_status == self.config.get_status_types().COMPLETED.value:
+                # A local runner can finish while its upload failed. Check
+                # actual artifact storage (not the node or a synthesized SAS).
+                try:
+                    self._complete_prediction_artifacts(inference_job.taskId)
+                except (FileNotFoundError, ResourceNotFoundError, ValueError):
+                    self.model_data.inferenceStatus = (
+                        self.config.get_status_types().FAILED.value
+                    )
+                    inference_job.status = self.model_data.inferenceStatus
+                    inference_job.completedDate = MetadataUtils.get_timestamp()
+                    self._update_inference_progress(
+                        "Uploaded prediction artifacts are missing or invalid; rerun inference."
+                    )
+                    return self.model_data
                 self.model_data.inferenceStatus = task_status
                 self.model_data.inferenceJobs[idx].status = task_status
                 self.model_data.inferenceJobs[
@@ -179,38 +360,6 @@ class InferencePostprocessor(BaseInferenceProcessor):
 
                 self.model_data.inferenceOutputPath = f"{MetadataUtils.hash_string(self.model_data.projectId)}/{self.model_data.inferenceJobs[idx].taskId}"
 
-                # Add artifact Urls only for successful inference
-                identifier = self.config.get_artifact_types().VISUALIZER.value.substitute(
-                    projectId=self.model_data.projectId,
-                    imageLayerId=self.model_data.imageLayerId,
-                )
-
-                # Local runner stores files in inference/ subfolder, remote doesn't
-                if self.config.runner_type == "local":
-                    extra_keys = [
-                        f"{self.model_data.inferenceJobs[idx].taskId}",
-                        "inference",
-                    ]
-                else:
-                    extra_keys = f"{self.model_data.inferenceJobs[idx].taskId}"
-
-                self.model_data.predictedDamageLayerUrl = (
-                    self.storage.get_file_remote_path(
-                        identifier=identifier,
-                        extra_partition_keys=extra_keys,
-                        data_format="tif",
-                    )
-                )
-
-                identifier = self.config.get_artifact_types().INFERENCE_GPKG.value.substitute(
-                    modelName=self.model_data.name
-                )
-
-                self.model_data.gpkgUrl = self.storage.get_file_remote_path(
-                    identifier=identifier,
-                    extra_partition_keys=extra_keys,
-                    data_format="gpkg",
-                )
                 self._update_inference_progress(
                     "Inference job completed successfully"
                 )
@@ -251,11 +400,10 @@ class InferencePostprocessor(BaseInferenceProcessor):
                     task_id=self.model_data.inferenceJobs[idx].taskId,
                 )
             else:
-                self.model_data.inferenceStatus = task_status
-                self.model_data.inferenceJobs[idx].status = task_status
-                self.queue_client.put_message(
-                    json.dumps(self.model_data.dict())
+                self.model_data.inferenceStatus = (
+                    self.config.get_status_types().IN_PROGRESS.value
                 )
+                self.model_data.inferenceJobs[idx].status = task_status
         else:
             self.model_data.inferenceStatus = (
                 self.config.get_status_types().FAILED.value
@@ -272,6 +420,17 @@ class InferencePostprocessor(BaseInferenceProcessor):
                 f"Adding task for model inference {self.model_data.modelId}"
             )
             # Prepare the input files and experiment config for the inference task
+            task_id = (
+                self.model_data.currentInferenceTaskId
+                or f"{INFERENCE_PREFIX}-{MetadataUtils.generate_id()}"
+            )
+            self.model_data.currentInferenceTaskId = task_id
+            self.model_data.predictionGpkgFilename = self.model_data.predictionGpkgFilename or (
+                self.config.get_artifact_types().INFERENCE_GPKG.value.substitute(
+                    modelName=_slugify_model_name(self.model_data.name)
+                )
+                + ".gpkg"
+            )
             inference_input_files = self._create_inference_config()
             # Multiple inference outputs are stored, but the visualizer imagery is set to the last completed job
             command = (
@@ -286,7 +445,6 @@ class InferencePostprocessor(BaseInferenceProcessor):
             ]
             # Trim job_id to 64 characters to comply with Azure Batch limits
             job_id = job_id[:64]
-            task_id = f"{INFERENCE_PREFIX}-{MetadataUtils.generate_id()}"
             inference_output_prefix = f"{MetadataUtils.hash_string(self.model_data.projectId)}/{task_id}"
 
             job_id, task_id = self.runner.add_task(
@@ -323,21 +481,17 @@ class InferencePostprocessor(BaseInferenceProcessor):
             self._update_inference_progress(
                 f"Inference submitted with task id {task_id}", step=0
             )
-            self.queue_client.put_message(json.dumps(self.model_data.dict()))
-            self.logger.info(
-                f"InProgress message to queue sent for model {self.model_data.modelId}"
-            )
         except Exception as e:
             self.logger.error(
-                f"Error processing model {self.model_data.modelId}: {e}",
-                stack_info=True,
+                "Inference submission failed (%s)",
+                type(e).__name__,
             )
-            # Surface the error in the user-facing status message for the most
-            # common actionable failure (missing cached building-footprint URL
-            # — see _create_inference_config). For other exception types this
-            # still gives the user something more useful than a silent FAILED.
+            if not isinstance(e, ValueError):
+                raise RuntimeError(
+                    f"Inference submission failed ({type(e).__name__})"
+                ) from None
             self._update_inference_progress(
-                f"Inference failed to start: {e}",
+                "Inference configuration is invalid; check the model and cached footprints.",
                 step=self.model_data.inferenceCurrentStep,
             )
             self.model_data.inferenceStatus = (
@@ -345,6 +499,45 @@ class InferencePostprocessor(BaseInferenceProcessor):
             )
 
         return self.model_data
+
+    def _complete_prediction_artifacts(self, task_id: str) -> None:
+        storage = UnifiedArtifactStorage(
+            self.config.artifact_storage_type,
+            **self.config.artifact_storage_config,
+        )
+        namespace = [
+            MetadataUtils.hash_string(self.model_data.projectId),
+            task_id,
+        ]
+        if self.config.runner_type == "local":
+            namespace.append("inference")
+        names = {
+            "gpkgUrl": self.model_data.predictionGpkgFilename,
+            "predictionAttrsUrl": attrs_artifact_name(self.model_data.modelId),
+            "predictedDamageLayerUrl": self.config.get_artifact_types().VISUALIZER.value.substitute(
+                projectId=self.model_data.projectId,
+                imageLayerId=self.model_data.imageLayerId,
+            )
+            + ".tif",
+        }
+        attributes = validate_uploaded_pair(
+            storage,
+            storage.get_file_path(names["gpkgUrl"], namespace),
+            storage.get_file_path(names["predictionAttrsUrl"], namespace),
+            task_id,
+            "inference",
+        )
+        urls = {
+            field: storage.get_download_url(
+                identifier=name, extra_partition_keys=namespace
+            )
+            for field, name in names.items()
+        }
+        for field, url in urls.items():
+            setattr(self.model_data, field, url)
+        self.model_data.predictedBuildingCount = attributes.n
+        self.model_data.predictedAt = MetadataUtils.get_timestamp()
+        self.model_data.predictionRevision = task_id
 
     def _create_inference_config(self):
         # Hard requirement: every layer that goes through inference must have
@@ -401,20 +594,25 @@ class InferencePostprocessor(BaseInferenceProcessor):
         }
 
         checkpoint_version = "last.ckpt"  # TODO - accept the checkpoint version from UI when inference is invoked
+        if not self.model_data.checkpointPath:
+            raise ValueError("Model has no checkpoint for inference")
+        artifacts = UnifiedArtifactStorage(
+            storage_type=self.config.artifact_storage_type,
+            **self.config.artifact_storage_config,
+        )
+        checkpoint_url = artifacts.get_download_url(
+            identifier=checkpoint_version,
+            extra_partition_keys=self.model_data.checkpointPath,
+        )
         inference_input_files["checkpoint"] = {
-            "http_url": f"{self.storage.get_base_url()}/{self.model_data.checkpointPath}/{checkpoint_version}",
+            "http_url": extract_from_url(checkpoint_url, plain_url_pattern),
             "file_path": f"inputs/checkpoint/{checkpoint_version}",
         }
 
         # Load the experiment config that was saved during training
-        config_filepath = self.storage.get_file_remote_path(
-            self.model_data.modelId,
-            self.config.get_metadata_types().EXPERIMENT_CONFIG.value,
-            data_format="yaml",
-        )
-
+        inference_config_id = f"{self.model_data.modelId}-{self.model_data.currentInferenceTaskId}"
         # Create a copy of the existing experiment config and update inference configuration
-        updated_experiment_config = self.experiment_config.dict()
+        updated_experiment_config = self.experiment_config.model_dump()
 
         # Create inference configuration using pydantic model for consistency
         inference_config = Inference(
@@ -426,19 +624,28 @@ class InferencePostprocessor(BaseInferenceProcessor):
             patch_size=256,
             building_footprints_source="microsoft",
             country_alpha2_iso_code="US",
-            predictions_gpkg_fileprefix=self.config.get_artifact_types().INFERENCE_GPKG.value.substitute(
-                modelName=self.model_data.name.replace(" ", "-"),
+            predictions_gpkg_fileprefix=self.model_data.predictionGpkgFilename.removesuffix(
+                ".gpkg"
             ),
+            prediction_attrs_filename=attrs_artifact_name(
+                self.model_data.modelId
+            ),
+            prediction_revision=self.model_data.currentInferenceTaskId,
         )
 
         # Update inference settings for the inference run
-        updated_experiment_config["inference"] = inference_config.dict()
+        updated_experiment_config["inference"] = inference_config.model_dump()
 
         # Save the updated experiment config with inference settings
         self.storage.save(
-            identifier=self.model_data.modelId,
+            identifier=inference_config_id,
             data=updated_experiment_config,
             data_type=self.config.get_metadata_types().EXPERIMENT_CONFIG.value,
+            data_format="yaml",
+        )
+        config_filepath = self.storage.get_file_remote_path(
+            inference_config_id,
+            self.config.get_metadata_types().EXPERIMENT_CONFIG.value,
             data_format="yaml",
         )
         inference_input_files["config"] = {
@@ -528,26 +735,29 @@ class InferencePostprocessor(BaseInferenceProcessor):
         )
         return self.model_data
 
-    def _cancel_inference(self):
-        for idx, inference_job in enumerate(self.model_data.inferenceJobs):
-            if inference_job.taskId == self.model_data.currentInferenceTaskId:
-                break
-        self.model_data.inferenceJobs[
-            idx
-        ].status = self.config.get_status_types().CANCELLED.value
-        self.model_data.inferenceJobs[
-            idx
-        ].completedDate = MetadataUtils.get_timestamp()
+    def _cancel_inference(self) -> None:
+        if not self.model_data.currentInferenceTaskId:
+            return  # Cancellation before submission has no Batch task.
+        job = next(
+            (
+                job
+                for job in self.model_data.inferenceJobs or []
+                if job.taskId == self.model_data.currentInferenceTaskId
+            ),
+            None,
+        )
+        if job is None:
+            return  # A queued task may not have been submitted yet.
+        job.status = self.config.get_status_types().CANCELLED.value
+        job.completedDate = MetadataUtils.get_timestamp()
         try:
             self.runner.cancel_task(
-                job_id=self.model_data.inferenceJobs[idx].jobId,
-                task_id=self.model_data.inferenceJobs[idx].taskId,
+                job_id=job.jobId,
+                task_id=job.taskId,
             )
-            self.logger.info(
-                f"Inference task {self.model_data.inferenceJobs[idx].taskId} cancelled successfully for model {self.model_data.modelId}"
-            )
-        except Exception as e:
+        except Exception as error:
             self.logger.error(
-                f"Error cancelling inference job {self.model_data.inferenceJobs[idx].jobId} for model {self.model_data.modelId}: {e}",
-                stack_info=True,
+                "Inference task cancellation failed (%s)",
+                type(error).__name__,
             )
+            raise RuntimeError("Inference task cancellation failed") from None

@@ -51,7 +51,7 @@ class AssessmentReportProcessor:
             model_id,
         )
         gpkg_url = model_data.get("gpkgUrl")
-        if not gpkg_url:
+        if not gpkg_url or model_data.get("predictedBuildingCount") == 0:
             raise FileNotFoundError(
                 "No inference results available for this model"
             )

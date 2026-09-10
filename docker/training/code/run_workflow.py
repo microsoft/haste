@@ -6,12 +6,33 @@
 import argparse
 import glob
 import os
+import re
 import subprocess
 import sys
 import traceback
 from datetime import datetime, timezone
 
 import yaml
+
+
+def prediction_attrs_settings(config: dict) -> tuple[str, str]:
+    """Validate eager artifact settings before starting expensive inference."""
+    inference = config.get("inference") or {}
+    filename = inference.get("prediction_attrs_filename")
+    revision = inference.get("prediction_revision")
+    if (
+        not isinstance(filename, str)
+        or len(filename) > 255
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.json", filename)
+    ):
+        raise ValueError(
+            "inference.prediction_attrs_filename must be a safe JSON basename."
+        )
+    if not isinstance(revision, str) or not revision.strip():
+        raise ValueError(
+            "inference.prediction_revision must be a nonempty string."
+        )
+    return filename, revision
 
 
 def run_subprocess(command, step_name):
@@ -49,6 +70,9 @@ def main():
 
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
+
+    if args.step in ("inference", "all"):
+        attrs_filename, prediction_revision = prediction_attrs_settings(config)
 
     if args.step == "training" or args.step == "all":
         if not os.path.exists(config.get("labels").get("fn")):
@@ -133,6 +157,10 @@ def main():
                 f"{inference_dir}. Please download all artifacts for this model"
                 " and check the stderr and stdout files for more information."
             )
+        if len(predictions_files) != 1:
+            raise ValueError(
+                "Expected exactly one prediction raster for this generation."
+            )
         predicted_damage_fn = predictions_files[0]
         gpkg_prefix = config["inference"]["predictions_gpkg_fileprefix"]
         merged_building_predictions_fn = os.path.join(
@@ -151,6 +179,19 @@ def main():
                 "--overwrite",
             ],
             "merge_with_building_footprints.py",
+        )
+
+        # Eager producer-owned attributes: this output follows the GPKG
+        # through the existing Batch/local upload path. No preparation job.
+        from hastegeo.core.utils.prediction_attrs import write_prediction_attrs
+
+        log_progress("Writing prediction attributes")
+        write_prediction_attrs(
+            merged_building_predictions_fn,
+            downloaded_footprints_fn,
+            os.path.join(inference_dir, attrs_filename),
+            prediction_revision=prediction_revision,
+            flavor="inference",
         )
 
         # Generate visualizer output - same file name, but with a .tif extension

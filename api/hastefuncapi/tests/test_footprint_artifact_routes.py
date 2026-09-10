@@ -41,6 +41,12 @@ class TestFootprintArtifactRoutes(unittest.IsolatedAsyncioTestCase):
             footprintTilesStatus="Processed",
         )
         self.metadata.load.return_value = self.layer.model_dump()
+        self.enterContext(
+            patch(
+                "hastegeo.core.processors.prediction_results.MetadataProcessor",
+                return_value=self.metadata,
+            )
+        )
 
     async def test_layer_edits_cannot_replace_server_owned_tile_fields(
         self,
@@ -94,7 +100,7 @@ class TestFootprintArtifactRoutes(unittest.IsolatedAsyncioTestCase):
             body=b"",
         )
         with patch.object(
-            function_app, "read_blob_range", new_callable=AsyncMock
+            function_app, "read_result_artifact", new_callable=AsyncMock
         ) as read:
             for url in (
                 "https://acct.blob.core.windows.net/private/secret.json",
@@ -117,4 +123,4 @@ class TestFootprintArtifactRoutes(unittest.IsolatedAsyncioTestCase):
             )
             response = await function_app.GetModelArtifact(req)
             self.assertEqual(response.status_code, 206)
-            read.assert_awaited_once_with(self.url, 0, 4)
+            read.assert_awaited_once_with(self.url, 0, 4, self.config)
