@@ -42,6 +42,17 @@ aborts owned GET requests and map work, and a stale route cannot clear or retain
 the destination route's loading surface.
 
 
+### US-007: Non-Blocking Dashboard Jobs
+
+**As a** HASTE user, **I want** dashboard summaries to render independently of
+optional catalog and job details, **so that** background status checks do not
+delay navigation.
+
+**Acceptance criteria:** Dashboard content waits only for dashboard data,
+active jobs use one compact conditional request, and hidden, overlapping, or
+unmounted polls perform no continuing work.
+
+
 ## Agent Assignment Map
 
 | Story | Implementing Agent(s) | Validating Agent(s) |
@@ -50,3 +61,4 @@ the destination route's loading surface.
 | US-002 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` |
 | US-003 | `ui` | `ui-validation` |
 | US-005 | `ui` | `ui-validation` |
+| US-007 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` |
