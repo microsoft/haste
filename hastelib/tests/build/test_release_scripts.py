@@ -68,6 +68,17 @@ class WheelPublisherTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "requires an rcN"):
                 publish_hastegeo_wheel.validate_wheel(wheel, "1.0.26", "rc")
 
+    def test_validate_wheel_reports_missing_file_clearly(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing = Path(temp_dir) / "hastegeo-1.0.26rc2-py3-none-any.whl"
+
+            with self.assertRaisesRegex(
+                ValueError, "Expected wheel not found"
+            ):
+                publish_hastegeo_wheel.validate_wheel(
+                    missing, "1.0.26rc2", "rc"
+                )
+
     @patch.object(
         publish_hastegeo_wheel,
         "list_release_assets",
