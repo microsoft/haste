@@ -7,19 +7,26 @@ import os
 import shutil
 import time
 import uuid
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 from azure.storage.blob import BlobClient, BlobServiceClient
 from azure.storage.queue import QueueServiceClient
+from docker.models.containers import Container
 from docker.types import DeviceRequest
 from hastegeo.core.config import Config
+from hastegeo.core.utils.file_lock import file_lock
 from hastegeo.core.utils.logs import Logger
 
 import docker
 
 from .base import BaseRunner
+
+
+class LocalTaskCancelledError(RuntimeError):
+    pass
 
 
 def _normalize_azurite_url(url: Optional[str]) -> Optional[str]:
@@ -157,6 +164,82 @@ class LocalRunner(BaseRunner):
 
     def add_task(
         self,
+        job_id: str | None = None,
+        task_id: str | None = None,
+        *args: Any,
+        idempotent: bool = False,
+        **kwargs: Any,
+    ) -> tuple[str, str]:
+        if not idempotent:
+            return self._add_task(job_id, task_id, *args, **kwargs)
+        if not job_id or not task_id:
+            raise ValueError("Idempotent tasks require explicit IDs")
+        task_dir = self.work_dir / job_id / task_id
+        with file_lock(self.work_dir / ".locks" / f"{job_id}-{task_id}.lock"):
+            if (task_dir / "status.json").is_file():
+                with open(task_dir / "status.json") as source:
+                    status = json.load(source)
+                if status.get("state") != "cancelled":
+                    output_container = kwargs.get("output_container_url") or (
+                        self.config.artifact_storage_config.get("container")
+                        or self.config.storage_config.get("container")
+                        or "data"
+                    )
+                    self._upload_all_task_files(
+                        task_dir,
+                        output_container,
+                        kwargs.get("output_prefix"),
+                        strict=True,
+                    )
+                return job_id, task_id
+            return self._add_task(
+                job_id, task_id, *args, idempotent=True, **kwargs
+            )
+
+    def _task_container(
+        self,
+        job_id: str,
+        task_id: str,
+        *args: Any,
+        idempotent: bool = False,
+        **kwargs: Any,
+    ) -> Container:
+        if not idempotent:
+            return self.docker_client.containers.run(*args, **kwargs)
+        with self._task_start_lock(job_id, task_id):
+            status_file = self.work_dir / job_id / task_id / "status.json"
+            if status_file.is_file():
+                with status_file.open() as source:
+                    if json.load(source).get("state") == "cancelled":
+                        raise LocalTaskCancelledError(
+                            "Task cancelled before container start"
+                        )
+            name = f"haste-{job_id}-{task_id}"
+            try:
+                container = self.docker_client.containers.get(name)
+            except docker.errors.NotFound:
+                container = self.docker_client.containers.create(
+                    *args,
+                    name=name,
+                    **{
+                        key: value
+                        for key, value in kwargs.items()
+                        if key not in ("detach", "remove", "stdout", "stderr")
+                    },
+                )
+            if container.status == "created":
+                container.start()
+            return container
+
+    def _task_start_lock(
+        self, job_id: str, task_id: str
+    ) -> AbstractContextManager[None]:
+        return file_lock(
+            self.work_dir / ".locks" / f"{job_id}-{task_id}.start.lock"
+        )
+
+    def _add_task(
+        self,
         job_id=None,
         task_id=None,
         image_name=None,
@@ -168,6 +251,7 @@ class LocalRunner(BaseRunner):
         resource_files_for_upload=None,
         file_pattern=None,
         env_vars=None,
+        idempotent=False,
         **kwargs,
     ):
         """Add and execute a task locally using Docker."""
@@ -220,8 +304,16 @@ class LocalRunner(BaseRunner):
                 f"[PIPELINE-TRACE] Derived output_container_url={output_container_url}"
             )
 
-        # Download resource files if specified
-        if resource_files_for_upload:
+        recovering = False
+        if idempotent:
+            try:
+                self.docker_client.containers.get(f"haste-{job_id}-{task_id}")
+                recovering = True
+            except docker.errors.NotFound:
+                pass
+
+        # Do not replace a running/recovered task's already-staged inputs.
+        if resource_files_for_upload and not recovering:
             self.logger.info(
                 "[PIPELINE-TRACE] Starting resource file download..."
             )
@@ -624,7 +716,6 @@ class LocalRunner(BaseRunner):
                             ]
                             if device_ids:
                                 request_kwargs["device_ids"] = device_ids
-                                request_kwargs["count"] = len(device_ids)
                                 visible_devices = ",".join(device_ids)
                             else:
                                 request_kwargs["count"] = -1
@@ -633,9 +724,7 @@ class LocalRunner(BaseRunner):
 
                         device_requests = [DeviceRequest(**request_kwargs)]
                         if visible_devices:
-                            task_env.setdefault(
-                                "CUDA_VISIBLE_DEVICES", visible_devices
-                            )
+                            # Docker-selected GPUs are renumbered by CUDA.
                             task_env.setdefault(
                                 "NVIDIA_VISIBLE_DEVICES", visible_devices
                             )
@@ -649,8 +738,11 @@ class LocalRunner(BaseRunner):
                             f"Failed to configure GPU device request, continuing without GPU: {gpu_err}"
                         )
 
-                container = self.docker_client.containers.run(
+                container = self._task_container(
+                    job_id,
+                    task_id,
                     container_image,
+                    idempotent=idempotent,
                     command=container_command,
                     environment=task_env,
                     volumes=volumes,
@@ -706,7 +798,10 @@ class LocalRunner(BaseRunner):
                 exit_code = container_result["StatusCode"]
 
                 # Only auto-remove container if CLEANUP_CONTAINERS not disabled
-                if os.getenv("CLEANUP_CONTAINERS", "1") == "1":
+                if (
+                    not idempotent
+                    and os.getenv("CLEANUP_CONTAINERS", "1") == "1"
+                ):
                     try:
                         container.remove()
                     except Exception as e:
@@ -793,9 +888,11 @@ class LocalRunner(BaseRunner):
                             "config_present": (
                                 task_dir / "config.json"
                             ).exists(),
-                            "output_log_size": os.path.getsize(output_log_path)
-                            if output_log_path.exists()
-                            else -1,
+                            "output_log_size": (
+                                os.path.getsize(output_log_path)
+                                if output_log_path.exists()
+                                else -1
+                            ),
                             "command": container_command,
                         }
                         with open(
@@ -809,6 +906,11 @@ class LocalRunner(BaseRunner):
                 except Exception as e:
                     self.logger.error(f"Post-run validation failed: {e}")
 
+            except LocalTaskCancelledError:
+                self.logger.info(
+                    "Catalog task cancelled before container start"
+                )
+                return job_id, task_id
             except docker.errors.ContainerError as e:
                 end_time = time.time()
                 exit_code = e.exit_status
@@ -827,6 +929,8 @@ class LocalRunner(BaseRunner):
                     f"Container failed with exit code {exit_code}: {error_output}"
                 )
             except Exception as e:
+                if idempotent:
+                    raise
                 end_time = time.time()
                 exit_code = 1
                 state = "failed"
@@ -864,6 +968,7 @@ class LocalRunner(BaseRunner):
                     task_dir,
                     output_container_url,
                     output_prefix,
+                    strict=idempotent,
                 )
 
             return job_id, task_id
@@ -888,6 +993,8 @@ class LocalRunner(BaseRunner):
             raise
         except Exception as e:
             self.logger.error(f"Task execution failed: {e}")
+            if idempotent:
+                raise
             # Save error status
             status_data = {
                 "state": "failed",
@@ -907,6 +1014,30 @@ class LocalRunner(BaseRunner):
 
     def cleanup_task(self, job_id, task_id):
         """Clean up local task files."""
+        if task_id.startswith(("inf-catalog-", "zip-catalog-")):
+            with file_lock(
+                self.work_dir / ".locks" / f"{job_id}-{task_id}.lock"
+            ):
+                if os.getenv("CLEANUP_CONTAINERS", "1") == "1":
+                    try:
+                        self.docker_client.containers.get(
+                            f"haste-{job_id}-{task_id}"
+                        ).remove()
+                    except docker.errors.NotFound:
+                        pass
+                if os.getenv("PRESERVE_LOCAL_TASK_DIRS", "0") != "1":
+                    task_dir = self.work_dir / job_id / task_id
+                    if task_dir.exists():
+                        # Keep the native task receipt after releasing its
+                        # large files, so delayed submissions cannot rerun it.
+                        for child in task_dir.iterdir():
+                            if child.name == "status.json":
+                                continue
+                            if child.is_dir() and not child.is_symlink():
+                                shutil.rmtree(child)
+                            else:
+                                child.unlink()
+            return
         if os.getenv("PRESERVE_LOCAL_TASK_DIRS", "0") == "1":
             self.logger.info(
                 "Skipping task directory cleanup because PRESERVE_LOCAL_TASK_DIRS is set"
@@ -934,10 +1065,25 @@ class LocalRunner(BaseRunner):
                 )
 
     def cancel_task(self, job_id, task_id):
-        """Cancel a running task (for local runner, tasks are synchronous so this is a no-op)."""
+        """Stop catalog tasks; preserve the legacy status-only cancellation."""
         self.logger.info(
             f"Cancel requested for task {task_id} in job {job_id}"
         )
+        if task_id.startswith("inf-catalog-"):
+            with self._task_start_lock(job_id, task_id):
+                task_dir = self.work_dir / job_id / task_id
+                task_dir.mkdir(parents=True, exist_ok=True)
+                with (task_dir / "status.json").open("w") as target:
+                    json.dump({"state": "cancelled", "exit_code": -2}, target)
+                try:
+                    container = self.docker_client.containers.get(
+                        f"haste-{job_id}-{task_id}"
+                    )
+                    if container.status in ("running", "restarting"):
+                        container.stop(timeout=5)
+                except docker.errors.NotFound:
+                    pass
+            return True
         # Since local tasks run synchronously, we can't really cancel them
         # but we can mark them as cancelled
         task_dir = self.work_dir / job_id / task_id
@@ -1214,10 +1360,13 @@ class LocalRunner(BaseRunner):
         task_dir: Path,
         output_container_url: str,
         output_prefix: str,
+        strict: bool = False,
     ):
         """Upload ALL task files to blob storage for full traceability.
         This includes inputs, outputs, logs, config files, everything."""
         if not self.blob_client:
+            if strict:
+                raise RuntimeError("No blob client available for task upload")
             self.logger.warning(
                 "No blob client available for uploading task files"
             )
@@ -1260,6 +1409,8 @@ class LocalRunner(BaseRunner):
                             f"Uploaded {relative_path} to {container_name}/{blob_path}"
                         )
                     except Exception as e:
+                        if strict:
+                            raise
                         self.logger.error(
                             f"Failed to upload {relative_path}: {e}"
                         )
@@ -1269,6 +1420,8 @@ class LocalRunner(BaseRunner):
             )
 
         except Exception as e:
+            if strict:
+                raise
             self.logger.error(
                 f"Failed to upload task files to blob storage: {e}"
             )

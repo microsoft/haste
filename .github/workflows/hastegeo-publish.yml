@@ -227,6 +227,8 @@ jobs:
         include:
           - image_dir: training
             image_name: hastetraining
+          - image_dir: transformerinference
+            image_name: hastetransformerinference
           - image_dir: imageryprep
             image_name: hasteimageryprep
     steps:
@@ -287,11 +289,18 @@ jobs:
             echo "::error::Existing RC image is not locked: $IMAGE_REF"
             exit 1
           fi
+          DOCKERFILE="docker/${IMAGE_DIR}/Dockerfile"
+          TARGET_ARGS=()
+          if [[ "$IMAGE_DIR" == "transformerinference" ]]; then
+            DOCKERFILE="docker/training/Dockerfile"
+            TARGET_ARGS=(--target transformerinference-runtime)
+          fi
           az acr build \
             --subscription "$SUBSCRIPTION_ID" \
             --registry "$ACR_NAME" \
             --image "$IMAGE_REF" \
-            --file "docker/${IMAGE_DIR}/Dockerfile" \
+            --file "$DOCKERFILE" \
+            "${TARGET_ARGS[@]}" \
             .
           az acr repository update \
             --name "$ACR_NAME" \
@@ -323,6 +332,7 @@ jobs:
 
           - \`hastegeo_version\`: \`${VERSION}\`
           - \`training_image_tag\`: \`${VERSION}\`
+          - \`transformer_inference_image_tag\`: \`${VERSION}\`
           - \`imageprep_image_tag\`: \`${VERSION}\`
           - wheel: \`hastegeo-${VERSION}-py3-none-any.whl\`
           EOF

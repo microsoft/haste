@@ -1,0 +1,8 @@
+# Transformer inference: Python 3.10 / Linux x86_64 CUDA wheels.
+# PyTorch wheels come from the official PyTorch index.
+# The 2.10 loader fixes CVE-2026-24747; do not use the legacy training stack.
+torch @ https://download-r2.pytorch.org/whl/cu128/torch-2.10.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl#sha256=36368507b56eaa51acbd3c96ac8893bb9a86991ffcd0699fea3a1a74a2b8bdcb
+torchvision @ https://download-r2.pytorch.org/whl/cu128/torchvision-0.25.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl#sha256=43350ca113e9f224dedb90b0dbc31853fde4f322794cbe4a7589fccab5768f0c
+transformers==5.5.4
+huggingface-hub==1.30.0
+tokenizers==0.22.2

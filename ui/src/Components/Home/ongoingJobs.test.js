@@ -53,3 +53,22 @@ test("extractJobs excludes terminal and empty statuses", () => {
 
   assert.deepEqual(jobs, []);
 });
+
+test("pretrained runs with unset training status appear only as ongoing inference", () => {
+  for (const inferenceStatus of ["Queued", "InProgress"]) {
+    const project = projectWithModel({
+      modelId: "catalog-run", modelType: "pretrained",
+      name: "Catalog inference fixture", catalogModelName: "DINOv3",
+      pretrainedInference: { adapter: "dinov3_upernet" },
+      status: null, trainingJob: null, inferenceStatus,
+      inferenceCurrentStep: 1, inferenceTotalSteps: 7, inferenceProgressPct: 15,
+    });
+    const jobs = extractJobs("project-1", project);
+
+    assert.deepEqual(jobs.map((job) => job.kind), ["Inference"]);
+    assert.equal(jobs[0].indicator.status, inferenceStatus);
+    assert.equal(jobs[0].indicator.currentStep, 1);
+    assert.equal(jobs[0].indicator.totalSteps, 7);
+    assert.equal(jobs[0].indicator.progressPct, 15);
+  }
+});

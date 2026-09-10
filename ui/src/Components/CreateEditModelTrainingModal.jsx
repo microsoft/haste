@@ -9,11 +9,14 @@ import {
   DrawerHeader,
   DrawerHeaderTitle,
   DrawerBody,
+  MessageBar,
+  MessageBarBody,
+  Spinner,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../util/icons";
 import { useDrawerAnimation } from "../util/useDrawerAnimation";
 
-import { apiPut } from "../util/api";
+import { apiGet, apiPut } from "../util/api";
 import { validateEmptyOrInvalid, validateInt, validateFloat } from "../util/validation";
 import { useNavigate } from "react-router-dom";
 import { initGuidedTourState, setGuidedTourState } from "./GuidedTourHelper";
@@ -39,58 +42,54 @@ const CreateEditModelTrainingModal = ({
   autoLaunchGuidedTour,
   eventTypes,
 }) => {
-  CreateEditModelTrainingModal.propTypes = {
-    onClose: proptypes.func.isRequired,
-    projectId: proptypes.string.isRequired,
-    imageLayer: proptypes.object.isRequired,
-    modelToEdit: proptypes.object,
-    guidedTour: proptypes.string.isRequired,
-    autoLaunchGuidedTour: proptypes.bool.isRequired,
-    eventTypes: proptypes.array.isRequired,
-  };
-  
   const { setDialog, appParams, setIsLoading, initCurrentTour } =
     useContext(AppContext);
-  const [componentState, setComponentState] = useState(null);
+  const [componentState, setComponentState] = useState(() =>
+    createComponentDefaultState(modelToEdit, imageLayer, projectId)
+  );
+  const [catalogError, setCatalogError] = useState("");
+  const [catalogReload, setCatalogReload] = useState(0);
   const navigate = useNavigate();
   const { open, requestClose } = useDrawerAnimation(onClose);
 
   useEffect(() => {
+    let active = true;
     async function initComponent() {
-      // Show the app loading overlay while the model catalog loads, then
-      // reveal the panel (mirrors the create-project flow).
-      setIsLoading(true, "Loading pre-trained models...");
-      const baseState = createComponentDefaultState(
-        modelToEdit,
-        imageLayer,
-        projectId
-      );
-      const cataloguedModels = await fetchModelCatalog(imageLayer, eventTypes);
-      const baseModelId = resolveBaseModelId(
-        cataloguedModels,
-        baseState.initialWeightsUrl
-      );
-      setComponentState({
-        ...baseState,
-        baseModelId,
-        baseModelIdError: "",
-        cataloguedModels,
-        catalogLoading: false,
-      });
-      setIsLoading(false);
-
-      if (autoLaunchGuidedTour) {
-        initCurrentTour(guidedTour);
-      } else {
-        initGuidedTourState(guidedTour, appParams.guidedTourProperties);
+      try {
+        const cataloguedModels = await fetchModelCatalog(imageLayer, eventTypes, apiGet);
+        if (active) setComponentState((previous) => ({
+          ...previous,
+          baseModelId: resolveBaseModelId(cataloguedModels, previous.initialWeightsUrl),
+          baseModelIdError: "",
+          cataloguedModels,
+        }));
+      } catch (error) {
+        if (active) setCatalogError(`Unable to load training models. ${error.message || "Please try again."}`);
+      } finally {
+        if (active) setComponentState((previous) => ({ ...previous, catalogLoading: false }));
       }
     }
-
     initComponent();
+    return () => { active = false; };
+  }, [imageLayer, eventTypes, catalogReload]);
+
+  useEffect(() => {
+    if (autoLaunchGuidedTour) {
+      initCurrentTour(guidedTour);
+    } else {
+      initGuidedTourState(guidedTour, appParams.guidedTourProperties);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function retryCatalog() {
+    setCatalogError("");
+    setComponentState((previous) => ({ ...previous, catalogLoading: true }));
+    setCatalogReload((value) => value + 1);
+  }
+
   async function validateBeforeSubmit() {
+    if (componentState.catalogLoading || catalogError) return;
     const {
       name,
       learningRate,
@@ -153,7 +152,7 @@ const CreateEditModelTrainingModal = ({
         onClose();
         setDialog("Success", "Model successfully created", buttons);
       }
-    } catch (error) {
+    } catch {
       setDialog(
         "Error",
         "There was an error while training the Model. Please try again later.",
@@ -211,6 +210,15 @@ const CreateEditModelTrainingModal = ({
         </DrawerHeaderTitle>
       </DrawerHeader>
       <DrawerBody>
+        {componentState.catalogLoading && <Spinner size="small" label="Loading training models..." />}
+        {catalogError && (
+          <MessageBar intent="error">
+            <MessageBarBody>{catalogError} <Button onClick={retryCatalog}>Retry catalog</Button></MessageBarBody>
+          </MessageBar>
+        )}
+        {!componentState.catalogLoading && !catalogError && componentState.cataloguedModels.length === 0 && (
+          <MessageBar><MessageBarBody>No training models match this imagery and event type.</MessageBarBody></MessageBar>
+        )}
         <div className="row mb-2">
           <div className="col-12">
             <Field label="Name" validationMessage={componentState.nameError}>
@@ -338,6 +346,7 @@ const CreateEditModelTrainingModal = ({
               className="me-2"
               onClick={validateBeforeSubmit}
               id="createEditModelTrainingSubmit"
+              disabled={componentState.catalogLoading || !!catalogError}
             >
               Submit
             </Button>
@@ -347,6 +356,16 @@ const CreateEditModelTrainingModal = ({
       </DrawerBody>
     </OverlayDrawer>
   );
+};
+
+CreateEditModelTrainingModal.propTypes = {
+  onClose: proptypes.func.isRequired,
+  projectId: proptypes.string.isRequired,
+  imageLayer: proptypes.object.isRequired,
+  modelToEdit: proptypes.object,
+  guidedTour: proptypes.string.isRequired,
+  autoLaunchGuidedTour: proptypes.bool.isRequired,
+  eventTypes: proptypes.array.isRequired,
 };
 
 export default CreateEditModelTrainingModal;

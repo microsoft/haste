@@ -13,9 +13,13 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 import shapely.geometry
-from hastegeo.core.utils.aoi import save_polygon_as_geojson
+from hastegeo.core.utils.aoi import (
+    raster_extent_feature,
+    save_polygon_as_geojson,
+)
 
 
 class TestSavePolygonAsGeojson(unittest.TestCase):
@@ -60,6 +64,25 @@ class TestSavePolygonAsGeojson(unittest.TestCase):
                 fc["features"][0]["properties"]["source"],
                 "post_event_mosaic",
             )
+
+
+class TestRasterDisplayExtent(unittest.TestCase):
+    def test_extent_reads_only_raster_headers_without_scanning_a_mask(
+        self,
+    ) -> None:
+        source = Mock(crs="EPSG:4326", bounds=(-1.0, 0.0, 1.0, 2.0))
+        with patch("hastegeo.core.utils.aoi.rasterio.open") as open_raster:
+            open_raster.return_value.__enter__.return_value = source
+            feature = raster_extent_feature("fixture.tif")
+        self.assertEqual(feature["bbox"], [-1.0, 0.0, 1.0, 2.0])
+        self.assertEqual(feature["geometry"]["type"], "Polygon")
+        source.read.assert_not_called()
+
+    def test_missing_crs_is_not_a_success_shaped_empty_extent(self) -> None:
+        with patch("hastegeo.core.utils.aoi.rasterio.open") as open_raster:
+            open_raster.return_value.__enter__.return_value = Mock(crs=None)
+            with self.assertRaisesRegex(ValueError, "coordinate reference"):
+                raster_extent_feature("fixture.tif")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,16 @@
 
 This document contains third-party software notices and information for HASTE (High-speed Assessment and Satellite Tracking for Emergencies).
 
+## Contents
+
+- [Dependencies](#dependencies)
+- [Major Third-Party Components](#major-third-party-components)
+- [Optional DINOv3 Model Assets (Not Bundled)](#optional-dinov3-model-assets-not-bundled)
+- [Build / Development Tooling](#build--development-tooling-not-redistributed)
+- [Proprietary Components](#proprietary-components-non-oss-redistribution-permitted)
+- [Additional Notices](#additional-notices)
+- [License Compliance](#license-compliance)
+
 ## Dependencies
 
 This software includes third-party packages and libraries. The complete list of dependencies and their licenses can be found in the following files:
@@ -12,6 +22,7 @@ This software includes third-party packages and libraries. The complete list of 
 - `api/titilerfuncapi/requirements.txt`
 - `docker/imageryprep/requirements.txt`
 - `docker/training/env/env.yml`
+- `docker/transformerinference/requirements.txt`
 - `hastelib/pyproject.toml`
 - `env.yml`
 
@@ -55,6 +66,43 @@ This software includes third-party packages and libraries. The complete list of 
 - **License**: BSD License
 - **Source**: https://rasterio.readthedocs.io/
 - **Usage**: Geospatial raster data I/O
+
+### Transformers (DINOv3 Backbone Implementation)
+- **Package**: `transformers`
+- **License**: Apache License 2.0
+- **License Terms**: https://github.com/huggingface/transformers/blob/v5.5.4/LICENSE
+- **Source**: https://github.com/huggingface/transformers
+- **Usage**: Constructs the DINOv3 backbone from separately supplied configuration and weights in the optional transformer inference image.
+
+The DINOv3 implementation in Transformers carries the notice:
+Copyright 2025 Meta AI and The HuggingFace Inc. team. All rights reserved.
+
+### Building Damage Assessment Adapter Code
+- **License**: MIT License
+- **Copyright**: Copyright (c) Microsoft Corporation.
+- **Source**: https://github.com/microsoft/building-damage-assessment/tree/4d0d1925dc3a5a63566f047102f8dd474dbbcf80
+- **Usage**: DINOv3 UPerNet architecture and raster inference code adapted for HASTE.
+
+## Optional DINOv3 Model Assets (Not Bundled)
+
+HASTE includes integration code for separately supplied DINOv3 models, not a
+bundled DINOv3 model. Checkpoint weights and associated backbone configuration
+assets are obtained and imported separately into an operator's storage; they
+are not included in the HASTE source repository.
+
+The custom xView2 checkpoint used during local development was imported only
+to exercise this integration. Its packaging, hosting, and distribution are
+separate from HASTE, and deploying HASTE does not automatically install it.
+Local test assets under `localtmp/` are excluded from Git.
+
+DINOv3 model assets and derivatives remain subject to the separate
+[Meta DINOv3 License](https://github.com/facebookresearch/dinov3/blob/ffb4bb89c6558ca3244655c25a3955d01788b732/LICENSE.md),
+including its use restrictions and redistribution requirements. Anyone
+distributing those materials or derivatives separately must comply with that
+agreement, including providing a copy with the distributed materials.
+
+Neither HASTE's MIT license nor the Transformers implementation's Apache-2.0
+license relicenses separately supplied DINOv3 model assets.
 
 ## Build / Development Tooling (Not Redistributed)
 

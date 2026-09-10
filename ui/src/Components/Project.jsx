@@ -136,9 +136,12 @@ const Project = ({ setModalComponent }) => {
   const { dispatchToast } = useToastController("job-completion-toaster");
 
 
-  useEffect(() => {
+  const savedLayerPageSize = appParams.userSettings.itemsPerPageLayers;
+  const [previousLayerPageSize, setPreviousLayerPageSize] = useState(savedLayerPageSize);
+  if (previousLayerPageSize !== savedLayerPageSize) {
+    setPreviousLayerPageSize(savedLayerPageSize);
     setCurrentPage(1);
-  }, [appParams.userSettings.itemsPerPageLayers]);
+  }
 
   const DEFAULT_COMPONENT_STATE = {
     project: null,
@@ -148,7 +151,7 @@ const Project = ({ setModalComponent }) => {
 
   const projectCurrentTouruseRef = useRef(DEFAULT_COMPONENT_STATE.visibleModelId === "-1" ? "singleProjectGuide" : "singleProjectModelGuide");
 
-  const [moreInfoVisibleId, setMoreInfoVisibleId] = useState(null);
+  const [, setMoreInfoVisibleId] = useState(null);
   const [componentState, setComponentState] = useState(DEFAULT_COMPONENT_STATE);
   const navigate = useNavigate();
 
@@ -202,7 +205,7 @@ const Project = ({ setModalComponent }) => {
     if (showLoading) {
       setIsLoading(true);
     }
-    await apiGet("GetProjectDetails?projectId=" + projectId + "&includeModels=True")
+    const refreshed = await apiGet("GetProjectDetails?projectId=" + projectId + "&includeModels=True")
       .then((response) => {
         defaultProjectDetailsRef.current = response;
         const currentJobStates = collectProjectJobStates(response);
@@ -250,13 +253,18 @@ const Project = ({ setModalComponent }) => {
             filter: false,
           },
         }));
+        return true;
       })
       .catch((error) => {
         console.error("Error fetching projects:", error);
+        return false;
       });
     if (showLoading) {
       setIsLoading(false);
     }
+    // Existing callers may ignore this result. Catalog inference uses it to
+    // retry refreshing an accepted run without submitting another queue job.
+    return refreshed;
   }
 
   useEffect(() => {
@@ -307,8 +315,8 @@ const Project = ({ setModalComponent }) => {
   }
 
   // Filter + sort + group the image layers (memoised so pagination is cheap).
-  const imageLayers = componentState.project?.imageLayer || [];
   const processed = useMemo(() => {
+    const imageLayers = componentState.project?.imageLayer || [];
     const search = searchText.toLowerCase();
     const filtered = imageLayers.filter(
       (layer) =>
@@ -332,8 +340,7 @@ const Project = ({ setModalComponent }) => {
       return String(av ?? "").localeCompare(String(bv ?? "")) * dir;
     });
     return sorted;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageLayers, searchText, sort, effectiveGroupBy]);
+  }, [componentState.project?.imageLayer, searchText, sort, effectiveGroupBy]);
 
   if (!componentState.project) {
     return null;
@@ -758,4 +765,3 @@ const Project = ({ setModalComponent }) => {
 };
 
 export default Project;
-

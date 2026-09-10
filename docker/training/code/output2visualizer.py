@@ -53,6 +53,8 @@ def set_up_parser() -> argparse.ArgumentParser:
 
 
 def classify(x):
+    if x is None or not np.isfinite(x):
+        return None
     thresholds = [0.2, 0.4, 0.6, 0.8]
     for i, threshold in enumerate(thresholds):
         if x <= threshold:
@@ -62,21 +64,44 @@ def classify(x):
 
 def main(args):
     """Main function for the output2visualizer.py script."""
+    if os.path.realpath(args.output_fn) in {
+        os.path.realpath(args.predictions_fn),
+        os.path.realpath(args.merged_footprints_fn),
+    }:
+        raise ValueError("Output must not overwrite an input")
     if os.path.exists(args.output_fn) and not args.overwrite:
         raise FileExistsError(
             f"{args.output_fn} already exists. Use --overwrite to overwrite it."
         )
 
     with rasterio.open(args.predictions_fn, "r") as src:
-        predictions_crs = src.crs.to_string()
+        if src.crs is None:
+            raise ValueError("Predictions must have a CRS")
+        predictions_crs = src.crs
         height, width = src.shape
         transform = src.transform
-        profile = src.profile
+        # Class zero is invalid, not observed background (which is class 1).
+        observed = (src.read_masks(1) != 0) & np.isin(src.read(1), [1, 2, 3])
+        profile = {
+            "driver": "COG",
+            "width": width,
+            "height": height,
+            "transform": transform,
+            "crs": predictions_crs,
+            "dtype": "uint8",
+            "compress": "LZW",
+            "blocksize": 512,
+            "overview_resampling": "NEAREST",
+            "resampling": "NEAREST",
+        }
 
     with fiona.open(args.merged_footprints_fn, "r") as src:
-        footprints_crs = src.crs.to_string()
+        if not src.crs:
+            raise ValueError("Footprints must have a CRS")
+        footprints_crs = rasterio.crs.CRS.from_user_input(src.crs)
 
-    assert footprints_crs == predictions_crs
+    if footprints_crs != predictions_crs:
+        raise ValueError("Footprints and predictions must share a CRS")
 
     ############################################
     # Read predictions within building footprints
@@ -86,21 +111,30 @@ def main(args):
     with fiona.open(args.merged_footprints_fn) as f:
         for row in f:
             geom = row["geometry"]
-            val = classify(row["properties"]["damage_pct_0m"]) + 1
-            shape_vals.append((geom, val))
+            val = classify(row["properties"]["damage_pct_0m"])
+            unknown = row["properties"].get("unknown_pct")
+            if geom is not None and val is not None and unknown != 1:
+                shape_vals.append((geom, val + 1))
 
-    mask = rasterio.features.rasterize(
-        shape_vals,
-        out_shape=(height, width),
-        transform=transform,
-        fill=0,
+    mask = (
+        rasterio.features.rasterize(
+            shape_vals,
+            out_shape=(height, width),
+            transform=transform,
+            fill=0,
+            dtype="uint8",
+        )
+        if shape_vals
+        else np.zeros((height, width), dtype=np.uint8)
     )
+    mask[~observed] = 0
 
     colors = IDX_TO_COLOR[mask]
     colors = colors.transpose(2, 0, 1)
 
     profile["count"] = 4
-    profile["nodata"] = 0
+    # Alpha carries validity; RGB zero components are legitimate colours.
+    profile["nodata"] = None
     profile["BIGTIFF"] = "IF_SAFER"
 
     with rasterio.open(args.output_fn, "w", **profile) as f:

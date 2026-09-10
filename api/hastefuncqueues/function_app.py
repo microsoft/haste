@@ -19,6 +19,9 @@ from hastegeo.core.models.publishing import PublishQueueMessage
 from hastegeo.core.models.stats import ProjectsSummary, StatsRequest
 from hastegeo.core.models.training import ExperimentConfig
 from hastegeo.core.processors.artifacts import ArtifactProcessor
+from hastegeo.core.processors.catalog_inference import (
+    CatalogInferenceProcessor,
+)
 from hastegeo.core.processors.embedding import EmbeddingPostprocessor
 from hastegeo.core.processors.imagery import ImageryPostProcessor
 from hastegeo.core.processors.inference import (
@@ -666,8 +669,19 @@ async def GetRunInferenceQueueMessage(msg: func.QueueMessage) -> None:
     logger.info(
         f'GetRunInferenceQueueTrigger function processed a message: {msg.get_body().decode("utf-8")}'
     )
+    payload = json.loads(msg.get_body().decode("utf-8"))
+    if payload.get("inferenceRequestId"):
+        # Catalog processors own their persisted state. Never pass a sparse
+        # catalog message through the legacy Model-shaped failure fallback.
+        await asyncio.to_thread(
+            CatalogInferenceProcessor(config).process,
+            payload["projectId"],
+            payload["modelId"],
+            payload["inferenceRequestId"],
+        )
+        return
     try:
-        model_data = Model(**json.loads(msg.get_body().decode("utf-8")))
+        model_data = Model(**payload)
         try:
             # This check is to ensure deleted model does not get recreated here
             existing_model = await asyncio.to_thread(
@@ -685,6 +699,12 @@ async def GetRunInferenceQueueMessage(msg: func.QueueMessage) -> None:
         else:
             logger.info(
                 f"Model {model_data.modelId} not found, likely deleted, skipping processing."
+            )
+            return
+
+        if existing_model.modelType == "pretrained":
+            logger.warning(
+                "Ignoring catalog inference message without request identity"
             )
             return
 
@@ -1013,7 +1033,9 @@ async def GetPublishDatasetQueueMessage(msg: func.QueueMessage) -> None:
         message = PublishQueueMessage(
             **json.loads(msg.get_body().decode("utf-8"))
         )
-        await asyncio.to_thread(PublishingProcessor(config=config).run_step, message)
+        await asyncio.to_thread(
+            PublishingProcessor(config=config).run_step, message
+        )
     except Exception as error:
         logger.error(
             "PublishDatasetQueueTrigger failed with %s",

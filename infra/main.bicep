@@ -78,6 +78,9 @@ param sharedBatchSubnetId string = ''
 @description('Training container image (tag included).')
 param trainingImage string = 'hastetraining:1.4.1'
 
+@description('Transformer inference image including tag. Empty disables transformer model selection.')
+param transformerInferenceImage string = ''
+
 @description('Imageryprep container image (tag included).')
 param imageryprepImage string = 'hasteimageryprep:1.4.1'
 
@@ -320,6 +323,7 @@ module functions 'modules/functions.bicep' = {
     batchPoolName: batchPoolMode == 'Create' ? createdBatchPoolName : existingBatchPoolId
     acrLoginServer: wireAcr ? '${sharedAcrName}.azurecr.io' : ''
     trainingImage: trainingImage
+    transformerInferenceImage: transformerInferenceImage
     imageryprepImage: imageryprepImage
     staticWebAppName: staticWebAppName
     staticAppDomain: frontend.outputs.staticWebAppHostName
@@ -433,6 +437,7 @@ module batchPool 'modules/batchPool.bicep' = if (batchPoolMode == 'Create') {
     )
     acrName: sharedAcrName
     trainingImage: trainingImage
+    transformerInferenceImage: transformerInferenceImage
     imageryprepImage: imageryprepImage
   }
   dependsOn: [

@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from .pretrained_inference import CatalogInferenceSpec
 
 
 class ModelSource(str, Enum):
@@ -73,7 +75,7 @@ class ExperimentConfig(BaseModel):
 
 
 class CatalogModel(BaseModel):
-    baseModelName: str
+    baseModelName: str = Field(min_length=1, max_length=100)
     description: Optional[str] = None
     modelId: Optional[str] = None
     projectId: Optional[str] = None
@@ -86,3 +88,17 @@ class CatalogModel(BaseModel):
     additionalInfo: Optional[dict] = None
     source: ModelSource = Field(default=ModelSource.HASTE)
     usedByModels: list[str] = Field(default_factory=list)
+    capabilities: list[Literal["training", "inference"]] | None = None
+    inferenceSpec: CatalogInferenceSpec | None = None
+
+    @model_validator(mode="after")
+    def validate_catalog_contract(self) -> "CatalogModel":
+        if not self.baseModelName.strip():
+            raise ValueError("Catalog names must not be blank")
+        if (
+            self.inferenceSpec is not None
+            and self.inferenceSpec.adapter == "dinov3_upernet"
+            and self.capabilities != ["inference"]
+        ):
+            raise ValueError("DINOv3 catalog models support inference only")
+        return self

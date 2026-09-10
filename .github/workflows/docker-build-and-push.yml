@@ -7,13 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       image_dir:
-        description: 'Image directory to build (training, imageryprep, or all)'
+        description: 'Image to build (training, transformerinference, imageryprep, or all)'
         required: true
         default: 'all'
         type: choice
         options:
         - all
         - training
+        - transformerinference
         - imageryprep
       image_tag:
         description: 'Docker image tag'
@@ -46,6 +47,7 @@ jobs:
           filters: |
             training:
               - 'docker/training/**'
+              - 'docker/transformerinference/**'
             imageryprep:
               - 'docker/imageryprep/**'
             hastelib:
@@ -62,6 +64,8 @@ jobs:
       matrix:
         include:
           - image_dir: training
+            changed: ${{ needs.detect-changes.outputs.training }}
+          - image_dir: transformerinference
             changed: ${{ needs.detect-changes.outputs.training }}
           - image_dir: imageryprep
             changed: ${{ needs.detect-changes.outputs.imageryprep }}
@@ -99,7 +103,11 @@ jobs:
         env:
           IMAGE_DIR: ${{ matrix.image_dir }}
         run: |
-          docker build -f "docker/${IMAGE_DIR}/Dockerfile" -t "haste${IMAGE_DIR}:ci-build" .
+          if [[ "$IMAGE_DIR" == "transformerinference" ]]; then
+            docker build -f docker/training/Dockerfile --target transformerinference-runtime -t hastetransformerinference:ci-build .
+          else
+            docker build -f "docker/${IMAGE_DIR}/Dockerfile" -t "haste${IMAGE_DIR}:ci-build" .
+          fi
 
       - name: Azure Login
         if: steps.resolve.outputs.run == 'true' && github.actor != 'dependabot[bot]'
