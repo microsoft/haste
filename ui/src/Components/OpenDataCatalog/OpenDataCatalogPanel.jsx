@@ -40,6 +40,7 @@ import {
   bboxContains,
 } from "./openDataCatalog";
 import { isAzureMapsPlaceholder } from "../../util/azureMapsAuth";
+import { loadAzureMaps } from "../../util/azureMapsLoader";
 import OpenDataCatalogMap from "./OpenDataCatalogMap";
 import SceneListItem from "./SceneListItem";
 
@@ -197,6 +198,9 @@ const OpenDataCatalogPanel = ({
   const [errors, setErrors] = useState([]);
   const [loadError, setLoadError] = useState("");
   const [addError, setAddError] = useState("");
+  const [mapsReady, setMapsReady] = useState(false);
+  const [mapsError, setMapsError] = useState(false);
+  const [mapsAttempt, setMapsAttempt] = useState(0);
 
   const [sourceFilter, setSourceFilter] = useState("all");
   const [phaseFilter, setPhaseFilter] = useState("all");
@@ -209,8 +213,24 @@ const OpenDataCatalogPanel = ({
   // selection (it's a property of the layer, not a scene).
   const [clipMode, setClipMode] = useState(false);
 
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    let active = true;
+    loadAzureMaps()
+      .then(() => {
+        if (active) setMapsReady(true);
+      })
+      .catch(() => {
+        if (active) setMapsError(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isOpen, mapsAttempt]);
+
   // Leaving draw mode when the previewed scene changes (the AOI itself stays).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setClipMode(false);
   }, [selectedScene]);
 
@@ -234,6 +254,7 @@ const OpenDataCatalogPanel = ({
   useEffect(() => {
     if (!isOpen || events.length > 0) return undefined;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDiscovering(true);
     setDiscoverErrors([]);
     discoverEvents()
@@ -259,6 +280,7 @@ const OpenDataCatalogPanel = ({
   useEffect(() => {
     if (!isOpen || !event) return undefined;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setScenes([]);
     setErrors([]);
@@ -511,7 +533,7 @@ const OpenDataCatalogPanel = ({
 
           {/* Map / preview */}
           <div className={styles.mapRegion}>
-            {isOpen && (
+            {isOpen && mapsReady && (
               <OpenDataCatalogMap
                 scenes={filtered}
                 activeId={activeId}
@@ -522,6 +544,26 @@ const OpenDataCatalogPanel = ({
                 onSelect={setSelectedScene}
                 onClipDrawn={handleClipDrawn}
               />
+            )}
+            {isOpen && !mapsReady && (
+              <div className={styles.loadingState} role="status">
+                {mapsError ? (
+                  <div className="d-flex flex-column align-items-center gap-3">
+                    <span>Map assets could not be loaded.</span>
+                    <Button
+                      appearance="primary"
+                      onClick={() => {
+                        setMapsError(false);
+                        setMapsAttempt((value) => value + 1);
+                      }}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                ) : (
+                  <Spinner label="Loading map" />
+                )}
+              </div>
             )}
 
             {/* Server-side clip AOI toolbar */}

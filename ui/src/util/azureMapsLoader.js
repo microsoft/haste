@@ -11,7 +11,10 @@ const DRAWING_JS =
   "https://atlas.microsoft.com/sdk/javascript/drawing/1/atlas-drawing.min.js";
 const SWIPE_JS = "/assets/js/azure-maps-swipe-map.min.js";
 
-let loadPromise = null;
+let controlPromise = null;
+let drawingPromise = null;
+let swipePromise = null;
+const capabilityPromises = new Map();
 
 function loadElement(documentRef, selector, createElement) {
   const existing = documentRef.querySelector(selector);
@@ -67,23 +70,80 @@ function loadScript(documentRef, src) {
   );
 }
 
-export function loadAzureMaps(documentRef = document) {
-  if (loadPromise) return loadPromise;
+function loadMapControl(documentRef, stylesheet = null) {
+  if (controlPromise) return controlPromise;
+  controlPromise = Promise.all([
+    stylesheet || loadStylesheet(documentRef, MAP_CONTROL_CSS),
+    loadScript(documentRef, MAP_CONTROL_JS),
+  ]).catch((error) => {
+    controlPromise = null;
+    throw error;
+  });
+  return controlPromise;
+}
 
-  loadPromise = Promise.all([
-    loadStylesheet(documentRef, MAP_CONTROL_CSS),
-    loadStylesheet(documentRef, DRAWING_CSS),
+function loadDrawing(documentRef, stylesheet) {
+  if (drawingPromise) return drawingPromise;
+  drawingPromise = Promise.all([
+    loadMapControl(documentRef),
+    stylesheet || loadStylesheet(documentRef, DRAWING_CSS),
   ])
-    .then(() => loadScript(documentRef, MAP_CONTROL_JS))
     .then(() => loadScript(documentRef, DRAWING_JS))
-    .then(() => loadScript(documentRef, SWIPE_JS))
     .catch((error) => {
-      loadPromise = null;
+      drawingPromise = null;
       throw error;
     });
-  return loadPromise;
+  return drawingPromise;
+}
+
+function loadSwipe(documentRef) {
+  if (swipePromise) return swipePromise;
+  swipePromise = loadMapControl(documentRef)
+    .then(() => loadScript(documentRef, SWIPE_JS))
+    .catch((error) => {
+      swipePromise = null;
+      throw error;
+    });
+  return swipePromise;
+}
+
+export function loadAzureMaps(
+  documentRef = document,
+  { drawing = true, swipe = true } = {}
+) {
+  const capabilityKey = `${drawing}:${swipe}`;
+  const existing = capabilityPromises.get(capabilityKey);
+  if (existing) return existing;
+
+  let drawingStylesheet = null;
+  if (!controlPromise) {
+    const controlStylesheet = loadStylesheet(documentRef, MAP_CONTROL_CSS);
+    if (drawing) {
+      drawingStylesheet = loadStylesheet(documentRef, DRAWING_CSS);
+    }
+    loadMapControl(documentRef, controlStylesheet);
+  }
+
+  const loading = Promise.all([
+    loadMapControl(documentRef),
+    ...(drawing ? [loadDrawing(documentRef, drawingStylesheet)] : []),
+    ...(swipe ? [loadSwipe(documentRef)] : []),
+  ]).catch((error) => {
+    capabilityPromises.delete(capabilityKey);
+    throw error;
+  });
+  capabilityPromises.set(capabilityKey, loading);
+  return loading;
+}
+
+export function loadMapRoute(importRoute, loadMaps = loadAzureMaps) {
+  return () =>
+    Promise.all([loadMaps(), importRoute()]).then(([, route]) => route);
 }
 
 export function resetAzureMapsLoaderForTests() {
-  loadPromise = null;
+  controlPromise = null;
+  drawingPromise = null;
+  swipePromise = null;
+  capabilityPromises.clear();
 }
