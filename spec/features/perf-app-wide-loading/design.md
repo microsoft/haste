@@ -6,6 +6,7 @@
 - [Cancellation and Loading Ownership](#cancellation-and-loading-ownership)
 - [Session Bootstrap](#session-bootstrap)
 - [Security](#security)
+- [Published Datasets](#published-datasets)
 
 ## Route Loading
 
@@ -78,3 +79,15 @@ management plane.
 - Caches store data representations, not authorization decisions.
 - Both additive read routes require an active ACL-backed application role.
 - Development fallback remains restricted to `DEVELOPMENT_MODE`.
+
+
+## Published Datasets
+
+`GetPublishedDatasets` uses the existing bounded repository read behind a
+process-local TTL/single-flight cache keyed by the normalized authenticated
+query. The route emits an ETag and supports `If-None-Match`. Cache TTL is at
+most five seconds; mutations invalidate the cache.
+
+The UI stores ETags by query, sends conditional requests, and polls only when a
+visible page contains active work and no request is in flight. Polling never
+overlaps and preserves the current query.
