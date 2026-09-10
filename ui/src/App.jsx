@@ -32,6 +32,8 @@ import {
   RouteLoading,
 } from "./Components/MapRoute";
 import { getRouteLoadingLabel } from "./Components/routeLoading";
+import WorkspaceLoader from "./Components/WorkspaceLoader";
+import { LABELING_WORKSPACE_STEPS } from "./Components/LabelingTool/labelingToolLoading";
 
 function App() {
   const { appParams, setDialog, setAppParams } =
@@ -48,6 +50,7 @@ function App() {
   });
 
   const isMobileNav = Number(appParams.bootstrapBreakpoint) <= 2;
+  const isStandardLabeling = location.pathname.startsWith("/labeling-tool/");
 
   const toggleNav = () => {
     setNavCollapsed((prev) => {
@@ -187,9 +190,20 @@ function App() {
             </>
           ) : (
             <div className="app-startup-loading">
-              <RouteLoading
-                label={getRouteLoadingLabel(location.pathname)}
-              />
+              {isStandardLabeling ? (
+                <WorkspaceLoader
+                  eyebrow="Standard labeling tool"
+                  title="Preparing your workspace"
+                  steps={LABELING_WORKSPACE_STEPS}
+                  loadState={{ step: 0, loaded: null, total: null }}
+                  error=""
+                  errorTitle="Could not load the labeling workspace"
+                />
+              ) : (
+                <RouteLoading
+                  label={getRouteLoadingLabel(location.pathname)}
+                />
+              )}
             </div>
           )
         )}

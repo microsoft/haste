@@ -42,6 +42,17 @@ aborts owned GET requests and map work, and a stale route cannot clear or retain
 the destination route's loading surface.
 
 
+### US-006: Fast Standard Labeling Workspace
+
+**As a** disaster analyst, **I want** the standard Labeling Tool to prepare data
+and maps together, **so that** I can begin labeling without a blank map wait.
+
+**Acceptance criteria:** One workspace API returns only the target records,
+Maps and data load concurrently, progress is staged, the map begins at the AOI,
+and initialization is not complete until the map and drawing controls are
+ready.
+
+
 ### US-007: Non-Blocking Dashboard Jobs
 
 **As a** HASTE user, **I want** dashboard summaries to render independently of
@@ -61,4 +72,5 @@ unmounted polls perform no continuing work.
 | US-002 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` |
 | US-003 | `ui` | `ui-validation` |
 | US-005 | `ui` | `ui-validation` |
+| US-006 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` |
 | US-007 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` |

@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 import { apiPut } from "../../util/api";
 import settings from "../../assets/json/settings.json";
-import { getAzureMapsAuthOptions } from "../../util/azureMapsAuth";
+import { resolveImageryTileUrl } from "./labelingToolLoading";
 
 
 export function createShape(drawingManager, selectedPrimaryClass, setDrawingCount) {
@@ -81,25 +81,31 @@ export const layerTypeOptions = [
 ];
 
 
-export function loadImagery(tileUrl, map, imageryRef, customId, isVisible) {
-
-  var tempTileUrlPath = tileUrl;
-  if (tempTileUrlPath === "") {
-    tempTileUrlPath = `https://atlas.microsoft.com/map/tile?api-version=2.1&tilesetId=microsoft.imagery&zoom={z}&x={x}&y={y}`;
+export function loadImagery(
+  tileUrl,
+  map,
+  imageryRef,
+  customId,
+  isVisible,
+  { allowFallback = true, required = false } = {}
+) {
+  const tempTileUrlPath = resolveImageryTileUrl(tileUrl, {
+    allowFallback,
+    required,
+  });
+  if (!tempTileUrlPath) {
+    imageryRef.current = null;
+    return null;
   }
 
-
-  imageryRef.current = new window.atlas.layer.TileLayer({
+  const layer = new window.atlas.layer.TileLayer({
     tileUrl: tempTileUrlPath,
   });
-
-  try {
-    imageryRef.current.setOptions({ visible: isVisible });
-    imageryRef.current.customId = customId;
-    map.layers.add(imageryRef.current);
-  } catch (error) {
-    console.error("Error loading imagery layer:", error);
-  }
+  layer.setOptions({ visible: isVisible });
+  layer.customId = customId;
+  map.layers.add(layer);
+  imageryRef.current = layer;
+  return layer;
 }
 
 export function centrateMap(bbox, map, duration = 2500) {
@@ -155,7 +161,7 @@ export async function saveLabels(drawingManager, labelingToolDataRef, setIsLoadi
     setHasUnsavedChanges(false);
     setIsLoading(false);
     return (true);
-  } catch (error) {
+  } catch {
     setIsLoading(false);
     return (false);
   }

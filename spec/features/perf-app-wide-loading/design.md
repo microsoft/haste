@@ -8,6 +8,7 @@
 - [Security](#security)
 - [Published Datasets](#published-datasets)
 - [Active Jobs](#active-jobs)
+- [Labeling Workspace](#labeling-workspace)
 
 ## Route Loading
 
@@ -108,3 +109,20 @@ The Dashboard makes one conditional request instead of one
 `GetProjectDetails` request per project. Polls run only while visible, never
 overlap, and abort on route unmount. Dashboard content does not wait for the
 optional model catalog or active-jobs widget.
+
+
+## Labeling Workspace
+
+### `GET /api/GetLabelingWorkspace`
+
+The route requires `projectId` and `imageLayerId`. It returns the one label
+project, target image layer, project event types, and primary classes required
+by the standard Labeling Tool. Project and image-layer reads overlap. The label
+project is loaded directly through the image layer's existing `labelProjectId`;
+legacy layers without a usable pointer fall back to one partition scan.
+
+The UI starts this request at the same time as the route-specific Azure Maps
+control and drawing assets. It displays one route-owned staged workspace loader
+until data, map readiness, drawing controls, and the first stable map frame are
+ready. The map starts at the workspace bounds without an animated camera flight
+and is disposed if navigation interrupts initialization.
