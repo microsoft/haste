@@ -1,14 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import { useEffect, useRef, useState, useContext } from "react";
-import { apiGet } from "../../util/api";
 import {
   loadImagery,
   parsePrimaryClasses,
   updateDrawingLayerStyles,
   createShape,
   loadStudyArea,
-  centrateMap,
 } from "./LabelingToolHelper.js";
 import { getAzureMapsAuthOptions, isAzureMapsPlaceholder } from "../../util/azureMapsAuth";
 import { useParams } from "react-router-dom";
@@ -19,13 +17,22 @@ import PropType from "prop-types";
 import { AppContext } from "../../AppContext.jsx";
 import { useDrawingUndoRedo } from "./UndoRedo.jsx";
 import { splitShape } from "./SplitShape.jsx";
+import { waitForMapReady } from "../InteractiveLabeler/interactiveLabelerLoading.js";
+import {
+  getWorkspaceCameraOptions,
+  getWorkspaceBounds,
+  waitForMapIdle,
+} from "./labelingToolLoading.js";
 import "../../assets/css/drawingToolbar.css";
 
-const LabelingTool = ({ setModalComponent }) => {
-  LabelingTool.propTypes = {
-    setModalComponent: PropType.func.isRequired,
-  };
-
+const LabelingTool = ({
+  setModalComponent,
+  workspace,
+  signal,
+  onLoadStep,
+  onReady,
+  onError,
+}) => {
   const { projectId, imageLayerId } = useParams();
 
   const {
@@ -36,6 +43,7 @@ const LabelingTool = ({ setModalComponent }) => {
     appParams,
   } = useContext(AppContext);
 
+  const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const [drawingManager, setDrawingManager] = useState(null);
   const [selectedPrimaryClass, setSelectedPrimaryClass] = useState(0);
@@ -53,12 +61,23 @@ const LabelingTool = ({ setModalComponent }) => {
   const { undo, redo } = useDrawingUndoRedo(drawingManager, mapRef);
 
   useEffect(() => {
+    let active = true;
     const initializeMap = async () => {
-      if (window.atlas) {
-        setIsLoading(true);
-        await createMap();
+      try {
+        signal?.throwIfAborted();
+        if (!window.atlas) throw new Error("Azure Maps is unavailable.");
+        // eslint-disable-next-line react-hooks/immutability
+        await createMap(signal);
+        if (!active) return;
         setIsMapReady(true);
-        setIsLoading(false);
+        onReady();
+      } catch (error) {
+        if (!active || error.name === "AbortError") return;
+        mapRef.current?.dispose();
+        mapRef.current = null;
+        setDrawingManager(null);
+        setIsMapReady(false);
+        onError("The labeling map could not be prepared.");
       }
     };
 
@@ -66,6 +85,11 @@ const LabelingTool = ({ setModalComponent }) => {
 
     //On component dismount
     return () => {
+      active = false;
+      if (mapRef.current) {
+        mapRef.current.dispose();
+        mapRef.current = null;
+      }
       initCurrentTour(null);
       setAppHeaderRightButtons([]);
       setModalComponent(null);
@@ -74,14 +98,14 @@ const LabelingTool = ({ setModalComponent }) => {
   }, []);
 
   useEffect(() => {
-    if (!mapRef || !drawingManager) return;
+    if (!mapRef.current || !drawingManager) return;
 
 
     setDrawingCount(drawingManager.source.shapes.length);
     updateDrawingLayerStyles(drawingManager, primaryClassesRef.current);
 
     // Handler: drawingchanged
-    const handleDrawingChanged = (e) => {
+    const handleDrawingChanged = () => {
       const mode = drawingManager.getOptions().mode;
       if (mode === "draw-polygon") {
         createShape(drawingManager, selectedPrimaryClass, setDrawingCount);
@@ -90,7 +114,7 @@ const LabelingTool = ({ setModalComponent }) => {
     };
 
     // Handler: drawingmodechanged
-    const handleDrawingModeChanged = (e) => {
+    const handleDrawingModeChanged = () => {
       setTimeout(() => {
         const mode = drawingManager.getOptions().mode;
         if (mode !== "edit-geometry") {
@@ -111,7 +135,7 @@ const LabelingTool = ({ setModalComponent }) => {
     };
 
     // Handler: drawingerased
-    const handleDrawingErased = (e) => {
+    const handleDrawingErased = () => {
       setDrawingCount(drawingManager.source.shapes.length);
       setHasUnsavedChanges(true);
       setTimeout(() => {
@@ -134,23 +158,24 @@ const LabelingTool = ({ setModalComponent }) => {
     };
 
     // Add all the handlers
-    mapRef.current.events.add("drawingchanged", drawingManager, handleDrawingChanged);
-    mapRef.current.events.add("drawingmodechanged", drawingManager, handleDrawingModeChanged);
-    mapRef.current.events.add("drawingstarted", drawingManager, handleDrawingStarted);
-    mapRef.current.events.add("drawingerased", drawingManager, handleDrawingErased);
-    mapRef.current.events.add("drawingcomplete", drawingManager, handleDrawingComplete);
+    const map = mapRef.current;
+    map.events.add("drawingchanged", drawingManager, handleDrawingChanged);
+    map.events.add("drawingmodechanged", drawingManager, handleDrawingModeChanged);
+    map.events.add("drawingstarted", drawingManager, handleDrawingStarted);
+    map.events.add("drawingerased", drawingManager, handleDrawingErased);
+    map.events.add("drawingcomplete", drawingManager, handleDrawingComplete);
 
     // Handler cleanup
     return () => {
       initGuidedTourState("labelingToolGuide", appParams.guidedTourProperties);
-      if (!mapRef.current) return;
-      mapRef.current.events.remove("drawingchanged", drawingManager, handleDrawingChanged);
-      mapRef.current.events.remove("drawingmodechanged", drawingManager, handleDrawingModeChanged);
-      mapRef.current.events.remove("drawingstarted", drawingManager, handleDrawingStarted);
-      mapRef.current.events.remove("drawingerased", drawingManager, handleDrawingErased);
-      mapRef.current.events.remove("drawingcomplete", drawingManager, handleDrawingComplete);
+      map.events.remove("drawingchanged", drawingManager, handleDrawingChanged);
+      map.events.remove("drawingmodechanged", drawingManager, handleDrawingModeChanged);
+      map.events.remove("drawingstarted", drawingManager, handleDrawingStarted);
+      map.events.remove("drawingerased", drawingManager, handleDrawingErased);
+      map.events.remove("drawingcomplete", drawingManager, handleDrawingComplete);
     };
   }, [
+    appParams.guidedTourProperties,
     mapRef,
     drawingManager,
     selectedPrimaryClass
@@ -173,87 +198,87 @@ const LabelingTool = ({ setModalComponent }) => {
   }, [drawingManager]);
 
 
-  async function createMap() {
-    labelingToolDataRef.current = await apiGet(
-      "GetLayerLabelingToolData?projectId=" +
-      projectId +
-      "&imageLayerId=" +
-      imageLayerId
-    );
-    const projectDetails = await apiGet(
-      "GetProjectDetails?projectId=" + projectId
-    );
-    setEventTypes(projectDetails.eventTypes || []);
-    setImageLayer(
-      projectDetails.imageLayer?.find(
-        (layer) => layer.imageLayerId === imageLayerId
-      ) || null
-    );
-
-    const map = new window.atlas.Map(mapRef.current, {
-      center: [0, 0],
+  async function createMap(abortSignal) {
+    const labelProject = workspace.labelProject;
+    labelingToolDataRef.current = labelProject;
+    setEventTypes(workspace.eventTypes || []);
+    setImageLayer(workspace.imageLayer || null);
+    const workspaceBounds = getWorkspaceBounds(window.atlas, labelProject);
+    const map = new window.atlas.Map(mapContainerRef.current, {
       preserveDrawingBuffer: true,
-      zoom: 3,
       maxPitch: 0,
       pitch: 0,
       style: isAzureMapsPlaceholder ? "blank" : "grayscale_light",
       language: "en-US",
       authOptions: getAzureMapsAuthOptions(),
+      ...(workspaceBounds
+        ? { bounds: workspaceBounds, padding: 24 }
+        : { center: [0, 0], zoom: 3 }),
     });
+    mapRef.current = map;
+    let idlePromise = null;
+    const idleController = new AbortController();
+    const abortIdle = () => idleController.abort();
+    abortSignal.addEventListener("abort", abortIdle, { once: true });
 
-    map.events.add("ready", async function () {
-      // Avoid map rotation
-      map.setUserInteraction({
-        dragRotateInteraction: false,
-        scrollZoomInteraction: true,
-        pinchZoomInteraction: true,
-        pinchRotateInteraction: false,
+    try {
+      await waitForMapReady(map, {
+        signal: abortSignal,
+        onReady: () => {
+        idlePromise = waitForMapIdle(map, {
+          signal: idleController.signal,
+        });
+        map.setUserInteraction({
+          dragRotateInteraction: false,
+          scrollZoomInteraction: true,
+          pinchZoomInteraction: true,
+          pinchRotateInteraction: false,
+        });
+        map.controls.add(new window.atlas.control.ZoomControl(), {
+          position: "bottom-left",
+        });
+
+        loadImagery(
+          labelProject.imagery?.preEventTileUrl || "",
+          map,
+          preImageryRef,
+          "preEventImageryLayer",
+          false,
+          { allowFallback: !isAzureMapsPlaceholder }
+        );
+        loadImagery(
+          labelProject.imagery?.postEventTileUrl || "",
+          map,
+          postImageryRef,
+          "postEventImageryLayer",
+          true,
+          {
+            allowFallback: !isAzureMapsPlaceholder,
+            required: true,
+          }
+        );
+
+        const drawingManagerTemp =
+          new window.atlas.drawing.DrawingManager(map, {});
+        const primaryClasses = workspace.primaryClasses || [];
+        drawingManagerTemp.source.add(labelProject.labels || []);
+        primaryClassesRef.current = parsePrimaryClasses(primaryClasses);
+        setPrimaryClasses(primaryClassesRef.current);
+        setSelectedPrimaryClass(primaryClassesRef.current[0]?.key || 0);
+        loadStudyArea(map, labelProject);
+        setDrawingManager(drawingManagerTemp);
+
+        map.setCamera(getWorkspaceCameraOptions(workspaceBounds));
+
+        },
       });
-
-      map.controls.add(new window.atlas.control.ZoomControl(), {
-        position: "bottom-left",
-      });
-
-      map.setCamera({
-        bearing: 0,
-      });
-
-      loadImagery(
-        labelingToolDataRef.current.imagery.preEventTileUrl,
-        map,
-        preImageryRef,
-        "preEventImageryLayer",
-        false
+      onLoadStep(2);
+      if (!idlePromise) throw new Error("Azure Maps did not become ready.");
+      await idlePromise;
+      initGuidedTourState(
+        "labelingToolGuide",
+        appParams.guidedTourProperties
       );
-
-      loadImagery(
-        labelingToolDataRef.current.imagery.postEventTileUrl,
-        map,
-        postImageryRef,
-        "postEventImageryLayer",
-        true
-      );
-
-      var drawingManagerTemp = new window.atlas.drawing.DrawingManager(map, {});
-      
-
-      const primaryClasses = projectDetails.primaryClasses;
-      drawingManagerTemp.source.add(
-        labelingToolDataRef.current.labels != null
-          ? labelingToolDataRef.current.labels
-          : []
-      );
-
-      primaryClassesRef.current = parsePrimaryClasses(primaryClasses);
-      setPrimaryClasses(primaryClassesRef.current);
-      setSelectedPrimaryClass(primaryClassesRef.current[0].key);
-
-
-      const bbox = loadStudyArea(map, labelingToolDataRef.current);
-      setDrawingManager(drawingManagerTemp);
-      centrateMap(bbox, map, 2500);
-
-      initGuidedTourState("labelingToolGuide", appParams.guidedTourProperties);
       initCurrentTour("labelingToolGuide");
       setAppHeaderRightButtons([
         {
@@ -269,18 +294,24 @@ const LabelingTool = ({ setModalComponent }) => {
             ),
         },
       ]);
-    });
-
-
-    mapRef.current = map;
+    } catch (error) {
+      idleController.abort();
+      await idlePromise?.catch(() => {});
+      throw error;
+    } finally {
+      abortSignal.removeEventListener("abort", abortIdle);
+    }
   }
 
   return (
     <>
       <div
-        ref={mapRef}
+        ref={mapContainerRef}
         id="map"
         className="labeling-tool-page d-flex flex-grow-1 p-0 m-0"
+        data-map-ready={
+          isMapReady && drawingManager !== null ? "true" : "false"
+        }
       >
         {isMapReady && drawingManager !== null ? (
 
@@ -328,6 +359,25 @@ const LabelingTool = ({ setModalComponent }) => {
       </div>
     </>
   );
+};
+
+LabelingTool.propTypes = {
+  setModalComponent: PropType.func.isRequired,
+  workspace: PropType.shape({
+    labelProject: PropType.object.isRequired,
+    imageLayer: PropType.object.isRequired,
+    eventTypes: PropType.array,
+    primaryClasses: PropType.array,
+  }).isRequired,
+  signal: PropType.shape({
+    aborted: PropType.bool,
+    addEventListener: PropType.func,
+    removeEventListener: PropType.func,
+    throwIfAborted: PropType.func,
+  }).isRequired,
+  onLoadStep: PropType.func.isRequired,
+  onReady: PropType.func.isRequired,
+  onError: PropType.func.isRequired,
 };
 
 export default LabelingTool;

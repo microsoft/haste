@@ -13,6 +13,7 @@ import {
 } from "./MapRoute";
 import { getRouteLoadingLabel } from "./routeLoading";
 import { loadAzureMaps } from "../util/azureMapsLoader";
+import LabelingToolRoute from "./LabelingTool/LabelingToolRoute";
 
 const AdminLabelingTool = lazy(() => import("./AdminLabelingTool"));
 const AdminSourceTypes = lazy(() => import("./AdminSourceTypes"));
@@ -31,10 +32,6 @@ const ImageLayer = lazy(() => import("./ImageLayer"));
 const InteractiveLabeler = createMapRoute(
   () => import("./InteractiveLabeler/InteractiveLabeler"),
   () => loadAzureMaps(document, { drawing: false, swipe: true })
-);
-const LabelingTool = createMapRoute(
-  () => import("./LabelingTool/LabelingTool"),
-  () => loadAzureMaps(document, { drawing: true, swipe: false })
 );
 const ModelCatalog = lazy(() => import("./ModelCatalog"));
 const Project = lazy(() => import("./Project"));
@@ -86,7 +83,7 @@ const AppBody = ({ setModalComponent }) => {
               <Route
                 path="/labeling-tool/:projectId/:imageLayerId"
                 element={
-                  <LabelingTool
+                  <LabelingToolRoute
                     setModalComponent={setModalComponent}
                   />
                 }

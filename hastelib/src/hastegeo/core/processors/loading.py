@@ -9,7 +9,14 @@ from typing import Any
 from azure.core.exceptions import ResourceNotFoundError
 
 from ..config import Config
-from ..models.loading import ActiveJob, ActiveJobIndicator, ActiveJobs
+from ..models.loading import (
+    ActiveJob,
+    ActiveJobIndicator,
+    ActiveJobs,
+    LabelingImageLayer,
+    LabelingWorkspace,
+)
+from ..models.projects import ImageLayer, LabelProject, Project
 from .metadata import MetadataProcessor
 
 _TERMINAL_STATUSES = frozenset(
@@ -120,6 +127,104 @@ def assemble_active_jobs(
 
     jobs.sort(key=lambda job: job.key)
     return ActiveJobs(jobs=jobs)
+
+
+class LabelingWorkspaceProcessor:
+    """Load the minimum records for one standard labeling workspace."""
+
+    def __init__(
+        self,
+        project_id: str,
+        image_layer_id: str,
+        config: Config | None = None,
+        processor_factory: Callable[
+            ..., MetadataProcessor
+        ] = MetadataProcessor,
+    ) -> None:
+        self.project_id = project_id
+        self.image_layer_id = image_layer_id
+        self.config = config or Config()
+        self.processor_factory = processor_factory
+
+    def _processor(self, data_type: str) -> MetadataProcessor:
+        return self.processor_factory(
+            data_type=data_type,
+            partition_key=self.project_id,
+            config=self.config,
+        )
+
+    async def load(self) -> LabelingWorkspace:
+        """Load project and layer concurrently, then resolve labels by key."""
+        types = self.config.get_metadata_types()
+        project_task = asyncio.to_thread(
+            self._processor(types.PROJECT.value).load, self.project_id
+        )
+        layer_task = asyncio.to_thread(
+            self._processor(types.IMAGELAYER.value).load,
+            self.image_layer_id,
+        )
+        try:
+            raw_project, raw_layer = await asyncio.gather(
+                project_task, layer_task
+            )
+        except ResourceNotFoundError as error:
+            raise FileNotFoundError(
+                "Labeling workspace records were not found"
+            ) from error
+        project = Project(**raw_project)
+        image_layer = ImageLayer(**raw_layer)
+        if (
+            project.projectId != self.project_id
+            or image_layer.imageLayerId != self.image_layer_id
+            or image_layer.projectId != self.project_id
+        ):
+            raise FileNotFoundError("Labeling workspace records do not match")
+        label_project = await self._load_label_project(image_layer)
+        return LabelingWorkspace(
+            labelProject=label_project,
+            imageLayer=LabelingImageLayer(
+                imageLayerId=self.image_layer_id,
+                name=image_layer.name,
+                sourceTypePostEvent=image_layer.sourceTypePostEvent,
+            ),
+            eventTypes=project.eventTypes or [],
+            primaryClasses=project.primaryClasses or [],
+        )
+
+    async def _load_label_project(
+        self, image_layer: ImageLayer
+    ) -> LabelProject:
+        labels = self._processor(self.config.get_metadata_types().LABELS.value)
+        if image_layer.labelProjectId:
+            try:
+                raw_label = await asyncio.to_thread(
+                    labels.load, image_layer.labelProjectId
+                )
+                if (
+                    raw_label.get("projectId") == self.project_id
+                    and raw_label.get("imageLayerId") == self.image_layer_id
+                    and raw_label.get("labelprojectId")
+                    == image_layer.labelProjectId
+                ):
+                    return LabelProject(**raw_label)
+            except (FileNotFoundError, ResourceNotFoundError):
+                pass
+
+        raw_labels = await asyncio.to_thread(labels.load_all_from_partition)
+        raw_label = next(
+            (
+                label
+                for label in raw_labels
+                if label.get("projectId") == self.project_id
+                and label.get("imageLayerId") == self.image_layer_id
+            ),
+            None,
+        )
+        if raw_label is None:
+            raise FileNotFoundError(
+                f"Label project for image layer {self.image_layer_id} not found"
+            )
+        return LabelProject(**raw_label)
 
 
 class ActiveJobsProcessor:
