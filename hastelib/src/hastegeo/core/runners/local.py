@@ -32,6 +32,7 @@ from ..models.compute import (
     validate_relative_path,
 )
 from ..utils.atomic_files import LockUnavailableError, atomic_write
+from ..utils.local_permissions import LOCAL_TASK_ROOT
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.output_files import AmbiguousTaskOutputError, resolve_task_output
@@ -60,7 +61,7 @@ from .local_lifecycle import (
     task_path,
 )
 
-TASK_WORK_DIR = Path("/shared/azurite/task_work")
+TASK_WORK_DIR = LOCAL_TASK_ROOT
 ACTIVE_CONTAINER_STATES = {"running", "restarting", "paused"}
 _LOCAL_SUPPORTED_URI_SCHEMES = frozenset({"http", "https"})
 
@@ -714,6 +715,7 @@ class LocalRunner(BaseRunner, ComputeRunner):
         self, receipt: LocalReceipt, working_dir: str
     ) -> dict[str, str]:
         environment = {
+            "HASTE_LOCAL_SHARED_WORKSPACE": "1",
             "HASTE_JOB_WORKDIR": working_dir,
             "BATCH_JOB_WORKDIR": working_dir,
             "AZ_BATCH_TASK_WORKING_DIR": working_dir,
@@ -816,6 +818,7 @@ class LocalRunner(BaseRunner, ComputeRunner):
                         "Cannot persist a running task as terminal"
                     )
                 self._snapshot_logs(container, receipt)
+            self._prepare_output_permissions(receipt)
             if receipt.exit_code == 0 and not receipt.cancel_requested:
                 command = str(request.command or "")
                 if (
@@ -877,6 +880,71 @@ class LocalRunner(BaseRunner, ComputeRunner):
                 receipt.key,
                 f"Output persistence failed ({type(error).__name__}); task files retained",
             )
+
+    def _permissions_needed(self, task_dir: Path) -> bool:
+        def on_error(error: OSError) -> None:
+            raise error
+
+        try:
+            for directory, _, files in os.walk(
+                task_dir, followlinks=False, onerror=on_error
+            ):
+                if not os.access(directory, os.R_OK | os.W_OK | os.X_OK):
+                    return True
+                for filename in files:
+                    path = Path(directory) / filename
+                    if not path.is_symlink() and not os.access(path, os.R_OK):
+                        return True
+        except PermissionError:
+            return True
+        return False
+
+    def _prepare_output_permissions(self, receipt: LocalReceipt) -> None:
+        task_dir = self.work_dir / receipt.job_id / receipt.task_id
+        if not self._permissions_needed(task_dir):
+            return
+        if receipt.request is None:
+            raise RuntimeError(
+                "Permission repair requires the original task image"
+            )
+        self.logger.info(
+            "Preparing task output permissions using its image user: %s",
+            receipt.key,
+        )
+        self.docker_client.containers.run(
+            receipt.request.image,
+            entrypoint=[
+                "python",
+                "-m",
+                "hastegeo.core.utils.local_permissions",
+            ],
+            command=[
+                self._resolved_container_working_dir(
+                    receipt.job_id, receipt.task_id
+                )
+            ],
+            environment={
+                "PYTHONPATH": "/app",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            },
+            working_dir="/app",
+            volumes={self.volume: {"bind": "/shared/azurite", "mode": "rw"}},
+            network_disabled=True,
+            read_only=True,
+            cap_drop=["ALL"],
+            security_opt=["no-new-privileges:true"],
+            mem_limit="256m",
+            nano_cpus=500_000_000,
+            pids_limit=64,
+            remove=True,
+            labels={
+                OWNER_LABEL: receipt.key,
+                VOLUME_LABEL: self.volume,
+                "org.haste.local.helper": "permissions",
+            },
+        )
+        if self._permissions_needed(task_dir):
+            raise PermissionError("Local task outputs remain inaccessible")
 
     def _upload_all_task_files(
         self,
@@ -1034,6 +1102,7 @@ class LocalRunner(BaseRunner, ComputeRunner):
             return
         task_dir = self.work_dir / receipt.job_id / receipt.task_id
         if task_dir.exists():
+            self._prepare_output_permissions(receipt)
             shutil.rmtree(task_dir)
         receipt.files_cleaned = True
         self.receipts.save(receipt)

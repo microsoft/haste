@@ -81,6 +81,24 @@ Cleanup records intent but deletes task files only for terminal receipts
 with proven persistence. Receipts remain as durable idempotency tombstones.
 A cleanup call cannot discard outputs after failed persistence.
 
+Local worker images prepare their own output permissions before exiting.
+The queue process and training image can use different UIDs, so readable
+files alone are insufficient: output directories must also permit the
+queue process to remove their contents after persistence. The local-only
+`HASTE_LOCAL_SHARED_WORKSPACE` flag is injected by the adapter, not accepted
+from a task request. Image exit hooks grant group/other read access to owned
+files and traversal/removal access to owned directories within that exact
+job/task subtree, without following symlinks. Batch/AML permissions are
+unchanged, and permission preparation failure cannot turn a failed job into
+success.
+Interrupted workers and older receipts may lack that exit preparation.
+Before persistence or cleanup, the controller checks its own access and,
+only when needed, runs the same scoped helper under the original image's
+user. This helper has no network, GPU, or Linux capabilities, a read-only
+container filesystem, and bounded CPU/memory; it never reruns the workload.
+The controller rechecks permissions before declaring persistence or cleanup
+successful.
+
 Cancellation records intent under the short receipt lock and stops the
 owned Docker container. Launch and cancellation are serialized. A cancel
 during staging prevents launch; a cancel during upload wins over later

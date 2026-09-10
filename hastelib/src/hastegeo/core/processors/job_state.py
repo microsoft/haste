@@ -715,6 +715,12 @@ class JobStateRepository:
                 turn.cleanup = []
             else:
                 turn.actions.pop(action, None)
+            if turn.error:
+                field = WORKFLOWS[workload].message
+                data[field] = MetadataUtils.append_status_message(
+                    data.get(field), f"Deferred {action} action completed"
+                )
+                turn.error = None
 
         return self._update_claim(workload, baseline, update)
 

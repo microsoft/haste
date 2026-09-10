@@ -22,6 +22,7 @@ from hastegeo.core.runners.local_lifecycle import (
     POLICY_LABEL,
     SLOT_LABEL,
     blob_descriptor,
+    execution_key,
 )
 
 import docker
@@ -287,6 +288,7 @@ def test_receipts_never_store_signed_urls_or_config_credentials(setup) -> None:
     "kwargs",
     [
         {"env_vars": {"PASSWORD": "value"}},  # pragma: allowlist secret
+        {"env_vars": {"HASTE_LOCAL_SHARED_WORKSPACE": "0"}},
         {"env_vars": {"INPUT_DIR": "https://account/file?sig=value"}},
         {
             "resource_files_for_upload": {
@@ -700,6 +702,47 @@ def test_output_patterns_do_not_upload_staged_inputs(setup) -> None:
     assert "project/task/result.txt" in names
     assert "project/task/staged/input.txt" not in names
     assert "project/task/logs/workflow_progress.log" in names
+
+
+def test_permission_fallback_uses_the_task_image_without_privileges(
+    setup, mocker
+) -> None:
+    identity = submit(setup.runner)
+    receipt = setup.runner.receipts.load(execution_key(*identity))
+    mocker.patch.object(
+        setup.runner, "_permissions_needed", side_effect=[True, False]
+    )
+    helper = mocker.Mock(return_value=b"")
+    setup.engine.run = helper
+
+    setup.runner._prepare_output_permissions(receipt)
+
+    helper.assert_called_once()
+    options = helper.call_args.kwargs
+    assert helper.call_args.args == (receipt.request.image,)
+    assert options["network_disabled"] and options["read_only"]
+    assert options["cap_drop"] == ["ALL"]
+    assert options["security_opt"] == ["no-new-privileges:true"]
+    assert "user" not in options
+    assert "device_requests" not in options
+    assert options["labels"][OWNER_LABEL] == receipt.key
+
+
+def test_failed_permission_repair_never_reports_outputs_persisted(
+    setup, mocker
+) -> None:
+    identity = submit(setup.runner)
+    setup.runner.reconcile_task(*identity)
+    setup.engine.executions()[0].complete()
+    mocker.patch.object(setup.runner, "_permissions_needed", return_value=True)
+    setup.engine.run = mocker.Mock(return_value=b"")
+
+    setup.runner.reconcile_task(*identity)
+    setup.runner.cleanup_task(*identity)
+
+    assert setup.runner.get_task_status(*identity) == "Failed"
+    assert not setup.runner.get_task_receipt(*identity)["outputs_persisted"]
+    assert (setup.runner.work_dir / "job" / "task").exists()
 
 
 def test_packaging_staging_symlinks_do_not_fail_output_persistence(

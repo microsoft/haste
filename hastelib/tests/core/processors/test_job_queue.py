@@ -202,6 +202,10 @@ def test_failed_follow_on_delivery_retries_without_repeating_compute(
     assert compute.call_count == 1
     assert action.call_count == 2
     assert not state.repository.turn(load(state), Workload.TRAINING).actions
+    assert state.repository.turn(load(state), Workload.TRAINING).error is None
+    assert (
+        "Deferred inference action completed" in load(state)["statusMessage"]
+    )
 
 
 def test_duplicate_terminal_message_has_no_follow_on_side_effects(
