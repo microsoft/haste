@@ -235,12 +235,6 @@ class EmbeddingPostprocessor:
             )
             + ".geojson"
         )
-        pmtiles_name = (
-            ArtifactTypes.BUILDING_PMTILES.value.substitute(
-                modelName=self.model_data.modelId
-            )
-            + ".pmtiles"
-        )
         sidecar_name = (
             ArtifactTypes.BUILDING_FEATURES_SIDECAR.value.substitute(
                 modelName=self.model_data.modelId
@@ -260,7 +254,6 @@ class EmbeddingPostprocessor:
                 "imagery": imagery_fn,
                 "footprints": footprints_fn,
                 "embeddings": embeddings_name,
-                "pmtiles": pmtiles_name,
                 "sidecar": sidecar_name,
             },
             "pipeline": {
@@ -316,9 +309,6 @@ class EmbeddingPostprocessor:
         manifest = json.loads(content)
         self.model_data.embeddingsGeoJSONUrl = self._artifact_url(
             manifest.get("embeddings_filename", "")
-        )
-        self.model_data.pmtilesUrl = self._artifact_url(
-            manifest.get("pmtiles_filename", "")
         )
         self.model_data.featuresSidecarUrl = self._artifact_url(
             manifest.get("sidecar_filename", "")

@@ -48,10 +48,14 @@ RUN for i in 1 2 3 4 5; do \
 	&& update-ca-certificates \
 	&& rm -rf /var/lib/apt/lists/*
 
-# CLI shim for the building-embedding workflow (mirrors imageryprep's
-# prepare-imagery shim). `python` resolves to the conda env at runtime via PATH.
+# CLI shims for the workflows that run in this image (mirroring
+# imageryprep's prepare-imagery shim). `python` resolves to the conda env
+# at runtime via PATH. prepare-footprint-tiles lives here because
+# tippecanoe ships only in this image.
 RUN printf '#!/bin/bash\nexec python -m hastegeo.workflows.embed_buildings "$@"\n' > /usr/local/bin/embed-buildings \
-	&& chmod +x /usr/local/bin/embed-buildings
+	&& chmod +x /usr/local/bin/embed-buildings \
+	&& printf '#!/bin/bash\nexec python -m hastegeo.workflows.prepare_footprint_tiles "$@"\n' > /usr/local/bin/prepare-footprint-tiles \
+	&& chmod +x /usr/local/bin/prepare-footprint-tiles
 
 # Prepare conda env directory owned by the target user, then extract the packed env
 # as that user — non-root tar uses the running user's UID/GID, so no chown -R needed.

@@ -69,6 +69,9 @@ class MetadataProcessor:
         Example:
             >>> processor.save('project_1', {'name': 'My Project', 'status': 'active'})
         """
+        if self.data_type == "imagelayer" and data_format == "json":
+            return self.storage.merge_json(key, self.data_type, metadata)
+
         try:
             existing_metadata = self.load(key, data_format=data_format)
         except FileNotFoundError:
