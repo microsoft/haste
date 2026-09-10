@@ -45,12 +45,15 @@ from .base import resource_files_from_inputs as _resource_files_from_inputs
 
 # LocalRunner's own blob download/upload helpers
 # (_download_resource_files/_build_blob_client_candidates/
-# _upload_task_outputs) only understand real http(s) blob URLs — same
-# https://host/container/prefix shape split_destination_uri (base.py)
-# assumes — so those are the only input/output URI schemes this adapter
-# can actually translate. See azure_batch.py's
+# _upload_task_outputs) understand http(s) blob URLs, including Azurite's
+# configured account path, but not arbitrary storage URI schemes.
+# See azure_batch.py's
 # _BATCH_SUPPORTED_URI_SCHEMES for the same reasoning.
 _LOCAL_SUPPORTED_URI_SCHEMES = frozenset({"http", "https"})
+
+
+class _LocalOutputPersistenceError(RuntimeError):
+    """A task's files have not been durably copied to output storage."""
 
 
 def _normalize_azurite_url(url: Optional[str]) -> Optional[str]:
@@ -133,6 +136,10 @@ class LocalRunner(BaseRunner, ComputeRunner):
             outputs_file_path = job_dir / "outputs" / filename
             if outputs_file_path.exists():
                 file_path = outputs_file_path
+        if not file_path.exists():
+            logs_file_path = job_dir / "logs" / filename
+            if logs_file_path.exists():
+                file_path = logs_file_path
 
         if file_path.exists():
             if as_chunk:
@@ -888,8 +895,6 @@ class LocalRunner(BaseRunner, ComputeRunner):
             with open(status_file, "w") as f:
                 json.dump(status_data, f, indent=2)
 
-            self.logger.info(f"Task {task_id} completed successfully")
-
             # Upload ALL task files to blob storage for full traceability
             # This includes inputs, outputs, logs, status files, everything
             if output_container_url:
@@ -902,6 +907,12 @@ class LocalRunner(BaseRunner, ComputeRunner):
                     output_prefix,
                 )
 
+            self.logger.info(
+                "Task %s finished with state %s and exit code %s",
+                task_id,
+                state,
+                exit_code,
+            )
             return job_id, task_id
 
         except docker.errors.ContainerError as e:
@@ -934,6 +945,8 @@ class LocalRunner(BaseRunner, ComputeRunner):
                 "job_id": job_id,
                 "task_id": task_id,
             }
+            if isinstance(e, _LocalOutputPersistenceError):
+                status_data["outputs_persisted"] = False
 
             status_file = task_dir / "status.json"
             with open(status_file, "w") as f:
@@ -949,6 +962,15 @@ class LocalRunner(BaseRunner, ComputeRunner):
             )
             return
         task_dir = self.work_dir / job_id / task_id
+        status_file = task_dir / "status.json"
+        if status_file.exists():
+            status = json.loads(status_file.read_text(encoding="utf-8"))
+            if status.get("outputs_persisted") is False:
+                self.logger.warning(
+                    "Retaining task directory %s: output upload did not complete",
+                    task_dir,
+                )
+                return
         if task_dir.exists():
             try:
                 shutil.rmtree(task_dir)
@@ -1024,10 +1046,25 @@ class LocalRunner(BaseRunner, ComputeRunner):
                 allowed_schemes=_LOCAL_SUPPORTED_URI_SCHEMES,
                 backend_name="the local runner",
             )
-            require_single_output_destination(spec.outputs)
-            _resource_files_from_inputs(spec.inputs)
+            if any(
+                "<" in output.destinationUri or ">" in output.destinationUri
+                for output in spec.outputs
+            ):
+                raise ValueError(
+                    "COMPUTE_OUTPUT_CONTAINER_URL must point to the "
+                    "configured storage container, not a placeholder"
+                )
+            require_single_output_destination(
+                spec.outputs, account_url=self._storage_account_url()
+            )
+            _resource_files_from_inputs(
+                spec.inputs, account_url=self._storage_account_url()
+            )
         except ValueError as exc:
             raise BackendConfigurationError(str(exc)) from exc
+
+    def _storage_account_url(self) -> Optional[str]:
+        return self.blob_client.url if self.blob_client is not None else None
 
     def _resolved_container_working_dir(
         self, job_id: str, task_id: str
@@ -1063,13 +1100,18 @@ class LocalRunner(BaseRunner, ComputeRunner):
                 task_id,
             )
         else:
-            resource_files = _resource_files_from_inputs(spec.inputs)
+            account_url = self._storage_account_url()
+            resource_files = _resource_files_from_inputs(
+                spec.inputs, account_url=account_url
+            )
             (
                 _container_url,
                 container_name,
                 output_prefix,
                 patterns,
-            ) = require_single_output_destination(spec.outputs)
+            ) = require_single_output_destination(
+                spec.outputs, account_url=account_url
+            )
             file_patterns = [str(task_dir / pattern) for pattern in patterns]
             # Unlike Batch, the local adapter already knows the resolved
             # in-container working directory before the container starts,
@@ -1472,66 +1514,63 @@ class LocalRunner(BaseRunner, ComputeRunner):
         task_dir: Path,
         output_container_url: str,
         output_prefix: str,
-    ):
+    ) -> None:
         """Upload ALL task files to blob storage for full traceability.
         This includes inputs, outputs, logs, config files, everything."""
         if not self.blob_client:
-            self.logger.warning(
-                "No blob client available for uploading task files"
+            raise _LocalOutputPersistenceError(
+                "No storage client is configured for local task outputs"
             )
-            return
 
-        try:
-            container_name = output_container_url.split("/")[-1]
-            uploaded_count = 0
+        container_name = output_container_url.rstrip("/").split("/")[-1]
+        uploaded_count = 0
 
-            # Upload every file in the task directory
-            for file_path in task_dir.rglob("*"):
-                if file_path.is_file():
-                    # Create blob path maintaining the full directory structure
-                    relative_path = file_path.relative_to(task_dir)
+        # Upload every file in the task directory.
+        for file_path in task_dir.rglob("*"):
+            if file_path.is_file():
+                relative_path = file_path.relative_to(task_dir)
 
-                    if (
-                        relative_path.parts
-                        and relative_path.parts[0] == "outputs"
-                        and len(relative_path.parts) > 1
-                    ):
-                        relative_path = Path(*relative_path.parts[1:])
+                if (
+                    relative_path.parts
+                    and relative_path.parts[0] == "outputs"
+                    and len(relative_path.parts) > 1
+                ):
+                    relative_path = Path(*relative_path.parts[1:])
 
-                    blob_path = (
-                        f"{output_prefix}/{relative_path}"
-                        if output_prefix
-                        else str(relative_path)
+                blob_path = (
+                    f"{output_prefix}/{relative_path}"
+                    if output_prefix
+                    else str(relative_path)
+                )
+                blob_path = blob_path.replace("\\", "/")
+
+                try:
+                    blob_client = self.blob_client.get_blob_client(
+                        container_name, blob_path
                     )
-                    blob_path = blob_path.replace("\\", "/")
 
-                    try:
-                        blob_client = self.blob_client.get_blob_client(
-                            container_name, blob_path
-                        )
+                    with open(file_path, "rb") as f:
+                        blob_client.upload_blob(f, overwrite=True)
 
-                        with open(file_path, "rb") as f:
-                            blob_client.upload_blob(f, overwrite=True)
+                    uploaded_count += 1
+                    self.logger.info(
+                        f"Uploaded {relative_path} to {container_name}/{blob_path}"
+                    )
+                except Exception as e:
+                    self.logger.error(
+                        "Failed to upload local task file %s (%s)",
+                        relative_path,
+                        type(e).__name__,
+                    )
+                    raise _LocalOutputPersistenceError(
+                        f"Failed to persist local task file {relative_path} "
+                        f"({type(e).__name__}); task files are retained"
+                    ) from e
 
-                        uploaded_count += 1
-                        self.logger.info(
-                            f"Uploaded {relative_path} to {container_name}/{blob_path}"
-                        )
-                    except Exception as e:
-                        self.logger.error(
-                            f"Failed to upload {relative_path} "
-                            f"({type(e).__name__})"
-                        )
-
-            self.logger.info(
-                f"[PIPELINE-TRACE] Uploaded {uploaded_count} files to blob storage for task traceability"
-            )
-
-        except Exception as e:
-            self.logger.error(
-                "Failed to upload task files to blob storage "
-                f"({type(e).__name__})"
-            )
+        self.logger.info(
+            "[PIPELINE-TRACE] Uploaded %s files to blob storage for task traceability",
+            uploaded_count,
+        )
 
     def _upload_task_outputs(
         self,

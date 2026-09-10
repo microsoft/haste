@@ -179,33 +179,56 @@ class ComputeRunner(ABC):
 # --------------------------------------------------------------------------
 
 
-def split_destination_uri(uri: str) -> Tuple[str, str, str]:
+def split_destination_uri(
+    uri: str, *, account_url: Optional[str] = None
+) -> Tuple[str, str, str]:
     """Split a HASTE destination URI into ``(container_url, container_name,
     prefix)``.
 
     E.g. ``https://acct.blob.core.windows.net/data/proj-hash/task-id/`` ->
     ``("https://acct.blob.core.windows.net/data", "data",
-    "proj-hash/task-id")``.
+    "proj-hash/task-id")``. ``account_url`` supplies the configured service
+    root for path-style storage, such as Azurite's ``/devstoreaccount1``;
+    that account segment must not become the container name.
     """
     parsed = urlparse(uri)
     parts = [p for p in parsed.path.split("/") if p]
+    account_parts = []
+    if account_url:
+        account = urlparse(account_url)
+        if (
+            parsed.scheme.lower() == account.scheme.lower()
+            and parsed.netloc.lower() == account.netloc.lower()
+        ):
+            account_parts = [p for p in account.path.split("/") if p]
+            if parts[: len(account_parts)] != account_parts:
+                raise ValueError(
+                    "storage URI does not match the configured account path"
+                )
+            parts = parts[len(account_parts) :]
+            if account_parts and not parts:
+                raise ValueError("storage URI is missing a container")
     container_name = parts[0] if parts else ""
     prefix = "/".join(parts[1:])
     container_url = f"{parsed.scheme}://{parsed.netloc}"
     if container_name:
-        container_url = f"{container_url}/{container_name}"
+        container_path = "/".join([*account_parts, container_name])
+        container_url = f"{container_url}/{container_path}"
     return container_url, container_name, prefix
 
 
 def resource_files_from_inputs(
     inputs: List[ComputeInput],
+    *,
+    account_url: Optional[str] = None,
 ) -> Dict[str, dict]:
     """Translate ``ComputeJobSpec.inputs`` into the legacy
     ``resource_files_for_upload`` mapping ``AzureBatchJob.add_task``/
     ``LocalRunner._download_resource_files`` expect: a dict keyed by a
     stable name, each value carrying either ``http_url`` (single file) or
     ``storage_container_url``/``blob_prefix`` (whole folder), plus the
-    common ``file_path`` destination.
+    common ``file_path`` destination. Pass the configured ``account_url``
+    for path-style storage so folder prefixes exclude the account segment.
 
     ``ComputeInput.destinationRelativePath`` is a required, validated
     (non-empty, non-traversal) field, so it is used verbatim as the dict
@@ -225,7 +248,7 @@ def resource_files_from_inputs(
         entry: dict = {"file_path": key}
         if item.kind == InputKind.FOLDER:
             container_url, _container_name, prefix = split_destination_uri(
-                item.sourceUri
+                item.sourceUri, account_url=account_url
             )
             entry["storage_container_url"] = container_url
             entry["blob_prefix"] = prefix
@@ -237,6 +260,8 @@ def resource_files_from_inputs(
 
 def require_single_output_destination(
     outputs: List[ComputeOutput],
+    *,
+    account_url: Optional[str] = None,
 ) -> Tuple[str, str, str, List[str]]:
     """Validate that every output shares one destination container *and*
     prefix, and return ``(container_url, container_name, prefix,
@@ -250,15 +275,16 @@ def require_single_output_destination(
     ``outputs`` is empty, or any two outputs resolve to a different
     container *or* a different prefix (comparing container alone would
     silently accept two different prefixes and use only the first one).
+    ``account_url`` identifies the service root for path-style storage.
     """
     if not outputs:
         raise ValueError("at least one output is required")
     container_url, container_name, prefix = split_destination_uri(
-        outputs[0].destinationUri
+        outputs[0].destinationUri, account_url=account_url
     )
     for other in outputs[1:]:
         other_container_url, _, other_prefix = split_destination_uri(
-            other.destinationUri
+            other.destinationUri, account_url=account_url
         )
         if other_container_url != container_url or other_prefix != prefix:
             raise ValueError(

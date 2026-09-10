@@ -19,7 +19,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import docker.errors
 from hastegeo.core.config import Config
@@ -254,6 +254,79 @@ class TestValidate(unittest.TestCase):
 
 
 class TestSubmit(unittest.TestCase):
+    def test_azurite_outputs_and_folder_inputs_use_data_container(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = _runner(tmp)
+            runner.blob_client = MagicMock(
+                url="http://azurite:10000/devstoreaccount1/"
+            )
+            runner.add_task = MagicMock()
+            spec = _spec(
+                inputs=[
+                    ComputeInput(
+                        sourceUri=(
+                            "http://azurite:10000/devstoreaccount1/data/"
+                            "project/model"
+                        ),
+                        kind=InputKind.FOLDER,
+                        destinationRelativePath="model",
+                    )
+                ],
+                outputs=[
+                    ComputeOutput(
+                        name="out",
+                        sourceRelativePattern="outputs/*",
+                        destinationUri=(
+                            "http://azurite:10000/devstoreaccount1/data/"
+                            "project/task"
+                        ),
+                    )
+                ],
+            )
+
+            handle = runner.submit(spec)
+
+            kwargs = runner.add_task.call_args.kwargs
+            self.assertEqual(kwargs["output_container_url"], "data")
+            self.assertEqual(kwargs["output_prefix"], "project/task")
+            self.assertEqual(
+                kwargs["resource_files_for_upload"]["model"],
+                {
+                    "file_path": "model",
+                    "storage_container_url": (
+                        "http://azurite:10000/devstoreaccount1/data"
+                    ),
+                    "blob_prefix": "project/model",
+                },
+            )
+            self.assertEqual(handle.outputUri, spec.outputs[0].destinationUri)
+
+    def test_rejects_placeholder_destination_before_running_container(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = _runner(tmp)
+            runner.add_task = MagicMock()
+            spec = _spec(
+                outputs=[
+                    ComputeOutput(
+                        name="out",
+                        sourceRelativePattern="outputs/*",
+                        destinationUri=(
+                            "https://<storage-account>.blob.core.windows.net/"
+                            "<container>/project/task"
+                        ),
+                    )
+                ]
+            )
+            with self.assertRaisesRegex(
+                BackendConfigurationError, "COMPUTE_OUTPUT_CONTAINER_URL"
+            ):
+                runner.submit(spec)
+            runner.add_task.assert_not_called()
+
     def test_command_and_haste_job_workdir_env_var(self):
         """Local knows its resolved container working directory ahead of
         submission, so HASTE_JOB_WORKDIR is passed as a plain env var
@@ -362,6 +435,103 @@ class TestSubmit(unittest.TestCase):
             self.assertEqual(handle.providerTaskId, "exec-1")
 
 
+class TestOutputPersistence(unittest.TestCase):
+    def test_output_layout_is_flattened_but_logs_keep_their_directory(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = _runner(tmp)
+            runner.blob_client = MagicMock()
+            task_dir = Path(tmp) / "task"
+            for name in ("outputs/imagery_manifest.json", "logs/progress.log"):
+                path = task_dir / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}", encoding="utf-8")
+
+            runner._upload_all_task_files(task_dir, "data", "project/task")
+
+            self.assertCountEqual(
+                [
+                    call.args
+                    for call in runner.blob_client.get_blob_client.call_args_list
+                ],
+                [
+                    ("data", "project/task/imagery_manifest.json"),
+                    ("data", "project/task/logs/progress.log"),
+                ],
+            )
+
+    def test_upload_failure_is_not_swallowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = _runner(tmp)
+            runner.blob_client = MagicMock()
+            original_error = RuntimeError("sensitive-storage-error-detail")
+            runner.blob_client.get_blob_client.return_value.upload_blob.side_effect = (
+                original_error
+            )
+            path = Path(tmp) / "result.json"
+            path.write_text("{}", encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                RuntimeError, "Failed to persist local task file"
+            ) as raised:
+                runner._upload_all_task_files(Path(tmp), "data", "p/t")
+
+            self.assertIs(raised.exception.__cause__, original_error)
+            self.assertNotIn(
+                "sensitive-storage-error-detail", str(raised.exception)
+            )
+            self.assertTrue(path.exists())
+            runner.logger.error.assert_called_once()
+
+    def test_missing_storage_client_fails_explicitly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = _runner(tmp)
+            with self.assertRaisesRegex(RuntimeError, "No storage client"):
+                runner._upload_all_task_files(Path(tmp), "data", "p/t")
+
+    def test_successful_container_is_failed_when_output_upload_fails(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = _runner(tmp)
+            runner.blob_client = MagicMock()
+            runner.blob_client.get_blob_client.return_value.upload_blob.side_effect = RuntimeError(
+                "unavailable"
+            )
+            container = runner.docker_client.containers.run.return_value
+            container.logs.return_value = iter([b"Container finished.\n"])
+            container.wait.return_value = {"StatusCode": 0}
+            with patch.dict(
+                "os.environ",
+                {"CLEANUP_CONTAINERS": "0", "HASTE_ENABLE_GPU": "0"},
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "Failed to persist local task file"
+                ):
+                    runner.add_task(
+                        job_id="job-exec-1",
+                        task_id="exec-1",
+                        image_name="test-image:v1",
+                        command="python run.py",
+                        output_container_url="data",
+                        output_prefix="project/task",
+                    )
+
+            self.assertEqual(
+                runner.get_status(_handle()), ComputeJobState.FAILED
+            )
+            self.assertTrue(
+                (Path(tmp) / "job-exec-1" / "exec-1" / "output.log").exists()
+            )
+            status_path = Path(tmp) / "job-exec-1" / "exec-1" / "status.json"
+            self.assertFalse(
+                json.loads(status_path.read_text())["outputs_persisted"]
+            )
+            runner.finalize(_handle())
+            self.assertTrue(status_path.exists())
+
+
 class TestGetStatus(unittest.TestCase):
     def test_maps_completed_to_succeeded(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -411,6 +581,23 @@ class TestGetStatus(unittest.TestCase):
 
 
 class TestReadOutput(unittest.TestCase):
+    def test_reads_friendly_log_from_the_logs_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = _runner(tmp)
+            log = (
+                Path(tmp)
+                / "job-exec-1"
+                / "exec-1"
+                / "logs"
+                / "imagery_friendly.log"
+            )
+            log.parent.mkdir(parents=True)
+            log.write_text("time|Finalizing outputs\n", encoding="utf-8")
+            self.assertEqual(
+                runner.read_output(_handle(), "imagery_friendly.log"),
+                "time|Finalizing outputs\n",
+            )
+
     def test_rejects_path_traversal_before_any_filesystem_access(self):
         with tempfile.TemporaryDirectory() as tmp:
             runner = _runner(tmp)

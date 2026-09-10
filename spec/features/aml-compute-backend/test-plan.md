@@ -58,6 +58,9 @@
 | CT-001 | Same `ComputeJobSpec` run through fake Batch, AML, and local adapters | identical `submit → get_status → read_output → cancel → finalize` behavior and state transitions |
 | CT-002 | `get_capacity()` on each adapter | returns a valid `CapacitySnapshot` for every declared `(workload, resources)` combination |
 | CT-003 | Every adapter's `read_output()` on a not-yet-available live progress file | returns `None`, not an exception |
+| CT-004 | Local outputs and folder inputs use Azurite path-style URLs | configured account path excluded from container/blob prefix; cloud parsing unchanged |
+| CT-005 | Local container succeeds but output upload fails | task records failure and retains working files; no success-shaped upload fallback |
+| CT-006 | Local Compose configuration for all five workloads | output destination matches the configured Azurite container on both Function services |
 
 ### API Integration Tests
 

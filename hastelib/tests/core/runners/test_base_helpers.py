@@ -42,8 +42,81 @@ class TestSplitDestinationUri(unittest.TestCase):
         self.assertEqual(container_name, "data")
         self.assertEqual(prefix, "")
 
+    def test_path_style_account_is_not_the_container(self) -> None:
+        for host in ("azurite", "localhost", "127.0.0.1", "storage-emulator"):
+            for prefix in ("", "/project/task/"):
+                with self.subTest(host=host, prefix=prefix):
+                    root = f"http://{host}:10000/devstoreaccount1"
+                    self.assertEqual(
+                        split_destination_uri(
+                            f"{root}/data{prefix}", account_url=root + "/"
+                        ),
+                        (f"{root}/data", "data", prefix.strip("/")),
+                    )
+
+    def test_cloud_container_matching_account_name_is_not_stripped(
+        self,
+    ) -> None:
+        self.assertEqual(
+            split_destination_uri(
+                "https://account.blob.core.windows.net/account/project/task",
+                account_url="https://account.blob.core.windows.net/",
+            ),
+            (
+                "https://account.blob.core.windows.net/account",
+                "account",
+                "project/task",
+            ),
+        )
+
+    def test_account_path_does_not_apply_to_a_different_service(self) -> None:
+        self.assertEqual(
+            split_destination_uri(
+                "https://account.blob.core.windows.net/data/project/task",
+                account_url="http://azurite:10000/devstoreaccount1",
+            ),
+            (
+                "https://account.blob.core.windows.net/data",
+                "data",
+                "project/task",
+            ),
+        )
+
+    def test_rejects_incorrect_or_incomplete_account_path(self) -> None:
+        for path in ("otheraccount/data/project/task", "devstoreaccount1"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                split_destination_uri(
+                    f"http://azurite:10000/{path}",
+                    account_url="http://azurite:10000/devstoreaccount1",
+                )
+
 
 class TestResourceFilesFromInputs(unittest.TestCase):
+    def test_path_style_folder_keeps_account_in_container_url(self) -> None:
+        inputs = [
+            ComputeInput(
+                sourceUri=(
+                    "http://azurite:10000/devstoreaccount1/data/models/v1"
+                ),
+                kind=InputKind.FOLDER,
+                destinationRelativePath="model",
+            )
+        ]
+        self.assertEqual(
+            resource_files_from_inputs(
+                inputs, account_url="http://azurite:10000/devstoreaccount1"
+            ),
+            {
+                "model": {
+                    "file_path": "model",
+                    "storage_container_url": (
+                        "http://azurite:10000/devstoreaccount1/data"
+                    ),
+                    "blob_prefix": "models/v1",
+                }
+            },
+        )
+
     def test_file_input_maps_to_http_url(self):
         inputs = [
             ComputeInput(
@@ -118,6 +191,31 @@ class TestResourceFilesFromInputs(unittest.TestCase):
 
 
 class TestRequireSingleOutputDestination(unittest.TestCase):
+    def test_path_style_output_patterns_use_the_correct_container(
+        self,
+    ) -> None:
+        outputs = [
+            ComputeOutput(
+                name=name,
+                sourceRelativePattern=f"{name}/*",
+                destinationUri=(
+                    "http://azurite:10000/devstoreaccount1/data/project/task"
+                ),
+            )
+            for name in ("outputs", "logs")
+        ]
+        self.assertEqual(
+            require_single_output_destination(
+                outputs, account_url="http://azurite:10000/devstoreaccount1"
+            ),
+            (
+                "http://azurite:10000/devstoreaccount1/data",
+                "data",
+                "project/task",
+                ["outputs/*", "logs/*"],
+            ),
+        )
+
     def test_raises_on_empty_outputs(self):
         with self.assertRaises(ValueError):
             require_single_output_destination([])
