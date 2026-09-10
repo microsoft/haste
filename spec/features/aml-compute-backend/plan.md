@@ -144,7 +144,7 @@ commands while keeping already-published images working.
 | Default omitted selections compatibly | `backend-dev` | — | US-003 | done |
 | Reject client-supplied provider runtime state/handles | `backend-dev` | — | US-004, US-008 | done |
 | Accept create-time image-layer normalization input while preserving stored workflow values on edits | `backend-dev` | — | US-001, US-004 | done |
-| Preserve local Azurite output routing and surface persistence failures | `backend-dev` | Phase 8 | US-001, US-005 | in-progress |
+| Preserve local Azurite output routing and surface persistence failures | `backend-dev` | Phase 8 | US-001, US-005 | done — adapter tests and a fresh local queue/container/Azurite/labeling run passed |
 | Update queue handlers in `api/hastefuncqueues/function_app.py` to dispatch lifecycle ops by persisted handle | `backend-dev` | Phase 5 | US-004 | done |
 | API and queue integration tests | `backend-dev` | above | US-003, US-004 | done |
 

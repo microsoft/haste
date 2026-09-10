@@ -129,6 +129,12 @@
 | E2E-005 | Artifact packaging on AML | Run full artifact-packaging workload on AML | Same ZIPs and manifest as Batch baseline; runs on CPU target | US-002 |
 | E2E-006 | Mixed backend | Concurrent explicit Batch + AML jobs, plus `auto` distribution, in one deployment | All complete correctly; `auto` uses both providers over a deterministic sample and never changes provider for the same `executionId` | US-003 |
 | E2E-007 | Resilience | Restart Function workers mid-job; change `COMPUTE_BACKEND_DEFAULT`; scale AML compute to zero; inject throttling; simulate missing output | Correct lifecycle continuation in every case, per [design.md](design.md#edge-cases-and-failure-behavior) | US-004, US-005 |
+| E2E-008 | Local CPU imagery persistence | Queue a fresh layer with synthetic TIFF/GPKG inputs; run the actual local container and labeling follow-on | COG pixels/CRS correct, manifest and outputs present in Azurite, labeling complete, friendly logs available | US-001, US-005 |
+
+E2E-008 passed on 2026-09-10 against the local Compose stack. The run used
+a fresh queue message and container, not a repaired job status or copied
+outputs. Temporary fixture data was removed afterward, and existing user
+layers were unchanged. This does not close the separate live AML/GPU gates.
 
 ### Edge Case & Negative Tests
 
