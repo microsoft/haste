@@ -1,6 +1,6 @@
 # App-Wide Loading Performance
 
-This branch contains slices 1 through 5 of the seven-part split of PR #194.
+This branch contains slices 1 through 6 of the seven-part split of PR #194.
 The remaining slices are planned, not included in this branch.
 
 ## Scope
