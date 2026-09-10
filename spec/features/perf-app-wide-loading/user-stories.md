@@ -13,6 +13,15 @@ zero management-plane calls, and zero ACL writes. Inactive, pending, or deleted
 users receive no application roles and cannot reach protected routes.
 
 
+### US-002: Responsive Published Dataset Tracking
+
+**As a** contributor, **I want** published datasets to load and refresh without
+repeated full reads, **so that** I can track work without page stalls.
+
+**Acceptance criteria:** Same-query requests coalesce, unchanged conditional
+requests return `304`, and polling stops while hidden or in flight.
+
+
 ### US-003: Progressive Route Readiness
 
 **As a** disaster analyst, **I want** each route to show useful progress while
@@ -38,5 +47,6 @@ the destination route's loading surface.
 | Story | Implementing Agent(s) | Validating Agent(s) |
 |---|---|---|
 | US-001 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` |
+| US-002 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` |
 | US-003 | `ui` | `ui-validation` |
 | US-005 | `ui` | `ui-validation` |
