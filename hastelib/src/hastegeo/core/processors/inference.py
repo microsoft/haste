@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
-import json
 import os
 from typing import Dict, NamedTuple, Optional
 
@@ -13,6 +12,7 @@ from ..models.compute import (
     ComputeJobSpec,
     ComputeWorkload,
     OutputNotAvailableError,
+    SubmissionIndeterminateError,
 )
 from ..models.projects import ImageLayer, InferenceJob, Model
 from ..models.training import ExperimentConfig, Inference
@@ -39,6 +39,7 @@ from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
+from .job_state import Workload, persist_and_enqueue
 
 # Placeholder the training image substitutes inside the generated
 # experiment config (see ``compute_specs``); the command itself uses the
@@ -173,22 +174,16 @@ class InferencePreprocessor:
         self.model_data = model
         self.config = config
 
-    def send_to_queue(self, status=None):
+    def send_to_queue(self, status=None, *, request_id: str = None):
         if status == self.config.get_status_types().CANCELLED.value:
-            # Cancellation path: no new job record, just ask the queue
-            # worker to cancel the inference currently in flight.
-            self.model_data.inferenceStatus = status
-            self.queue_client.put_message(
-                json.dumps(self.model_data.dict()), visibility_timeout=1
-            )
-            self.model_data.inferenceStatusMessage = (
-                MetadataUtils.append_status_message(
-                    self.model_data.inferenceStatusMessage,
-                    "Cancelling inference",
-                )
+            self.model_data = persist_and_enqueue(
+                self.model_data,
+                Workload.INFERENCE,
+                self.config,
+                self.queue_client,
+                cancel=True,
             )
             return self.model_data
-
         self.model_data.inferenceStatus = (
             self.config.get_status_types().PENDING.value
         )
@@ -202,21 +197,13 @@ class InferencePreprocessor:
                 self.model_data.inferenceStatusMessage, "Queued for inference"
             )
         )
-        # Mint the task/execution id before queueing and record it on a
-        # pending InferenceJob, so the postprocessor reuses it and a
-        # duplicate delivery cannot start a second provider job.
-        task_id = new_task_id(INFERENCE_PREFIX)
-        self.model_data.inferenceJobs.append(
-            InferenceJob(
-                taskId=task_id,
-                modelId=self.model_data.modelId,
-                projectId=self.model_data.projectId,
-                status=self.config.get_status_types().PENDING.value,
-                creationDate=MetadataUtils.get_timestamp(),
-            )
+        self.model_data = persist_and_enqueue(
+            self.model_data,
+            Workload.INFERENCE,
+            self.config,
+            self.queue_client,
+            request_id=request_id,
         )
-        self.model_data.currentInferenceTaskId = task_id
-        self.queue_client.put_message(json.dumps(self.model_data.dict()))
         return self.model_data
 
 
@@ -245,11 +232,6 @@ class InferencePostprocessor(BaseInferenceProcessor):
         self.image_layer = image_layer
         self.experiment_config = experiment_config
         self.config = config or Config()
-        self.queue_client = AzureQueueHandler(
-            self.config.queue_config["queue_connection_string"],
-            self.config.queue_config["inference_queue_name"],
-            self.config.queue_config["queue_account_url"],
-        )
 
     # -- compute handle plumbing --------------------------------------
 
@@ -464,9 +446,6 @@ class InferencePostprocessor(BaseInferenceProcessor):
             else:
                 self.model_data.inferenceStatus = task_status
                 self.model_data.inferenceJobs[idx].status = task_status
-                self.queue_client.put_message(
-                    json.dumps(self.model_data.dict())
-                )
         else:
             self.model_data.inferenceStatus = (
                 self.config.get_status_types().FAILED.value
@@ -538,11 +517,9 @@ class InferencePostprocessor(BaseInferenceProcessor):
                 f"Inference submitted with task id {submitted_job.taskId}",
                 step=0,
             )
-            self.queue_client.put_message(json.dumps(self.model_data.dict()))
-            self.logger.info(
-                f"InProgress message to queue sent for model {self.model_data.modelId}"
-            )
         except Exception as e:
+            if isinstance(e, SubmissionIndeterminateError):
+                raise
             self.logger.error(
                 f"Error processing model {self.model_data.modelId}: {e}",
                 stack_info=True,
@@ -776,3 +753,4 @@ class InferencePostprocessor(BaseInferenceProcessor):
                 f"Error cancelling inference job {job.jobId} for model {self.model_data.modelId}: {e}",
                 stack_info=True,
             )
+            raise

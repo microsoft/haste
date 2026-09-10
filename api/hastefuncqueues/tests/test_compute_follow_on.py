@@ -39,8 +39,21 @@ os.environ.setdefault(
 with redirect_stderr(io.StringIO()):
     from api.hastefuncqueues import function_app
 
-from hastegeo.core.models.compute import ComputeBackend  # noqa: E402
+from hastegeo.core.config import Config  # noqa: E402
+from hastegeo.core.models.compute import (  # noqa: E402
+    ComputeBackend,
+    synthesize_legacy_batch_handle,
+)
 from hastegeo.core.models.projects import Model  # noqa: E402
+from hastegeo.core.processors import job_queue  # noqa: E402
+from hastegeo.core.processors.job_state import (  # noqa: E402
+    JobStateRepository,
+    Workload,
+)
+from hastegeo.core.processors.metadata import MetadataProcessor  # noqa: E402
+from hastegeo.core.utils.compute_specs import (  # noqa: E402
+    follow_on_backend_for_record,
+)
 
 PROJECT_ID = "123e4567-e89b-12d3-a456-426614174000"
 
@@ -79,7 +92,7 @@ class TestFollowOnBackendInheritance(unittest.TestCase):
             clear=False,
         ):
             self.assertEqual(
-                function_app.follow_on_backend_for_record(
+                follow_on_backend_for_record(
                     model, config=function_app.config
                 ),
                 ComputeBackend.AZURE_ML,
@@ -93,63 +106,79 @@ class TestFollowOnBackendInheritance(unittest.TestCase):
             clear=False,
         ):
             self.assertIsNone(
-                function_app.follow_on_backend_for_record(
-                    model, config=function_app.config
-                )
+                follow_on_backend_for_record(model, config=function_app.config)
             )
 
     def test_unset_backend_stays_unset(self):
         self.assertIsNone(
-            function_app.follow_on_backend_for_record(
-                _model(), config=function_app.config
-            )
+            follow_on_backend_for_record(_model(), config=function_app.config)
         )
 
 
 class TestTrainingTriggerFollowOns(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        types = function_app.config.get_metadata_types()
-        self.model_payload = _model().dict()
-
-        def _metadata_factory(*args, **kwargs):
-            instance = MagicMock()
-            data_type = kwargs.get("data_type")
-            if data_type == types.MODEL.value:
-                instance.load.return_value = self.model_payload
-            elif data_type == types.IMAGELAYER.value:
-                instance.load.return_value = {
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(
+            patch.dict(
+                os.environ,
+                {
+                    "METADATA_STORAGE_TYPE": "local",
+                    "DATA_PATH": directory,
+                },
+            )
+        )
+        config = Config()
+        types = config.get_metadata_types()
+        repository = JobStateRepository(config)
+        self.model_payload = repository.begin(
+            Workload.TRAINING, _model()
+        ).model_dump(mode="json")
+        for data_type, key, values in (
+            (
+                types.IMAGELAYER.value,
+                "layer-1",
+                {
                     "imageLayerId": "layer-1",
                     "projectId": PROJECT_ID,
-                }
-            elif data_type == types.PROJECT.value:
-                instance.load.return_value = {"projectId": PROJECT_ID}
-            elif data_type == types.LABELS.value:
-                instance.load_all_from_partition.return_value = [
-                    {
-                        "labelprojectId": "lp-1",
-                        "imageLayerId": "layer-1",
-                        "labels": [],
-                    }
-                ]
-            return instance
-
-        self.meta = patch.object(
-            function_app, "MetadataProcessor", side_effect=_metadata_factory
-        ).start()
-        self.train = patch.object(function_app, "TrainPostprocessor").start()
-        self.inference = patch.object(
-            function_app, "InferencePreprocessor"
-        ).start()
-        self.inference.side_effect = lambda record: MagicMock(
+                },
+            ),
+            (types.PROJECT.value, PROJECT_ID, {"projectId": PROJECT_ID}),
+            (
+                types.LABELS.value,
+                "lp-1",
+                {
+                    "labelprojectId": "lp-1",
+                    "imageLayerId": "layer-1",
+                    "projectId": PROJECT_ID,
+                    "labels": [],
+                },
+            ),
+        ):
+            MetadataProcessor(data_type, PROJECT_ID, config=config).save(
+                key, values
+            )
+        processor = job_queue.JobQueueProcessor(config, repository)
+        self.enterContext(patch.object(repository, "enqueue"))
+        self.enterContext(
+            patch.object(
+                function_app, "JobQueueProcessor", return_value=processor
+            )
+        )
+        self.train = self.enterContext(
+            patch.object(job_queue, "TrainPostprocessor")
+        )
+        self.inference = self.enterContext(
+            patch.object(job_queue, "InferencePreprocessor")
+        )
+        self.inference.side_effect = lambda record, **kwargs: MagicMock(
             send_to_queue=MagicMock(return_value=record)
         )
-        self.artifacts = patch.object(
-            function_app, "ArtifactProcessor"
-        ).start()
+        self.artifacts = self.enterContext(
+            patch.object(job_queue, "ArtifactProcessor")
+        )
         self.artifacts.side_effect = lambda **kwargs: MagicMock(
             send_to_zip_queue=MagicMock(return_value=kwargs["model_artifacts"])
         )
-        self.addCleanup(patch.stopall)
 
     def _train_result(self, **overrides):
         values = {
@@ -158,7 +187,11 @@ class TestTrainingTriggerFollowOns(unittest.IsolatedAsyncioTestCase):
             "computeBackend": ComputeBackend.LOCAL,
         }
         values.update(overrides)
-        return _model(**values)
+        result = Model.model_validate(self.model_payload)
+        for key, value in values.items():
+            setattr(result, key, value)
+        result.trainingJob.status = result.status
+        return result
 
     async def test_inference_follow_on_inherits_the_training_backend(self):
         self.train.return_value.process.return_value = self._train_result()
@@ -187,6 +220,28 @@ class TestTrainingTriggerFollowOns(unittest.IsolatedAsyncioTestCase):
 
         queued = self.inference.call_args.args[0]
         self.assertIsNone(queued.computeBackend)
+
+    async def test_follow_on_uses_handle_not_a_changed_model_preference(self):
+        result = self._train_result(computeBackend=ComputeBackend.LOCAL)
+        result.trainingJob.computeJob = synthesize_legacy_batch_handle(
+            job_id="actual-batch-job",
+            task_id=result.trainingJob.taskId,
+            output_uri="https://account.blob.core.windows.net/data/project/task",
+        )
+        self.train.return_value.process.return_value = result
+        with patch.dict(
+            os.environ,
+            {
+                "COMPUTE_FOLLOW_ON_INHERITS_BACKEND": "true",
+            },
+        ):
+            await function_app.GetCreateModelRunQueueMessage(
+                _Message(self.model_payload)
+            )
+        self.assertEqual(
+            self.inference.call_args.args[0].computeBackend,
+            ComputeBackend.AZURE_BATCH,
+        )
 
     async def test_packaging_follow_on_inherits_the_training_backend(self):
         self.train.return_value.process.return_value = self._train_result(
@@ -225,13 +280,11 @@ class TestQueueLoggingIsSanitized(unittest.TestCase):
         self.assertEqual(offenders, [], "\n".join(offenders))
 
     def test_workload_triggers_log_identifiers_only(self):
-        source = pathlib.Path(function_app.__file__).read_text(
-            encoding="utf-8"
-        )
+        source = pathlib.Path(job_queue.__file__).read_text(encoding="utf-8")
         # The workload triggers must log through the identifier-only core
         # helpers rather than dumping the record.
-        self.assertIn("backend_name(", source)
-        self.assertIn("selected_backend_of(", source)
+        self.assertIn("handle_log_fields(", source)
+        self.assertNotIn("logger.info(payload", source)
 
     def test_compute_helpers_live_in_core_not_the_function_app(self):
         # AGENTS.md: function_app.py holds HTTP/queue wrappers only; plain
@@ -246,7 +299,11 @@ class TestQueueLoggingIsSanitized(unittest.TestCase):
         ):
             with self.subTest(helper=helper):
                 self.assertNotIn(f"def {helper}(", source)
-                self.assertIn(helper, source)
+        self.assertIn("JobQueueProcessor", source)
+        self.assertIn(
+            "follow_on_backend_for_record",
+            pathlib.Path(job_queue.__file__).read_text(encoding="utf-8"),
+        )
 
 
 if __name__ == "__main__":

@@ -1,21 +1,22 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-import glob
 import json
 import os
 import shutil
 import time
-import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
-from urllib.parse import urlparse
+from typing import Any, Optional
 
-from azure.storage.blob import BlobClient, BlobServiceClient
-from azure.storage.queue import QueueServiceClient
+from azure.identity import DefaultAzureCredential
+from azure.storage.blob import BlobServiceClient
+from docker.models.containers import Container
 from docker.types import DeviceRequest
-from hastegeo.core.config import Config
-from hastegeo.core.models.compute import (
+
+import docker
+
+from ..config import Config
+from ..models.compute import (
     BackendConfigurationError,
     BackendUnavailableError,
     CapacitySnapshot,
@@ -30,15 +31,10 @@ from hastegeo.core.models.compute import (
     LocalProviderDetail,
     validate_relative_path,
 )
-from hastegeo.core.utils.logs import Logger
-from hastegeo.core.utils.metadata import MetadataUtils
-from hastegeo.core.utils.output_files import (
-    AmbiguousTaskOutputError,
-    resolve_task_output,
-)
-
-import docker
-
+from ..utils.atomic_files import LockUnavailableError, atomic_write
+from ..utils.logs import Logger
+from ..utils.metadata import MetadataUtils
+from ..utils.output_files import AmbiguousTaskOutputError, resolve_task_output
 from .base import (
     BaseRunner,
     ComputeRunner,
@@ -46,91 +42,84 @@ from .base import (
     require_supported_uri_schemes,
 )
 from .base import resource_files_from_inputs as _resource_files_from_inputs
+from .local_lifecycle import (
+    LIMIT_LABEL,
+    OWNER_LABEL,
+    POLICY_LABEL,
+    SLOT_LABEL,
+    TERMINAL_PHASES,
+    VOLUME_LABEL,
+    LocalReceipt,
+    LocalTaskRequest,
+    Phase,
+    ReceiptStore,
+    ResourceDescriptor,
+    blob_descriptor,
+    execution_key,
+    safe_relative_path,
+    task_path,
+)
 
-# LocalRunner's own blob download/upload helpers
-# (_download_resource_files/_build_blob_client_candidates/
-# _upload_task_outputs) understand http(s) blob URLs, including Azurite's
-# configured account path, but not arbitrary storage URI schemes.
-# See azure_batch.py's
-# _BATCH_SUPPORTED_URI_SCHEMES for the same reasoning.
+TASK_WORK_DIR = Path("/shared/azurite/task_work")
+ACTIVE_CONTAINER_STATES = {"running", "restarting", "paused"}
 _LOCAL_SUPPORTED_URI_SCHEMES = frozenset({"http", "https"})
-
-
-class _LocalOutputPersistenceError(RuntimeError):
-    """A task's files have not been durably copied to output storage."""
 
 
 def _normalize_azurite_url(url: Optional[str]) -> Optional[str]:
     """Replace localhost-style emulator hosts with the azurite service name."""
-
     if not url:
         return url
-
-    normalized = url
     for host in ("localhost", "127.0.0.1"):
-        normalized = normalized.replace(f"http://{host}", "http://azurite")
-    return normalized
+        url = url.replace(f"http://{host}", "http://azurite")
+    return url
 
 
 class LocalRunner(BaseRunner, ComputeRunner):
-    """Local runner that executes containers using Docker instead of Azure Batch."""
+    """Accept local work durably; Docker and periodic reconciliation own it."""
 
     def __init__(
-        self, config: Config = None, pool_id=None, candidate_pool_ids=None
-    ):
+        self,
+        config: Config = None,
+        pool_id: str = None,
+        candidate_pool_ids: list[str] = None,
+    ) -> None:
         super().__init__(config)
-        self.config = config or Config()
-        # candidate_pool_ids is accepted for interface parity with the Azure
-        # Batch runner (capacity-aware routing); local runs use a single pool.
         self.pool_id = pool_id or "local-pool"
         self.logger = Logger.get_logger(__name__)
-        self.verbose = os.getenv("HASTE_DEBUG_VERBOSE", "0") == "1"
-
+        self.docker_client = docker.from_env()
+        storage = self.config.local_storage_config
+        if storage["connection_string"]:
+            self.blob_client = BlobServiceClient.from_connection_string(
+                storage["connection_string"]
+            )
+        elif storage["account_url"]:
+            self.blob_client = BlobServiceClient(
+                storage["account_url"], credential=DefaultAzureCredential()
+            )
+        else:
+            raise ValueError(
+                "Local tasks require Blob storage configured through Config"
+            )
+        self.work_dir = TASK_WORK_DIR
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+        self.receipts = ReceiptStore(self.work_dir)
+        self.volume = os.getenv(
+            "HASTE_DOCKER_AZURITE_VOLUME", "docker_azurite-data"
+        )
         self.fail_on_empty_logs = (
             os.getenv("FAIL_ON_EMPTY_OUTPUT_LOG", "0") == "1"
         )
-
-        try:
-            self.docker_client = docker.from_env()
-        except Exception as e:
-            self.logger.error(f"Failed to connect to Docker: {e}")
-            raise
-
-        # Storage clients - using environment variables for local development
-        connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
-        if connection_string:
-            try:
-                self.blob_client = BlobServiceClient.from_connection_string(
-                    connection_string
-                )
-                self.queue_client = QueueServiceClient.from_connection_string(
-                    connection_string
-                )
-            except Exception as e:
-                self.logger.error(f"Failed to connect to storage: {e}")
-                raise
-        else:
-            self.logger.warning("No AZURE_STORAGE_CONNECTION_STRING found")
-            self.blob_client = None
-            self.queue_client = None
-
-        # Local work directory for tasks
-        # Use a directory inside the azurite volume (but not __blobstorage__)
-        # This way spawned containers can access it, and it's separate from blob storage
-        self.work_dir = Path("/shared/azurite/task_work")
-        self.work_dir.mkdir(parents=True, exist_ok=True)
-
-        # Container images mapping - map ACR images to local ones
         self.container_images = {
             "imageryprep": "haste-imageryprep",
             "training": "haste-training",
-            "inference": "haste-training",  # Same container, different command
+            "inference": "haste-training",
         }
 
     def get_filecontent_from_task(
         self, job_id, task_id, filename, as_chunk=False
     ):
         """Read a live or completed output from this task's workspace."""
+        execution_key(job_id, task_id)
         job_dir = self.work_dir / job_id / task_id
         try:
             file_path = resolve_task_output(job_dir, filename)
@@ -163,36 +152,40 @@ class LocalRunner(BaseRunner, ComputeRunner):
             )
             return None
 
-    def get_task_status(self, job_id, task_id):
-        """Get the status of a task."""
-        # For local runner, tasks are synchronous, so they're either running or completed
-        job_dir = self.work_dir / job_id / task_id
-        if job_dir.exists():
-            status_file = job_dir / "status.json"
+    def get_task_receipt(self, job_id: str, task_id: str) -> dict:
+        return self.receipts.load(execution_key(job_id, task_id)).model_dump(
+            mode="json"
+        )
+
+    def get_task_status(self, job_id: str, task_id: str) -> str:
+        statuses = self.config.get_status_types()
+        try:
+            receipt = self.receipts.load(execution_key(job_id, task_id))
+        except FileNotFoundError:
+            status_file = self.work_dir / job_id / task_id / "status.json"
             if status_file.exists():
-                with open(status_file, "r") as f:
-                    status_data = json.load(f)
-                    # Map internal state to expected status format
-                    if (
-                        status_data.get("state") == "completed"
-                        and status_data.get("exit_code") == 0
-                    ):
-                        return self.config.get_status_types().COMPLETED.value
-                    elif (
-                        status_data.get("state") == "failed"
-                        or status_data.get("exit_code", 0) != 0
-                    ):
-                        return self.config.get_status_types().FAILED.value
-                    elif status_data.get("state") == "cancelled":
-                        return self.config.get_status_types().FAILED.value
-                    else:
-                        return self.config.get_status_types().IN_PROGRESS.value
-            else:
-                # No status file means completed successfully (old behavior)
-                return self.config.get_status_types().COMPLETED.value
-        else:
-            # Task directory doesn't exist - task not found or not started
-            return self.config.get_status_types().IN_PROGRESS.value
+                legacy = json.loads(status_file.read_bytes())
+                if (
+                    legacy.get("state") == "completed"
+                    and legacy.get("exit_code") == 0
+                    and legacy.get("outputs_persisted") is True
+                ):
+                    return statuses.COMPLETED.value
+            self.logger.error(
+                "No durable execution/persistence evidence for %s/%s",
+                job_id,
+                task_id,
+            )
+            return statuses.FAILED.value
+        if receipt.phase == "completed":
+            if not receipt.outputs_persisted or receipt.exit_code != 0:
+                raise RuntimeError("Invalid local completion evidence")
+            return statuses.COMPLETED.value
+        if receipt.phase == "failed":
+            return statuses.FAILED.value
+        if receipt.phase == "cancelled":
+            return statuses.CANCELLED.value
+        return statuses.IN_PROGRESS.value
 
     def add_task(
         self,
@@ -208,821 +201,855 @@ class LocalRunner(BaseRunner, ComputeRunner):
         file_pattern=None,
         env_vars=None,
         **kwargs,
-    ):
-        """Add and execute a task locally using Docker."""
+    ) -> tuple[str, str]:
+        job_id = job_id or f"job-{MetadataUtils.generate_id()}"
+        task_id = task_id or f"task-{MetadataUtils.generate_id()}"
+        key = execution_key(job_id, task_id)
+        request = self._request(
+            image_name,
+            command,
+            arguments,
+            output_container_url,
+            output_prefix,
+            resource_files_for_upload,
+            env_vars,
+            self._output_patterns(file_pattern, job_id, task_id),
+        )
+        with self.receipts.lock(key):
+            try:
+                existing = self.receipts.load(key)
+            except FileNotFoundError:
+                existing = None
+            if existing is not None:
+                if (
+                    existing.request is not None
+                    and existing.request.fingerprint() != request.fingerprint()
+                ):
+                    raise ValueError(
+                        "Local execution identity already has another request"
+                    )
+                return job_id, task_id
+            if (self.work_dir / job_id / task_id).exists():
+                raise RuntimeError(
+                    "Legacy local task files exist without a durable receipt; "
+                    "refusing to repeat unknown compute"
+                )
+            receipt = LocalReceipt(
+                job_id=job_id,
+                task_id=task_id,
+                accepted_at=time.time(),
+                request=request,
+            )
+            self.receipts.save(receipt)
+            self._phase_log(
+                receipt, "Local task accepted; waiting for capacity"
+            )
+        return job_id, task_id
 
-        self.logger.info(
-            "[PIPELINE-TRACE] ========== LocalRunner.add_task ENTRY =========="
+    def _request(
+        self,
+        image_name: str | None,
+        command: str | list[str] | None,
+        arguments: str | list[str] | None,
+        output_container_url: str | None,
+        output_prefix: str | None,
+        resource_files: dict | None,
+        env_vars: dict[str, str] | None,
+        output_patterns: list[str],
+    ) -> LocalTaskRequest:
+        account = self.blob_client.account_name
+        account_url = self.blob_client.url
+        destination = output_container_url or (
+            self.config.artifact_storage_config.get("container")
+            or self.config.local_storage_config["container"]
         )
-        self.logger.info(
-            f"[PIPELINE-TRACE] Input params: image_name={image_name}, command={command}"
+        container, _ = blob_descriptor(
+            destination, account, account_url, container_only=True
         )
-        self.logger.info(f"[PIPELINE-TRACE] Arguments: {arguments}")
-        self.logger.info(
-            f"[PIPELINE-TRACE] Resource files: {list(resource_files_for_upload.keys()) if resource_files_for_upload else 'None'}"
+        resources = []
+        for resource in (resource_files or {}).values():
+            if "http_url" in resource:
+                source_container, blob = blob_descriptor(
+                    resource["http_url"],
+                    account,
+                    account_url,
+                    container_only=False,
+                )
+                prefix = False
+            elif "storage_container_url" in resource:
+                source_container, _ = blob_descriptor(
+                    resource["storage_container_url"],
+                    account,
+                    account_url,
+                    container_only=True,
+                )
+                blob = safe_relative_path(resource["blob_prefix"])
+                prefix = True
+            else:
+                raise ValueError("Unsupported local task resource")
+            resources.append(
+                ResourceDescriptor(
+                    container=source_container,
+                    blob=blob,
+                    file_path=resource["file_path"],
+                    prefix=prefix,
+                )
+            )
+        return LocalTaskRequest(
+            image=self.container_images.get(
+                image_name, image_name or "haste-training"
+            ),
+            command=command,
+            arguments=arguments,
+            environment=env_vars or {},
+            resources=resources,
+            output_container=container,
+            output_prefix=output_prefix,
+            output_patterns=output_patterns,
         )
 
-        if job_id is None:
-            job_id = f"job-{uuid.uuid4().hex[:8]}"
-        if task_id is None:
-            task_id = f"task-{uuid.uuid4().hex[:8]}"
+    def _output_patterns(
+        self, patterns: str | list[str] | None, job_id: str, task_id: str
+    ) -> list[str]:
+        if patterns is None:
+            return ["**/*"]
+        prefixes = [
+            str(self.work_dir / job_id / task_id).replace("\\", "/"),
+            *(
+                prefix
+                for name in (
+                    "HASTE_JOB_WORKDIR",
+                    "AZ_BATCH_TASK_WORKING_DIR",
+                    "BATCH_JOB_WORKDIR",
+                )
+                for prefix in ("$" + name, "${" + name + "}")
+            ),
+        ]
+        normalized = []
+        for pattern in [patterns] if isinstance(patterns, str) else patterns:
+            relative = pattern.replace("\\", "/")
+            for prefix in prefixes:
+                if relative.startswith(prefix + "/"):
+                    relative = relative[len(prefix) + 1 :]
+                    break
+            normalized.append(safe_relative_path(relative))
+        return normalized
 
-        self.logger.info(
-            f"[PIPELINE-TRACE] Generated job_id={job_id}, task_id={task_id}"
-        )
+    def reconcile_tasks(self) -> int:
+        reconciled = 0
+        errors = 0
+        for receipt in self.receipts.list_receipts():
+            try:
+                self.reconcile_task(receipt.job_id, receipt.task_id)
+                reconciled += 1
+            except LockUnavailableError:
+                self.logger.debug(
+                    "Local task %s is being reconciled", receipt.key
+                )
+            except Exception as error:
+                errors += 1
+                self.logger.error(
+                    "Local reconciliation failed for %s (%s)",
+                    receipt.key,
+                    type(error).__name__,
+                )
+                with self.receipts.lock(receipt.key):
+                    current = self.receipts.load(receipt.key)
+                    current.error = (
+                        f"Local reconciliation interrupted ({type(error).__name__}); "
+                        "the next timer invocation will retry"
+                    )
+                    self.receipts.save(current)
+        if errors:
+            raise RuntimeError(
+                f"Local reconciliation failed for {errors} tasks"
+            )
+        return reconciled
 
-        # Create task directory
-        task_dir = self.work_dir / job_id / task_id
-        self.logger.info(
-            f"[PIPELINE-TRACE] Creating task directory: {task_dir}"
-        )
+    def reconcile_task(self, job_id: str, task_id: str) -> None:
+        key = execution_key(job_id, task_id)
+        with self.receipts.lock(key, operation=True, timeout=0):
+            pending = self.receipts.load(key)
+            if (
+                pending.cancel_requested
+                and pending.phase not in TERMINAL_PHASES | {"uploading"}
+            ):
+                self.cancel_task(job_id, task_id)
+            with self.receipts.lock(key):
+                receipt = self.receipts.load(key)
+                if receipt.phase == "queued":
+                    if receipt.cancel_requested:
+                        self._set_phase(receipt, "uploading")
+                    elif not self._reserve_capacity(receipt):
+                        return
+                    else:
+                        self._set_phase(receipt, "preparing")
+            if receipt.phase == "preparing":
+                self._prepare(receipt)
+            receipt = self.receipts.load(key)
+            if receipt.phase == "running":
+                self._inspect(receipt)
+            receipt = self.receipts.load(key)
+            if receipt.phase == "uploading":
+                self._persist_outputs(receipt)
+            with self.receipts.lock(key):
+                receipt = self.receipts.load(key)
+                if receipt.phase in TERMINAL_PHASES:
+                    self._release_capacity(receipt)
+                    self._cleanup_if_safe(receipt)
+
+    def _set_phase(self, receipt: LocalReceipt, phase: Phase) -> None:
+        receipt.phase = phase
+        receipt.error = None
+        self.receipts.save(receipt)
+        self._phase_log(receipt, f"Local task {phase}")
+
+    def _phase_log(self, receipt: LocalReceipt, message: str) -> None:
+        task_dir = self.work_dir / receipt.job_id / receipt.task_id
         task_dir.mkdir(parents=True, exist_ok=True)
         task_dir.chmod(0o777)
-        self.logger.info(
-            "[PIPELINE-TRACE] Task directory created successfully"
+        log_dir = task_dir / "logs"
+        log_dir.mkdir(exist_ok=True)
+        log_dir.chmod(0o777)
+        log_path = log_dir / "workflow_progress.log"
+        with log_path.open("a", encoding="utf-8") as log:
+            log.write(f"{MetadataUtils.get_timestamp()}|{message}\n")
+            log.flush()
+        log_path.chmod(0o666)
+
+    def _owned_container(
+        self, receipt: LocalReceipt, *, slot: int | None = None
+    ) -> Container | None:
+        name = (
+            f"haste-local-slot-{slot}"
+            if slot is not None
+            else receipt.container_id or receipt.container_name
         )
-
-        if output_container_url is None:
-            container_name = None
-            if getattr(self.config, "artifact_storage_config", None):
-                container_name = self.config.artifact_storage_config.get(
-                    "container"
-                )
-            if not container_name and getattr(
-                self.config, "storage_config", None
-            ):
-                container_name = self.config.storage_config.get("container")
-            if not container_name:
-                container_name = "data"
-            output_container_url = container_name
-            self.logger.info(
-                f"[PIPELINE-TRACE] Derived output_container_url={output_container_url}"
-            )
-
-        # Download resource files if specified
-        if resource_files_for_upload:
-            # Never log the raw resource_files_for_upload dict: its
-            # values carry input blob URLs (and, depending on caller, a
-            # signed query string) — only the destination-relative path
-            # keys and a count are safe to log.
-            self.logger.info(
-                "[PIPELINE-TRACE] Starting resource file download for "
-                f"{len(resource_files_for_upload)} input(s): "
-                f"{list(resource_files_for_upload.keys())}"
-            )
-            self._download_resource_files(task_dir, resource_files_for_upload)
-            self.logger.info(
-                "[PIPELINE-TRACE] Resource file download completed"
-            )
-
-            # Make all downloaded files writable by the training container user
-            for _p in task_dir.rglob("*"):
-                try:
-                    _p.chmod(0o777)
-                except Exception as chmod_err:
-                    self.logger.debug(f"chmod failed for {_p}: {chmod_err}")
-
-            # Force filesystem sync and verify files exist before starting container
-            os.sync()
-            time.sleep(1)  # Brief pause to ensure filesystem is consistent
-
-            # Verify downloaded files are visible
-            inputs_dir = task_dir / "inputs"
-            if inputs_dir.exists():
-                all_files = list(inputs_dir.rglob("*"))
-                self.logger.info(
-                    f"[ZIP-DEBUG] After download sync: {len(all_files)} items in {inputs_dir}"
-                )
-                # Show first few items
-                for f in all_files[:5]:
-                    self.logger.info(f"[ZIP-DEBUG] Found: {f}")
-            else:
-                self.logger.warning(
-                    "[ZIP-DEBUG] inputs directory does not exist after download!"
-                )
-        else:
-            self.logger.info("[PIPELINE-TRACE] No resource files to download")
-
         try:
-            self.logger.info(
-                "[PIPELINE-TRACE] ========== DOCKER CONTAINER SETUP =========="
-            )
+            container = self.docker_client.containers.get(name)
+        except docker.errors.NotFound:
+            return None
+        if (
+            container.labels.get(OWNER_LABEL) != receipt.key
+            or container.labels.get(VOLUME_LABEL) != self.volume
+        ):
+            raise RuntimeError("Docker execution ownership mismatch")
+        return container
 
-            # Set up task environment and working directory
-            container_working_dir = work_dir or "/app/data"
-            self.logger.info(
-                f"[PIPELINE-TRACE] Initial container_working_dir: {container_working_dir}"
-            )
-
-            # Set up volumes first to determine the correct working directory
-            relative_task_path = str(task_dir).replace("/shared/azurite/", "")
-            self.logger.info(
-                f"[PIPELINE-TRACE] Relative task path: {relative_task_path}"
-            )
-
-            volumes = {}
-
-            # Mount the azurite volume - this contains both blob storage AND task_work
-            # Volume name depends on docker-compose project name (directory name)
-            azurite_volume_name = os.getenv(
-                "HASTE_DOCKER_AZURITE_VOLUME", "docker_azurite-data"
-            )
-            volumes[azurite_volume_name] = {
-                "bind": "/shared/azurite",
-                "mode": "rw",
-            }
-            self.logger.info(
-                f"[PIPELINE-TRACE] Using azurite volume: {azurite_volume_name}"
-            )
-
-            # Container working dir points directly to the task directory in the volume
-            container_working_dir = f"/shared/azurite/{relative_task_path}"
-
-            self.logger.info(
-                f"[PIPELINE-TRACE] Final container_working_dir: {container_working_dir}"
-            )
-
-            task_env = {
-                "AZ_BATCH_TASK_WORKING_DIR": container_working_dir,
-                "AZ_BATCH_JOB_ID": job_id,
-                "AZ_BATCH_TASK_ID": task_id,
-            }
-            self.logger.info(
-                f"[PIPELINE-TRACE] Base task environment created: {task_env}"
-            )
-            task_env.setdefault("DATA_PATH", container_working_dir)
-
-            # Pass through verbose flag so workflow scripts can emit TRACE logs
-            if self.verbose:
-                task_env["HASTE_DEBUG_VERBOSE"] = "1"
-                self.logger.info(
-                    "[PIPELINE-TRACE] Added verbose debug flag to environment"
-                )
-
-            dataloader_workers = os.getenv("HASTE_DATALOADER_WORKERS")
-            if dataloader_workers:
-                task_env["HASTE_DATALOADER_WORKERS"] = dataloader_workers
-
-            self.logger.info(
-                "[PIPELINE-TRACE] ========== STORAGE CONFIG SETUP =========="
-            )
-            # Add storage configuration for azurite connectivity
-            if self.config and hasattr(self.config, "storage_config"):
-                storage_config = self.config.storage_config
-                self.logger.info(
-                    f"[PIPELINE-TRACE] Found storage_config: {storage_config}"
-                )
-
-                if "connection_string" in storage_config:
-                    # Pass the connection string so spawned containers can connect to azurite
-                    task_env[
-                        "AZURE_STORAGE_CONNECTION_STRING"
-                    ] = storage_config["connection_string"]
-                    task_env["BLOB_CONNECTION_STRING"] = storage_config[
-                        "connection_string"
-                    ]
-                    task_env.setdefault(
-                        "AzureWebJobsStorage",
-                        storage_config["connection_string"],
-                    )
-                    self.logger.info(
-                        "[PIPELINE-TRACE] Added Azure storage connection string to environment"
-                    )
-
-                    # Also add individual storage account components for different tools
-                    task_env["STORAGE_ACCOUNT_NAME"] = "devstoreaccount1"
-                    task_env[
-                        "STORAGE_ACCOUNT_KEY"
-                    ] = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="  # pragma: allowlist secret
-                    storage_account_url = _normalize_azurite_url(
-                        storage_config.get(
-                            "account_url",
-                            "http://azurite:10000/devstoreaccount1",
-                        )
-                    )
-                    task_env["STORAGE_ACCOUNT_URL"] = storage_account_url
-                    task_env["BLOB_ACCOUNT_URL"] = storage_account_url
-                    if "container" in storage_config:
-                        task_env["BLOB_CONTAINER"] = storage_config[
-                            "container"
-                        ]
-                    self.logger.info(
-                        "[PIPELINE-TRACE] Added individual storage account components"
-                    )
-                else:
-                    self.logger.info(
-                        "[PIPELINE-TRACE] No connection_string found in storage_config"
-                    )
-            else:
-                self.logger.info(
-                    f"[PIPELINE-TRACE] No storage_config found - config exists: {self.config is not None}"
-                )
-
-            if env_vars:
-                self.logger.info(
-                    f"[PIPELINE-TRACE] Adding custom env vars: {env_vars}"
-                )
-                task_env.update(env_vars)
-
-            if self.config:
-                task_env.setdefault(
-                    "METADATA_STORAGE_TYPE", self.config.storage_type
-                )
-                task_env.setdefault(
-                    "ARTIFACT_STORAGE_TYPE",
-                    self.config.artifact_storage_type,
-                )
-                image_storage_type = os.getenv(
-                    "IMAGERY_STORAGE_TYPE",
-                    self.config.artifact_storage_type,
-                )
-                task_env.setdefault("IMAGERY_STORAGE_TYPE", image_storage_type)
-                queue_cfg = getattr(self.config, "queue_config", {}) or {}
-                queue_account_url = _normalize_azurite_url(
-                    queue_cfg.get(
-                        "queue_account_url",
-                        "http://azurite:10001/devstoreaccount1",
-                    )
-                )
-                task_env.setdefault("QUEUE_ACCOUNT_URL", queue_account_url)
-                for key in (
-                    "image_queue_name",
-                    "train_queue_name",
-                    "stats_queue_name",
-                    "zip_queue_name",
-                    "inference_queue_name",
-                ):
-                    if key in queue_cfg:
-                        task_env.setdefault(key.upper(), queue_cfg[key])
-
-            self.logger.info(
-                f"[PIPELINE-TRACE] Final task environment: {task_env}"
-            )
-            self.logger.info(
-                "[PIPELINE-TRACE] ========== CONTAINER IMAGE MAPPING =========="
-            )
-
-            # Determine container image - map ACR images to local ones
-            if image_name in self.container_images:
-                container_image = self.container_images[image_name]
-                self.logger.info(
-                    f"[PIPELINE-TRACE] Mapped image '{image_name}' to '{container_image}'"
-                )
-            else:
-                container_image = image_name or self.container_images.get(
-                    "training", "haste-training"
-                )
-                self.logger.info(
-                    f"[PIPELINE-TRACE] Using direct/fallback image: '{container_image}'"
-                )
-
-            self.logger.info(
-                "[PIPELINE-TRACE] ========== COMMAND PREPARATION =========="
-            )
-            # Prepare command - replace Azure Batch environment variables
-            container_command = command
-            self.logger.info(f"[PIPELINE-TRACE] Original command: {command}")
-            self.logger.info(
-                f"[PIPELINE-TRACE] Original arguments: {arguments}"
-            )
-
-            if arguments:
-                if isinstance(arguments, list):
-                    container_command = (
-                        command + arguments if command else arguments
-                    )
-                    self.logger.info(
-                        f"[PIPELINE-TRACE] Combined command+arguments (list): {container_command}"
-                    )
-                else:
-                    container_command = (
-                        f"{command} {arguments}" if command else arguments
-                    )
-                    self.logger.info(
-                        f"[PIPELINE-TRACE] Combined command+arguments (string): {container_command}"
-                    )
-
-            # Replace Azure Batch environment variables in the command
-            self.logger.info(
-                "[PIPELINE-TRACE] Replacing environment variables in command..."
-            )
-            if isinstance(container_command, str):
-                orig_command = container_command
-                container_command = container_command.replace(
-                    "$AZ_BATCH_TASK_WORKING_DIR", container_working_dir
-                )
-                container_command = container_command.replace(
-                    "${AZ_BATCH_TASK_WORKING_DIR}", container_working_dir
-                )
-                container_command = container_command.replace(
-                    "$BATCH_JOB_WORKDIR", container_working_dir
-                )
-                container_command = container_command.replace(
-                    "${BATCH_JOB_WORKDIR}", container_working_dir
-                )
-                container_command = container_command.replace(
-                    "$AZ_BATCH_JOB_ID", job_id
-                )
-                container_command = container_command.replace(
-                    "${AZ_BATCH_JOB_ID}", job_id
-                )
-                container_command = container_command.replace(
-                    "$AZ_BATCH_TASK_ID", task_id
-                )
-                container_command = container_command.replace(
-                    "${AZ_BATCH_TASK_ID}", task_id
-                )
-                self.logger.info(
-                    f"[PIPELINE-TRACE] Env var replacement: '{orig_command}' -> '{container_command}'"
-                )
-            elif isinstance(container_command, list):
-                orig_command = container_command[:]
-                container_command = [
-                    arg.replace(
-                        "$AZ_BATCH_TASK_WORKING_DIR", container_working_dir
-                    )
-                    .replace(
-                        "${AZ_BATCH_TASK_WORKING_DIR}", container_working_dir
-                    )
-                    .replace("$BATCH_JOB_WORKDIR", container_working_dir)
-                    .replace("${BATCH_JOB_WORKDIR}", container_working_dir)
-                    .replace("$AZ_BATCH_JOB_ID", job_id)
-                    .replace("${AZ_BATCH_JOB_ID}", job_id)
-                    .replace("$AZ_BATCH_TASK_ID", task_id)
-                    .replace("${AZ_BATCH_TASK_ID}", task_id)
-                    for arg in container_command
-                ]
-                self.logger.info(
-                    f"[PIPELINE-TRACE] Env var replacement (list): {orig_command} -> {container_command}"
-                )
-
-            self.logger.info(
-                "[PIPELINE-TRACE] ========== CONTAINER EXECUTION SETUP =========="
-            )
-            self.logger.info(
-                f"[PIPELINE-TRACE] Container image: {container_image}"
-            )
-            self.logger.info(
-                f"[PIPELINE-TRACE] Working directory: {container_working_dir}"
-            )
-            self.logger.info(f"[PIPELINE-TRACE] Volume mounts: {volumes}")
-            self.logger.info(
-                f"[PIPELINE-TRACE] Environment vars count: {len(task_env)}"
-            )
-
-            # For containers with bash entrypoint (like haste containers),
-            # ensure the command is always a single string
-            if container_image.startswith("haste-"):
-                self.logger.info(
-                    "[PIPELINE-TRACE] Processing haste container command format..."
-                )
-
-                if isinstance(container_command, list):
-                    if (
-                        len(container_command) == 3
-                        and container_command[0] == "/bin/bash"
-                        and container_command[1] == "-c"
-                    ):
-                        # Extract the actual command from ["/bin/bash", "-c", "command"]
-                        container_command = container_command[2]
-                        self.logger.info(
-                            f"[PIPELINE-TRACE] Extracted bash -c command: {container_command}"
-                        )
-                    else:
-                        # Convert list to string for bash entrypoint
-                        container_command = " ".join(
-                            str(arg) for arg in container_command
-                        )
-                        self.logger.info(
-                            f"[PIPELINE-TRACE] Converted list to string: {container_command}"
-                        )
-
-                # Inject a diagnostic preamble when verbose to ensure we get some stdout even on early failures
-                # Temporarily disabled to avoid command parsing issues
-                # if self.verbose and isinstance(container_command, str):
-                #     diag_preamble = "echo [CONTAINER-DIAG] Container started && date && pwd && ls -al && echo [CONTAINER-DIAG] Python version && python -c \"import sys; print(sys.version)\" && echo [CONTAINER-DIAG] Environment check && env | grep -E \"(HASTE|AZ_BATCH|STORAGE)\" && echo [CONTAINER-DIAG] Starting actual command &&"
-                #     container_command = f"{diag_preamble} {container_command}"
-                #     self.logger.info(f"[PIPELINE-TRACE] Added diagnostic preamble to command")
-            else:
-                self.logger.info(
-                    "[PIPELINE-TRACE] Processing non-haste container command format..."
-                )
-                # For non-bash entrypoint containers, handle complex shell commands
-                if isinstance(container_command, str) and (
-                    "&&" in container_command
-                    or "$" in container_command
-                    or "|" in container_command
-                ):
-                    # Complex shell command - run through bash
-                    container_command = ["/bin/bash", "-c", container_command]
-                    self.logger.info(
-                        f"[PIPELINE-TRACE] Wrapped complex command in bash: {container_command}"
-                    )
-
-            self.logger.info(
-                f"[PIPELINE-TRACE] FINAL container command: {repr(container_command)}"
-            )
-
-            # Run the container
-            start_time = time.time()
-            output_file_path = task_dir / "output.log"
-            result_preview_bytes = bytearray()
+    def _reserve_capacity(self, receipt: LocalReceipt) -> bool:
+        if receipt.request is None:
+            raise RuntimeError("Queued local receipt has no launch request")
+        limit = self.config.local_max_active_tasks
+        self._ensure_capacity_policy(receipt.request.image, limit)
+        for slot in range(limit):
+            name = f"haste-local-slot-{slot}"
             try:
-                self.logger.info(
-                    f"BEFORE DOCKER RUN - Image: {container_image}, Command: {repr(container_command)}"
+                reservation = self.docker_client.containers.create(
+                    receipt.request.image,
+                    name=name,
+                    command="/bin/true",
+                    network_disabled=True,
+                    mem_limit="16m",
+                    cpu_period=100000,
+                    cpu_quota=1000,
+                    labels={
+                        OWNER_LABEL: receipt.key,
+                        VOLUME_LABEL: self.volume,
+                        SLOT_LABEL: str(slot),
+                        LIMIT_LABEL: str(limit),
+                    },
                 )
-                # Persist the resolved command for debugging
+            except docker.errors.APIError as error:
+                if error.status_code != 409:
+                    raise
                 try:
-                    with open(task_dir / "resolved_command.txt", "w") as fc:
-                        fc.write(str(container_command))
-                except Exception as e:
-                    self.logger.warning(
-                        f"Failed writing resolved_command.txt: {e}"
-                    )
-                # Use detach=True to get the container object so we can check exit code
-                # Configure GPU access if requested via environment variables
-                device_requests = None
-                if os.getenv("HASTE_ENABLE_GPU", "0").lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                }:
-                    try:
-                        gpu_devices = (
-                            os.getenv("HASTE_GPU_DEVICES", "all")
-                            .strip()
-                            .lower()
-                        )
-                        request_kwargs: Dict[str, Any] = {
-                            "capabilities": [["gpu"]]
-                        }
-                        visible_devices = None
+                    reservation = self.docker_client.containers.get(name)
+                except docker.errors.NotFound:
+                    # A competing completion released the slot; retry next tick.
+                    return False
+                if reservation.labels.get(LIMIT_LABEL) != str(limit):
+                    raise RuntimeError(
+                        "Conflicting local admission limits; drain active work "
+                        "before changing HASTE_LOCAL_MAX_ACTIVE_TASKS"
+                    ) from error
+                if (
+                    reservation.labels.get(OWNER_LABEL) != receipt.key
+                    or reservation.labels.get(VOLUME_LABEL) != self.volume
+                ):
+                    continue
+            receipt.slot = slot
+            self.receipts.save(receipt)
+            return True
+        return False
 
-                        if gpu_devices and gpu_devices != "all":
-                            device_ids = [
-                                d.strip()
-                                for d in gpu_devices.split(",")
-                                if d.strip()
-                            ]
-                            if device_ids:
-                                request_kwargs["device_ids"] = device_ids
-                                request_kwargs["count"] = len(device_ids)
-                                visible_devices = ",".join(device_ids)
-                            else:
-                                request_kwargs["count"] = -1
-                        else:
-                            request_kwargs["count"] = -1
-
-                        device_requests = [DeviceRequest(**request_kwargs)]
-                        if visible_devices:
-                            task_env.setdefault(
-                                "CUDA_VISIBLE_DEVICES", visible_devices
-                            )
-                            task_env.setdefault(
-                                "NVIDIA_VISIBLE_DEVICES", visible_devices
-                            )
-
-                        self.logger.info(
-                            f"[PIPELINE-TRACE] GPU device request configured: {request_kwargs}"
-                        )
-                    except Exception as gpu_err:
-                        device_requests = None
-                        self.logger.error(
-                            f"Failed to configure GPU device request, continuing without GPU: {gpu_err}"
-                        )
-
-                container = self.docker_client.containers.run(
-                    container_image,
-                    command=container_command,
-                    environment=task_env,
-                    volumes=volumes,
-                    working_dir=container_working_dir,
-                    device_requests=device_requests,
-                    shm_size=os.getenv("HASTE_DOCKER_SHM_SIZE", "8g"),
-                    mem_limit=os.getenv("HASTE_DOCKER_MEM_LIMIT", "32g"),
-                    network=os.getenv(
-                        "HASTE_DOCKER_NETWORK", "docker_default"
-                    ),  # Connect to docker-compose network for azurite access
-                    remove=False,  # Keep for inspection (we'll decide after)
-                    detach=True,
-                    stdout=True,
-                    stderr=True,
+    def _ensure_capacity_policy(self, image: str, limit: int) -> None:
+        name = "haste-local-capacity"
+        try:
+            policy = self.docker_client.containers.get(name)
+        except docker.errors.NotFound:
+            try:
+                policy = self.docker_client.containers.create(
+                    image,
+                    name=name,
+                    command="/bin/true",
+                    network_disabled=True,
+                    mem_limit="16m",
+                    labels={POLICY_LABEL: "1", LIMIT_LABEL: str(limit)},
                 )
-
-                # Stream container logs to disk for parity with Azure Batch outputs
-                try:
-                    with open(output_file_path, "wb") as log_fp:
-                        for chunk in container.logs(
-                            stream=True,
-                            stdout=True,
-                            stderr=True,
-                            follow=True,
-                        ):
-                            if not chunk:
-                                continue
-                            log_fp.write(chunk)
-                            log_fp.flush()
-                            if len(result_preview_bytes) < 512:
-                                remaining = 512 - len(result_preview_bytes)
-                                result_preview_bytes.extend(chunk[:remaining])
-                except Exception as log_err:
-                    self.logger.warning(
-                        f"Failed streaming container logs; falling back to single fetch: {log_err}"  # noqa: E702
-                    )
-                    fallback_logs = container.logs(stdout=True, stderr=True)
-                    with open(output_file_path, "ab") as log_fp:
-                        if isinstance(fallback_logs, bytes):
-                            log_fp.write(fallback_logs)
-                            result_preview_bytes = bytearray(
-                                fallback_logs[:512]
-                            )
-                        else:
-                            log_str = str(fallback_logs)
-                            log_fp.write(log_str.encode())
-                            result_preview_bytes = bytearray(
-                                log_str.encode()[:512]
-                            )
-
-                # Wait for container to finish and get result
-                container_result = container.wait()
-                exit_code = container_result["StatusCode"]
-
-                # Only auto-remove container if CLEANUP_CONTAINERS not disabled
-                if os.getenv("CLEANUP_CONTAINERS", "1") == "1":
-                    try:
-                        container.remove()
-                    except Exception as e:
-                        self.logger.warning(
-                            f"Failed removing container {container.id}: {e}"
-                        )
-
-                end_time = time.time()
-                duration = end_time - start_time
-
-                if exit_code == 0:
-                    state = "completed"
-                    self.logger.info(
-                        f"Container completed successfully in {duration:.2f} seconds with exit code {exit_code}"
-                    )
-                else:
-                    state = "failed"
-                    self.logger.error(
-                        f"Container failed in {duration:.2f} seconds with exit code {exit_code}"
-                    )
-
-                preview_text = (
-                    bytes(result_preview_bytes).decode(
-                        "utf-8", errors="replace"
-                    )
-                    if result_preview_bytes
-                    else "No output"
-                )
-                self.logger.info(
-                    f"Container output preview (first 500 chars): {preview_text[:500]}"
-                )
-
-                # Post-run validation for imagery preprocessing tasks: ensure manifest present
-                try:
-                    output_log_path = task_dir / "output.log"
-                    empty_log = (
-                        output_log_path.exists()
-                        and os.path.getsize(output_log_path) == 0
-                    )
-                    is_imagery = (
-                        isinstance(container_command, str)
-                        and "prepare_imagery" in container_command
-                    )
-                    # Manifest is created in outputs/ subdirectory by prepare_imagery workflow
-                    manifest_path = (
-                        task_dir / "outputs" / "imagery_manifest.json"
-                    )
-
-                    # Rule 1: Any task that reports success but produced an empty log is suspicious -> fail
-                    if exit_code == 0 and empty_log:
-                        base_msg = (
-                            "Task reported success but output.log is empty"
-                        )
-                        if self.fail_on_empty_logs:
-                            self.logger.error(
-                                f"{base_msg}; marking failed"  # noqa: E702
-                            )
-                        else:
-                            self.logger.warning(
-                                f"{base_msg}; continuing per configuration"  # noqa: E702
-                            )
-                        if not (task_dir / "no_logs.debug").exists():
-                            with open(task_dir / "no_logs.debug", "w") as f:
-                                f.write(
-                                    f"Empty output.log detected. Command: {container_command}\n"
-                                )
-                        if self.fail_on_empty_logs:
-                            state = "failed"
-                            exit_code = 12
-
-                    # Rule 2 (imagery specific): Missing manifest is failure even if log not empty
-                    if (
-                        exit_code == 0
-                        and is_imagery
-                        and not manifest_path.exists()
-                    ):
-                        self.logger.error(
-                            "Imagery task reported success but manifest missing; marking failed"
-                        )
-                        file_list = [p.name for p in task_dir.iterdir()]
-                        diagnostics = {
-                            "reason": "manifest_missing",
-                            "files_present": file_list,
-                            "config_present": (
-                                task_dir / "config.json"
-                            ).exists(),
-                            "output_log_size": (
-                                os.path.getsize(output_log_path)
-                                if output_log_path.exists()
-                                else -1
-                            ),
-                            "command": container_command,
-                        }
-                        with open(
-                            task_dir / "manifest_missing.debug.json", "w"
-                        ) as fdiag:
-                            json.dump(diagnostics, fdiag, indent=2)
-                        state = "failed"
-                        # Preserve previous override if we already marked for empty log; otherwise set
-                        if exit_code == 0:
-                            exit_code = 11
-                except Exception as e:
-                    self.logger.error(f"Post-run validation failed: {e}")
-
-            except docker.errors.ContainerError as e:
-                end_time = time.time()
-                exit_code = e.exit_status
-                state = "failed"
-                error_output = e.stderr if e.stderr else str(e)
-                with open(output_file_path, "wb") as log_fp:
-                    if isinstance(error_output, bytes):
-                        log_fp.write(error_output)
-                        result_preview_bytes = bytearray(error_output[:512])
-                    else:
-                        log_fp.write(str(error_output).encode())
-                        result_preview_bytes = bytearray(
-                            str(error_output).encode()[:512]
-                        )
-                self.logger.error(
-                    f"Container failed with exit code {exit_code}: {error_output}"
-                )
-            except Exception as e:
-                end_time = time.time()
-                exit_code = 1
-                state = "failed"
-                error_message = str(e)
-                with open(output_file_path, "wb") as log_fp:
-                    log_fp.write(error_message.encode())
-                result_preview_bytes = bytearray(error_message.encode()[:512])
-                self.logger.error(
-                    f"Unexpected error running container: {error_message}"
-                )
-
-            # Save task status
-            status_data = {
-                "state": state,
-                "exit_code": exit_code,
-                "start_time": start_time,
-                "end_time": end_time,
-                "job_id": job_id,
-                "task_id": task_id,
-            }
-
-            status_file = task_dir / "status.json"
-            with open(status_file, "w") as f:
-                json.dump(status_data, f, indent=2)
-
-            # Upload ALL task files to blob storage for full traceability
-            # This includes inputs, outputs, logs, status files, everything
-            if output_container_url:
-                self.logger.info(
-                    "[PIPELINE-TRACE] Uploading all task files to blob storage for traceability"
-                )
-                self._upload_all_task_files(
-                    task_dir,
-                    output_container_url,
-                    output_prefix,
-                )
-
-            self.logger.info(
-                "Task %s finished with state %s and exit code %s",
-                task_id,
-                state,
-                exit_code,
+            except docker.errors.APIError as error:
+                if error.status_code != 409:
+                    raise
+                policy = self.docker_client.containers.get(name)
+        if policy.labels.get(POLICY_LABEL) != "1" or policy.labels.get(
+            LIMIT_LABEL
+        ) != str(limit):
+            raise RuntimeError(
+                "Local host capacity policy differs from Config; drain all "
+                "local work and remove haste-local-capacity before changing "
+                "HASTE_LOCAL_MAX_ACTIVE_TASKS on every controller"
             )
-            return job_id, task_id
 
-        except docker.errors.ContainerError as e:
-            self.logger.error(f"Container execution failed: {e}")
-            # Save error status
-            status_data = {
-                "state": "failed",
-                "exit_code": e.exit_status,
-                "error": str(e),
-                "start_time": time.time(),
-                "end_time": time.time(),
-                "job_id": job_id,
-                "task_id": task_id,
-            }
+    def _release_capacity(self, receipt: LocalReceipt) -> None:
+        if receipt.slot is not None:
+            execution = self._owned_container(receipt)
+            if (
+                execution is not None
+                and execution.status in ACTIVE_CONTAINER_STATES
+            ):
+                raise RuntimeError(
+                    "Cannot release capacity for active compute"
+                )
+            container = self._owned_container(receipt, slot=receipt.slot)
+            if container is not None:
+                container.remove()
+            receipt.slot = None
+            self.receipts.save(receipt)
 
-            status_file = task_dir / "status.json"
-            with open(status_file, "w") as f:
-                json.dump(status_data, f, indent=2)
-
-            raise
-        except Exception as e:
-            self.logger.error(f"Task execution failed: {e}")
-            # Save error status
-            status_data = {
-                "state": "failed",
-                "exit_code": -1,
-                "error": str(e),
-                "start_time": time.time(),
-                "end_time": time.time(),
-                "job_id": job_id,
-                "task_id": task_id,
-            }
-            if isinstance(e, _LocalOutputPersistenceError):
-                status_data["outputs_persisted"] = False
-
-            status_file = task_dir / "status.json"
-            with open(status_file, "w") as f:
-                json.dump(status_data, f, indent=2)
-
-            raise
-
-    def cleanup_task(self, job_id, task_id):
-        """Clean up local task files."""
-        if os.getenv("PRESERVE_LOCAL_TASK_DIRS", "0") == "1":
-            self.logger.info(
-                "Skipping task directory cleanup because PRESERVE_LOCAL_TASK_DIRS is set"
+    def _prepare(self, receipt: LocalReceipt) -> None:
+        container = self._owned_container(receipt)
+        if container is None and receipt.start_requested:
+            self._fail(
+                receipt.key, "Previously started Docker execution is missing"
             )
             return
-        task_dir = self.work_dir / job_id / task_id
-        status_file = task_dir / "status.json"
-        if status_file.exists():
-            status = json.loads(status_file.read_text(encoding="utf-8"))
-            if status.get("outputs_persisted") is False:
-                self.logger.warning(
-                    "Retaining task directory %s: output upload did not complete",
-                    task_dir,
+        if container is None:
+            try:
+                self._download_resource_files(receipt)
+            except Exception as error:
+                self.logger.error(
+                    "Input staging failed for %s (%s)",
+                    receipt.key,
+                    type(error).__name__,
+                )
+                self._fail(
+                    receipt.key,
+                    f"Input staging failed ({type(error).__name__})",
                 )
                 return
-        if task_dir.exists():
-            try:
-                shutil.rmtree(task_dir)
-                self.logger.info(f"Cleaned up task directory: {task_dir}")
-            except Exception as e:
-                self.logger.warning(
-                    f"Failed to cleanup task directory {task_dir}: {e}"
-                )
+        with self.receipts.lock(receipt.key):
+            current = self.receipts.load(receipt.key)
+            if current.cancel_requested:
+                return
+            if container is None:
+                try:
+                    container = self.docker_client.containers.create(
+                        **self._launch_options(current)
+                    )
+                except docker.errors.APIError as error:
+                    if error.status_code != 409:
+                        raise
+                    container = self._owned_container(current)
+                    if container is None:
+                        raise
+            current.container_id = container.id
+            current.start_requested = True
+            self.receipts.save(current)
+            if container.status == "created":
+                container.start()
+            self._set_phase(current, "running")
 
-        # Check if job directory is empty and remove it
-        job_dir = self.work_dir / job_id
-        if job_dir.exists() and not any(job_dir.iterdir()):
-            try:
-                job_dir.rmdir()
-                self.logger.info(f"Cleaned up empty job directory: {job_dir}")
-            except Exception as e:
-                self.logger.warning(
-                    f"Failed to cleanup job directory {job_dir}: {e}"
+    def _download_resource_files(self, receipt: LocalReceipt) -> None:
+        if receipt.request is None:
+            raise RuntimeError("Local task has no resource descriptors")
+        root = self.work_dir / receipt.job_id / receipt.task_id
+        for resource in receipt.request.resources:
+            if self.receipts.load(receipt.key).cancel_requested:
+                return
+            self.logger.info(
+                "Staging local input %s for %s",
+                resource.file_path,
+                receipt.key,
+            )
+            if resource.prefix:
+                client = self.blob_client.get_container_client(
+                    resource.container
                 )
+                names = [
+                    blob.name
+                    for blob in client.list_blobs(
+                        name_starts_with=resource.blob.rstrip("/") + "/"
+                    )
+                ]
+                if not names:
+                    raise FileNotFoundError(
+                        "Required resource prefix is empty"
+                    )
+            else:
+                names = [resource.blob]
+            for name in names:
+                if self.receipts.load(receipt.key).cancel_requested:
+                    return
+                relative = (
+                    f"{resource.file_path.rstrip('/')}/{name}"
+                    if resource.prefix
+                    else resource.file_path
+                )
+                target = task_path(root, relative)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                temporary = target.with_name(f".{target.name}.staging")
+                try:
+                    client = self.blob_client.get_blob_client(
+                        resource.container, name
+                    )
+                    with temporary.open("wb") as output:
+                        client.download_blob().readinto(output)
+                        output.flush()
+                        os.fsync(output.fileno())
+                    os.replace(temporary, target)
+                    target.chmod(0o666)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        for directory in root.rglob("*"):
+            if directory.is_dir():
+                directory.chmod(0o777)
 
-    def cancel_task(self, job_id, task_id):
-        """Cancel a running task (for local runner, tasks are synchronous so this is a no-op)."""
-        self.logger.info(
-            f"Cancel requested for task {task_id} in job {job_id}"
+    def _launch_options(self, receipt: LocalReceipt) -> dict[str, Any]:
+        request = receipt.request
+        if request is None:
+            raise RuntimeError("Local task has no launch request")
+        working_dir = (
+            f"/shared/azurite/task_work/{receipt.job_id}/{receipt.task_id}"
         )
-        # Since local tasks run synchronously, we can't really cancel them
-        # but we can mark them as cancelled
-        task_dir = self.work_dir / job_id / task_id
-        if task_dir.exists():
-            status_file = task_dir / "status.json"
-            status_data = {
-                "state": "cancelled",
-                "exit_code": -2,
-                "cancelled_time": time.time(),
-                "job_id": job_id,
-                "task_id": task_id,
-            }
-            with open(status_file, "w") as f:
-                json.dump(status_data, f, indent=2)
+        task_env = self._task_environment(receipt, working_dir)
+        command = request.command
+        if request.arguments:
+            if isinstance(request.arguments, list):
+                if command is not None and not isinstance(command, list):
+                    raise ValueError("List arguments require a list command")
+                command = (command or []) + request.arguments
+            else:
+                command = (
+                    f"{command} {request.arguments}"
+                    if command
+                    else request.arguments
+                )
+        replacements = {
+            "HASTE_JOB_WORKDIR": working_dir,
+            "AZ_BATCH_TASK_WORKING_DIR": working_dir,
+            "BATCH_JOB_WORKDIR": working_dir,
+            "AZ_BATCH_JOB_ID": receipt.job_id,
+            "AZ_BATCH_TASK_ID": receipt.task_id,
+        }
 
+        def replace(value: str) -> str:
+            for variable, replacement in replacements.items():
+                value = value.replace("${" + variable + "}", replacement)
+                value = value.replace("$" + variable, replacement)
+            return value
+
+        if isinstance(command, str):
+            command = replace(command)
+        elif isinstance(command, list):
+            command = [replace(arg) for arg in command]
+        if request.image.startswith("haste-") and isinstance(command, list):
+            command = (
+                command[2]
+                if len(command) == 3 and command[:2] == ["/bin/bash", "-c"]
+                else " ".join(command)
+            )
+        elif (
+            not request.image.startswith("haste-")
+            and isinstance(command, str)
+            and any(token in command for token in ("&&", "$", "|"))
+        ):
+            command = ["/bin/bash", "-c", command]
+        devices = None
+        if os.getenv("HASTE_ENABLE_GPU", "0").lower() in {"1", "true", "yes"}:
+            gpu_devices = os.getenv("HASTE_GPU_DEVICES", "all").strip().lower()
+            if gpu_devices == "all":
+                devices = [DeviceRequest(count=-1, capabilities=[["gpu"]])]
+            else:
+                ids = [
+                    item.strip()
+                    for item in gpu_devices.split(",")
+                    if item.strip()
+                ]
+                if not ids:
+                    raise ValueError(
+                        "HASTE_GPU_DEVICES must name devices or all"
+                    )
+                devices = [
+                    DeviceRequest(device_ids=ids, capabilities=[["gpu"]])
+                ]
+                task_env["CUDA_VISIBLE_DEVICES"] = ",".join(ids)
+                task_env["NVIDIA_VISIBLE_DEVICES"] = ",".join(ids)
+        return {
+            "image": request.image,
+            "name": receipt.container_name,
+            "command": command,
+            "environment": task_env,
+            "volumes": {
+                self.volume: {"bind": "/shared/azurite", "mode": "rw"}
+            },
+            "working_dir": working_dir,
+            "device_requests": devices,
+            "shm_size": os.getenv("HASTE_DOCKER_SHM_SIZE", "8g"),
+            "mem_limit": os.getenv("HASTE_DOCKER_MEM_LIMIT", "32g"),
+            "network": os.getenv("HASTE_DOCKER_NETWORK", "docker_default"),
+            "auto_remove": False,
+            "labels": {OWNER_LABEL: receipt.key, VOLUME_LABEL: self.volume},
+        }
+
+    def _task_environment(
+        self, receipt: LocalReceipt, working_dir: str
+    ) -> dict[str, str]:
+        environment = {
+            "HASTE_JOB_WORKDIR": working_dir,
+            "BATCH_JOB_WORKDIR": working_dir,
+            "AZ_BATCH_TASK_WORKING_DIR": working_dir,
+            "AZ_BATCH_JOB_ID": receipt.job_id,
+            "AZ_BATCH_TASK_ID": receipt.task_id,
+            "DATA_PATH": working_dir,
+            "METADATA_STORAGE_TYPE": self.config.storage_type,
+            "ARTIFACT_STORAGE_TYPE": self.config.artifact_storage_type,
+            "IMAGERY_STORAGE_TYPE": os.getenv(
+                "IMAGERY_STORAGE_TYPE", self.config.artifact_storage_type
+            ),
+            "BLOB_CONTAINER": self.config.local_storage_config["container"],
+        }
+        connection = self.config.local_storage_config["connection_string"]
+        if connection:
+            environment.update(
+                {
+                    "AZURE_STORAGE_CONNECTION_STRING": connection,
+                    "BLOB_CONNECTION_STRING": connection,
+                    "AzureWebJobsStorage": (
+                        self.config.queue_config["queue_connection_string"]
+                        or connection
+                    ),
+                }
+            )
+        credential = getattr(self.blob_client, "credential", None)
+        if credential is not None and hasattr(credential, "account_key"):
+            environment["STORAGE_ACCOUNT_KEY"] = credential.account_key
+        environment["STORAGE_ACCOUNT_NAME"] = self.blob_client.account_name
+        account_url = _normalize_azurite_url(self.blob_client.url)
+        environment["STORAGE_ACCOUNT_URL"] = account_url
+        environment["BLOB_ACCOUNT_URL"] = account_url
+        queue_url = _normalize_azurite_url(
+            self.config.queue_config.get("queue_account_url")
+        )
+        if queue_url:
+            environment["QUEUE_ACCOUNT_URL"] = queue_url
+        for key, value in self.config.queue_config.items():
+            if key.endswith("_queue_name") and value:
+                environment[key.upper()] = value
+        for key in ("HASTE_DEBUG_VERBOSE", "HASTE_DATALOADER_WORKERS"):
+            if os.getenv(key):
+                environment[key] = os.environ[key]
+        if receipt.request:
+            environment.update(receipt.request.environment)
+        return environment
+
+    def _snapshot_logs(
+        self, container: Container, receipt: LocalReceipt
+    ) -> None:
+        output = (
+            self.work_dir / receipt.job_id / receipt.task_id / "output.log"
+        )
+        temporary = output.with_name(".output.log.snapshot")
+        try:
+            with temporary.open("wb") as log:
+                for chunk in container.logs(
+                    stream=True, follow=False, stdout=True, stderr=True
+                ):
+                    log.write(chunk)
+                log.flush()
+                os.fsync(log.fileno())
+            os.replace(temporary, output)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _inspect(self, receipt: LocalReceipt) -> None:
+        container = self._owned_container(receipt)
+        if container is None:
+            self._fail(
+                receipt.key,
+                "Docker execution is missing; compute will not be repeated",
+            )
+            return
+        self._snapshot_logs(container, receipt)
+        if container.status in ACTIVE_CONTAINER_STATES:
+            return
+        if container.status not in {"exited", "dead"}:
+            raise RuntimeError(
+                "Docker execution has no terminal exit evidence"
+            )
+        exit_code = container.attrs["State"]["ExitCode"]
+        if not isinstance(exit_code, int):
+            raise RuntimeError("Docker execution has no exit code")
+        with self.receipts.lock(receipt.key):
+            current = self.receipts.load(receipt.key)
+            current.exit_code = exit_code
+            self._set_phase(current, "uploading")
+
+    def _persist_outputs(self, receipt: LocalReceipt) -> None:
+        task_dir = self.work_dir / receipt.job_id / receipt.task_id
+        request = receipt.request
+        if request is None:
+            raise RuntimeError("Local task has no output descriptor")
+        try:
+            container = self._owned_container(receipt)
+            if container is not None:
+                if container.status in ACTIVE_CONTAINER_STATES:
+                    raise RuntimeError(
+                        "Cannot persist a running task as terminal"
+                    )
+                self._snapshot_logs(container, receipt)
+            if receipt.exit_code == 0 and not receipt.cancel_requested:
+                command = str(request.command or "")
+                if (
+                    "prepare-imagery" in command
+                    or "prepare_imagery" in command
+                ) and not (
+                    task_dir / "outputs" / "imagery_manifest.json"
+                ).is_file():
+                    raise FileNotFoundError(
+                        "Required imagery manifest is missing"
+                    )
+                if self.fail_on_empty_logs and (
+                    not (task_dir / "output.log").is_file()
+                    or (task_dir / "output.log").stat().st_size == 0
+                ):
+                    raise ValueError("Task output.log is empty")
+            self._upload_all_task_files(
+                task_dir,
+                request.output_container,
+                request.output_prefix,
+                request.output_patterns,
+            )
+            with self.receipts.lock(receipt.key):
+                current = self.receipts.load(receipt.key)
+                phase = (
+                    "cancelled"
+                    if current.cancel_requested
+                    else "completed"
+                    if current.exit_code == 0
+                    else "failed"
+                )
+                status = {
+                    "state": phase,
+                    "exit_code": current.exit_code,
+                    "outputs_persisted": True,
+                    "job_id": current.job_id,
+                    "task_id": current.task_id,
+                }
+                status_path = task_dir / "status.json"
+                atomic_write(status_path, json.dumps(status).encode())
+                self._upload_single_file(
+                    status_path,
+                    request.output_container,
+                    "/".join(
+                        filter(None, [request.output_prefix, "status.json"])
+                    ),
+                )
+                current.phase = phase
+                current.outputs_persisted = True
+                current.error = None
+                self.receipts.save(current)
+        except Exception as error:
+            self.logger.error(
+                "Output persistence failed for %s (%s)",
+                receipt.key,
+                type(error).__name__,
+            )
+            self._fail(
+                receipt.key,
+                f"Output persistence failed ({type(error).__name__}); task files retained",
+            )
+
+    def _upload_all_task_files(
+        self,
+        task_dir: Path,
+        output_container_url: str,
+        output_prefix: str | None,
+        patterns: list[str] | None = None,
+    ) -> None:
+        if self.blob_client is None:
+            raise RuntimeError("No storage client for local task outputs")
+        selected = {
+            path
+            for pattern in patterns or ["**/*"]
+            for path in task_dir.glob(pattern)
+        }
+        selected.update(task_dir.glob("logs/**/*"))
+        if (task_dir / "output.log").exists():
+            selected.add(task_dir / "output.log")
+        for path in sorted(selected):
+            if path.is_symlink():
+                raise ValueError("Task output symlinks cannot be persisted")
+            if not path.resolve().is_relative_to(task_dir.resolve()):
+                raise ValueError("Task output escapes its workspace")
+            if not path.is_file() or path == task_dir / "status.json":
+                continue
+            relative = path.relative_to(task_dir)
+            if relative.parts[0] == "outputs" and len(relative.parts) > 1:
+                relative = Path(*relative.parts[1:])
+            blob_name = "/".join(
+                filter(None, [output_prefix, relative.as_posix()])
+            )
+            self._upload_single_file(path, output_container_url, blob_name)
+
+    def _upload_single_file(
+        self, file_path: Path, container_url: str, blob_name: str
+    ) -> None:
+        try:
+            client = self.blob_client.get_blob_client(container_url, blob_name)
+            with file_path.open("rb") as contents:
+                client.upload_blob(contents, overwrite=True)
+        except Exception as error:
+            self.logger.error(
+                "Local task output upload failed (%s)", type(error).__name__
+            )
+            raise RuntimeError("Failed to persist local task file") from error
+
+    def _fail(self, key: str, message: str) -> None:
+        self.logger.error("%s: %s", key, message)
+        with self.receipts.lock(key):
+            current = self.receipts.load(key)
+            current.phase = (
+                "cancelled" if current.cancel_requested else "failed"
+            )
+            current.outputs_persisted = False
+            current.error = message
+            self.receipts.save(current)
+            self._phase_log(current, message)
+            atomic_write(
+                self.work_dir
+                / current.job_id
+                / current.task_id
+                / "status.json",
+                json.dumps(
+                    {
+                        "state": current.phase,
+                        "exit_code": current.exit_code,
+                        "outputs_persisted": False,
+                        "error": message,
+                    }
+                ).encode(),
+            )
+
+    def cancel_task(self, job_id: str, task_id: str) -> bool:
+        key = execution_key(job_id, task_id)
+        with self.receipts.lock(key):
+            try:
+                receipt = self.receipts.load(key)
+            except FileNotFoundError:
+                if (self.work_dir / job_id / task_id).exists():
+                    raise RuntimeError(
+                        "Cannot safely cancel a legacy local task without "
+                        "an owned Docker execution identity"
+                    )
+                receipt = LocalReceipt(
+                    job_id=job_id,
+                    task_id=task_id,
+                    accepted_at=time.time(),
+                    phase="cancelled",
+                    cancel_requested=True,
+                )
+                self.receipts.save(receipt)
+                return True
+            if receipt.phase in TERMINAL_PHASES:
+                return True
+            receipt.cancel_requested = True
+            self.receipts.save(receipt)
+            container = self._owned_container(receipt)
+            if (
+                container is not None
+                and container.status in ACTIVE_CONTAINER_STATES
+            ):
+                if container.status == "paused":
+                    container.unpause()
+                try:
+                    container.stop(timeout=5)
+                except docker.errors.APIError:
+                    container.reload()
+                    if container.status in ACTIVE_CONTAINER_STATES:
+                        raise
+                container.reload()
+                if container.status in ACTIVE_CONTAINER_STATES:
+                    raise RuntimeError("Docker execution did not stop")
+                receipt.exit_code = container.attrs["State"]["ExitCode"]
+            self._set_phase(receipt, "uploading")
         return True
 
-    # ---------------------------------------------------------------
-    # ComputeRunner contract
-    #
-    # Translates ComputeJobSpec into calls on the legacy add_task/
-    # get_task_status/get_filecontent_from_task/cancel_task/cleanup_task
-    # methods above, so Docker execution, blob download/upload, and
-    # AZ_BATCH_* emulation are reused unchanged rather than duplicated
-    # (design.md#backend-neutral-compute-runner, ADR-0005).
-    # ---------------------------------------------------------------
+    def cleanup_task(self, job_id: str, task_id: str) -> None:
+        key = execution_key(job_id, task_id)
+        with self.receipts.lock(key):
+            try:
+                receipt = self.receipts.load(key)
+            except FileNotFoundError:
+                self.logger.warning(
+                    "Retaining task files without a durable receipt"
+                )
+                return
+            receipt.cleanup_requested = True
+            self.receipts.save(receipt)
+        try:
+            with self.receipts.lock(key, operation=True, timeout=0):
+                with self.receipts.lock(key):
+                    self._cleanup_if_safe(self.receipts.load(key))
+        except LockUnavailableError:
+            self.logger.info("Task cleanup deferred to reconciliation")
+
+    def _cleanup_if_safe(self, receipt: LocalReceipt) -> None:
+        if (
+            receipt.phase not in TERMINAL_PHASES
+            or not receipt.outputs_persisted
+        ):
+            return
+        if os.getenv("CLEANUP_CONTAINERS", "1") == "1":
+            container = self._owned_container(receipt)
+            if container is not None:
+                if container.status in ACTIVE_CONTAINER_STATES:
+                    raise RuntimeError(
+                        "Refusing to remove an active execution"
+                    )
+                container.remove()
+        if (
+            not receipt.cleanup_requested
+            or receipt.files_cleaned
+            or os.getenv("PRESERVE_LOCAL_TASK_DIRS", "0") == "1"
+        ):
+            return
+        task_dir = self.work_dir / receipt.job_id / receipt.task_id
+        if task_dir.exists():
+            shutil.rmtree(task_dir)
+        receipt.files_cleaned = True
+        self.receipts.save(receipt)
+
+    def ensure_docker_images(self) -> bool:
+        missing = []
+        for image in set(self.container_images.values()):
+            try:
+                self.docker_client.images.get(image)
+            except docker.errors.ImageNotFound:
+                missing.append(image)
+        if missing:
+            self.logger.error(
+                "Required local Docker images are missing: %s", missing
+            )
+        return not missing
 
     def validate(self, spec: ComputeJobSpec) -> None:
         if self.docker_client is None:
@@ -1070,18 +1097,8 @@ class LocalRunner(BaseRunner, ComputeRunner):
     def _resolved_container_working_dir(
         self, job_id: str, task_id: str
     ) -> str:
-        """Return the in-container working directory add_task will use
-        for ``(job_id, task_id)``, mirroring its internal
-        ``container_working_dir``/``relative_task_path`` computation
-        (see add_task) without modifying that legacy method.
-
-        Needed to pass ``HASTE_JOB_WORKDIR`` through ``env_vars`` ahead of
-        submission, since add_task only derives this value internally and
-        does not expose it to callers.
-        """
-        task_dir = self.work_dir / job_id / task_id
-        relative_task_path = str(task_dir).replace("/shared/azurite/", "")
-        return f"/shared/azurite/{relative_task_path}"
+        execution_key(job_id, task_id)
+        return f"/shared/azurite/task_work/{job_id}/{task_id}"
 
     def submit(self, spec: ComputeJobSpec) -> ComputeJobHandle:
         self.validate(spec)
@@ -1089,54 +1106,30 @@ class LocalRunner(BaseRunner, ComputeRunner):
         task_id = spec.executionId
         task_dir = self.work_dir / job_id / task_id
 
-        if (task_dir / "status.json").exists():
-            # Idempotent get-or-create: local execution is synchronous
-            # inside add_task, so a second submit() for the same
-            # executionId (retry / duplicate queue delivery) must reuse
-            # the already-produced result instead of re-running the
-            # container.
-            self.logger.info(
-                "Local task %s already ran; reusing its recorded result "
-                "instead of re-executing.",
-                task_id,
-            )
-        else:
-            account_url = self._storage_account_url()
-            resource_files = _resource_files_from_inputs(
-                spec.inputs, account_url=account_url
-            )
-            (
-                _container_url,
-                container_name,
-                output_prefix,
-                patterns,
-            ) = require_single_output_destination(
-                spec.outputs, account_url=account_url
-            )
-            file_patterns = [str(task_dir / pattern) for pattern in patterns]
-            # Unlike Batch, the local adapter already knows the resolved
-            # in-container working directory before the container starts,
-            # so HASTE_JOB_WORKDIR can be set as a plain static env var
-            # (design.md#work-directory-contract) rather than exported
-            # from another variable at container-start time. Legacy
-            # AZ_BATCH_* variables are still set by add_task unchanged.
-            env_vars = dict(spec.environment)
-            env_vars[
-                "HASTE_JOB_WORKDIR"
-            ] = self._resolved_container_working_dir(job_id, task_id)
-            self.add_task(
-                job_id=job_id,
-                task_id=task_id,
-                image_name=spec.container.imageReference,
-                command=spec.command,
-                arguments=None,
-                work_dir=spec.container.workingDirectory,
-                output_container_url=container_name,
-                output_prefix=output_prefix,
-                resource_files_for_upload=resource_files or None,
-                file_pattern=file_patterns,
-                env_vars=env_vars,
-            )
+        account_url = self._storage_account_url()
+        resource_files = _resource_files_from_inputs(
+            spec.inputs, account_url=account_url
+        )
+        (
+            _,
+            container_name,
+            output_prefix,
+            patterns,
+        ) = require_single_output_destination(
+            spec.outputs, account_url=account_url
+        )
+        self.add_task(
+            job_id=job_id,
+            task_id=task_id,
+            image_name=spec.container.imageReference,
+            command=spec.command,
+            work_dir=spec.container.workingDirectory,
+            output_container_url=container_name,
+            output_prefix=output_prefix,
+            resource_files_for_upload=resource_files or None,
+            file_pattern=patterns,
+            env_vars=dict(spec.environment),
+        )
 
         return ComputeJobHandle(
             executionId=spec.executionId,
@@ -1157,6 +1150,19 @@ class LocalRunner(BaseRunner, ComputeRunner):
         )
 
     def get_status(self, handle: ComputeJobHandle) -> ComputeJobState:
+        try:
+            receipt = self.receipts.load(
+                execution_key(handle.providerJobId, handle.providerTaskId)
+            )
+        except FileNotFoundError:
+            receipt = None
+        if receipt is not None and receipt.phase not in TERMINAL_PHASES:
+            return {
+                "queued": ComputeJobState.QUEUED,
+                "preparing": ComputeJobState.PREPARING,
+                "running": ComputeJobState.RUNNING,
+                "uploading": ComputeJobState.RUNNING,
+            }[receipt.phase]
         status = self.get_task_status(
             handle.providerJobId, handle.providerTaskId
         )
@@ -1165,6 +1171,8 @@ class LocalRunner(BaseRunner, ComputeRunner):
             return ComputeJobState.SUCCEEDED
         if status == status_types.FAILED.value:
             return ComputeJobState.FAILED
+        if status == status_types.CANCELLED.value:
+            return ComputeJobState.CANCELLED
         if status == status_types.IN_PROGRESS.value:
             return ComputeJobState.RUNNING
         # Log the raw provider status server-side before failing
@@ -1197,35 +1205,9 @@ class LocalRunner(BaseRunner, ComputeRunner):
         )
 
     def cancel(self, handle: ComputeJobHandle) -> None:
-        """Cancel the task referenced by ``handle``.
-
-        Local tasks run synchronously inside ``add_task``, so by the time
-        a handle exists the task has usually already finished; guard
-        against the legacy ``cancel_task`` unconditionally overwriting an
-        already-terminal ``status.json`` with ``cancelled`` (NEG-003:
-        cancellation racing with completion must not clobber a final
-        succeeded/failed state).
-        """
-        current_status = self.get_task_status(
-            handle.providerJobId, handle.providerTaskId
-        )
-        status_types = self.config.get_status_types()
-        if current_status in (
-            status_types.COMPLETED.value,
-            status_types.FAILED.value,
-        ):
-            self.logger.info(
-                "Task %s already finished (%s); cancel() is a no-op.",
-                handle.providerTaskId,
-                current_status,
-            )
-            return
         self.cancel_task(handle.providerJobId, handle.providerTaskId)
 
     def finalize(self, handle: ComputeJobHandle) -> None:
-        # cleanup_task is already idempotent (checks task_dir.exists()
-        # before removing it) and has no shared-job concept to protect
-        # (unlike Batch, each local task owns its own job_id directory).
         self.cleanup_task(handle.providerJobId, handle.providerTaskId)
 
     def get_capacity(
@@ -1240,453 +1222,23 @@ class LocalRunner(BaseRunner, ComputeRunner):
                 state=CapacityState.UNAVAILABLE,
                 detail=f"local Docker daemon unreachable: {exc}",
             )
+        occupied = 0
+        for slot in range(self.config.local_max_active_tasks):
+            try:
+                self.docker_client.containers.get(f"haste-local-slot-{slot}")
+            except docker.errors.NotFound:
+                continue
+            occupied += 1
         return CapacitySnapshot(
             backend=ComputeBackend.LOCAL,
             workload=workload,
-            state=CapacityState.AVAILABLE,
-            detail="local Docker daemon reachable",
+            state=(
+                CapacityState.QUEUEABLE
+                if occupied >= self.config.local_max_active_tasks
+                else CapacityState.AVAILABLE
+            ),
+            detail=(
+                f"{occupied}/{self.config.local_max_active_tasks} "
+                "local execution slots reserved"
+            ),
         )
-
-    def _download_blob_data(self, blob_path: str, local_dir: Path):
-        """Download data from blob storage to local directory."""
-        if not blob_path or not self.blob_client:
-            return
-
-        try:
-            # Parse blob path (format: container/blob/path)
-            parts = blob_path.split("/", 1)
-            if len(parts) != 2:
-                self.logger.warning(f"Invalid blob path format: {blob_path}")
-                return
-
-            container_name, blob_name = parts
-            blob_client = self.blob_client.get_blob_client(
-                container_name, blob_name
-            )
-
-            local_file = local_dir / Path(blob_name).name
-            local_file.parent.mkdir(parents=True, exist_ok=True)
-
-            with open(local_file, "wb") as f:
-                blob_data = blob_client.download_blob()
-                blob_data.readinto(f)
-
-            self.logger.info(f"Downloaded {blob_path} to {local_file}")
-        except Exception as e:
-            self.logger.error(f"Failed to download blob {blob_path}: {e}")
-
-    def _build_blob_client_candidates(self, blob_url: str):
-        candidates = []
-
-        if not self.blob_client or not blob_url:
-            return candidates
-
-        credential = getattr(self.blob_client, "credential", None)
-
-        # Prefer direct URL when it is reachable (covers real Azure accounts)
-        try:
-            if credential is not None:
-                candidates.append(
-                    BlobClient.from_blob_url(blob_url, credential=credential)
-                )
-            else:
-                candidates.append(BlobClient.from_blob_url(blob_url))
-        except Exception as blob_url_err:
-            self.logger.debug(
-                "BlobClient.from_blob_url failed "
-                f"({type(blob_url_err).__name__}); will try fallbacks"
-            )
-
-        parsed = urlparse(blob_url)
-        path_parts = [part for part in parsed.path.split("/") if part]
-
-        # Reject path traversal and null bytes before joining segments into
-        # a blob name. The Azure SDK likely rejects these too, but we should
-        # not rely on undocumented downstream behavior.
-        if any(part == ".." or "\x00" in part for part in path_parts):
-            self.logger.warning(
-                "Rejecting blob URL with unsafe path segments "
-                f"({len(path_parts)} segment(s))"
-            )
-            return candidates
-
-        account_name = getattr(self.blob_client, "account_name", None)
-        if (
-            account_name
-            and path_parts
-            and path_parts[0].lower() == account_name.lower()
-        ):
-            path_parts = path_parts[1:]
-
-        if path_parts:
-            container_name = path_parts[0]
-            blob_name = "/".join(path_parts[1:])
-
-            if container_name and blob_name:
-                try:
-                    candidates.append(
-                        self.blob_client.get_blob_client(
-                            container_name, blob_name
-                        )
-                    )
-                except Exception as bc_err:
-                    self.logger.debug(
-                        f"get_blob_client failed for container "
-                        f"{container_name!r} "
-                        f"({type(bc_err).__name__})"
-                    )
-
-        return candidates
-
-    def _download_resource_files(self, task_dir: Path, resource_files: dict):
-        """Download resource files from blob storage to local task directory."""
-        try:
-            for file_key, file_info in resource_files.items():
-                if not isinstance(file_info, dict):
-                    continue
-
-                if "http_url" in file_info and "file_path" in file_info:
-                    blob_url = file_info.get("http_url")
-                    target_rel_path = file_info.get("file_path")
-
-                    if not blob_url or not target_rel_path:
-                        self.logger.warning(
-                            f"Skipping resource '{file_key}' due to missing URL or file path"
-                        )
-                        continue
-
-                    if not self.blob_client:
-                        self.logger.warning(
-                            "No blob client available for downloading resource files"
-                        )
-                        continue
-
-                    local_file_path = task_dir / target_rel_path
-                    local_file_path.parent.mkdir(parents=True, exist_ok=True)
-
-                    download_succeeded = False
-                    last_error = None
-
-                    for candidate in self._build_blob_client_candidates(
-                        blob_url
-                    ):
-                        try:
-                            with open(local_file_path, "wb") as f:
-                                blob_data = candidate.download_blob()
-                                blob_data.readinto(f)
-                            download_succeeded = True
-                            break
-                        except Exception as download_err:
-                            last_error = download_err
-                            if local_file_path.exists():
-                                try:
-                                    local_file_path.unlink()
-                                except Exception as unlink_err:
-                                    self.logger.debug(
-                                        f"Failed to clean up partial download {local_file_path}: {unlink_err}"
-                                    )
-
-                    if download_succeeded:
-                        self.logger.info(
-                            f"Downloaded resource '{file_key}' to {local_file_path}"
-                        )
-                    else:
-                        self.logger.error(
-                            f"Failed to download resource '{file_key}' "
-                            f"({type(last_error).__name__ if last_error else 'unknown error'})"
-                        )
-                    continue
-
-                if (
-                    "storage_container_url" in file_info
-                    and "blob_prefix" in file_info
-                    and "file_path" in file_info
-                ):
-                    if not self.blob_client:
-                        self.logger.warning(
-                            "No blob client available for downloading resource files"
-                        )
-                        continue
-
-                    container_url = file_info.get("storage_container_url")
-                    blob_prefix = (file_info.get("blob_prefix") or "").lstrip(
-                        "/"
-                    )
-                    target_rel_path = file_info.get("file_path") or ""
-
-                    if not container_url or not blob_prefix:
-                        self.logger.warning(
-                            f"Skipping resource '{file_key}' due to missing container URL or blob prefix"
-                        )
-                        continue
-
-                    parsed_url = urlparse(container_url)
-                    path_parts = [p for p in parsed_url.path.split("/") if p]
-                    container_name = path_parts[-1] if path_parts else None
-
-                    if not container_name:
-                        self.logger.warning(
-                            f"Skipping resource '{file_key}' due to unresolved container name"
-                        )
-                        continue
-
-                    dest_root = task_dir / target_rel_path
-                    dest_root.mkdir(parents=True, exist_ok=True)
-
-                    try:
-                        container_client = (
-                            self.blob_client.get_container_client(
-                                container_name
-                            )
-                        )
-                        blob_count = 0
-                        for blob in container_client.list_blobs(
-                            name_starts_with=blob_prefix
-                        ):
-                            blob_count += 1
-                            # For local runs, preserve the full blob path structure
-                            # so that INPUT_DIR (which includes the hash prefix) works correctly
-                            local_blob_path = dest_root / blob.name
-                            if blob_count <= 3:
-                                self.logger.info(
-                                    f"[ZIP-DEBUG] blob.name={blob.name}, dest_root={dest_root}, local_blob_path={local_blob_path}"
-                                )
-                            local_blob_path.parent.mkdir(
-                                parents=True, exist_ok=True
-                            )
-                            with open(local_blob_path, "wb") as f:
-                                container_client.download_blob(
-                                    blob.name
-                                ).readinto(f)
-                        self.logger.info(
-                            f"[ZIP-DEBUG] Downloaded {blob_count} blobs from {blob_prefix}"
-                        )
-                        self.logger.info(
-                            f"Synced resource '{file_key}' from prefix {blob_prefix} to {dest_root}"
-                        )
-                    except Exception as download_err:
-                        self.logger.error(
-                            f"Failed to download resource '{file_key}' "
-                            f"from prefix {blob_prefix!r} "
-                            f"({type(download_err).__name__})"
-                        )
-        except Exception as e:
-            self.logger.error(
-                f"Failed to download resource files ({type(e).__name__})"
-            )
-
-    def _upload_blob_data(self, local_dir: Path, blob_path: str):
-        """Upload data from local directory to blob storage."""
-        if not blob_path or not self.blob_client:
-            return
-
-        try:
-            # Parse blob path
-            parts = blob_path.split("/", 1)
-            if len(parts) != 2:
-                self.logger.warning(f"Invalid blob path format: {blob_path}")
-                return
-
-            container_name, blob_prefix = parts
-            container_client = self.blob_client.get_container_client(
-                container_name
-            )
-
-            # Upload all files in the directory
-            for file_path in local_dir.rglob("*"):
-                if file_path.is_file():
-                    relative_path = file_path.relative_to(local_dir)
-                    blob_name = f"{blob_prefix}/{relative_path}".replace(
-                        "\\", "/"
-                    )
-                    blob_client = container_client.get_blob_client(blob_name)
-
-                    with open(file_path, "rb") as f:
-                        blob_client.upload_blob(f, overwrite=True)
-
-                    self.logger.info(
-                        f"Uploaded {file_path} to {container_name}/{blob_name}"
-                    )
-        except Exception as e:
-            self.logger.error(f"Failed to upload to blob {blob_path}: {e}")
-
-    def _upload_all_task_files(
-        self,
-        task_dir: Path,
-        output_container_url: str,
-        output_prefix: str,
-    ) -> None:
-        """Upload ALL task files to blob storage for full traceability.
-        This includes inputs, outputs, logs, config files, everything."""
-        if not self.blob_client:
-            raise _LocalOutputPersistenceError(
-                "No storage client is configured for local task outputs"
-            )
-
-        container_name = output_container_url.rstrip("/").split("/")[-1]
-        uploaded_count = 0
-
-        # Upload every file in the task directory.
-        for file_path in task_dir.rglob("*"):
-            if file_path.is_file():
-                relative_path = file_path.relative_to(task_dir)
-
-                if (
-                    relative_path.parts
-                    and relative_path.parts[0] == "outputs"
-                    and len(relative_path.parts) > 1
-                ):
-                    relative_path = Path(*relative_path.parts[1:])
-
-                blob_path = (
-                    f"{output_prefix}/{relative_path}"
-                    if output_prefix
-                    else str(relative_path)
-                )
-                blob_path = blob_path.replace("\\", "/")
-
-                try:
-                    blob_client = self.blob_client.get_blob_client(
-                        container_name, blob_path
-                    )
-
-                    with open(file_path, "rb") as f:
-                        blob_client.upload_blob(f, overwrite=True)
-
-                    uploaded_count += 1
-                    self.logger.info(
-                        f"Uploaded {relative_path} to {container_name}/{blob_path}"
-                    )
-                except Exception as e:
-                    self.logger.error(
-                        "Failed to upload local task file %s (%s)",
-                        relative_path,
-                        type(e).__name__,
-                    )
-                    raise _LocalOutputPersistenceError(
-                        f"Failed to persist local task file {relative_path} "
-                        f"({type(e).__name__}); task files are retained"
-                    ) from e
-
-        self.logger.info(
-            "[PIPELINE-TRACE] Uploaded %s files to blob storage for task traceability",
-            uploaded_count,
-        )
-
-    def _upload_task_outputs(
-        self,
-        task_dir: Path,
-        output_container_url: str,
-        output_prefix: str,
-        resource_files: list,
-        file_pattern: Optional[Union[str, List[str]]],
-    ):
-        """Upload task output files to blob storage."""
-        if not self.blob_client:
-            return
-
-        try:
-            # Simple implementation - upload all files matching pattern
-            files_to_upload = []
-
-            if file_pattern:
-                # Mirror AzureBatchJob.add_task: a workload may supply several
-                # patterns when its outputs span more than one directory.
-                patterns = (
-                    [file_pattern]
-                    if isinstance(file_pattern, str)
-                    else [p for p in file_pattern if p]
-                )
-                for pattern in patterns:
-                    normalized_pattern = pattern.replace("\\", "/")
-                    try:
-                        files_to_upload += [
-                            Path(p)
-                            for p in glob.glob(
-                                normalized_pattern, recursive=True
-                            )
-                        ]
-                    except Exception as e:
-                        self.logger.warning(
-                            f"Failed globbing output pattern {pattern}: {e}. Falling back to task_dir search"
-                        )
-
-            if not files_to_upload:
-                outputs_dir = task_dir / "outputs"
-                if outputs_dir.exists():
-                    files_to_upload = list(outputs_dir.rglob("*"))
-
-            if not files_to_upload:
-                files_to_upload = list(task_dir.rglob("*"))
-
-            for file_path in files_to_upload:
-                if file_path.is_file():
-                    # Create blob path
-                    relative_path = file_path.relative_to(task_dir)
-
-                    # Mirror Azure Batch behavior by omitting the local
-                    # staging folder name (e.g. "outputs/") from the blob path.
-                    if (
-                        relative_path.parts
-                        and relative_path.parts[0] == "outputs"
-                    ):
-                        relative_path = Path(*relative_path.parts[1:])
-
-                    blob_path = (
-                        f"{output_prefix}/{relative_path}"
-                        if output_prefix
-                        else str(relative_path)
-                    )
-                    blob_path = blob_path.replace("\\", "/")
-
-                    # Upload to blob storage
-                    self._upload_single_file(
-                        file_path, output_container_url, blob_path
-                    )
-
-        except Exception as e:
-            self.logger.error(f"Failed to upload task outputs: {e}")
-
-    def _upload_single_file(
-        self, file_path: Path, container_url: str, blob_name: str
-    ):
-        """Upload a single file to blob storage."""
-        try:
-            # Extract container name from URL (simple parsing)
-            # This is a simplified version - in production you'd want more robust URL parsing
-            container_name = container_url.split("/")[-1]
-
-            blob_client = self.blob_client.get_blob_client(
-                container_name, blob_name
-            )
-
-            with open(file_path, "rb") as f:
-                blob_client.upload_blob(f, overwrite=True)
-
-            self.logger.info(
-                f"Uploaded {file_path} to {container_name}/{blob_name}"
-            )
-        except Exception as e:
-            self.logger.error(f"Failed to upload file {file_path}: {e}")
-
-    def ensure_docker_images(self):
-        """Ensure required Docker images are available."""
-        required_images = list(self.container_images.values())
-        missing_images = []
-
-        for image in required_images:
-            try:
-                self.docker_client.images.get(image)
-                self.logger.info(f"Docker image {image} is available")
-            except docker.errors.ImageNotFound:
-                missing_images.append(image)
-                self.logger.warning(f"Docker image {image} not found")
-
-        if missing_images:
-            self.logger.error(f"Missing Docker images: {missing_images}")
-            self.logger.error(
-                "Please build the required images using docker-compose"
-            )
-            return False
-
-        return True

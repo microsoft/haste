@@ -422,6 +422,16 @@ class Config:
             "ARTIFACT_STORAGE_TYPE", "local"
         ).lower()
         self.runner_type = os.getenv("RUNNER_TYPE", "azure_batch").lower()
+        self.local_max_active_tasks = _get_bounded_int_env(
+            "HASTE_LOCAL_MAX_ACTIVE_TASKS", 1, 1, 64
+        )
+        self.local_storage_config = self.STORAGE_CONFIGS[
+            StorageType.BLOB
+        ].copy()
+        self.local_storage_config["connection_string"] = (
+            os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+            or self.local_storage_config["connection_string"]
+        )
         self.storage_config = self._get_storage_config(self.storage_type)
         self.artifact_storage_config = self._get_storage_config(
             self.artifact_storage_type

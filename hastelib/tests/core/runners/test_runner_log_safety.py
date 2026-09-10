@@ -15,7 +15,6 @@ import logging
 import tempfile
 import unittest
 import warnings
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from hastegeo.core.models.compute import (
@@ -37,6 +36,10 @@ from hastegeo.core.runners.execution_service import ComputeExecutionService
 from hastegeo.core.runners.local import LocalRunner
 from hastegeo.core.runners.registry import RunnerRegistry
 from hastegeo.core.runners.unified_runner import UnifiedRunner
+
+from hastelib.tests.core.runners.test_local_compute_runner import (
+    _runner as local_runner,
+)
 
 # A representative "signed URL" shape: any of these substrings leaking
 # into a log line is a failure, regardless of which safety fix caught it.
@@ -197,65 +200,71 @@ class TestUnifiedRunnerLoggingSafety(unittest.TestCase):
 
 class TestLocalRunnerBlobLoggingSafety(unittest.TestCase):
     def _runner_with_logger(self, logger_name):
-        runner = LocalRunner.__new__(LocalRunner)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        runner = local_runner(directory.name)
         runner.logger = logging.getLogger(logger_name)
-        runner.blob_client = MagicMock()
         runner.blob_client.credential = None
-        runner.blob_client.account_name = None
+        runner.blob_client.account_name = "acct"
+        runner.blob_client.url = "https://acct.blob.core.windows.net/"
         return runner
 
-    def test_build_blob_client_candidates_never_logs_signed_url(self):
+    def _submit(self, runner: LocalRunner, url: str):
+        return runner.add_task(
+            job_id="job",
+            task_id="task",
+            image_name="training",
+            command="python run.py",
+            output_container_url="data",
+            resource_files_for_upload={
+                "input": {"http_url": url, "file_path": "in/f.tif"}
+            },
+        )
+
+    def test_accepted_receipt_never_stores_or_logs_signed_url(self):
         logger_name = "test.local.blob_candidates.1"
         runner = self._runner_with_logger(logger_name)
+        with self.assertNoLogs(logger_name, level="DEBUG"):
+            self._submit(runner, _SIGNED_URL.replace("/c/", "/data/"))
+        receipt = next(runner.receipts.root.glob("*.json")).read_text()
+        self.assertNotIn(_SIGNED_URL, receipt)
+        self.assertNotIn(_SIGNED_QUERY_SECRET, receipt)
 
-        with patch(
-            "hastegeo.core.runners.local.BlobClient.from_blob_url",
-            side_effect=ValueError(f"could not parse {_SIGNED_URL}"),
-        ):
-            with self.assertLogs(logger_name, level="DEBUG") as cm:
-                runner._build_blob_client_candidates(_SIGNED_URL)
-
-        combined = "\n".join(cm.output)
-        self.assertNotIn(_SIGNED_URL, combined)
-        self.assertNotIn(_SIGNED_QUERY_SECRET, combined)
-
-    def test_unsafe_path_segment_warning_never_logs_the_url(self):
+    def test_unsafe_path_error_never_echoes_the_url(self):
         logger_name = "test.local.blob_candidates.2"
         runner = self._runner_with_logger(logger_name)
         malicious_url = (
-            "https://acct.blob.core.windows.net/c/../secret"
+            "https://acct.blob.core.windows.net/data/../secret"
             f"?sv=2020&sig={_SIGNED_QUERY_SECRET}"
         )
 
-        with self.assertLogs(logger_name, level="WARNING") as cm:
-            runner._build_blob_client_candidates(malicious_url)
-
-        combined = "\n".join(cm.output)
-        self.assertNotIn(malicious_url, combined)
-        self.assertNotIn(_SIGNED_QUERY_SECRET, combined)
-        self.assertIn("unsafe path segments", combined)
+        with self.assertNoLogs(logger_name, level="DEBUG"):
+            with self.assertRaises(ValueError) as error:
+                self._submit(runner, malicious_url)
+        self.assertNotIn(malicious_url, str(error.exception))
+        self.assertNotIn(_SIGNED_QUERY_SECRET, str(error.exception))
+        self.assertIn("safe relative paths", str(error.exception))
 
     def test_download_resource_files_failure_never_logs_the_source_url(
         self,
     ):
         logger_name = "test.local.download_resource_files"
         runner = self._runner_with_logger(logger_name)
-        resource_files = {
-            "in/f.tif": {"http_url": _SIGNED_URL, "file_path": "in/f.tif"}
-        }
-
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(
-                runner, "_build_blob_client_candidates", return_value=[]
-            ):
-                with self.assertLogs(logger_name, level="INFO") as cm:
-                    runner._download_resource_files(Path(tmp), resource_files)
+        identity = self._submit(runner, _SIGNED_URL.replace("/c/", "/data/"))
+        with patch.object(
+            runner.blob_client,
+            "get_blob_client",
+            side_effect=OSError(f"download failed: {_SIGNED_URL}"),
+        ):
+            with self.assertLogs(logger_name, level="INFO") as cm:
+                runner.reconcile_task(*identity)
 
         combined = "\n".join(cm.output)
         self.assertNotIn(_SIGNED_URL, combined)
         self.assertNotIn(_SIGNED_QUERY_SECRET, combined)
         # The destination-relative path (file key) is still safe to log.
         self.assertIn("in/f.tif", combined)
+        self.assertEqual(runner.get_task_status(*identity), "Failed")
 
 
 class TestExecutionServiceLoggingSafety(unittest.TestCase):

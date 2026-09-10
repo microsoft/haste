@@ -1116,6 +1116,16 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
                 IMAGE_LAYER_WORKFLOW_OWNED_FIELDS,
             )
             output = image_data
+            await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().IMAGELAYER.value,
+                    partition_key=output.projectId,
+                ).save,
+                output.imageLayerId,
+                output.model_dump(
+                    exclude=set(IMAGE_LAYER_WORKFLOW_OWNED_FIELDS)
+                ),
+            )
         else:
             # A new layer launches a preprocessing job: its runtime
             # handle is server-owned, so drop anything the client sent
@@ -1124,15 +1134,6 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
             output = await asyncio.to_thread(
                 ImageryPreProcessor(image_data=image_data).queue_for_processing
             )
-
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().IMAGELAYER.value,
-                partition_key=output.projectId,
-            ).save,
-            output.imageLayerId,
-            output.dict(),
-        )
 
         # Repeating the check because we want to save stats after the image layer, if new, is saved
 
@@ -2514,15 +2515,6 @@ async def PutRunModelQueueMessage(req: func.HttpRequest) -> func.HttpResponse:
             TrainPreprocessor(output).send_to_queue
         )
 
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=output.projectId,
-            ).save,
-            output.modelId,
-            output.dict(),
-        )
-
         request = StatsPreProcessor(
             request=StatsRequest(
                 action="add",
@@ -2613,15 +2605,6 @@ async def PutRunInferenceQueueMessage(
 
         output = await asyncio.to_thread(
             InferencePreprocessor(output).send_to_queue
-        )
-
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=output.projectId,
-            ).save,
-            output.modelId,
-            output.dict(),
         )
 
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
@@ -2721,15 +2704,6 @@ async def PutRunEmbeddingQueueMessage(
 
         output = await asyncio.to_thread(
             EmbeddingPreprocessor(output).send_to_queue
-        )
-
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=output.projectId,
-            ).save,
-            output.modelId,
-            output.dict(),
         )
 
         request = StatsPreProcessor(
@@ -2884,7 +2858,7 @@ async def PutBuildingPredictions(
                 status_code=404,
             )
 
-        model_data = await asyncio.to_thread(
+        await asyncio.to_thread(
             MetadataProcessor(
                 data_type=config.get_metadata_types().MODEL.value,
                 partition_key=project_id,
@@ -2940,14 +2914,13 @@ async def PutBuildingPredictions(
 
         gpkg_url = await asyncio.to_thread(_store_and_url)
 
-        model_data["gpkgUrl"] = gpkg_url
         await asyncio.to_thread(
             MetadataProcessor(
                 data_type=config.get_metadata_types().MODEL.value,
                 partition_key=project_id,
             ).save,
             model_id,
-            model_data,
+            {"gpkgUrl": gpkg_url},
         )
 
         return func.HttpResponse(
@@ -3157,15 +3130,6 @@ async def PutArtifactsZipQueueMessage(
             ).send_to_zip_queue
         )
 
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL_ARTIFACTS.value,
-                partition_key=output.projectId,
-            ).save,
-            output.modelId,
-            output.dict(),
-        )
-
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
     except ValidationError as e:
@@ -3273,15 +3237,6 @@ async def PutCancelModelQueueMessage(
                 TrainPreprocessor(existing_model_data).send_to_queue,
                 status=config.get_status_types().CANCELLED.value,
             )
-
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=output.projectId,
-            ).save,
-            output.modelId,
-            output.dict(),
-        )
 
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 

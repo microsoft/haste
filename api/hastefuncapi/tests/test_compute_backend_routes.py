@@ -42,8 +42,10 @@ os.environ.setdefault(
 with redirect_stderr(io.StringIO()):
     from api.hastefuncapi import function_app
 
+from hastegeo.core.config import Config  # noqa: E402
 from hastegeo.core.models.projects import Model, ModelArtifacts  # noqa: E402
 from hastegeo.core.processors.imagery import ImageryPreProcessor  # noqa: E402
+from hastegeo.core.processors.metadata import MetadataProcessor  # noqa: E402
 
 PROJECT_ID = "123e4567-e89b-12d3-a456-426614174000"
 
@@ -669,7 +671,17 @@ class ImageLayerRouteTestCase(unittest.IsolatedAsyncioTestCase):
         ) as queue:
             for factor in ("0", 0, "10000", 10000):
                 for supplied_id in (None, self._body()["imageLayerId"]):
-                    with self.subTest(factor=factor, supplied_id=supplied_id):
+                    with (
+                        self.subTest(factor=factor, supplied_id=supplied_id),
+                        tempfile.TemporaryDirectory() as directory,
+                        patch.dict(
+                            os.environ,
+                            {
+                                "METADATA_STORAGE_TYPE": "local",
+                                "DATA_PATH": directory,
+                            },
+                        ),
+                    ):
                         self.pre.reset_mock()
                         self.meta.return_value.save.reset_mock()
                         queue.reset_mock()
@@ -684,11 +696,15 @@ class ImageLayerRouteTestCase(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(response.status_code, 200)
                         self.pre.assert_called_once()
                         queue.return_value.put_message.assert_called_once()
-                        self.meta.return_value.save.assert_called_once()
+                        self.meta.return_value.save.assert_not_called()
                         queued = json.loads(
                             queue.return_value.put_message.call_args.args[0]
                         )
-                        saved = self._saved_payload()
+                        saved = MetadataProcessor(
+                            Config.get_metadata_types().IMAGELAYER.value,
+                            PROJECT_ID,
+                            config=Config(),
+                        ).load(queued["imageLayerId"])
                         returned = json.loads(response.get_body())
                         for record in (queued, saved, returned):
                             self.assertEqual(
@@ -802,7 +818,10 @@ class ImageLayerRouteTestCase(unittest.IsolatedAsyncioTestCase):
         return stored
 
     def _saved_payload(self):
-        return self.meta.return_value.save.call_args.args[1]
+        delta = self.meta.return_value.save.call_args.args[1]
+        self.assertNotIn("preprocessJob", delta)
+        self.assertNotIn("status", delta)
+        return {**self.meta.return_value.load.return_value, **delta}
 
     async def test_editing_an_existing_layer_launches_nothing(self):
         # An edit does not launch a preprocessing job, so it must not go

@@ -22,6 +22,7 @@ from ..models.compute import (
     ComputeJobSpec,
     ComputeWorkload,
     OutputNotAvailableError,
+    SubmissionIndeterminateError,
 )
 from ..models.projects import ImageLayer, Model, TrainingJob
 from ..utils.compute_jobs import resolve_compute_job_handle
@@ -46,6 +47,7 @@ from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
+from .job_state import Workload, persist_and_enqueue
 
 EMBEDDING_PREFIX = "emb"
 EMBEDDING_WORKLOAD = ComputeWorkload.EMBEDDING
@@ -144,19 +146,11 @@ class EmbeddingPreprocessor:
         self.model_data.progressPct = 0.0
         # 3 friendly steps: submit -> embedding -> tiling/finalize.
         self.model_data.totalSteps = 3
-        # Stable task/execution id minted before queueing; the
-        # postprocessor reuses it so a duplicate delivery cannot create a
-        # second provider job.
-        self.model_data.embeddingJob = TrainingJob(
-            taskId=new_task_id(EMBEDDING_PREFIX),
-            modelId=self.model_data.modelId,
-            projectId=self.model_data.projectId,
-            status=self.config.get_status_types().PENDING.value,
-            creationDate=MetadataUtils.get_timestamp(),
-        )
-        self.queue_client.put_message(json.dumps(self.model_data.dict()))
         self.model_data.statusMessage = MetadataUtils.append_status_message(
             self.model_data.statusMessage, "Queued for embedding"
+        )
+        self.model_data = persist_and_enqueue(
+            self.model_data, Workload.EMBEDDING, self.config, self.queue_client
         )
         return self.model_data
 
@@ -185,11 +179,6 @@ class EmbeddingPostprocessor:
             execution_service
             if execution_service is not None
             else build_execution_service(self.config)
-        )
-        self.queue_client = AzureQueueHandler(
-            config.queue_config["queue_connection_string"],
-            config.queue_config["embedding_queue_name"],
-            config.queue_config["queue_account_url"],
         )
 
     # -- compute handle plumbing --------------------------------------
@@ -299,9 +288,6 @@ class EmbeddingPostprocessor:
             else:
                 self.model_data.status = task_status
                 self.model_data.embeddingJob.status = task_status
-                self.queue_client.put_message(
-                    json.dumps(self.model_data.dict())
-                )
 
         return self.model_data
 
@@ -351,8 +337,9 @@ class EmbeddingPostprocessor:
                 f"{self.model_data.embeddingJob.taskId}",
                 step=1,
             )
-            self.queue_client.put_message(json.dumps(self.model_data.dict()))
         except Exception as e:
+            if isinstance(e, SubmissionIndeterminateError):
+                raise
             self.logger.error(
                 f"Error executing embedding for model "
                 f"{self.model_data.modelId}: {e}",

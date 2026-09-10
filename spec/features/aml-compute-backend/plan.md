@@ -6,6 +6,14 @@ This is a `hastelib` core-library + infra feature with no dedicated UI phase
 [user-stories.md](user-stories.md#agent-assignment-map) for the agent→story
 mapping and [rollout.md](rollout.md) for the deployment sequence.
 
+**Local lifecycle integration:** the
+[durable local execution prerequisite](../local-compute-lifecycle/README.md)
+now replaces blocking local submission, preserves handle-based dispatch,
+and fences queue updates. It is integrated with
+[shared progress reporting](../job-progress-observability/README.md) before
+the existing local validation environment is rebuilt. Live AML validation
+remains a separate rollout gate.
+
 ## Phases
 
 ### Phase 1: Spec, ADR, and characterization tests

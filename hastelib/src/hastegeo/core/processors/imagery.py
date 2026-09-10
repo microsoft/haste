@@ -36,6 +36,7 @@ from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
+from .job_state import Workload, persist_and_enqueue
 
 IMAGERY_PREFIX = "img"
 IMAGERY_WORKLOAD = ComputeWorkload.IMAGERY_PREPARATION
@@ -239,20 +240,12 @@ class ImageryPreProcessor:
         self.image_data.currentStep = 0
         self.image_data.totalSteps = 4
         self.image_data.progressPct = 0.0
-        # Stable task/execution id minted before queueing and recorded on
-        # a pending ImageryPreprocessJob; the postprocessor reuses it, so
-        # a duplicate queue delivery cannot start a second provider job.
-        self.image_data.preprocessJob = ImageryPreprocessJob(
-            taskId=new_task_id(IMAGERY_PREFIX),
-            imageLayerId=self.image_data.imageLayerId,
-            projectId=self.image_data.projectId,
-            status=self.config.get_status_types().PENDING.value,
-            creationDate=MetadataUtils.get_timestamp(),
-        )
         self.image_data.statusMessage = MetadataUtils.append_status_message(
             self.image_data.statusMessage, "Queued for processing"
         )
-        self.queue.put_message(json.dumps(self.image_data.dict()), 0)
+        self.image_data = persist_and_enqueue(
+            self.image_data, Workload.IMAGERY, self.config, self.queue
+        )
         self.logger.info(
             f"Image data queued for processing for project: {self.image_data.projectId} and image layer id: {self.image_data.imageLayerId}"
         )
@@ -289,11 +282,6 @@ class ImageryPostProcessor:
             execution_service
             if execution_service is not None
             else build_execution_service(self.config)
-        )
-        self.queue = AzureQueueHandler(
-            config.queue_config["queue_connection_string"],
-            config.queue_config["image_queue_name"],
-            config.queue_config["queue_account_url"],
         )
 
     # -- compute handle plumbing --------------------------------------
@@ -414,7 +402,6 @@ class ImageryPostProcessor:
             else:
                 self.image_data.status = task_status
                 self.image_data.preprocessJob.status = task_status
-                self.queue.put_message(json.dumps(self.image_data.dict()))
 
         return self.image_data
 
@@ -507,10 +494,6 @@ class ImageryPostProcessor:
             f"Image preprocessing submitted with task id "
             f"{self.image_data.preprocessJob.taskId}",
             step=0,
-        )
-        self.queue.put_message(json.dumps(self.image_data.dict()))
-        self.logger.info(
-            f"InProgress message sent to queue for image layer {self.image_data.imageLayerId}"
         )
         return self.image_data
 

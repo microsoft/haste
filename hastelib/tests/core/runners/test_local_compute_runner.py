@@ -17,6 +17,7 @@ behavior it delegates to.
 
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -42,18 +43,29 @@ from hastegeo.core.models.compute import (
 )
 from hastegeo.core.runners.base import ComputeRunner
 from hastegeo.core.runners.local import LocalRunner
+from hastegeo.core.runners.local_lifecycle import LocalReceipt, ReceiptStore
+
+from hastelib.tests.core.runners.test_local_lifecycle import (
+    FakeBlobs,
+    FakeDocker,
+)
 
 
 def _runner(work_dir):
     runner = LocalRunner.__new__(LocalRunner)
-    runner.docker_client = MagicMock()
+    runner.docker_client = FakeDocker()
+    runner.docker_client.ping = MagicMock(return_value=True)
     runner.work_dir = Path(work_dir)
+    runner.receipts = ReceiptStore(runner.work_dir)
+    runner.volume = "unit-test-volume"
     runner.logger = MagicMock()
     runner.pool_id = "local-pool"
     runner.config = Config()
     runner.verbose = False
     runner.fail_on_empty_logs = False
-    runner.blob_client = None
+    runner.blob_client = FakeBlobs()
+    runner.blob_client.account_name = "a"
+    runner.blob_client.url = "https://a.blob.core.windows.net/"
     runner.queue_client = None
     runner.container_images = {
         "imageryprep": "haste-imageryprep",
@@ -126,9 +138,20 @@ def _write_status(work_dir, job_id, task_id, state, exit_code=0):
                 "exit_code": exit_code,
                 "job_id": job_id,
                 "task_id": task_id,
+                "outputs_persisted": state in {"completed", "failed"},
             },
             f,
         )
+    ReceiptStore(Path(work_dir)).save(
+        LocalReceipt(
+            job_id=job_id,
+            task_id=task_id,
+            accepted_at=time.time(),
+            phase=state,
+            exit_code=exit_code,
+            outputs_persisted=state in {"completed", "failed"},
+        )
+    )
     return task_dir
 
 
@@ -328,10 +351,7 @@ class TestSubmit(unittest.TestCase):
             runner.add_task.assert_not_called()
 
     def test_command_and_haste_job_workdir_env_var(self):
-        """Local knows its resolved container working directory ahead of
-        submission, so HASTE_JOB_WORKDIR is passed as a plain env var
-        (not exported from another variable, unlike Batch); legacy
-        AZ_BATCH_* vars remain add_task's own responsibility."""
+        """Canonical and legacy working directories are derived at launch."""
         with tempfile.TemporaryDirectory() as tmp:
             runner = _runner(tmp)
             runner.add_task = MagicMock(return_value=("job-exec-1", "exec-1"))
@@ -344,7 +364,16 @@ class TestSubmit(unittest.TestCase):
             # The exact value mirrors add_task's own container_working_dir
             # formula; assert it targets this task's directory rather than
             # re-deriving the "/shared/azurite" substitution here.
-            workdir = kwargs["env_vars"]["HASTE_JOB_WORKDIR"]
+            self.assertNotIn("HASTE_JOB_WORKDIR", kwargs["env_vars"])
+            receipt = LocalReceipt(
+                job_id="job-exec-1", task_id="exec-1", accepted_at=time.time()
+            )
+            workdir = runner._resolved_container_working_dir(
+                "job-exec-1", "exec-1"
+            )
+            environment = runner._task_environment(receipt, workdir)
+            self.assertEqual(environment["HASTE_JOB_WORKDIR"], workdir)
+            self.assertEqual(environment["AZ_BATCH_TASK_WORKING_DIR"], workdir)
             self.assertIn("job-exec-1", workdir)
             self.assertIn("exec-1", workdir)
             self.assertEqual(
@@ -363,7 +392,7 @@ class TestSubmit(unittest.TestCase):
             self.assertEqual(kwargs["task_id"], "exec-1")
             self.assertEqual(kwargs["image_name"], "acr.example.io/train:v1")
             self.assertEqual(kwargs["command"], "python run.py")
-            self.assertIsNone(kwargs["arguments"])
+            self.assertIsNone(kwargs.get("arguments"))
             self.assertEqual(kwargs["output_container_url"], "data")
             self.assertEqual(kwargs["output_prefix"], "proj/task-1")
             self.assertEqual(
@@ -377,10 +406,7 @@ class TestSubmit(unittest.TestCase):
                     }
                 },
             )
-            expected_pattern = str(
-                Path(tmp) / "job-exec-1" / "exec-1" / "outputs" / "*.tif"
-            )
-            self.assertEqual(kwargs["file_pattern"], [expected_pattern])
+            self.assertEqual(kwargs["file_pattern"], ["outputs/*.tif"])
 
             self.assertEqual(handle.executionId, "exec-1")
             self.assertEqual(handle.selectedBackend, ComputeBackend.LOCAL)
@@ -425,12 +451,15 @@ class TestSubmit(unittest.TestCase):
     def test_idempotent_when_task_already_ran(self):
         with tempfile.TemporaryDirectory() as tmp:
             runner = _runner(tmp)
-            _write_status(tmp, "job-exec-1", "exec-1", "completed")
-            runner.add_task = MagicMock()
-
-            handle = runner.submit(_spec())
-
-            runner.add_task.assert_not_called()
+            spec = _spec(inputs=[])
+            first = runner.submit(spec)
+            runner.reconcile_tasks()
+            runner.docker_client.executions()[0].complete()
+            runner.reconcile_tasks()
+            runner.finalize(first)
+            handle = runner.submit(spec)
+            self.assertEqual(len(runner.docker_client.executions()), 1)
+            self.assertEqual(runner.docker_client.executions()[0].starts, 1)
             self.assertEqual(handle.providerJobId, "job-exec-1")
             self.assertEqual(handle.providerTaskId, "exec-1")
 
@@ -487,6 +516,7 @@ class TestOutputPersistence(unittest.TestCase):
     def test_missing_storage_client_fails_explicitly(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runner = _runner(tmp)
+            runner.blob_client = None
             with self.assertRaisesRegex(RuntimeError, "No storage client"):
                 runner._upload_all_task_files(Path(tmp), "data", "p/t")
 
@@ -495,28 +525,22 @@ class TestOutputPersistence(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runner = _runner(tmp)
-            runner.blob_client = MagicMock()
-            runner.blob_client.get_blob_client.return_value.upload_blob.side_effect = RuntimeError(
-                "unavailable"
-            )
-            container = runner.docker_client.containers.run.return_value
-            container.logs.return_value = iter([b"Container finished.\n"])
-            container.wait.return_value = {"StatusCode": 0}
+            runner.blob_client.fail_at = 1
             with patch.dict(
                 "os.environ",
                 {"CLEANUP_CONTAINERS": "0", "HASTE_ENABLE_GPU": "0"},
             ):
-                with self.assertRaisesRegex(
-                    RuntimeError, "Failed to persist local task file"
-                ):
-                    runner.add_task(
-                        job_id="job-exec-1",
-                        task_id="exec-1",
-                        image_name="test-image:v1",
-                        command="python run.py",
-                        output_container_url="data",
-                        output_prefix="project/task",
-                    )
+                runner.add_task(
+                    job_id="job-exec-1",
+                    task_id="exec-1",
+                    image_name="test-image:v1",
+                    command="python run.py",
+                    output_container_url="data",
+                    output_prefix="project/task",
+                )
+                runner.reconcile_tasks()
+                runner.docker_client.executions()[0].complete()
+                runner.reconcile_tasks()
 
             self.assertEqual(
                 runner.get_status(_handle()), ComputeJobState.FAILED
@@ -551,11 +575,11 @@ class TestGetStatus(unittest.TestCase):
                 runner.get_status(_handle()), ComputeJobState.FAILED
             )
 
-    def test_missing_task_dir_maps_to_running(self):
+    def test_missing_execution_evidence_maps_to_failed(self):
         with tempfile.TemporaryDirectory() as tmp:
             runner = _runner(tmp)
             self.assertEqual(
-                runner.get_status(_handle()), ComputeJobState.RUNNING
+                runner.get_status(_handle()), ComputeJobState.FAILED
             )
 
     def test_unmapped_status_logs_raw_status_before_raising(self):
@@ -630,8 +654,11 @@ class TestCancel(unittest.TestCase):
     def test_cancels_a_still_running_task(self):
         with tempfile.TemporaryDirectory() as tmp:
             runner = _runner(tmp)
-            _write_status(tmp, "job-exec-1", "exec-1", "running")
+            runner.submit(_spec(inputs=[]))
+            runner.reconcile_tasks()
             runner.cancel(_handle())
+            self.assertEqual(runner.docker_client.executions()[0].stops, 1)
+            runner.reconcile_tasks()
             status_file = Path(tmp) / "job-exec-1" / "exec-1" / "status.json"
             with open(status_file) as f:
                 data = json.load(f)

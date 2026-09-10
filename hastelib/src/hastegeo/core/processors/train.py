@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
-import json
 import os
 import tempfile
 from datetime import datetime
@@ -13,6 +12,7 @@ from ..models.compute import (
     ComputeJobSpec,
     ComputeWorkload,
     OutputNotAvailableError,
+    SubmissionIndeterminateError,
 )
 from ..models.projects import (
     ImageLayer,
@@ -47,6 +47,7 @@ from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
 from ..utils.tbparser import calculate_metrics, parse_tb_event_logs
+from .job_state import Workload, persist_and_enqueue
 
 # Placeholder the training image substitutes inside the generated
 # experiment config (see ``compute_specs``); the command itself uses the
@@ -164,19 +165,21 @@ class TrainPreprocessor:
             config = Config()
         self.queue_client = AzureQueueHandler(
             config.queue_config["queue_connection_string"],
-            config.queue_config["train_queue_name"],
+            config.queue_config[
+                (
+                    "embedding_queue_name"
+                    if model.modelType == "embedding"
+                    else "train_queue_name"
+                )
+            ],
             config.queue_config["queue_account_url"],
         )
         self.model_data = model
         self.config = config
 
-    def send_to_queue(self, status=None):
+    def send_to_queue(self, status=None, *, request_id: str = None):
         if status == self.config.get_status_types().CANCELLED.value:
             self.model_data.status = status
-            # Cancel the training job ASAP
-            self.queue_client.put_message(
-                json.dumps(self.model_data.dict()), visibility_timeout=1
-            )
             self.model_data.statusMessage = (
                 MetadataUtils.append_status_message(
                     self.model_data.statusMessage, "Cancelling training"
@@ -189,26 +192,23 @@ class TrainPreprocessor:
             self.model_data.currentStep = 0
             self.model_data.progressPct = 0.0
             self.model_data.totalSteps = int(self.model_data.maxEpochs) + 1
-            # Mint the task/execution id here, before the message is
-            # queued, and record it on a pending TrainingJob. The
-            # postprocessor reuses it verbatim, so a duplicate queue
-            # delivery (or a worker restart after the provider already
-            # accepted the job) can never produce a second id for the
-            # same run. A new user-triggered run comes through here
-            # again and gets a fresh one.
-            self.model_data.trainingJob = TrainingJob(
-                taskId=new_task_id(TRAINING_PREFIX),
-                modelId=self.model_data.modelId,
-                projectId=self.model_data.projectId,
-                status=self.config.get_status_types().PENDING.value,
-                creationDate=MetadataUtils.get_timestamp(),
-            )
-            self.queue_client.put_message(json.dumps(self.model_data.dict()))
             self.model_data.statusMessage = (
                 MetadataUtils.append_status_message(
                     self.model_data.statusMessage, "Queued for training"
                 )
             )
+        self.model_data = persist_and_enqueue(
+            self.model_data,
+            (
+                Workload.EMBEDDING
+                if self.model_data.modelType == "embedding"
+                else Workload.TRAINING
+            ),
+            self.config,
+            self.queue_client,
+            cancel=status == self.config.get_status_types().CANCELLED.value,
+            request_id=request_id,
+        )
         return self.model_data
 
 
@@ -228,11 +228,6 @@ class TrainPostprocessor(BaseTrainProcessor):
         self.label_project = label_project
         self.project = project
         self.config = config or Config()
-        self.queue_client = AzureQueueHandler(
-            self.config.queue_config["queue_connection_string"],
-            self.config.queue_config["train_queue_name"],
-            self.config.queue_config["queue_account_url"],
-        )
 
     # -- compute handle plumbing --------------------------------------
 
@@ -430,10 +425,6 @@ class TrainPostprocessor(BaseTrainProcessor):
                         self._update_training_progress(
                             message, step=self.model_data.currentStep or 0
                         )
-                self.queue_client.put_message(
-                    json.dumps(self.model_data.dict())
-                )
-
         return self.model_data
 
     def _execute_training(self):
@@ -489,11 +480,9 @@ class TrainPostprocessor(BaseTrainProcessor):
             self._update_training_progress(
                 f"Training submitted with task id {task_id}", step=0
             )
-            self.queue_client.put_message(json.dumps(self.model_data.dict()))
-            self.logger.info(
-                f"InProgress message to queue sent for model {self.model_data.modelId}"
-            )
         except Exception as e:
+            if isinstance(e, SubmissionIndeterminateError):
+                raise
             self.logger.error(
                 f"Error processing model {self.model_data.modelId}: {e}",
                 stack_info=True,

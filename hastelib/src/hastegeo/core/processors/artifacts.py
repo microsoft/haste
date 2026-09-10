@@ -13,6 +13,7 @@ from hastegeo.core.models.compute import (
     ComputeJobHandle,
     ComputeJobSpec,
     ComputeWorkload,
+    SubmissionIndeterminateError,
 )
 from hastegeo.core.models.projects import Model, ModelArtifacts, ZipJob
 from hastegeo.core.utils.compute_jobs import resolve_compute_job_handle
@@ -35,6 +36,8 @@ from hastegeo.core.utils.compute_specs import (
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
 from hastegeo.core.utils.queues import AzureQueueHandler
+
+from .job_state import Workload, persist_and_enqueue
 
 ZIP_PREFIX = "zip"
 ARTIFACT_WORKLOAD = ComputeWorkload.ARTIFACT_PACKAGING
@@ -230,11 +233,7 @@ class ArtifactProcessor:
             **self.config.artifact_storage_config,
         )
         self.logger = Logger.get_logger(__name__)
-        self.queue_client = AzureQueueHandler(
-            self.config.queue_config["queue_connection_string"],
-            self.config.queue_config["zip_queue_name"],
-            self.config.queue_config["queue_account_url"],
-        )
+        self._queue_client: AzureQueueHandler | None = None
         self.model_data = model
         # Injectable so tests can drive the processor with fake adapters.
         self.execution_service = (
@@ -255,6 +254,16 @@ class ArtifactProcessor:
                 modelName=safe_name
             )
 
+    @property
+    def queue_client(self) -> AzureQueueHandler:
+        if self._queue_client is None:
+            self._queue_client = AzureQueueHandler(
+                self.config.queue_config["queue_connection_string"],
+                self.config.queue_config["zip_queue_name"],
+                self.config.queue_config["queue_account_url"],
+            )
+        return self._queue_client
+
     def get_download_url(
         self,
         identifier=None,
@@ -270,7 +279,7 @@ class ArtifactProcessor:
             extra_partition_keys=extra_partition_keys,
         )
 
-    def send_to_zip_queue(self):
+    def send_to_zip_queue(self, *, request_id: str = None):
         """
         Put a message to the queue.
         """
@@ -281,27 +290,12 @@ class ArtifactProcessor:
             MetadataUtils.append_status_message("", "Queued for zipping")
         )
         self.model_artifacts.zipUrl = None
-        # Mint the task/execution id before queueing and record it on a
-        # pending ZipJob so the postprocessor reuses it; a duplicate queue
-        # delivery therefore cannot start a second packaging job.
-        task_id = new_task_id(ZIP_PREFIX)
-        self.model_artifacts.zipJobs.append(
-            ZipJob(
-                projectId=self.model_artifacts.projectId,
-                imageLayerId=self.model_artifacts.imageLayerId,
-                modelId=self.model_artifacts.modelId,
-                taskId=task_id,
-                status=self.config.get_status_types().PENDING.value,
-                dstZipPath=output_prefix(
-                    self.model_artifacts.projectId, task_id
-                ),
-                creationDate=MetadataUtils.get_timestamp(),
-            )
-        )
-        self.model_artifacts.currentZipJobUid = task_id
-        # Setting visibility timeout to 0 to make sure the message is processed immediately
-        self.queue_client.put_message(
-            json.dumps(self.model_artifacts.dict()), visibility_timeout=0
+        self.model_artifacts = persist_and_enqueue(
+            self.model_artifacts,
+            Workload.ZIP,
+            self.config,
+            self.queue_client,
+            request_id=request_id,
         )
         return self.model_artifacts
 
@@ -452,9 +446,6 @@ class ArtifactProcessor:
                 self.model_artifacts.zipJobs[
                     idx
                 ].logs = self.model_artifacts.zipStatusMessage
-                self.queue_client.put_message(
-                    json.dumps(self.model_artifacts.dict())
-                )
         else:
             self.model_artifacts.zipStatus = (
                 self.config.get_status_types().FAILED.value
@@ -569,13 +560,9 @@ class ArtifactProcessor:
             self._update_zip_progress(
                 f"Zipping submitted with task id {submitted_job.taskId}"
             )
-            self.queue_client.put_message(
-                json.dumps(self.model_artifacts.dict())
-            )
-            self.logger.info(
-                f"InProgress message to queue sent for model {self.model_artifacts.modelId}"
-            )
         except Exception as e:
+            if isinstance(e, SubmissionIndeterminateError):
+                raise
             self.logger.error(
                 f"Error processing model {self.model_artifacts.modelId}: {e}",
                 stack_info=True,

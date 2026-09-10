@@ -68,7 +68,7 @@ class TestTrainingProgress(unittest.TestCase):
         self.assertEqual(result.status, self.statuses.IN_PROGRESS.value)
         self.assertEqual(result.currentStep, 0)
         self.assertIn("metrics are not yet available", result.statusMessage)
-        self.processor.queue_client.put_message.assert_called_once()
+        self.processor.queue_client.put_message.assert_not_called()
         self.processor.execution_service.finalize.assert_not_called()
 
     def test_empty_event_results_do_not_convert_unset_epoch_to_int(
@@ -80,7 +80,7 @@ class TestTrainingProgress(unittest.TestCase):
             result = self.processor.process()
         self.assertEqual(result.status, self.statuses.IN_PROGRESS.value)
         self.assertEqual(result.currentStep, 0)
-        self.processor.queue_client.put_message.assert_called_once()
+        self.processor.queue_client.put_message.assert_not_called()
 
     def test_epoch_zero_and_zero_elapsed_are_retained(self) -> None:
         logs = json.dumps([{"epoch": 0, "elapsedDurationInMinutes": 0.0}])

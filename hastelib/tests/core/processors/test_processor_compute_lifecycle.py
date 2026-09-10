@@ -16,6 +16,7 @@ See spec/features/aml-compute-backend/plan.md Phases 8-9.
 """
 
 import json
+import tempfile
 import unittest
 from fnmatch import fnmatch
 from unittest.mock import MagicMock, patch
@@ -43,6 +44,7 @@ from hastegeo.core.models.projects import (
     TrainingJob,
     ZipJob,
 )
+from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.runners.base import ComputeRunner
 from hastegeo.core.runners.execution_service import ComputeExecutionService
 from hastegeo.core.runners.registry import RunnerRegistry
@@ -263,7 +265,29 @@ def _training_model(**overrides):
     return Model(**values)
 
 
-class TestTrainingSubmission(unittest.TestCase):
+class ProcessorTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(
+            patch.dict(
+                "os.environ",
+                {
+                    "METADATA_STORAGE_TYPE": "local",
+                    "DATA_PATH": directory,
+                },
+            )
+        )
+        self.enterContext(
+            patch(
+                "requests.sessions.Session.request",
+                side_effect=AssertionError(
+                    "Unit test attempted network access"
+                ),
+            )
+        )
+
+
+class TestTrainingSubmission(ProcessorTestCase):
     def test_preprocessor_records_a_stable_pending_task_id(self):
         from hastegeo.core.processors import train
 
@@ -347,7 +371,7 @@ class TestTrainingSubmission(unittest.TestCase):
         self.assertIsNone(result.computeBackend)
 
 
-class TestTrainingPolling(unittest.TestCase):
+class TestTrainingPolling(ProcessorTestCase):
     def _in_progress_model(self, **job_overrides):
         job_values = {
             "jobId": "job-trn-stable",
@@ -457,7 +481,7 @@ class TestTrainingPolling(unittest.TestCase):
                 _train_processor(model, service).process()
 
 
-class TestTrainingCancellation(unittest.TestCase):
+class TestTrainingCancellation(ProcessorTestCase):
     def test_cancel_requests_provider_cancellation_and_finalizes(self):
         service, runner = _service()
         model = _training_model()
@@ -535,7 +559,7 @@ def _inference_model(**overrides):
     return Model(**values)
 
 
-class TestInferenceLifecycle(unittest.TestCase):
+class TestInferenceLifecycle(ProcessorTestCase):
     def test_preprocessor_creates_the_pending_job_and_current_task_id(self):
         from hastegeo.core.processors import inference
 
@@ -556,6 +580,11 @@ class TestInferenceLifecycle(unittest.TestCase):
         from hastegeo.core.processors import inference
 
         model = _inference_model()
+        MetadataProcessor(
+            Config.get_metadata_types().MODEL.value,
+            PROJECT_ID,
+            config=Config(),
+        ).save(model.modelId, model.model_dump(mode="json"))
         with patch.object(inference, "AzureQueueHandler", autospec=True):
             output = inference.InferencePreprocessor(
                 model, config=Config()
@@ -776,7 +805,7 @@ _EMBEDDING_MANIFEST = json.dumps(
 )
 
 
-class TestEmbeddingLifecycle(unittest.TestCase):
+class TestEmbeddingLifecycle(ProcessorTestCase):
     def test_preprocessor_records_a_pending_job(self):
         from hastegeo.core.processors import embedding
 
@@ -894,7 +923,7 @@ def _image_layer(**overrides):
     return ImageLayer(**values)
 
 
-class TestImageryLifecycle(unittest.TestCase):
+class TestImageryLifecycle(ProcessorTestCase):
     def test_preprocessor_records_a_pending_job(self):
         from hastegeo.core.processors import imagery
 
@@ -1013,7 +1042,7 @@ def _model_artifacts(**overrides):
     return ModelArtifacts(**values)
 
 
-class TestArtifactPackagingLifecycle(unittest.TestCase):
+class TestArtifactPackagingLifecycle(ProcessorTestCase):
     def _model(self):
         return Model(
             modelId="42",
