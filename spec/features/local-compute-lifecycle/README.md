@@ -1,10 +1,17 @@
 # Local compute lifecycle
 
-**Status:** in-progress
+**Status:** implemented
 
 **Date:** 2026-09-10
 
 **Priority:** P0
+
+## Contents
+
+- [Scope](#scope)
+- [Acceptance](#acceptance)
+- [Live verification](#live-verification)
+- [Documents and boundaries](#documents-and-boundaries)
 
 ## Scope
 
@@ -34,6 +41,18 @@ own execution truth.
   including when cleanup/finalization is requested.
 - Queue updates preserve newer attempts, terminal state, cancellation, and
   user-owned fields.
+
+## Live verification
+
+Two isolated diagnostic PyTorch/TensorBoard jobs were observed through the
+application API at `InProgress` with 25% progress while their Docker
+containers were running. The second waited for the one-job host limit.
+A queue-host restart did not duplicate either execution; both completed at
+100% with outputs persisted and task files cleaned.
+
+A separate fresh imagery queue run verified COG pixels/CRS, the Azurite
+manifest, friendly logs, and labeling. These checks did not change normal
+training parameters or run scientific model-quality validation.
 
 ## Documents and boundaries
 

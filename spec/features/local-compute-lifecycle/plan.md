@@ -15,13 +15,19 @@
 
 | Task | Agent | Dependencies | Story | Status |
 |---|---|---|---|---|
-| Validate implementation against acceptance | `backend-validation` | Combined integration | All | complete for deterministic tests; live gate below |
-| Validate disposable Docker execution and restart on a Docker-capable host | `backend-validation` | Approved local smoke environment | US-001 through US-005 | pending live verification |
+| Validate implementation against acceptance | `backend-validation` | Combined integration | All | complete |
+| Validate disposable Docker execution and restart on a Docker-capable host | `backend-validation` | Approved local smoke environment | US-001 through US-005 | complete; API observed in-flight progress, restart without duplication, persistence and cleanup |
 | Preserve lifecycle/fencing seams in progress and backend-neutral prerequisites | `backend-dev` | Combined integration | All | complete |
 
 The combined branch is validated in the existing local Docker environment
 before any prerequisite PR split. No AML resource provisioning or live AML
 execution is part of this local verification.
+
+Live verification also exposed differing queue/worker UIDs. Scoped
+permission preparation and a capability-free recovery helper now preserve
+cross-UID finalization. The Linux tests exercise real distinct producer and
+consumer UIDs; the live runs confirmed that both output persistence and
+cleanup finish successfully.
 
 The broader library run identifies the pre-existing stale
 `TestArtifactProcessor.test_zip` call to a removed method. Unrelated
