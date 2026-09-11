@@ -1,13 +1,12 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
-"""Phase 0 baseline: measure GetProjectDetails logical metadata operations.
+"""Phase 0 baseline: measure GetProjectDetails logical data-layer calls.
 
 Seeds synthetic projects (small / medium / large) into a temporary local-FS
 backend and replays the *exact* read sequence of the ``GetProjectDetails`` handler
 (``api/hastefuncapi/function_app.py`` lines ~534-638) with perf instrumentation on.
 
-Reports, per size, the number of backend logical metadata operations (the headline
-success metric: ~O(layers x models) today -> O(1) target) plus a per-op breakdown
+Reports, per size, the number of logical data-layer calls plus a per-op breakdown
 and a local-FS wall-clock (for relative comparison only; absolute latency p50/p95
 must be measured against the running Azure/Docker stack via bench_api_http.py).
 
@@ -143,39 +142,27 @@ def run():
                 ops = {k: v["calls"] for k, v in counter.by_op.items()}
                 perf.end()
 
-            rows.append(
-                {
-                    "size": name,
-                    "layers": layers,
-                    "models_per": models_per,
-                    "total_models": total_models,
-                    "metadata_ops": calls,
-                    "ops": ops,
-                    "payload_bytes": payload,
-                    "wall_p50_ms": round(statistics.median(walls), 1),
-                    "wall_p95_ms": round(max(walls), 1),
-                }
-            )
+            rows.append({
+                "size": name, "layers": layers, "models_per": models_per,
+                "total_models": total_models, "data_layer_calls": calls,
+                "ops": ops, "payload_bytes": payload,
+                "wall_p50_ms": round(statistics.median(walls), 1),
+                "wall_p95_ms": round(max(walls), 1),
+            })
 
-    hdr = (
-        f"{'size':7} {'layers':6} {'mdl/l':5} {'metadata_ops':11} "
-        f"{'payload_kb':10} {'localfs_p50ms':13} {'ops (by type)'}"
-    )
+    hdr = (f"{'size':7} {'layers':6} {'mdl/l':5} {'data_calls':10} "
+           f"{'payload_kb':10} {'localfs_p50ms':13} {'ops (by type)'}")
     print(hdr)
     print("-" * len(hdr))
     for r in rows:
-        print(
-            f"{r['size']:7} {r['layers']:<6} {r['models_per']:<5} "
-            f"{r['metadata_ops']:<11} {r['payload_bytes']/1024:<10.1f} "
-            f"{r['wall_p50_ms']:<13} {r['ops']}"
-        )
+        print(f"{r['size']:7} {r['layers']:<6} {r['models_per']:<5} "
+              f"{r['data_layer_calls']:<10} {r['payload_bytes']/1024:<10.1f} "
+              f"{r['wall_p50_ms']:<13} {r['ops']}")
     print()
     for r in rows:
         L, M = r["layers"], r["models_per"]
-        print(
-            f"  {r['size']}: metadata_ops={r['metadata_ops']}  "
-            f"formula 3 + L*(2M+2) = {3 + L * (2 * M + 2)}"
-        )
+        print(f"  {r['size']}: data_layer_calls={r['data_layer_calls']}  "
+              f"formula 3 + L*(2M+2) = {3 + L * (2 * M + 2)}")
 
 
 if __name__ == "__main__":
