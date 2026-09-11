@@ -160,7 +160,7 @@ def test_cosmos_replaces_only_the_expected_partitioned_revision(
     current, version = cosmos.load_json_versioned("key", "model")
     cosmos.save_json_if_version("key", "model", current, version)
     cosmos.container.read_item.assert_called_once_with(
-        item="model_key", partition_key="partition"
+        item="model_key", partition_key="partition"  # gitleaks:allow
     )
     options = cosmos.container.replace_item.call_args.kwargs
     assert options["etag"] == "etag-1"
