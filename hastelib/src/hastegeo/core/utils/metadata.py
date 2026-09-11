@@ -34,7 +34,9 @@ def matches_metadata_type(path: str, data_type: str) -> bool:
     name = path.rsplit("/", 1)[-1]
     matching_types = [
         known_type
-        for known_type in _known_metadata_types()
+        for known_type in sorted(
+            set(_known_metadata_types()) | {data_type}, key=len, reverse=True
+        )
         if name.startswith(f"{known_type}_")
     ]
     if not matching_types:

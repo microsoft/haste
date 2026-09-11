@@ -5,6 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
+from azure.core.exceptions import ResourceNotFoundError
 from hastegeo.core.data_layer.abstract_data_layer import AbstractDataLayer
 from hastegeo.core.data_layer.azure_cosmos_db_data_layer import (
     AzureCosmosDBDataLayer,
@@ -19,10 +20,23 @@ from hastegeo.core.data_layer.local_file_system_data_layer import (
     LocalFileSystemDataLayer,
 )
 from hastegeo.core.data_layer.unified import UnifiedDataLayer
+from hastegeo.core.utils.metadata import matches_metadata_type
 from psycopg2 import sql
 
 
 class TestCosmosReadContract(unittest.TestCase):
+    def test_bounded_query_excludes_longer_types_before_limit(self) -> None:
+        self.layer.container.query_items.return_value = [{"id": "model_a"}]
+        self.assertEqual(
+            self.layer.load_bounded("model", 1), [{"id": "model_a"}]
+        )
+        call = self.layer.container.query_items.call_args.kwargs
+        self.assertIn("SELECT TOP 2", call["query"])
+        self.assertIn("AND NOT STARTSWITH", call["query"])
+        self.assertIn(
+            "model_catalog_", [item["value"] for item in call["parameters"]]
+        )
+
     def setUp(self) -> None:
         self.layer = AzureCosmosDBDataLayer.__new__(AzureCosmosDBDataLayer)
         self.layer.partition_key = "partition"
@@ -114,6 +128,28 @@ class TestCosmosReadContract(unittest.TestCase):
 
 
 class TestDataLakeReadContract(unittest.TestCase):
+    def test_missing_download_or_read_maps_to_file_not_found(self) -> None:
+        file_client = (
+            self.layer.file_system_client.get_file_client.return_value
+        )
+        for operation in [
+            file_client.download_file,
+            file_client.download_file.return_value.readall,
+        ]:
+            with self.subTest(operation=operation):
+                operation.side_effect = ResourceNotFoundError("missing")
+                with self.assertRaises(FileNotFoundError):
+                    self.layer.load("missing", "model")
+                operation.side_effect = None
+
+    def test_unknown_type_can_extend_a_known_prefix(self) -> None:
+        self.assertTrue(
+            matches_metadata_type("model_custom_1.json", "model_custom")
+        )
+        self.assertFalse(
+            matches_metadata_type("model_catalog_1.json", "model")
+        )
+
     def setUp(self) -> None:
         self.layer = AzureDataLakeDataLayer.__new__(AzureDataLakeDataLayer)
         self.layer.partition_key = "partition"
@@ -219,6 +255,18 @@ class TestDataLakeReadContract(unittest.TestCase):
 
 
 class TestPostgreSQLReadContract(unittest.TestCase):
+    @patch(
+        "hastegeo.core.data_layer.azure_postgresql_data_layer.psycopg2.connect"
+    )
+    def test_bounded_load_accepts_jsonb_and_serialized_values(
+        self, connect
+    ) -> None:
+        cursor = self._cursor(connect)
+        cursor.fetchall.return_value = [({"value": 1},), ('{"value": 2}',)]
+        self.assertEqual(
+            self.layer.load_bounded("model", 2), [{"value": 1}, {"value": 2}]
+        )
+
     def setUp(self) -> None:
         self.layer = AzurePostgreSQLDataLayer.__new__(AzurePostgreSQLDataLayer)
         self.layer.partition_key = "partition"
