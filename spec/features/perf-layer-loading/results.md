@@ -189,7 +189,7 @@ fundamentally the backend fix; UI work reduces the *amplifiers* below.
 Two UI-specific amplifiers the browser run exposed:
 - **Duplicate concurrent fetch (U1-adjacent):** the page issues `GetProjectDetails`
   **twice concurrently** on load (React StrictMode in dev + no request dedup). The two
-  603-round-trip requests contend, so browser-observed latency is **~2× the isolated
+  603-operation requests contend, so browser-observed latency is **~2× the isolated
   API call** (large: 38.4 s browser vs 20.8 s isolated `curl`). Production build drops
   the StrictMode double, but the absence of dedup/caching is real.
 - **Poll re-does everything (U1):** the 20 s poll fires a fresh full
@@ -212,13 +212,38 @@ would shift the constants but not the O(layers × models) scaling or the amplifi
 PYTHONPATH=hastelib/src python3 \
   spec/features/perf-layer-loading/tools/phase0_baseline.py
 
-# Real latency (requires running stack + HASTE_PERF=true on the API + seeded project):
-METADATA_STORAGE_TYPE=local DATA_PATH=/tmp/haste-bench PYTHONPATH=hastelib/src \
-  python3 spec/features/perf-layer-loading/tools/seed_synthetic_project.py \
-    --project-id <guid> --layers 50 --models 5
+# Real latency: use an already-running local Compose API backed by Azurite.
+# Copy the tool because the image does not include the spec directory.
+docker compose -f docker/docker-compose.yml cp \
+  spec/features/perf-layer-loading/tools/seed_synthetic_project.py \
+  hastefuncapi:/tmp/seed_synthetic_project.py
+docker compose -f docker/docker-compose.yml exec -T \
+  -e METADATA_STORAGE_TYPE=blob hastefuncapi \
+  python /tmp/seed_synthetic_project.py \
+  --project-id 00000000-0000-4000-8000-000050000005 --layers 50 --models 5
 python3 spec/features/perf-layer-loading/tools/bench_api_http.py \
-  --base-url http://localhost:7071/api --project-id <guid> --repeats 30
+  --base-url http://localhost:7071/api \
+  --project-id 00000000-0000-4000-8000-000050000005 --repeats 30
 ```
+
+Use only a disposable local Azurite stack. The seed runs with the API container's
+storage account/container settings and overwrites the specified synthetic project.
+The separate local-FS replay does not seed data visible to the Compose API.
+
+### Measurement Interpretation
+
+The counter records logical MetadataProcessor operations, not network requests.
+Legacy `X-Haste-Storage-*` header names remain for compatibility. A partition
+operation can list and download multiple blobs; counts cannot quantify round trips.
+
+The original replay and HTTP tables above used different fixture revisions and
+backends, so their payload bytes are not a matched before/after comparison. After
+restoring missing label count/URL fields, the current replay produced 9.2, 82.9,
+and 206.8 KiB for small, medium, and large fixtures (2026-09-11). The historical
+82.8 KB figure is an HTTP fixture observation, not the current large replay size.
+
+The browser benchmark uses the API configured by the UI's `VITE_API_URL`; it does
+not accept an API override. Configure that UI before measuring another API.
 
 ## Targets to beat (from [README.md](README.md#success-criteria))
 

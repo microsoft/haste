@@ -1,3 +1,7 @@
+export function isSuccessfulJobStatus(status) {
+  return ["Processed", "Completed", "Trained"].includes(status);
+}
+
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
