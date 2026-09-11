@@ -70,9 +70,7 @@ class BoundedExecutor:
             else validate_worker_count(max_workers)
         )
         worker_count = min(requested_workers, self.max_workers, len(items))
-        if worker_count == 1 or current_thread().name.startswith(
-            self._thread_prefix
-        ):
+        if current_thread().name.startswith(self._thread_prefix):
             return [function(item) for item in items]
 
         indexed_items = iter(enumerate(items))
