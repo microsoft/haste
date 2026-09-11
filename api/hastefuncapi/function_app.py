@@ -54,6 +54,10 @@ from hastegeo.core.processors.publishing import (
     PublishingSizeLimitError,
     PublishingStateConflictError,
 )
+from hastegeo.core.processors.publishing_catalog import (
+    CatalogQuery,
+    PublishingCatalogProcessor,
+)
 from hastegeo.core.processors.session import (
     SessionAccessError,
     SessionBootstrapProcessor,
@@ -4746,9 +4750,12 @@ async def GetPublishedDatasets(req: func.HttpRequest) -> func.HttpResponse:
         sort_key = req.params.get("sortKey", "publishedDate")
         sort_direction = req.params.get("sortDirection", "desc")
 
-        async def load_response() -> dict:
-            records, total_count = await asyncio.to_thread(
-                PublishingRepository(config=config).list_page,
+        cached_response, cache_hit = await PublishingCatalogProcessor(
+            lambda: PublishingRepository(config=config),
+            _published_datasets_cache,
+        ).load(
+            str(caller["id"]),
+            CatalogQuery(
                 page=page,
                 page_size=page_size,
                 project_id=project_id,
@@ -4757,43 +4764,7 @@ async def GetPublishedDatasets(req: func.HttpRequest) -> func.HttpResponse:
                 search=search,
                 sort_key=sort_key,
                 sort_direction=sort_direction,
-            )
-            payload = json.dumps(
-                {
-                    "publishedDatasets": [
-                        record.model_dump(mode="json") for record in records
-                    ],
-                    "pagination": {
-                        "page": page,
-                        "pageSize": page_size,
-                        "totalCount": total_count,
-                    },
-                }
-            )
-            return {
-                "payload": payload,
-                "etag": '"'
-                + hashlib.sha256(payload.encode()).hexdigest()[:32]
-                + '"',
-            }
-
-        cache_key = (
-            str(caller["id"]).lower(),
-            page,
-            page_size,
-            project_id or "",
-            target.value if target else "",
-            status.value if status else "",
-            search.lower(),
-            sort_key,
-            sort_direction,
-        )
-        (
-            cached_response,
-            cache_hit,
-        ) = await _published_datasets_cache.get_or_create(
-            cache_key,
-            load_response,
+            ),
             refresh=_cache_refresh_requested(req.headers.get("Cache-Control")),
         )
         headers = {
