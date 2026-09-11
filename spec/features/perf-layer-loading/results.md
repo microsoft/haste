@@ -101,8 +101,9 @@ SAS URL construction. Same measurement harnesses as Phase 0.
 - Correctness verified: 50 layers, 5 models each, all 250 artifacts joined,
   `labelProjectCount`/`validationLabelCount` correct, and the `labelsUrl` build path
   confirmed (populates a SAS URL when a train-labels blob exists, else null).
-- The after-payload is *larger* (166 KB vs 82 KB — the seed was enriched for the UI
-  run), so the latency win is conservative.
+- The 166.2 KB Phase 1 HTTP payload and historical 82.8 KB Phase 0 HTTP
+  payload use different seed revisions. Neither is the 205.8 KB historical
+  local-FS replay payload; no like-for-like payload reduction is established.
 
 **Historical Phase 1 state:** UI TTI (5.5 s) exceeded the API call because the page
 fired `GetProjectDetails` twice and did not consume ETags. The post-review hardening
@@ -251,7 +252,7 @@ not accept an API override. Configure that UI before measuring another API.
 |---|---|---|
 | Logical calls / request | **603** | 7 |
 | API p50 / p95 latency | **20.8 s / 21.8 s** (Azurite) | < 1.5 s |
-| Payload (default shape) | 82.8 KB | smaller via `summary` mode |
+| Payload (historical HTTP fixture, not current replay) | 82.8 KB | compare only like-for-like fixtures |
 
 ## Environment notes
 

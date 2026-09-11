@@ -151,7 +151,7 @@ const mockUser = {
   } catch (e) { bodyText = "<innerText failed: " + e + ">"; }
   try { await page.screenshot({ path: arg("shot", "/tmp/haste-uibench/shot.png"), fullPage: true }); } catch (e) {}
 
-  const interactiveAt = Date.now();
+  const interactiveAt = tti === null ? t0 : t0 + tti;
   const initialCalls = gpd.filter((call) => call.startedAt <= interactiveAt);
   const initialGpdMs = initialCalls.length ? initialCalls[0].ms : null;
   const initialGpdStartedMs = initialCalls.length
