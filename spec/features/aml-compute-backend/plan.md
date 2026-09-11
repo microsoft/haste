@@ -14,6 +14,14 @@ and fences queue updates. It is integrated with
 the existing local validation environment is rebuilt. Live AML validation
 remains a separate rollout gate.
 
+## Contents
+
+- [Phases](#phases)
+- [Milestones](#milestones)
+- [Agent Summary](#agent-summary)
+- [Resource Requirements](#resource-requirements)
+- [Open Questions](#open-questions)
+
 ## Phases
 
 ### Phase 1: Spec, ADR, and characterization tests
@@ -119,6 +127,7 @@ commands while keeping already-published images working.
 | Implement lazy `MLClient` creation, config validation, command-job mapping, immutable environment resolution, input staging, named output mapping | `backend-dev` | Phase 3, dependency approval | US-002 | done |
 | Implement status normalization, output/log reading, cancellation, finalization, capacity snapshots, submission reconciliation | `backend-dev` | — | US-002, US-005 | done |
 | Unit tests with mocked `MLClient` for all above | `backend-dev` | above | US-002 | done |
+| Support managed jobs with no explicit identity ID using existing compute identity; preserve explicit UAMI/user/Disabled behavior with config, SDK, and API regression tests | `backend-dev` | — | US-002, US-003, US-008 | done — local compatibility fix and targeted regressions pass; no compute/resource changes or live Azure operations |
 | Update Function app requirements and `env.yml` with lazy-import guarantees | `backend-dev` | — | US-002 | done |
 
 **Exit Criteria:**
@@ -175,12 +184,29 @@ commands while keeping already-published images working.
 | Security review of RBAC scope, keyless auth, and cross-deployment isolation | `security` | above | US-006, US-008 | done |
 | Confirm security findings addressed | `security-validation` | above | US-006, US-008 | done |
 | Local Bicep compilation + static template checks for all three modes (no Azure deployment operation) | `backend-dev` | above | US-006 | done |
+| Preserve blank managed identity IDs in Existing mode while retaining Create-only environment UAMI fallback; correct identity grants and drain-before-disable rollback documentation | `backend-dev` | — | US-004, US-006, US-008 | done — source-only regression checks and local Bicep compilation pass |
 
 **Exit Criteria:**
 - [x] `Disabled`, `Existing`, and `Create` modes compile and pass local static
       template checks; no mode was applied during implementation, and
       `Create` remains pending separate approval
 - [x] `security-validation` sign-off recorded
+
+**Existing-compute identity compatibility validation (local only):**
+
+- Targeted hatch run: `tests/core/test_config.py`,
+  `tests/core/runners/test_azure_ml.py`,
+  `tests/core/utils/test_compute_specs.py`, and
+  `tests/build/test_release_workflows.py` — **271 passed, 5 skipped** on
+  Windows Python 3.11. The skips require real POSIX symlinks; all identity
+  regressions passed.
+- Scoped `black`, `isort`, `flake8`, and `detect-secrets` hooks passed.
+- `bicep build infra/main.bicep --stdout --no-restore` compiled locally;
+  two existing hardcoded-environment-URL warnings remain in
+  `infra/modules/apimApis.bicep`.
+- Live AML authorization/smoke validation remains a separate gate. No
+  deployment, identity attachment, resource recreation, or compute change
+  was performed for this fix.
 
 ### Phase 11: Observability, full test suite, and rollout
 
@@ -193,7 +219,7 @@ commands while keeping already-published images working.
 | Validate all test results and acceptance criteria against the spec | `backend-validation` | above | all | in-progress — local unit/contract/API/queue/container/IaC validation and pre-landing review feedback are complete; authorized live AML/Batch parity and rollout checks remain |
 | Update `docs/architecture.md`, `docs/configuration.md`, `spec/architecture/overview.md`, `docs/hastelib/runners.md` | `backend-dev` | — | — | done — public documentation, deployment settings, and Disabled/Existing/Create behavior are synchronized with the implementation |
 | Execute staged rollout per [rollout.md](rollout.md) | `backend-dev` | above | all | not-started — no live deployment performed |
-| Rollback exercise (disable AML/`auto`, confirm existing handles keep working) | `backend-dev` | — | US-004, US-005 | not-started |
+| Rollback exercise (route new work away from AML, drain existing handles before disabling AML) | `backend-dev` | — | US-004, US-005 | not-started |
 
 **Exit Criteria:**
 - [ ] Full `hastelib` suite green: `cd hastelib && hatch run test:pytest`

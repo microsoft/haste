@@ -435,7 +435,9 @@ class TestBackendRejectionMessage(unittest.TestCase):
         self.assertIsNotNone(message)
         self.assertIn("my-gpu-cluster", message)
 
-    def test_explicit_aml_requires_complete_workload_configuration(self):
+    def test_explicit_aml_requires_complete_workload_configuration(
+        self,
+    ) -> None:
         configured = {
             "AML_MODE": "Existing",
             "AML_SUBSCRIPTION_ID": "subscription",
@@ -456,20 +458,57 @@ class TestBackendRejectionMessage(unittest.TestCase):
             "AML_ENVIRONMENT_TRAINING",
         )
 
-        for missing in required:
-            with self.subTest(missing=missing):
-                incomplete = dict(configured)
-                incomplete.pop(missing)
-                with patch.dict("os.environ", incomplete, clear=True):
+        for identity_mode in ("user", "managed"):
+            for missing in required:
+                with self.subTest(
+                    identity_mode=identity_mode, missing=missing
+                ):
+                    incomplete = dict(configured)
+                    incomplete["AML_IDENTITY_MODE"] = identity_mode
+                    incomplete.pop(missing)
+                    with patch.dict("os.environ", incomplete, clear=True):
+                        message = backend_rejection_message(
+                            ComputeBackend.AZURE_ML,
+                            ComputeWorkload.TRAINING,
+                            config=Config(),
+                        )
+                    self.assertIsNotNone(message)
+                    self.assertIn(missing, message)
+                    self.assertNotIn("AML_MANAGED_IDENTITY_ID", message)
+
+    def test_explicit_aml_accepts_default_or_explicit_managed_identity(
+        self,
+    ) -> None:
+        for identity_id in (
+            None,
+            "",
+            "/subscriptions/00000000-0000-0000-0000-000000000000/"
+            "resourceGroups/rg-1/providers/Microsoft.ManagedIdentity/"
+            "userAssignedIdentities/aml-job",
+        ):
+            with self.subTest(identity_id=identity_id):
+                configured = {
+                    "AML_MODE": "Existing",
+                    "AML_SUBSCRIPTION_ID": "subscription",
+                    "AML_RESOURCE_GROUP": "resource-group",
+                    "AML_WORKSPACE_NAME": "workspace",
+                    "AML_DATASTORE_NAME": "datastore",
+                    "AML_COMPUTE_TRAINING": "gpu-cluster",
+                    "AML_ENVIRONMENT_TRAINING": "azureml:training:1",
+                    "AML_IDENTITY_MODE": "managed",
+                }
+                if identity_id is not None:
+                    configured["AML_MANAGED_IDENTITY_ID"] = identity_id
+                with patch.dict("os.environ", configured, clear=True):
                     message = backend_rejection_message(
                         ComputeBackend.AZURE_ML,
                         ComputeWorkload.TRAINING,
                         config=Config(),
                     )
-                self.assertIsNotNone(message)
-                self.assertIn(missing, message)
 
-    def test_explicit_aml_requires_managed_identity_id(self):
+                self.assertIsNone(message)
+
+    def test_explicit_aml_rejects_malformed_managed_identity_id(self) -> None:
         with patch.dict(
             "os.environ",
             {
@@ -481,6 +520,7 @@ class TestBackendRejectionMessage(unittest.TestCase):
                 "AML_COMPUTE_TRAINING": "gpu-cluster",
                 "AML_ENVIRONMENT_TRAINING": "azureml:training:1",
                 "AML_IDENTITY_MODE": "managed",
+                "AML_MANAGED_IDENTITY_ID": "not-a-resource-id",
             },
             clear=True,
         ):

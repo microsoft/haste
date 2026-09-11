@@ -21,6 +21,7 @@ import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
+import pytest
 from azure.core.exceptions import (
     HttpResponseError,
     ResourceExistsError,
@@ -64,6 +65,13 @@ from hastegeo.core.runners.azure_ml import (
     _sanitized_tags,
 )
 from hastegeo.core.runners.base import ComputeRunner
+from pytest_mock import MockerFixture
+
+_MANAGED_IDENTITY_ID = (
+    "/subscriptions/00000000-0000-0000-0000-000000000000/"
+    "resourceGroups/rg-1/providers/Microsoft.ManagedIdentity/"
+    "userAssignedIdentities/aml-job"
+)
 
 
 def _aml_config(**overrides):
@@ -269,10 +277,15 @@ class TestLazyImport(unittest.TestCase):
 
 
 class TestValidate(unittest.TestCase):
-    def test_raises_when_mode_disabled(self):
-        runner = _runner(mode="Disabled")
-        with self.assertRaises(BackendConfigurationError):
-            runner.validate(_spec())
+    def test_raises_when_mode_disabled(self) -> None:
+        for identity_mode in ("user", "managed"):
+            with self.subTest(identity_mode=identity_mode):
+                runner = _runner(mode="Disabled", identity_mode=identity_mode)
+                with self.assertRaisesRegex(
+                    BackendConfigurationError, "AML_MODE=Disabled"
+                ):
+                    runner.submit(_spec())
+                self.assertEqual(runner._client.mock_calls, [])
 
     def test_accepts_create_mode(self):
         # 'Create' is accepted for parity with Batch's mode vocabulary —
@@ -297,17 +310,35 @@ class TestValidate(unittest.TestCase):
         with self.assertRaises(BackendConfigurationError):
             runner.validate(_spec())
 
-    def test_raises_when_managed_identity_missing_resource_id(self):
-        runner = _runner(identity_mode="managed", managed_identity_id=None)
-        with self.assertRaises(BackendConfigurationError):
-            runner.validate(_spec())
+    def test_passes_when_managed_identity_has_no_resource_id(self) -> None:
+        for identity_id in (None, ""):
+            with self.subTest(identity_id=identity_id):
+                runner = _runner(
+                    identity_mode="managed", managed_identity_id=identity_id
+                )
+                runner.validate(_spec())
+                self.assertEqual(runner._client.mock_calls, [])
 
-    def test_passes_when_managed_identity_has_resource_id(self):
+    def test_passes_when_managed_identity_has_resource_id(self) -> None:
         runner = _runner(
             identity_mode="managed",
-            managed_identity_id="/subscriptions/x/.../identity",
+            managed_identity_id=_MANAGED_IDENTITY_ID,
         )
         runner.validate(_spec())  # must not raise
+
+    def test_rejects_malformed_managed_identity_before_provider_call(
+        self,
+    ) -> None:
+        runner = _runner(
+            identity_mode="managed", managed_identity_id="not-a-resource-id"
+        )
+
+        with self.assertRaisesRegex(
+            BackendConfigurationError, "AML_MANAGED_IDENTITY_ID"
+        ):
+            runner.submit(_spec())
+
+        self.assertEqual(runner._client.mock_calls, [])
 
     def test_passes_with_user_identity_mode(self):
         runner = _runner(identity_mode="user")
@@ -467,17 +498,102 @@ class TestJobNaming(unittest.TestCase):
         self.assertLessEqual(len(inference), 200)
 
 
+@pytest.mark.parametrize(
+    ("identity_mode", "identity_id"),
+    [
+        ("managed", None),
+        ("managed", ""),
+        ("managed", _MANAGED_IDENTITY_ID),
+        ("user", None),
+        ("user", ""),
+        ("user", _MANAGED_IDENTITY_ID),
+        ("user", "ignored-invalid-id"),
+    ],
+)
+def test_submission_preserves_identity_selection_without_compute_changes(
+    identity_mode: str,
+    identity_id: str | None,
+    mocker: MockerFixture,
+) -> None:
+    from azure.ai.ml.entities import (
+        ManagedIdentityConfiguration,
+        UserIdentityConfiguration,
+    )
+
+    managed_constructor = mocker.patch(
+        "azure.ai.ml.entities.ManagedIdentityConfiguration",
+        wraps=ManagedIdentityConfiguration,
+    )
+    user_constructor = mocker.patch(
+        "azure.ai.ml.entities.UserIdentityConfiguration",
+        wraps=UserIdentityConfiguration,
+    )
+    client = mocker.MagicMock()
+    client.jobs.get.side_effect = ResourceNotFoundError("not found")
+    client.jobs.create_or_update.return_value = _job(status="Queued")
+    runner = _runner(
+        client=client,
+        identity_mode=identity_mode,
+        managed_identity_id=identity_id,
+    )
+
+    handle = runner.submit(_spec())
+
+    client.jobs.create_or_update.assert_called_once()
+    job = client.jobs.create_or_update.call_args.args[0]
+    if identity_mode == "managed":
+        if identity_id:
+            managed_constructor.assert_called_once_with(
+                resource_id=identity_id
+            )
+        else:
+            managed_constructor.assert_called_once_with()
+        user_constructor.assert_not_called()
+        assert isinstance(job.identity, ManagedIdentityConfiguration)
+        assert job.identity.resource_id == (identity_id or None)
+        assert job.identity.client_id is None
+        assert job.identity.object_id is None
+    else:
+        user_constructor.assert_called_once_with()
+        managed_constructor.assert_not_called()
+        assert isinstance(job.identity, UserIdentityConfiguration)
+    assert runner.aml_config["identity_mode"] == identity_mode
+    assert runner.aml_config["managed_identity_id"] == identity_id
+    assert job.compute == handle.targetId == "gpu-cluster"
+    assert [call[0] for call in client.mock_calls] == [
+        "jobs.get",
+        "jobs.create_or_update",
+    ]
+
+
 class TestIdentity(unittest.TestCase):
-    def test_managed_mode_returns_managed_identity_with_resource_id(self):
+    def test_managed_mode_returns_managed_identity_with_resource_id(
+        self,
+    ) -> None:
         from azure.ai.ml.entities import ManagedIdentityConfiguration
 
         runner = _runner(
             identity_mode="managed",
-            managed_identity_id="/subscriptions/x/.../identity",
+            managed_identity_id=_MANAGED_IDENTITY_ID,
         )
         identity = runner._identity()
         self.assertIsInstance(identity, ManagedIdentityConfiguration)
-        self.assertEqual(identity.resource_id, "/subscriptions/x/.../identity")
+        self.assertEqual(identity.resource_id, _MANAGED_IDENTITY_ID)
+
+    def test_managed_mode_without_identity_key_uses_compute_identity(
+        self,
+    ) -> None:
+        from azure.ai.ml.entities import ManagedIdentityConfiguration
+
+        runner = _runner(identity_mode="managed")
+        del runner.aml_config["managed_identity_id"]
+
+        identity = runner._identity()
+
+        self.assertIsInstance(identity, ManagedIdentityConfiguration)
+        self.assertIsNone(identity.resource_id)
+        self.assertIsNone(identity.client_id)
+        self.assertIsNone(identity.object_id)
 
     def test_user_mode_returns_user_identity_configuration(self):
         from azure.ai.ml.entities import UserIdentityConfiguration

@@ -142,7 +142,7 @@ param amlImageryprepEnvironmentReference string = ''
 ])
 param amlIdentityMode string = 'user'
 
-@description('User-assigned managed identity resource id to submit AML jobs as when amlIdentityMode == managed. Empty when amlIdentityMode == user or amlMode == Disabled.')
+@description('Optional already-attached UAMI resource id for AML job data access when amlIdentityMode == managed. Empty selects the existing system/default managed identity on compute; main.bicep preserves this in Existing mode and supplies the environment UAMI fallback only in Create mode. Empty when amlIdentityMode == user or amlMode == Disabled.')
 param amlManagedIdentityId string = ''
 
 // --- data publishing ---------------------------------------------------------
@@ -270,15 +270,14 @@ var appConfigSettings = [
   { name: 'AML_ENVIRONMENT_TRAINING', value: amlTrainingEnvironmentReference }
   { name: 'AML_ENVIRONMENT_IMAGERYPREP', value: amlImageryprepEnvironmentReference }
   // Neutral/configurable — NOT hardcoded to a specific identity semantic.
-  // Default 'user': jobs submit as the calling principal (hastefuncqueues),
-  // which already holds Storage Blob Data Owner on the HASTE storage account
-  // (storage.bicep/functionApp.bicep), needing no AML-specific grant. Only
-  // populate AML_MANAGED_IDENTITY_ID when 'managed' is selected. In Existing
-  // mode, whatever access the chosen identity needs on the existing AML
-  // platform (workspace RBAC, datastore/storage access, ACR pull) is a
-  // prerequisite owned by that platform — this is IaC-side plumbing only, it
-  // grants nothing there. In Create mode, the equivalent HASTE-managed grant
-  // is amlRole.bicep (queue app only).
+  // Default 'user' selects the submitting Function App for job data access.
+  // The Function App needs AML workspace submit/read/cancel permissions in
+  // either mode; its storage grants alone do not authorize AML operations.
+  // In 'managed', an empty ID selects the compute's existing system/default
+  // identity, while an explicit ID selects an already-attached UAMI.
+  // Existing-mode workspace, job data-access, and image-pull permissions are
+  // platform prerequisites; this module only passes settings through.
+  // Create-mode queue-app workspace access is granted by amlRole.bicep.
   { name: 'AML_IDENTITY_MODE', value: amlIdentityMode }
   { name: 'AML_MANAGED_IDENTITY_ID', value: amlManagedIdentityId }
   // Data publishing feature flag (Local target). The queue + publishing-locks

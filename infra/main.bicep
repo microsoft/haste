@@ -114,7 +114,7 @@ param computeBackendDefault string = 'azure_batch'
 // creation even by accident.
 // ---------------------------------------------------------------------------
 
-@description('AML resource ownership mode. Disabled = no AML app settings emitted. Existing (the default enablement path) = wire pre-existing, platform-owned identifiers into Function App settings; HASTE creates/mutates nothing. Create (explicit, later opt-in) = HASTE also provisions its own workspace, compute clusters, environment versions, and datastore registration.')
+@description('AML resource ownership mode. Disabled = AML settings remain present but inert, with empty resource identifiers. Existing (the default enablement path) = wire pre-existing, platform-owned identifiers into Function App settings; HASTE creates/mutates nothing. Create (explicit, later opt-in) = HASTE also provisions its own workspace, compute clusters, environment versions, and datastore registration.')
 @allowed([
   'Disabled'
   'Existing'
@@ -167,14 +167,14 @@ param amlTrainingEnvironmentVersion string = split(trainingImage, ':')[1]
 @description('Immutable AML environment version HASTE registers for the imageryprep image when amlMode == Create. Defaults to the image tag. Unused when amlMode != Create.')
 param amlImageryprepEnvironmentVersion string = split(imageryprepImage, ':')[1]
 
-@description('Default job-execution identity mode surfaced to the AML adapter as AML_IDENTITY_MODE: "user" submits AML jobs using the calling principal (hastefuncqueues) own identity — the security default, since that identity already holds the storage RBAC granted in storage.bicep/functionApp.bicep, needing no additional AML-specific grant. "managed" submits jobs using a specific user-assigned managed identity instead (see amlManagedIdentityResourceId). In Existing mode, granting that identity access on the existing AML platform (workspace RBAC, datastore/storage access, ACR pull) is a prerequisite owned by that platform — this IaC only emits the setting, it does not grant any AML permission. In Create mode, the equivalent HASTE-managed grant is amlRole.bicep (queue app only).')
+@description('Job data-access identity mode surfaced as AML_IDENTITY_MODE: "user" uses the submitting Function App principal; "managed" uses the compute system/default identity or an explicit attached UAMI (see amlManagedIdentityResourceId). The submitting Function App needs AML workspace submit/read/cancel permissions in either mode; storage RBAC alone is insufficient. Existing mode requires operator-provided workspace, job data-access, and image-pull grants outside this IaC. Create mode grants queue-app workspace access through amlRole.bicep.')
 @allowed([
   'user'
   'managed'
 ])
 param amlIdentityMode string = 'user'
 
-@description('User-assigned managed identity resource id to submit AML jobs as when amlIdentityMode == "managed". Empty (with amlIdentityMode == "managed") defaults to the shared env UMI. Ignored when amlIdentityMode == "user". In Existing mode, the existing AML platform must already grant this identity whatever access it needs — this parameter only names it, it grants nothing there.')
+@description('Optional already-attached UAMI resource id for AML job data access when amlIdentityMode == "managed". Empty stays empty in Existing mode, selecting the existing system/default managed identity on compute; only Create mode defaults to the shared env UMI attached to its provisioned compute. Ignored when amlIdentityMode == "user". Existing mode never attaches identities, changes compute, or grants permissions.')
 param amlManagedIdentityResourceId string = ''
 
 // ---------------------------------------------------------------------------
@@ -344,15 +344,15 @@ var resolvedAmlCpuComputeName = createAmlWorkspace ? amlCpuComputeName : existin
 var resolvedAmlDatastoreName = createAmlWorkspace ? amlDatastoreName : existingAmlDatastoreName
 var resolvedAmlTrainingEnvironmentReference = createAmlWorkspace ? amlTrainingEnvironmentReference : existingAmlTrainingEnvironmentReference
 var resolvedAmlImageryprepEnvironmentReference = createAmlWorkspace ? amlImageryprepEnvironmentReference : existingAmlImageryprepEnvironmentReference
-// Resolved job-submission identity for AML jobs (AML_MANAGED_IDENTITY_ID
+// Resolved job data-access identity for AML jobs (AML_MANAGED_IDENTITY_ID
 // app setting): only meaningful/populated when amlIdentityMode == 'managed'.
-// Defaults to the shared env UMI when the operator doesn't supply a
-// different one. Empty in 'user' mode or when AML is Disabled. Naming this
-// identity does not grant it anything by itself in Existing mode — any
-// access it needs on the existing AML platform is a prerequisite owned by
-// that platform (Create mode grants it via amlRole.bicep instead).
+// Existing preserves a blank ID for the compute's existing system/default
+// identity. Only Create defaults to the env UMI attached to its compute.
+// Explicit UAMI IDs pass through in either enabled mode; they must already
+// be attached and authorized. Empty in 'user' mode or when AML is Disabled.
+// Naming an identity here does not attach it or grant it any permissions.
 var resolvedAmlManagedIdentityResourceId = (deployAml && amlIdentityMode == 'managed')
-  ? (empty(amlManagedIdentityResourceId) ? identity.outputs.resourceId : amlManagedIdentityResourceId)
+  ? (createAmlWorkspace && empty(amlManagedIdentityResourceId) ? identity.outputs.resourceId : amlManagedIdentityResourceId)
   : ''
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,16 @@
 # Impact Analysis: Backend-neutral compute runner + Azure Machine Learning backend
 
+## Contents
+
+- [Scope of Change](#scope-of-change)
+- [Azure Service Impact](#azure-service-impact)
+- [Dependency Analysis](#dependency-analysis)
+- [Risk Assessment](#risk-assessment)
+- [Performance Impact](#performance-impact)
+- [Security Impact](#security-impact)
+- [Compliance & Data Impact](#compliance--data-impact)
+- [Rollback Assessment](#rollback-assessment)
+
 ## Scope of Change
 
 ### HASTE Components Affected
@@ -146,9 +157,11 @@
   scenario applies `Create` mode, that infrastructure would require its own
   explicit, separate decommissioning after all AML job handles are terminal
   and retention requirements are met (not an application rollback step).
-- **Cosmos data:** No rollback needed — `computeJob` is additive and ignored
-  by prior code versions; legacy `jobId`/`taskId` remain authoritative
-  throughout.
+- **Cosmos data:** No schema rollback needed — `computeJob` is additive and
+  legacy Batch `jobId`/`taskId` are unchanged. Retain AML-capable code and
+  `AML_MODE=Existing` until accepted or indeterminate AML submissions have
+  been reconciled, reached terminal state, and completed lifecycle work;
+  prior code versions cannot manage AML jobs through legacy Batch fields.
 - **Blob data:** No cleanup needed — output paths and containers are
   unchanged by this feature.
 - **API:** Backward-compatible — omitted compute-selection fields default to
@@ -156,9 +169,10 @@
 - **Batch behavior:** Fully preserved behind the adapter boundary; Batch
   remains enabled throughout rollout (this feature adds AML, it does not
   replace Batch).
-- **Estimated rollback time:** Application-level rollback (disable AML/`auto`
-  submissions via configuration, or revert the deploy) is under 15 minutes,
-  consistent with existing HASTE flag-based rollbacks. `Create`-mode
+- **Estimated rollback time:** Stopping new AML/`auto` submissions through
+  routing and caller controls targets under 15 minutes. Disabling the AML
+  adapter or restoring a pre-AML release must wait for accepted jobs to
+  drain, so total rollback time depends on job/cancellation state. `Create`-mode
   infrastructure teardown, if that mode is ever applied under a separately
   approved future scenario, is a separate, deliberately slower operation
   gated on job/retention state (see [rollout.md](rollout.md)).

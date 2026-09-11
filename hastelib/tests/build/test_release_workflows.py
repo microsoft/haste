@@ -352,6 +352,49 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn("param amlComputeSubnetId string = ''", storage_bicep)
         self.assertIn("id: amlComputeSubnetId", storage_bicep)
 
+    def test_aml_managed_identity_fallback_is_create_only(self) -> None:
+        """Source-only: Existing must preserve a blank compute identity ID."""
+        main_bicep = (REPO_ROOT / "infra/main.bicep").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("var deployAml = amlMode != 'Disabled'", main_bicep)
+        self.assertIn(
+            "var createAmlWorkspace = amlMode == 'Create'", main_bicep
+        )
+        self.assertIn(
+            "var resolvedAmlManagedIdentityResourceId = "
+            "(deployAml && amlIdentityMode == 'managed') "
+            "? (createAmlWorkspace && empty(amlManagedIdentityResourceId) "
+            "? identity.outputs.resourceId : amlManagedIdentityResourceId) "
+            ": ''",
+            " ".join(main_bicep.split()),
+        )
+
+    def test_aml_identity_settings_pass_through_without_substitution(
+        self,
+    ) -> None:
+        main_bicep = (REPO_ROOT / "infra/main.bicep").read_text(
+            encoding="utf-8"
+        )
+        functions_bicep = (
+            REPO_ROOT / "infra/modules/functions.bicep"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("amlIdentityMode: amlIdentityMode", main_bicep)
+        self.assertIn(
+            "amlManagedIdentityId: resolvedAmlManagedIdentityResourceId",
+            main_bicep,
+        )
+        self.assertIn(
+            "{ name: 'AML_IDENTITY_MODE', value: amlIdentityMode }",
+            functions_bicep,
+        )
+        self.assertIn(
+            "{ name: 'AML_MANAGED_IDENTITY_ID', value: amlManagedIdentityId }",
+            functions_bicep,
+        )
+
     def test_rc_deploy_defaults_all_artifacts_to_same_version(self):
         workflow = (REPO_ROOT / ".github/workflows/deploy-apps.yml").read_text(
             encoding="utf-8"

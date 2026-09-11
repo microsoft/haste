@@ -1,5 +1,16 @@
 # Rollout Plan: Backend-neutral compute runner + Azure Machine Learning backend
 
+## Contents
+
+- [Rollout Strategy](#rollout-strategy)
+- [Deployment Targets](#deployment-targets)
+- [Feature Flags](#feature-flags)
+- [Rollout Phases](#rollout-phases)
+- [Rollback Plan](#rollback-plan)
+- [Monitoring & Alerting](#monitoring--alerting)
+- [Communication Plan](#communication-plan)
+- [Post-Rollout Checklist](#post-rollout-checklist)
+
 ## Rollout Strategy
 
 **Type:** phased + feature-flag
@@ -32,15 +43,17 @@ performs a live deployment as part of this rollout.
 
 | Flag | Location | Default | Description | Kill Switch? |
 |---|---|---|---|---|
-| `AML_MODE` | IaC parameter / app setting | `Disabled` | Controls whether AML resources exist at all | yes (`Disabled`) |
+| `AML_MODE` | IaC parameter / app setting | `Disabled` | Controls AML enablement and resource ownership; `Disabled` also prevents handle-based AML lifecycle operations | only after accepted/indeterminate jobs are reconciled and drained |
 | `COMPUTE_BACKEND_DEFAULT` | app setting | `azure_batch` | Global fallback backend | yes (revert to `azure_batch`) |
 | `COMPUTE_BACKEND_<WORKLOAD>` | app setting | unset | Per-workload override | yes (unset) |
 | `COMPUTE_AUTO_CANDIDATES_<WORKLOAD>` | app setting | unset (no `auto` candidates until configured) | Backends `auto` may select | yes (unset disables `auto` for that workload) |
 | `COMPUTE_FOLLOW_ON_INHERITS_BACKEND` | app setting | `true` | Automatic follow-on backend inheritance | yes (`false` reverts to workload default) |
 | `RUNNER_TYPE` | app setting | — | Deprecated alias; still honored during migration | reverting it is equivalent to `COMPUTE_BACKEND_DEFAULT` |
 
-Reverting all flags to their defaults restores exact current Batch-only
-behavior with no data migration.
+Routing and caller controls can stop new AML submissions without disabling
+the adapter. Keep `AML_MODE=Existing` and its references/permissions until
+accepted or indeterminate AML submissions are reconciled and drained; only
+then restore all defaults for Batch-only behavior with no data migration.
 
 ## Rollout Phases
 
@@ -78,10 +91,17 @@ behavior with no data migration.
 - **Deployment:** set `AML_MODE=Existing` and supply the existing workspace,
   resource group, compute target names, immutable environment references,
   datastore name, and identity mode (`AML_IDENTITY_MODE=user` by default —
-  AML jobs submit as the calling Function App's own identity, needing no
-  extra grant; `managed` requires `AML_MANAGED_IDENTITY_ID`). Do not create
-  or mutate the workspace, compute, environments, datastore, or AML RBAC
-  from HASTE.
+  job data access uses the submitting Function App's principal).
+  `managed` with an empty/unset `AML_MANAGED_IDENTITY_ID` uses the compute's
+  existing system/default managed identity; a nonempty ID selects an
+  already-attached UAMI. `Existing` preserves a blank ID; only the separately
+  approved `Create` path retains the environment-UAMI fallback.
+- **Permissions:** the submitting Function App requires AML workspace
+  submit/read/cancel permissions in both modes, separately from storage
+  RBAC. The selected data-access identity and platform image-pull identity
+  also need their required grants. These are operator prerequisites; HASTE
+  does not create or mutate the workspace, compute, identities, environments,
+  datastore, or AML RBAC in `Existing` mode.
 - **Success criteria:**
   - [ ] Local Bicep compilation and static tests confirm `Existing` emits
         application settings but no `Microsoft.MachineLearningServices`
@@ -92,8 +112,9 @@ behavior with no data migration.
   - [ ] No account keys, passwords, or connection strings present anywhere in
         the deployed configuration.
 - **Rollback trigger:** any smoke-job failure or credential-boundary finding
-  → set `AML_MODE=Disabled`; there are no HASTE-created AML resources to
-  remove.
+  → stop new submissions, then reconcile/poll/cancel/finalize any accepted
+  smoke jobs with `AML_MODE=Existing`. Disable AML only after they are
+  terminal; there are no HASTE-created AML resources to remove.
 
 > `Create` mode remains in source for a separately approved future deployment
 > scenario. It is not applied under this rollout.
@@ -110,8 +131,9 @@ behavior with no data migration.
   - [ ] Cancellation and worker-restart resilience scenarios pass
         (E2E-007).
 - **Rollback trigger:** output mismatch, cancellation failure, or handle
-  routing error → unset the workload override, keep AML resources deployed
-  for further investigation.
+  routing error → route new workload submissions to Batch, retaining
+  `AML_MODE=Existing` and unchanged AML resources for accepted jobs and
+  further investigation.
 
 ### Phase 4: Expand explicit AML to embedding, inference, training, remaining workload
 
@@ -151,8 +173,9 @@ behavior with no data migration.
   - [ ] `auto` never changes provider for the same `executionId` across
         retries.
 - **Rollback trigger:** routing instability, quota contention, or output
-  parity regression → unset `COMPUTE_AUTO_CANDIDATES_<WORKLOAD>` for the
-  affected workload, falling back to explicit/default routing.
+  parity regression → remove AML from the affected workload's auto
+  candidates, retaining a non-AML candidate or replacing `auto` with an
+  explicit non-AML default.
 
 ### Phase 7: Broader environment rollout
 
@@ -171,20 +194,27 @@ than replacing Batch.
 
 | Step | Action | Owner |
 |---|---|---|
-| 1 | Unset `COMPUTE_BACKEND_<WORKLOAD>` / `COMPUTE_AUTO_CANDIDATES_<WORKLOAD>` on the affected environment | Platform Operator |
-| 2 | Set `AML_MODE=Disabled` if AML infrastructure itself is implicated | Platform Operator |
-| 3 | (If code-level) revert the merged branch / redeploy the previous release | backend-dev |
-| 4 | Continue polling/cancelling/finalizing any already-submitted AML jobs by their persisted handle until terminal | backend-dev |
+| 1 | Stop new AML submissions through routing and caller controls; do not disable the adapter | Platform Operator |
+| 2 | Keep `AML_MODE=Existing`, resource references, permissions, and an AML-capable release while reconciling/polling/cancelling accepted or indeterminate submissions through their persisted handles; finalize terminal jobs | backend-dev |
+| 3 | Only after those jobs are terminal and lifecycle work is complete, set `AML_MODE=Disabled` if needed | Platform Operator |
+| 4 | Only after draining AML, revert code / redeploy the previous release if needed | backend-dev |
 | 5 | Verify Batch-only jobs are unaffected and route correctly | backend-validation |
 | 6 | Leave the operator-provided AML resources unchanged; HASTE rollback is configuration-only | Platform Operator |
+
+For step 1, set the global default to `azure_batch`, remove/replace AML
+workload overrides, remove AML from auto candidates, and disable AML
+follow-on inheritance where needed. Pause callers that explicitly request
+`azure_ml` and account for already-queued AML requests: routing defaults do
+not override explicit or persisted selections.
 
 Automatic cross-provider resubmission is never used as a rollback mechanism.
 A job whose provider may have accepted it is reconciled or explicitly
 retried as a new HASTE execution, never blindly resubmitted to a different
 backend.
 
-**Cosmos data rollback required?** no — `computeJob` is additive; legacy
-`jobId`/`taskId` remain authoritative throughout.
+**Cosmos data rollback required?** no — `computeJob` is additive and legacy
+Batch `jobId`/`taskId` fields are unchanged. Keep AML-capable code until AML
+handles are terminal; old code cannot manage those jobs.
 **Blob artifacts cleanup needed?** no — output paths and containers are
 unchanged by this feature.
 

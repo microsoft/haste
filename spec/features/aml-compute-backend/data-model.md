@@ -5,6 +5,19 @@ Queue message schema. It adds a new validated core model module and an
 optional field on four existing job records. See [design.md](design.md) for
 behavior and [test-plan.md](test-plan.md) for model-level test coverage.
 
+## Contents
+
+- [Core Model Changes](#core-model-changes-hastelib)
+- [Configuration Changes](#configuration-changes-hastegeocoreconfig)
+- [Blob Storage / Data Lake](#blob-storage--data-lake)
+- [Queue Storage](#queue-storage)
+- [Azure Batch Changes](#azure-batch-changes)
+- [Azure Machine Learning Changes](#azure-machine-learning-changes-new)
+- [Data Flow](#data-flow)
+- [Migration Plan](#migration-plan)
+- [Data Volume Estimates](#data-volume-estimates)
+- [Caching Strategy](#caching-strategy)
+
 ## Core Model Changes (`hastelib`)
 
 ### New module: `hastegeo.core.models.compute`
@@ -170,8 +183,8 @@ model:
 | `AML_DATASTORE_NAME` | string | unset unless `AML_MODE != Disabled` | Registered HASTE storage datastore |
 | `AML_COMPUTE_<WORKLOAD>` | string | unset unless workload uses AML | Compute cluster name per workload tier |
 | `AML_ENVIRONMENT_<IMAGE>` | string | unset unless workload uses AML | Immutable environment version per workload image |
-| `AML_IDENTITY_MODE` | `user` \| `managed` | `user` | Identity AML jobs submit/authenticate as. `user` (default) maps to AML's `UserIdentityConfiguration` — the job runs as the *submitting principal's own identity* (the calling Function App's identity); needs no extra AML-specific grant beyond whatever access that identity already holds. `managed` maps to `ManagedIdentityConfiguration`, using `AML_MANAGED_IDENTITY_ID`. |
-| `AML_MANAGED_IDENTITY_ID` | string | unset | User-assigned managed identity resource ID; required only when `AML_IDENTITY_MODE=managed`, ignored otherwise |
+| `AML_IDENTITY_MODE` | `user` \| `managed` | `user` | Job data-access identity. `user` maps to `UserIdentityConfiguration` for the submitting Function App principal; `managed` selects the compute's existing system/default identity or an explicit attached UAMI. The Function App still needs AML workspace submit/read/cancel grants in either mode, separate from storage RBAC. |
+| `AML_MANAGED_IDENTITY_ID` | string | unset | Optional attached UAMI resource ID for `managed`: empty/unset selects `ManagedIdentityConfiguration()` without identifiers; nonempty selects `ManagedIdentityConfiguration(resource_id=...)`. Ignored in `user` mode. |
 | `AML_EXPERIMENT_PREFIX` | string | `haste` | AML experiment naming prefix |
 | `AML_SUBMISSION_TIMEOUT_SECONDS` | int | provider-appropriate default | Bounded provider call timeout |
 
@@ -183,6 +196,16 @@ mean the `AML_*` settings are absent from the Function App's configuration —
 the IaC unconditionally emits every `AML_*` key with an inert/empty value
 (e.g. `AML_MODE=Disabled`) rather than omitting the key (see
 [design.md](design.md#infrastructure)).
+
+In `Existing` mode, IaC preserves a blank managed identity ID instead of
+substituting the environment UAMI. `Create` retains its intentional fallback
+to the environment UAMI attached to newly provisioned compute. The runtime
+does not provision or change identities in either mode.
+
+Explicit IDs are checked locally for the user-assigned managed identity
+resource-ID shape. HASTE does not look up identity attachment or permissions
+for this validation; the operator must supply the required workspace,
+job data-access, and image-pull grants.
 
 ## Blob Storage / Data Lake
 
@@ -255,12 +278,18 @@ UI → titilerfuncapi → Blob Storage (COG tiles)
 
 ### Backward migration
 
-1. Revert processors to the previous release; `jobId`/`taskId` remain
-   authoritative and unaffected since they were never removed.
-2. Cosmos documents: no rollback action needed — `computeJob` is ignored by
-   old code, not required by it.
-3. Blob artifacts: no cleanup needed — output paths did not change.
-4. AML resources: set `AML_MODE=Disabled`. Because `Existing` mode never
+1. Stop new AML submissions through routing and caller controls, including
+   automatic follow-ons; see [rollout.md](rollout.md#rollback-plan).
+2. Keep `AML_MODE=Existing`, its resource references/permissions, and an
+   AML-capable release until accepted or indeterminate AML submissions have
+   been reconciled, reached terminal state, and completed polling,
+   cancellation, and finalization through their persisted handles.
+3. Only then set `AML_MODE=Disabled` and, if needed, revert processors to the
+   previous release. Legacy Batch `jobId`/`taskId` fields remain unchanged;
+   old code cannot manage accepted AML jobs just because those fields exist.
+4. Cosmos documents need no schema rollback; Blob artifacts need no cleanup
+   because output paths did not change.
+5. AML resources: leave them unchanged. Because `Existing` mode never
    created or modified any AML resource, there is nothing for HASTE to
    decommission in this rollout. If a future, separately approved scenario
    applies `Create` mode, its resources would require their own separate

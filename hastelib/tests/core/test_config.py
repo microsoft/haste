@@ -17,6 +17,12 @@ from unittest.mock import patch
 from hastegeo.core.config import AML_IDENTITY_MODES, AML_MODES, Config
 from hastegeo.core.models.compute import ComputeBackend, ComputeWorkload
 
+_MANAGED_IDENTITY_ID = (
+    "/subscriptions/00000000-0000-0000-0000-000000000000/"
+    "resourceGroups/rg-1/providers/Microsoft.ManagedIdentity/"
+    "userAssignedIdentities/aml-job"
+)
+
 
 def _env(**overrides):
     return patch.dict("os.environ", overrides, clear=True)
@@ -185,13 +191,11 @@ class TestGetAmlConfig(unittest.TestCase):
 
     def test_managed_identity_id_and_experiment_prefix(self):
         with _env(
-            AML_MANAGED_IDENTITY_ID="/subscriptions/x/.../identity",
+            AML_MANAGED_IDENTITY_ID=_MANAGED_IDENTITY_ID,
             AML_EXPERIMENT_PREFIX="myorg",
         ):
             config = Config.get_aml_config()
-        self.assertEqual(
-            config["managed_identity_id"], "/subscriptions/x/.../identity"
-        )
+        self.assertEqual(config["managed_identity_id"], _MANAGED_IDENTITY_ID)
         self.assertEqual(config["experiment_prefix"], "myorg")
 
     def test_submission_timeout_seconds_is_configurable_and_bounded(self):
@@ -213,6 +217,97 @@ class TestGetAmlConfig(unittest.TestCase):
         # — a Batch-only deployment must never fail here.
         with _env():
             Config.get_aml_config()  # must not raise
+
+
+class TestValidateAmlConfig(unittest.TestCase):
+    @staticmethod
+    def _config(**overrides: str) -> dict:
+        env = {
+            "AML_MODE": "Existing",
+            "AML_SUBSCRIPTION_ID": "sub-1",
+            "AML_RESOURCE_GROUP": "rg-1",
+            "AML_WORKSPACE_NAME": "ws-1",
+            "AML_DATASTORE_NAME": "ds-1",
+            "AML_IDENTITY_MODE": "managed",
+        }
+        env.update(overrides)
+        with _env(**env):
+            return Config.get_aml_config()
+
+    def test_managed_identity_accepts_unset_or_empty_id(self) -> None:
+        for mode in ("Existing", "Create"):
+            for identity_id in (None, ""):
+                with self.subTest(mode=mode, identity_id=identity_id):
+                    overrides = {"AML_MODE": mode}
+                    if identity_id is not None:
+                        overrides["AML_MANAGED_IDENTITY_ID"] = identity_id
+                    config = self._config(**overrides)
+
+                    Config.validate_aml_config(config)
+
+                    self.assertEqual(config["identity_mode"], "managed")
+                    self.assertEqual(
+                        config["managed_identity_id"], identity_id
+                    )
+                    self.assertEqual(config["mode"], mode)
+
+    def test_managed_identity_preserves_explicit_resource_id(self) -> None:
+        for identity_id in (
+            _MANAGED_IDENTITY_ID,
+            _MANAGED_IDENTITY_ID.upper(),
+        ):
+            with self.subTest(identity_id=identity_id):
+                config = self._config(AML_MANAGED_IDENTITY_ID=identity_id)
+
+                Config.validate_aml_config(config)
+
+                self.assertEqual(config["managed_identity_id"], identity_id)
+                self.assertEqual(config["identity_mode"], "managed")
+
+    def test_managed_identity_rejects_malformed_explicit_ids(self) -> None:
+        for identity_id in (
+            "not-a-resource-id",
+            "/subscriptions/x/.../identity",
+            _MANAGED_IDENTITY_ID + "/",
+            _MANAGED_IDENTITY_ID + "?query=value",
+            _MANAGED_IDENTITY_ID.replace(
+                "Microsoft.ManagedIdentity", "Microsoft.Compute"
+            ),
+            "   ",
+        ):
+            with self.subTest(identity_id=identity_id):
+                config = self._config(AML_MANAGED_IDENTITY_ID=identity_id)
+
+                with self.assertRaisesRegex(
+                    ValueError, "AML_MANAGED_IDENTITY_ID"
+                ):
+                    Config.validate_aml_config(config)
+
+    def test_user_identity_ignores_managed_identity_id(self) -> None:
+        for identity_id in (None, "", _MANAGED_IDENTITY_ID, "not-an-id"):
+            with self.subTest(identity_id=identity_id):
+                overrides = {"AML_IDENTITY_MODE": "user"}
+                if identity_id is not None:
+                    overrides["AML_MANAGED_IDENTITY_ID"] = identity_id
+                config = self._config(**overrides)
+
+                Config.validate_aml_config(config)
+
+                self.assertEqual(config["identity_mode"], "user")
+                self.assertEqual(config["managed_identity_id"], identity_id)
+
+    def test_disabled_config_stays_inert_until_aml_is_requested(self) -> None:
+        for identity_mode in ("user", "managed"):
+            with self.subTest(identity_mode=identity_mode):
+                with _env(
+                    AML_MODE="Disabled", AML_IDENTITY_MODE=identity_mode
+                ):
+                    config = Config.get_aml_config()
+
+                self.assertEqual(config["identity_mode"], identity_mode)
+                self.assertIsNone(config["managed_identity_id"])
+                with self.assertRaisesRegex(ValueError, "AML_MODE=Disabled"):
+                    Config.validate_aml_config(config)
 
 
 class TestAmlEnvironmentEnvVarNameForWorkload(unittest.TestCase):

@@ -1,5 +1,14 @@
 # Test Plan: Backend-neutral compute runner + Azure Machine Learning backend
 
+## Contents
+
+- [Test Strategy](#test-strategy)
+- [Test Scenarios](#test-scenarios)
+- [Test Data Requirements](#test-data-requirements)
+- [Coverage Matrix](#coverage-matrix)
+- [Environment Requirements](#environment-requirements)
+- [Sign-off Criteria](#sign-off-criteria)
+
 ## Test Strategy
 
 | Level | Scope | Tool/Framework | Coverage Target |
@@ -42,7 +51,8 @@
 | UT-014 | `core/runners/test_execution_service.py` | Two workers race to submit the same `executionId` | exactly one create succeeds; the other retrieves/validates the existing job | US-005 |
 | UT-015 | `core/runners/test_execution_service.py` | Config change mid-job | lifecycle calls use the persisted handle's backend, not the current default | US-004 |
 | UT-016 | `core/runners/test_azure_ml.py` | Command-job construction (inputs, outputs, environment, compute, timeout, priority, spot, tags, identity) | exact expected `MLClient` call arguments (mocked) | US-002 |
-| UT-016b | `core/runners/test_azure_ml.py` | Identity mapping: `AML_IDENTITY_MODE=user` (default) maps to `UserIdentityConfiguration` (the submitting/calling principal's own identity, no extra grant needed); `AML_IDENTITY_MODE=managed` maps to `ManagedIdentityConfiguration(resource_id=AML_MANAGED_IDENTITY_ID)`; `managed` without `AML_MANAGED_IDENTITY_ID` set | correct identity object per mode; `BackendConfigurationError` for `managed` with no ID configured, before any provider call | US-002, US-006, US-008 |
+| UT-016b | `core/runners/test_azure_ml.py` | Managed identity with empty/unset ID, explicit attached UAMI, and user identity (with/without an ignored ID) | exact SDK constructor arguments: `ManagedIdentityConfiguration()` without identifiers, `ManagedIdentityConfiguration(resource_id=...)`, or `UserIdentityConfiguration()` respectively; submission preserves identity mode and compute, with no resource lookup or mutation | US-002, US-006, US-008 |
+| UT-016c | `core/test_config.py`, `core/utils/test_compute_specs.py` | Managed default identity at config/API boundaries; malformed explicit IDs; Disabled mode; missing workspace/datastore/compute/environment settings | empty/unset identity ID accepted for `managed`; malformed explicit IDs rejected locally only in `managed`; required workload settings and Disabled rejection unchanged | US-002, US-003, US-006 |
 | UT-017 | `core/runners/test_azure_ml.py` | Status normalization from AML run states, including scaling-from-zero | mapped to correct `ComputeJobState`, `queued`/`preparing` not `failed` | US-002 |
 | UT-018 | `core/runners/test_azure_ml.py` | `cancel()`/`finalize()` idempotency, repeated calls | no error on repeat; AML run history not deleted | US-002 |
 | UT-019 | `core/runners/test_azure_ml.py` | Missing/invalid environment or ACR access | classified, sanitized `BackendConfigurationError`, no credential in message | US-002, US-008 |
@@ -98,6 +108,7 @@
 | INF-001 | `az bicep build` (local compilation) on all new `aml*.bicep` modules | compiles clean |
 | INF-002 | Local compilation/static template check with `amlMode=Disabled` | no AML resources are created; the Function App's `AML_*` settings (`AML_MODE`, `AML_IDENTITY_MODE`, etc.) are still emitted, with inert/empty values, not omitted |
 | INF-003 | Local compilation/static template check with `amlMode=Create` (template review only — not deployed this rollout) | workspace, compute, environment, datastore, and `amlRole.bicep`'s least-privilege RBAC (AzureML Data Scientist, scoped to the queue Function App identity) are correctly defined in the template |
+| INF-003b | Source-only identity-resolution checks in `build/test_release_workflows.py` for `Existing`, `Create`, `Disabled`, and user mode | `Existing` + `managed` preserves a blank ID; only `Create` + `managed` falls back to the environment UAMI; explicit IDs pass through when managed; Disabled/user retain empty resolved IDs without changing the caller's identity mode |
 | INF-004 | Local compilation/static template check with `amlMode=Existing` | only application settings referencing the operator-provided workspace/compute/environment/datastore are emitted; no AML resource or RBAC template block renders, confirming pure-reference behavior |
 | INF-005 | Re-run local compilation for any mode with unchanged parameters | template output is deterministic — no diff between compilations |
 

@@ -1,5 +1,13 @@
 # User Stories: Backend-neutral compute runner + Azure Machine Learning backend
 
+## Contents
+
+- [Personas](#personas)
+- [Stories](#stories)
+- [Agent Assignment Map](#agent-assignment-map)
+- [Story Map](#story-map)
+- [Out of Scope](#out-of-scope)
+
 ## Personas
 
 | Persona | Description | Key Goals |
@@ -151,6 +159,14 @@ Then subsequent status/cancel/finalize calls for that job still address
 ```
 
 ```gherkin
+Given an AML submission has been accepted or its outcome is indeterminate
+When new AML submissions are stopped through routing and caller controls
+Then AML_MODE remains Existing and an AML-capable worker keeps the resource
+  references and permissions needed to reconcile/poll/cancel/finalize that
+  submission until terminal, before AML is disabled or old code restored
+```
+
+```gherkin
 Given a legacy TrainingJob/InferenceJob/ImageryPreprocessJob/ZipJob record
   with only jobId and taskId and no computeJob handle
 When it is loaded
@@ -227,6 +243,16 @@ Then HASTE writes only the application settings needed to address those
   resources: it creates no AML resource and assigns no RBAC role. Granting
   the identity HASTE runs as sufficient access is the operator's
   responsibility, performed outside HASTE's IaC
+```
+
+```gherkin
+Given amlMode=Existing and amlIdentityMode=managed with a blank
+  amlManagedIdentityResourceId
+When HASTE application settings are resolved
+Then AML_MANAGED_IDENTITY_ID remains blank, selecting the compute's existing
+  system/default managed identity without changing compute or assigning RBAC
+And only Create mode retains the intentional blank-ID fallback to the
+  environment UAMI attached to its provisioned compute
 ```
 
 ```gherkin
@@ -316,6 +342,26 @@ When an AML job is submitted
 Then it runs as the submitting principal's own identity (the calling
   Function App's identity) rather than as a new standing identity, and no
   AML_MANAGED_IDENTITY_ID value is required
+And the Function App still requires AML workspace permissions as well as
+  the necessary job data-access grants; storage RBAC alone is insufficient
+```
+
+```gherkin
+Given AML_IDENTITY_MODE=managed
+When AML_MANAGED_IDENTITY_ID is empty or unset
+Then the adapter uses ManagedIdentityConfiguration() without any identity
+  identifiers, selecting the compute's existing system/default identity
+And the API still requires the workspace, datastore, compute, and environment
+  settings needed by the requested workload
+```
+
+```gherkin
+Given AML_IDENTITY_MODE=managed and a nonempty AML_MANAGED_IDENTITY_ID
+When an AML job is submitted
+Then the adapter uses ManagedIdentityConfiguration(resource_id=...) with
+  that exact attached UAMI resource ID, rejecting malformed explicit IDs
+  locally and never falling back to a different identity or changing compute
+And user mode continues to ignore AML_MANAGED_IDENTITY_ID
 ```
 
 **Notes:** Requires a live negative access test, not only static review.

@@ -433,7 +433,7 @@ class AzureMLRunner(ComputeRunner):
         prefix = self.aml_config["experiment_prefix"]
         return _bounded_aml_name(f"{prefix}-{workload.value}")
 
-    def _identity(self):
+    def _identity(self) -> object:
         identity_mode = self.aml_config["identity_mode"]
         (
             ManagedIdentityConfiguration,
@@ -444,9 +444,11 @@ class AzureMLRunner(ComputeRunner):
             "UserIdentityConfiguration",
         )
         if identity_mode == "managed":
-            return ManagedIdentityConfiguration(
-                resource_id=self.aml_config["managed_identity_id"]
-            )
+            resource_id = self.aml_config.get("managed_identity_id")
+            if resource_id:
+                return ManagedIdentityConfiguration(resource_id=resource_id)
+            # Let AML select the compute's existing system/default identity.
+            return ManagedIdentityConfiguration()
         if identity_mode == "user":
             return UserIdentityConfiguration()
         # ``_validate_config`` should have already rejected any other

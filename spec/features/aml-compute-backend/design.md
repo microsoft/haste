@@ -1,5 +1,19 @@
 # Design: Backend-neutral compute runner + Azure Machine Learning backend
 
+## Contents
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Backend-neutral contracts](#backend-neutral-contracts)
+- [Behavior & logic](#behavior--logic)
+- [Configuration](#configuration)
+- [Infrastructure](#infrastructure)
+- [Security](#security)
+- [Observability](#observability)
+- [Edge cases and failure behavior](#edge-cases-and-failure-behavior)
+- [Scaling and bottlenecks](#scaling-and-bottlenecks)
+- [Open Questions](#open-questions)
+
 ## Overview
 
 HASTE runs GPU/CPU workloads through `hastelib/src/hastegeo/core/runners/`.
@@ -284,8 +298,13 @@ The AML adapter (`azure_ml.py`):
    never by concatenating untrusted input into the command string;
 6. maps shared memory, instance count, timeout, priority, spot allowance,
    tags, and identity (`UserIdentityConfiguration` for `AML_IDENTITY_MODE=user`,
+   `ManagedIdentityConfiguration()` for `managed` with an empty/unset
+   `AML_MANAGED_IDENTITY_ID`, or
    `ManagedIdentityConfiguration(resource_id=AML_MANAGED_IDENTITY_ID)` for
-   `managed`) into an AML command job;
+   `managed` with an explicit attached user-assigned identity) into an AML
+   command job. The empty-ID case selects the compute's existing
+   system/default managed identity; HASTE never switches identity mode or
+   changes the compute's identities;
 7. submits with `ml_client.jobs.create_or_update` using a deterministic job
    name derived from `executionId`;
 8. reconciles retries with `ml_client.jobs.get` by that deterministic name;
@@ -358,13 +377,17 @@ settings table. Highlights:
 | `RUNNER_TYPE` | string | — | Function App settings | Deprecated alias for `COMPUTE_BACKEND_DEFAULT` during migration |
 | `AML_MODE` | `Disabled` \| `Create` \| `Existing` | `Disabled` | IaC parameter / Function App setting | Controls whether HASTE provisions or references AML resources. Stage 1 rollout uses `Existing` as a pure reference to an operator-provided workspace/compute/environment/datastore/identity (no HASTE-created resources, no RBAC assignment). `Create` mode compiles locally and is available in source for a separately approved future scenario, but is not applied this rollout. `Disabled` (default) means HASTE creates no AML resource — it does **not** mean the `AML_*` application settings are omitted; see [Infrastructure](#infrastructure) below. |
 | `AML_SUBSCRIPTION_ID`, `AML_RESOURCE_GROUP`, `AML_WORKSPACE_NAME`, `AML_DATASTORE_NAME`, `AML_COMPUTE_<WORKLOAD>`, `AML_ENVIRONMENT_<IMAGE>` | strings | unset | Function App settings | Required only when `AML_MODE != Disabled`; for `Existing` these identify the operator-provided resources to reference |
-| `AML_IDENTITY_MODE` | `user` \| `managed` | `user` | Function App setting | Identity AML jobs submit/authenticate as. `user` (default) maps to AML's `UserIdentityConfiguration` — the job runs as the *submitting principal's own identity* (the calling Function App's identity), which needs no additional AML-specific grant beyond whatever access that identity already holds. `managed` maps to `ManagedIdentityConfiguration`, using a specific user-assigned managed identity instead. |
-| `AML_MANAGED_IDENTITY_ID` | string | unset | Function App setting | User-assigned managed identity resource ID AML jobs submit as; required only when `AML_IDENTITY_MODE=managed`, ignored otherwise. |
+| `AML_IDENTITY_MODE` | `user` \| `managed` | `user` | Function App setting | Job data-access identity. `user` (default) maps to `UserIdentityConfiguration`, using the submitting principal (the calling Function App). `managed` uses the compute's existing system/default managed identity unless an explicit attached UAMI is selected. Submission always authenticates the Function App separately via `DefaultAzureCredential`; existing storage access alone does not grant AML workspace access. |
+| `AML_MANAGED_IDENTITY_ID` | string | unset | Function App setting | Optional attached user-assigned managed identity (UAMI) resource ID for `managed`. Empty/unset selects `ManagedIdentityConfiguration()` with no identity identifiers; nonempty selects that explicit UAMI. Ignored in `user` mode. |
 
 Validation is conditional: AML settings are required only when AML is enabled
 or explicitly selected for a job. A Batch-only deployment never imports
 `azure-ai-ml` and pays no AML startup cost (lazy adapter import via
 `RunnerRegistry`).
+
+Explicit managed identity IDs receive local resource-ID syntax validation
+only. Attachment to each selected compute target and the required permissions
+remain operator prerequisites, not new runtime resource lookups.
 
 ## Infrastructure
 
@@ -415,6 +438,12 @@ HASTE's IaC. `Create` mode (which would additionally deploy `amlRole.bicep`)
 compiles locally and is retained in source for a separately approved future
 scenario, but is not applied during this rollout.
 
+For `Existing` + `managed`, a blank `amlManagedIdentityResourceId` stays blank
+in the Function App settings; it must not silently select the environment
+UAMI. `Create` retains its intentional blank-ID fallback to the environment
+UAMI attached to the compute it provisions. Explicit UAMI values are passed
+through in either enabled mode.
+
 **`Disabled` (default) means HASTE creates no AML resource — it does not
 mean the `AML_*` application settings are absent.** The Function App
 settings module (`functions.bicep`) unconditionally emits every `AML_*`
@@ -435,17 +464,21 @@ template checks; this rollout performs no Azure deployment operation
 
 - Use `DefaultAzureCredential` for AML; never add AML keys, passwords, or
   other standing secrets.
-- The job-submission identity defaults to `AML_IDENTITY_MODE=user`: AML jobs
-  run as the *submitting principal's own identity* (the calling Function
-  App's identity), which needs no additional AML-specific grant beyond
-  whatever access it already holds. `AML_IDENTITY_MODE=managed` submits as a
-  specific user-assigned managed identity (`AML_MANAGED_IDENTITY_ID`)
-  instead. In `Existing` mode, granting either identity access on the
-  operator-provided AML platform (workspace RBAC, datastore/storage access,
-  ACR pull) is that platform's responsibility — HASTE's IaC only emits the
-  identity-mode setting, it grants no AML permission. In `Create` mode (not
-  applied this rollout), the equivalent HASTE-managed grant is
-  `amlRole.bicep` (queue Function App identity only).
+- The submitting Function App needs AML workspace permissions for
+  submit/read/cancel in both identity modes; storage RBAC does not imply
+  those permissions. `AML_IDENTITY_MODE=user` selects that submitting
+  principal for job data access, which also requires appropriate
+  datastore/storage grants.
+- `AML_IDENTITY_MODE=managed` selects the compute's existing system/default
+  managed identity when `AML_MANAGED_IDENTITY_ID` is empty/unset, or the
+  explicitly named, already-attached UAMI otherwise. The selected compute
+  identity needs the required datastore/storage permissions; image-pull
+  permissions must also be in place for the platform's pull identity.
+  Naming an identity grants nothing and does not attach it to compute.
+- In `Existing` mode, these grants are operator/platform prerequisites
+  outside HASTE's IaC. In `Create` mode (not applied this rollout),
+  `amlRole.bicep` grants AML workspace access to the queue Function App
+  identity; it does not replace job data-access or image-pull permissions.
 - Shared AML compute must not gain standing access to storage outside its own
   deployment — preserve the `batch-compute-expansion` credential-boundary
   isolation principle; add cross-deployment negative tests if multiple HASTE

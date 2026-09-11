@@ -328,8 +328,8 @@ a live Azure Machine Learning workspace as part of this rollout.
 | `HASTE_EXISTING_AML_DATASTORE_NAME` | — | Name of the operator-provided AML datastore (`Existing`). |
 | `HASTE_EXISTING_AML_TRAINING_ENVIRONMENT_REFERENCE` | — | Fully-qualified `azureml:<name>:<version>` reference to the operator-registered immutable environment version for the training image (`Existing`). |
 | `HASTE_EXISTING_AML_IMAGERYPREP_ENVIRONMENT_REFERENCE` | — | Same, for the imagery-prep image. |
-| `HASTE_AML_IDENTITY_MODE` | `user` | `user` (submit as the calling `queues` app identity) \| `managed` (submit as a specific user-assigned managed identity). In `Existing` mode, granting either identity access on the operator's AML platform is that platform's responsibility. |
-| `HASTE_AML_MANAGED_IDENTITY_RESOURCE_ID` | — | User-assigned managed identity resource id, only consulted when `HASTE_AML_IDENTITY_MODE=managed`. |
+| `HASTE_AML_IDENTITY_MODE` | `user` | Job data-access identity: `user` uses the submitting Function App principal; `managed` uses the compute's existing system/default managed identity or an explicit attached UAMI. The Function App needs AML workspace permissions in either mode. |
+| `HASTE_AML_MANAGED_IDENTITY_RESOURCE_ID` | — | Optional attached UAMI resource ID, only consulted in `managed` mode. Blank stays blank in `Existing`, selecting the compute's existing system/default identity. Only `Create` defaults a blank value to the environment UAMI attached to its provisioned compute. |
 
 `Create`-mode-only provisioning knobs (ignored unless `HASTE_AML_MODE=Create`;
 compiles locally, not applied by this rollout):
@@ -353,6 +353,30 @@ to set. Two further advanced settings have no IaC-side variable at all
 (set them directly as Function App settings if you need to override the
 built-in default): `AML_EXPERIMENT_PREFIX` (default `haste`) and
 `AML_SUBMISSION_TIMEOUT_SECONDS` (default `120`, bounded `1`–`3600`).
+
+For `AML_IDENTITY_MODE=managed`, an empty/unset `AML_MANAGED_IDENTITY_ID`
+selects SDK `ManagedIdentityConfiguration()` without identity identifiers.
+A nonempty value selects `ManagedIdentityConfiguration(resource_id=...)`
+with that exact attached UAMI ID; malformed explicit resource-ID shapes are
+rejected locally. `user` mode ignores this setting and continues to select
+`UserIdentityConfiguration()`; HASTE never switches the caller's identity
+mode or changes compute identities.
+
+The submitting Function App authenticates through `DefaultAzureCredential`
+and needs AML workspace submit/read/cancel permissions in both modes.
+Existing HASTE storage RBAC alone does **not** grant workspace access, even
+in `user` mode. The selected job data-access identity and platform image-pull
+identity also need their respective datastore/storage and registry grants.
+In `Existing` mode, these are operator prerequisites outside HASTE's IaC;
+identity selection does not attach an identity or grant it access.
+
+To stop new AML submissions, change routing and pause explicit AML launch
+sources, including inherited follow-ons. Keep `AML_MODE=Existing`, resource
+references/permissions, and AML-capable workers until accepted or
+indeterminate jobs have been reconciled, reached terminal state, and
+completed polling/cancellation/finalization. Only then disable AML or
+restore a release without AML support; see the
+[rollback plan](../spec/features/aml-compute-backend/rollout.md#rollback-plan).
 
 AML support depends on the optional `azure-ml` extra
 (`azure-ai-ml==1.34.1`, approved and pinned), which is imported lazily only

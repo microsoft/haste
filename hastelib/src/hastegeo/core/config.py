@@ -145,10 +145,10 @@ AML_MODES = ("Disabled", "Create", "Existing")
 #: Valid ``AML_IDENTITY_MODE`` values, aligned with the AML IaC/security
 #: model: ``user`` (default) maps to AML's ``UserIdentityConfiguration``
 #: (the identity of the submitting principal); ``managed`` maps to
-#: ``ManagedIdentityConfiguration(resource_id=AML_MANAGED_IDENTITY_ID)``
-#: (the user-assigned managed identity attached to the AML compute/
-#: workspace by IaC). See ``hastegeo.core.runners.azure_ml`` for the
-#: mapping.
+#: ``ManagedIdentityConfiguration()`` for the compute's existing
+#: system/default identity, or supplies ``resource_id=AML_MANAGED_IDENTITY_ID``
+#: for an explicitly selected, already-attached UAMI. See
+#: ``hastegeo.core.runners.azure_ml`` for the mapping.
 AML_IDENTITY_MODES = ("user", "managed")
 
 
@@ -1134,6 +1134,9 @@ class Config:
         complete target and environment before queueing. The adapter omits
         it for its base validation, then applies target overrides and
         explicit ``container.environmentReference`` values from the spec.
+        Managed identity IDs are optional: empty/unset selects the compute's
+        existing system/default identity. Explicit IDs are checked for
+        syntax only, without looking up or changing compute identities.
         """
         mode = aml_config["mode"]
         if mode not in AML_MODES:
@@ -1159,10 +1162,22 @@ class Config:
                 f"AML_IDENTITY_MODE={identity_mode!r} must be one of "
                 f"{AML_IDENTITY_MODES}"
             )
-        if identity_mode == "managed" and not aml_config.get(
-            "managed_identity_id"
+        managed_identity_id = aml_config.get("managed_identity_id")
+        if (
+            identity_mode == "managed"
+            and managed_identity_id
+            and not re.fullmatch(
+                r"/subscriptions/[^/\s?#]+/resourceGroups/[^/\s?#]+"
+                r"/providers/Microsoft\.ManagedIdentity"
+                r"/userAssignedIdentities/[^/\s?#]+",
+                managed_identity_id,
+                flags=re.IGNORECASE,
+            )
         ):
-            missing.append("AML_MANAGED_IDENTITY_ID")
+            raise ValueError(
+                "AML_MANAGED_IDENTITY_ID must be a full user-assigned "
+                "managed identity resource ID when set"
+            )
 
         experiment_prefix = (aml_config.get("experiment_prefix") or "").strip()
         if not experiment_prefix or not re.fullmatch(
