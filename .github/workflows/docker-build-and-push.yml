@@ -2,8 +2,6 @@ name: Build and Push Docker Images
 
 on:
   pull_request:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       image_dir:

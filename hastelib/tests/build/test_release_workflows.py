@@ -9,6 +9,45 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class ReleaseWorkflowPolicyTests(unittest.TestCase):
+    def test_secret_scan_diagnostics_keep_full_redaction(self):
+        text = (REPO_ROOT / ".github/workflows/secret-scan.yml").read_text(
+            encoding="utf-8"
+        )
+        commands = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip().startswith(("git --", "detect --"))
+        ]
+        self.assertEqual(len(commands), 3)
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertIn("--verbose", command)
+                self.assertIn("--redact=100", command)
+                self.assertIn("--exit-code 1", command)
+
+    def test_validation_runs_for_pull_requests_against_stack_branches(self):
+        for name in (
+            "hastegeo-build.yml",
+            "docker-build-and-push.yml",
+            "config-drift.yml",
+            "dependency-validation.yml",
+            "secret-scan.yml",
+            "codeql.yml",
+        ):
+            with self.subTest(workflow=name):
+                text = (REPO_ROOT / ".github" / "workflows" / name).read_text(
+                    encoding="utf-8"
+                )
+                match = re.search(
+                    r"^  pull_request:(.*?)(?=^  (?:push|schedule|workflow_dispatch):"
+                    r"|^jobs:|^permissions:)",
+                    text,
+                    re.MULTILINE | re.DOTALL,
+                )
+                self.assertIsNotNone(match)
+                self.assertNotIn("branches:", match.group(1))
+                self.assertNotIn("branches-ignore:", match.group(1))
+
     def test_external_actions_are_pinned_to_full_sha(self):
         workflows = [
             ".github/workflows/hastegeo-build.yml",
