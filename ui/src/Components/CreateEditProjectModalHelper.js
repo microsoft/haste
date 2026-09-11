@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 import { apiGet } from "../util/api";
 import staticSettings from "../assets/json/settings.json";
+import { validateEventTypes, validatePrimaryClasses } from "../util/validation";
 
 /* AFFECTED COUNTRY FUNCTIONS */
 export function addAffectedCountry(setComponentState, componentState, selectedCountry) {
@@ -13,6 +14,7 @@ export function addAffectedCountry(setComponentState, componentState, selectedCo
           ...componentState.affectedCountries,
           selectedCountry.key,
         ],
+        affectedCountriesError: "",
       });
     }
   }
@@ -59,6 +61,7 @@ export function addEventType(setComponentState, componentState, selectedEventTyp
       setComponentState({
         ...componentState,
         eventTypes: [selectedEventType.key, ...componentState.eventTypes],
+        eventTypesError: "",
         primaryClasses: [
           ...componentState.primaryClasses,
           ...selectedEventTypePrimaryClasses,
@@ -117,6 +120,9 @@ export function removeEventType(eventType, setComponentState, componentState, se
   setComponentState({
     ...componentState,
     eventTypes: updatedEventTypes,
+    eventTypesError: componentState.eventTypesError
+      ? validateEventTypes(updatedEventTypes) || ""
+      : "",
     primaryClasses: updatedPrimaryClasses,
   });
 
@@ -125,11 +131,15 @@ export function removeEventType(eventType, setComponentState, componentState, se
 
 export function removePrimaryClass(index, setComponentState, componentState, setDialog) {
   if (componentState.primaryClasses.length > 1) {
+    const primaryClasses = componentState.primaryClasses.filter(
+      (c, i) => i !== index
+    );
     setComponentState({
       ...componentState,
-      primaryClasses: componentState.primaryClasses.filter(
-        (c, i) => i !== index
-      ),
+      primaryClasses,
+      primaryClassesError: componentState.primaryClassesError
+        ? validatePrimaryClasses(primaryClasses) || ""
+        : "",
     });
   } else {
     setDialog("Error", "At least one primary class is required", []);
@@ -144,12 +154,22 @@ export function addPrimaryClass(setComponentState, componentState) {
   });
 }
 
-export function onChangePrimaryClass(index, key, value, setComponentState, componentState) {
-  const tempPrimaryClasses = componentState.primaryClasses;
-  tempPrimaryClasses[index][key] = value;
-  setComponentState({
-    ...componentState,
-    primaryClasses: tempPrimaryClasses,
+export function onChangePrimaryClass(index, key, value, setComponentState) {
+  setComponentState((currentState) => {
+    const primaryClasses = currentState.primaryClasses.map(
+      (primaryClass, primaryClassIndex) =>
+        primaryClassIndex === index
+          ? { ...primaryClass, [key]: value }
+          : primaryClass
+    );
+
+    return {
+      ...currentState,
+      primaryClasses,
+      primaryClassesError: currentState.primaryClassesError
+        ? validatePrimaryClasses(primaryClasses) || ""
+        : "",
+    };
   });
 }
 

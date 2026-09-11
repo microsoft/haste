@@ -34,7 +34,6 @@ import {
 
 import PrimaryClassCreator from "./PrimaryClassCreator";
 import { apiPut } from "../util/api";
-import ErrorMessage from "./OtherComponents/ErrorMessage";
 import proptypes from "prop-types";
 import {
   validateEmptyOrInvalid,
@@ -45,6 +44,22 @@ import {
 } from "../util/validation";
 import { AppContext } from "../AppContext";
 import { useNavigate } from "react-router-dom";
+
+function getInvalidPrimaryClassIndexes(primaryClasses) {
+  const nameCounts = primaryClasses.reduce((counts, primaryClass) => {
+    const name = primaryClass.name.trim().toLowerCase();
+    if (name) counts.set(name, (counts.get(name) || 0) + 1);
+    return counts;
+  }, new Map());
+
+  return primaryClasses.reduce((indexes, primaryClass, index) => {
+    const name = primaryClass.name.trim().toLowerCase();
+    if (!name || !primaryClass.color || nameCounts.get(name) > 1) {
+      indexes.add(index);
+    }
+    return indexes;
+  }, new Set());
+}
 
 const CreateEditProjectModal = ({ onClose, projectId }) => {
   CreateEditProjectModal.propTypes = {
@@ -58,6 +73,8 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
   const [selectedCountry, setSelectedCountry] = useState(null);
   const [countryQuery, setCountryQuery] = useState("");
   const [selectedEventType, setSelectedEventType] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [validationFocusRequest, setValidationFocusRequest] = useState(null);
   const { setDialog, appParams, setIsLoading } = useContext(AppContext);
   const navigate = useNavigate();
 
@@ -71,6 +88,14 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
     initComponent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!validationFocusRequest) return;
+
+    const control = document.getElementById(validationFocusRequest.id);
+    control?.focus({ preventScroll: true });
+    control?.scrollIntoView({ behavior: "auto", block: "center" });
+  }, [validationFocusRequest]);
 
   async function validateBeforeSubmit() {
     const { name, eventTypes, eventDate, affectedCountries, primaryClasses } = componentState;
@@ -90,19 +115,55 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
       ? validateEventTypes(eventTypes)
       : "";
 
-    if (nameError || eventTypesError || eventDateError || affectedCountriesError || primaryClassesError) {
-      setComponentState({
-        ...componentState,
-        nameError: nameError,
-        eventTypesError: eventTypesError,
-        eventDateError: eventDateError,
-        affectedCountriesError: affectedCountriesError,
-        primaryClassesError: primaryClassesError,
+    const errors = {
+      nameError,
+      eventTypesError,
+      eventDateError,
+      affectedCountriesError,
+      primaryClassesError,
+    };
+
+    if (Object.values(errors).some(Boolean)) {
+      setComponentState((currentState) => ({
+        ...currentState,
+        ...errors,
+      }));
+
+      const firstInvalidPrimaryClass = getInvalidPrimaryClassIndexes(
+        primaryClasses
+      ).values().next().value;
+      const firstInvalidControlId =
+        (nameError && "createEditProjectName") ||
+        (eventDateError && "createEditProjectEventDate") ||
+        (affectedCountriesError && "createEditProjectAffectedCountries") ||
+        (eventTypesError && "createEditProjectEventTypes") ||
+        (primaryClasses.length === 0 && "createEditProjectAddPrimaryClass") ||
+        (primaryClassesError &&
+          `createEditProjectPrimaryClassName-${firstInvalidPrimaryClass}`);
+
+      setValidationFocusRequest({
+        id: firstInvalidControlId,
+        attempt: Date.now(),
       });
       return;
     }
 
-    await save();
+    setIsSubmitting(true);
+    try {
+      await save();
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function handleNameChange(value) {
+    setComponentState((currentState) => ({
+      ...currentState,
+      name: value,
+      nameError: currentState.nameError
+        ? validateEmptyOrInvalid(true, "Name", value)
+        : "",
+    }));
   }
 
   function handleCountryAddition() {
@@ -207,6 +268,10 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
     return null;
   }
 
+  const invalidPrimaryClassIndexes = componentState.primaryClassesError
+    ? getInvalidPrimaryClassIndexes(componentState.primaryClasses)
+    : new Set();
+
   return (
     <OverlayDrawer
       open={open}
@@ -241,18 +306,16 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
         <div className="p-3" style={{ width: "100%" }}>
           <div className="row mb-2">
             <div className="col-12 p-0">
-              <Field label="Name" required validationMessage={componentState.nameError}>
+              <Field
+                label="Name"
+                required
+                validationState={componentState.nameError ? "error" : "none"}
+                validationMessage={componentState.nameError}
+              >
                 <Input
                   id="createEditProjectName"
                   value={componentState.name}
-                  onChange={(e, data) =>
-                    onFormChange(
-                      "name",
-                      data.value,
-                      setComponentState,
-                      componentState
-                    )
-                  }
+                  onChange={(e, data) => handleNameChange(data.value)}
                   maxLength={250}
                 />
               </Field>
@@ -289,6 +352,7 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
               <Field
                 label="Event Date"
                 required
+                validationState={componentState.eventDateError ? "error" : "none"}
                 validationMessage={componentState.eventDateError}
                 className="mb-3"
               >
@@ -327,6 +391,7 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
               <div className="col-12 d-flex">
                 <Field
                   className="flex-grow-1"
+                  validationState={componentState.affectedCountriesError ? "error" : "none"}
                   validationMessage={componentState.affectedCountriesError}
                 >
                   <Combobox
@@ -403,6 +468,7 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
               <div className="col-12 d-flex">
                 <Field
                   className="flex-grow-1"
+                  validationState={componentState.eventTypesError ? "error" : "none"}
                   validationMessage={componentState.eventTypesError}
                 >
                   <Combobox
@@ -476,7 +542,15 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
                   <span className="required-form-element"> *</span>
                 </h6>
 
-                <ErrorMessage errorMessage={componentState.primaryClassesError} />
+                {!!componentState.primaryClassesError && (
+                  <div
+                    id="createEditProjectPrimaryClassesError"
+                    className="error-message"
+                    role="alert"
+                  >
+                    {componentState.primaryClassesError}
+                  </div>
+                )}
 
                 <Text id="createEditProjectPrimaryClasses">
                   These categories will be used to train the damage assessment model. Use the defaults here or edit them to define your own.
@@ -491,6 +565,8 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
                   componentState={componentState}
                   projectId={projectId}
                   setDialog={setDialog}
+                  invalid={invalidPrimaryClassIndexes.has(index)}
+                  errorMessageId="createEditProjectPrimaryClassesError"
                 />
               ))}
 
@@ -510,8 +586,15 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
 
           <div className="row">
             <div className="col-12 d-flex justify-content-end">
-              <Button appearance="primary" className="me-2" onClick={validateBeforeSubmit} id="createEditProjectSubmit">
-                Submit
+              <Button
+                appearance="primary"
+                className="me-2"
+                onClick={validateBeforeSubmit}
+                id="createEditProjectSubmit"
+                disabled={isSubmitting}
+                aria-busy={isSubmitting}
+              >
+                {isSubmitting ? "Saving..." : "Submit"}
               </Button>
               <Button onClick={requestClose}>Cancel</Button>
             </div>
