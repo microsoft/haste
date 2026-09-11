@@ -42,17 +42,33 @@ The editing PR diff contains only this stage above the common-results base.
 
 ## Observed Evidence
 
-The combined backend/native regression gate passed 322 cases. Independent
-review also exercised concurrent/idempotent saves, lost responses, source
-changes, protected version selection, and 324 categorical report combinations.
-Legacy raw report compatibility and model-list source/URL consistency have
-native regression coverage.
+The simplified stack's combined backend/native regression gate passed 248
+cases. Model-only edit tests cover concurrent/idempotent saves, partial uploads,
+source changes, historical versions, protected downloads and reports. Tests for
+the removed shadow authority, reservation counters and receipt ledger are gone.
 
-The editor's Node suite passed 198 cases before incorporating the parent's
+The deployed save-failure investigation compared wheel `1.0.44rc11` with
+`9ded358`: all 104 non-version Python modules match. Both reported response
+bodies identify the Python generic-error paths, not an absent APIM operation.
+This establishes code parity and transport location, not the remote exception.
+
+Additional regressions exercise Azure SDK policy-list handling, unchanged-policy
+no-op behavior, preservation of unrelated policies, lease renewal/release error
+classification, and credential-free error diagnostics on both save routes.
+These use deterministic SDK mocks; no remote account access, prediction
+submission, deployment, or existing project-data mutation is implied.
+The combined policy/lease/storage/processor/API gate passed 95 cases. A separate
+offline run in the API image passed 31 policy/lease/diagnostic cases using the
+deployment's Azure Blob SDK 12.30.0, rather than only the host's SDK version.
+
+The final merged editor's Node suite passed 206 cases, including the parent's
 additional raw-download tests. Real Chrome/Azure Maps SDK/WebGL fixtures covered
 gestures, complete pins, version selection, report/download choices, navigation
 guards, and failure recovery. After 39 passing cases in the last broad pass,
 six targeted notice cases closed its remaining failures, retaining the 650 ms
 delayed-error reproduction and ordinary pointer hit-testing at 1440px and 390px.
+Six direct real-browser smoke checks also passed against the simplified public
+serializers: editing controls, save/version adoption, saved pins, lost-response
+retry, historical results after clear, and reports. The UI bundle is unchanged.
 All reported browser findings are closed. Fixture authentication and service
 responses are not a claim of live Azure authentication or basemap validation.
