@@ -1,9 +1,12 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import json
+from copy import deepcopy
+from typing import Callable
 
 from hastegeo.core.config import Config
 
+from ..data_layer.conditional import JsonDocument, RevisionConflictError
 from ..data_layer.unified import UnifiedDataLayer
 
 
@@ -69,6 +72,16 @@ class MetadataProcessor:
         Example:
             >>> processor.save('project_1', {'name': 'My Project', 'status': 'active'})
         """
+        if data_format == "json" and isinstance(metadata, (dict, list)):
+            self.mutate(
+                key,
+                lambda current: (
+                    self._combine_metadata(current, metadata)
+                    if current is not None
+                    else metadata
+                ),
+            )
+            return
         try:
             existing_metadata = self.load(key, data_format=data_format)
         except FileNotFoundError:
@@ -91,6 +104,33 @@ class MetadataProcessor:
                 data_type=self.data_type,
                 data_format=data_format,
             )
+
+    def mutate(
+        self,
+        key: str,
+        mutation: Callable[[JsonDocument | None], JsonDocument | None],
+    ) -> JsonDocument | None:
+        """Apply a pure JSON mutation using the store's native revision fence."""
+        for _ in range(8):
+            try:
+                current, version = self.storage.load_json_versioned(
+                    key, self.data_type
+                )
+            except FileNotFoundError:
+                current, version = None, None
+            updated = mutation(deepcopy(current))
+            if updated is None:
+                return current
+            try:
+                self.storage.save_json_if_version(
+                    key, self.data_type, updated, version
+                )
+                return updated
+            except RevisionConflictError:
+                continue
+        raise RevisionConflictError(
+            "Metadata update exceeded its conflict budget"
+        )
 
     def load(self, key, data_format="json"):
         """
