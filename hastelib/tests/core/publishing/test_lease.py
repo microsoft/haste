@@ -1,12 +1,13 @@
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from azure.core.exceptions import HttpResponseError
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from hastegeo.core.publishing.lease import (
     BlobLeaseCoordinator,
     LeaseRenewalError,
     LeaseUnavailableError,
+    renew_lease,
 )
 
 
@@ -91,6 +92,48 @@ def build_coordinator(blob_client: FakeBlobClient) -> BlobLeaseCoordinator:
 
 
 class TestBlobLeaseCoordinator(unittest.TestCase):
+    def test_explicit_renewal_reports_genuine_lease_loss_as_conflict(
+        self,
+    ) -> None:
+        for code in (
+            "LeaseIdMismatchWithLeaseOperation",
+            "LeaseNotPresentWithLeaseOperation",
+            "LeaseIsBrokenAndCannotBeRenewed",
+            "LeaseLost",
+        ):
+            with self.subTest(code=code):
+                error = HttpResponseError("private service details")
+                error.status_code = 409
+                error.error_code = code
+                lease = Mock()
+                lease.renew.side_effect = error
+                with self.assertRaises(LeaseUnavailableError) as raised:
+                    renew_lease(lease)
+                self.assertIs(raised.exception.__cause__, error)
+
+    def test_explicit_renewal_keeps_auth_transport_and_unrelated_conflicts(
+        self,
+    ) -> None:
+        for status, code in (
+            (403, "AuthorizationPermissionMismatch"),
+            (500, "InternalError"),
+            (409, "ContainerBeingDeleted"),
+            (409, None),
+        ):
+            with self.subTest(status=status, code=code):
+                error = HttpResponseError("private service details")
+                error.status_code = status
+                error.error_code = code
+                lease = Mock()
+                lease.renew.side_effect = error
+                with self.assertRaises(HttpResponseError) as raised:
+                    renew_lease(lease)
+                self.assertIs(raised.exception, error)
+        lease = Mock()
+        lease.renew.side_effect = TimeoutError("offline")
+        with self.assertRaises(TimeoutError):
+            renew_lease(lease)
+
     def test_constructor_rejects_invalid_configuration(self) -> None:
         with self.assertRaisesRegex(ValueError, "positive"):
             BlobLeaseCoordinator(None, None, renewal_interval_seconds=0)
@@ -176,6 +219,48 @@ class TestBlobLeaseCoordinator(unittest.TestCase):
 
         self.assertEqual(blob_client.attempts, 2)
         self.assertTrue(lease.released)
+
+    def test_release_failure_preserves_the_operation_exception(self) -> None:
+        lease = FakeLease()
+        coordinator = build_coordinator(FakeBlobClient(lease=lease))
+        original = ValueError("operation failed")
+        with patch.object(
+            lease, "release", side_effect=ResourceNotFoundError("lease gone")
+        ), patch("hastegeo.core.publishing.lease.Logger.get_logger") as logger:
+            with self.assertRaises(ValueError) as raised:
+                with coordinator.acquire("project", "dataset"):
+                    raise original
+        self.assertIs(raised.exception, original)
+        logger.return_value.warning.assert_called_once()
+
+    def test_release_failure_without_operation_error_is_not_silently_ignored(
+        self,
+    ) -> None:
+        lease = FakeLease()
+        coordinator = build_coordinator(FakeBlobClient(lease=lease))
+        error = HttpResponseError("credential-bearing release error")
+        error.status_code = 403
+        with patch.object(lease, "release", side_effect=error), patch(
+            "hastegeo.core.publishing.lease.Logger.get_logger"
+        ) as logger:
+            with self.assertRaises(HttpResponseError) as raised:
+                with coordinator.acquire("project", "dataset"):
+                    pass
+        self.assertIs(raised.exception, error)
+        self.assertNotIn("credential-bearing", str(logger.mock_calls))
+
+    def test_release_failure_does_not_replace_prior_renewal_failure(
+        self,
+    ) -> None:
+        lease = FakeLease(fail_renewal=True)
+        coordinator = build_coordinator(FakeBlobClient(lease=lease))
+        with patch.object(
+            lease, "release", side_effect=ResourceNotFoundError("lease gone")
+        ):
+            with self.assertRaises(LeaseRenewalError) as raised:
+                with coordinator.acquire("project", "dataset"):
+                    self.assertTrue(lease.renewed.wait(timeout=1))
+        self.assertIsInstance(raised.exception.__cause__, RuntimeError)
 
 
 if __name__ == "__main__":
