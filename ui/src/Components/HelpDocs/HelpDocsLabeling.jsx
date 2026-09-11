@@ -18,11 +18,6 @@ import { useEffect } from 'react';
 
 
 const HelpDocsLabeling = ({ anchor }) => {
-  // PropTypes for the component
-  HelpDocsLabeling.propTypes = {
-    anchor: PropTypes.string,
-  };
-
   useEffect(() => {
     if (anchor) {
       const element = document.getElementsByName(anchor)[0];
@@ -33,8 +28,6 @@ const HelpDocsLabeling = ({ anchor }) => {
       window.scrollTo(0, 0);
     }
   }, [anchor]);
-
-  const bubbleStyle = { minHeight: 100, display: 'flex', flexDirection: 'column' };
 
   return (
     <>
@@ -58,7 +51,7 @@ const HelpDocsLabeling = ({ anchor }) => {
 
       <div className='row col-12 pt-4 pb-4'>
         <div className="col-12 d-flex flex-column flex-lg-row align-items-start justify-content-start mb-3 mb-lg-0">
-          <img src={labelingImageryProperties} alt="Labeling Imagery Properties" className="img-fluid pe-lg-5" />
+          <img src={labelingImageryProperties} alt="Labeling Imagery Properties" loading="lazy" decoding="async" className="img-fluid pe-lg-5" />
           <div>
             <p className='mt-4 mt-lg-0'>
               This panel allows you to adjust the visual properties of the pre and post imagery to improve clarity or highlight specific features. The available controls are:
@@ -81,7 +74,7 @@ const HelpDocsLabeling = ({ anchor }) => {
 
       <h3 className='pt-4'>Drawing Tools</h3>
 
-      <img src={labelingDrawingTools} alt="Labeling Drawing Tools" className="img-fluid pe-5 pt-4 pb-4" />
+      <img src={labelingDrawingTools} alt="Labeling Drawing Tools" loading="lazy" decoding="async" className="img-fluid pe-5 pt-4 pb-4" />
 
       <p>
         Use these tools to create and manage geometric annotations on the map. Each button allows you to switch between interaction modes:
@@ -100,7 +93,7 @@ const HelpDocsLabeling = ({ anchor }) => {
 
       <div className='row col-12 pt-4'>
         <div className="col-12 d-flex flex-column flex-lg-row align-items-start justify-content-start mb-3 mb-lg-0">
-          <img src={labelingPrimaryClasses} alt="Labeling Primary Classes" className="img-fluid pe-sm-5" />
+          <img src={labelingPrimaryClasses} alt="Labeling Primary Classes" loading="lazy" decoding="async" className="img-fluid pe-sm-5" />
           <p className='pt-3 pt-lg-0'>
             Switch between label classes here. You must select a tool as well as a class to draw a label.
           </p>
@@ -108,7 +101,7 @@ const HelpDocsLabeling = ({ anchor }) => {
       </div>
 
       <h3 className='pt-4'>Saving Labels</h3>
-      <p>Click on "Save" to save all labels drawn so far. Alternatively, click on the down arrow next to "Save" to save labels and initiate model training in one click.</p>
+      <p>Click on &quot;Save&quot; to save all labels drawn so far. Alternatively, click on the down arrow next to &quot;Save&quot; to save labels and initiate model training in one click.</p>
 
       <hr className="mt-5 pb-4" />
 
@@ -123,22 +116,22 @@ const HelpDocsLabeling = ({ anchor }) => {
 
       <div className="row">
         <div className="col-12 col-xl-6">
-          <img src={labelingDenseClusteredLabelingCorrect} alt="Dense Clustered labeling correct" className="w-100 pt-4 pb-4" />
+          <img src={labelingDenseClusteredLabelingCorrect} alt="Dense Clustered labeling correct" loading="lazy" decoding="async" className="w-100 pt-4 pb-4" />
         </div>
         <div className="col-12 col-xl-6">
-          <img src={labelingDenseClusteredLabelingWrong} alt="Dense Clustered labeling wrong" className="w-100 pt-4 pb-4" />
+          <img src={labelingDenseClusteredLabelingWrong} alt="Dense Clustered labeling wrong" loading="lazy" decoding="async" className="w-100 pt-4 pb-4" />
         </div>
       </div>
 
       <h3 className='pt-4'>Draw labels precisely</h3>
 
-      <p>Labeling features with high precision is more important than rapidly labeling large areas with low precision​. Following images illustrate a good and bad example of high precision labeling:</p>
+      <p>Labeling features with high precision is more important than rapidly labeling large areas with low precision. Following images illustrate a good and bad example of high precision labeling:</p>
       <div className="row">
         <div className="col-12 col-xl-6">
-          <img src={labelingHighPrecisionLabelingCorrect} alt="High Precision Labeling correct" className="w-100 pt-4 pb-4" />
+          <img src={labelingHighPrecisionLabelingCorrect} alt="High Precision Labeling correct" loading="lazy" decoding="async" className="w-100 pt-4 pb-4" />
         </div>
         <div className="col-12 col-xl-6">
-          <img src={labelingHighPrecisionLabelingWrong} alt="High Precision Labeling wrong" className="w-100 pt-4 pb-4" />
+          <img src={labelingHighPrecisionLabelingWrong} alt="High Precision Labeling wrong" loading="lazy" decoding="async" className="w-100 pt-4 pb-4" />
         </div>
       </div>
 
@@ -147,10 +140,10 @@ const HelpDocsLabeling = ({ anchor }) => {
       <p>Label diverse features. For example, labeling 20 identical looking buildings is less useful to the model training as opposed labelling 20 buildings with varying roof colors, sizes and textures. Following images illustrate a example high and low diversity of labels:</p>
       <div className="row">
         <div className="col-12 col-xl-6">
-          <img src={labelingMaximizeDiversityOfLabelsHigh} alt="Maximize Diversity of Labels high" className="w-100 pt-4 pb-4" />
+          <img src={labelingMaximizeDiversityOfLabelsHigh} alt="Maximize Diversity of Labels high" loading="lazy" decoding="async" className="w-100 pt-4 pb-4" />
         </div>
         <div className="col-12 col-xl-6">
-          <img src={labelingMaximizeDiversityOfLabelsLow} alt="Maximize Diversity of Labels low" className="w-100 pt-4 pb-4" />
+          <img src={labelingMaximizeDiversityOfLabelsLow} alt="Maximize Diversity of Labels low" loading="lazy" decoding="async" className="w-100 pt-4 pb-4" />
         </div>
       </div>
 
@@ -159,14 +152,18 @@ const HelpDocsLabeling = ({ anchor }) => {
       <p>Buildings can have mixed labels e.g. a partially damaged building will have some pixels represented the damaged class while other pixels will not. When labelling, only assign the damaged pixels to the damaged class as opposed to the whole building. Next images ilustrate a good and bad example of labeling relevant portions:</p>
       <div className="row">
         <div className="col-12 col-xl-6">
-          <img src={labelingLabelRelevantPortionsOnlyCorrect} alt="Label Relevant Portions Only correct" className="w-100 pt-4 pb-4" />
+          <img src={labelingLabelRelevantPortionsOnlyCorrect} alt="Label Relevant Portions Only correct" loading="lazy" decoding="async" className="w-100 pt-4 pb-4" />
         </div>
         <div className="col-12 col-xl-6">
-          <img src={labelingLabelRelevantPortionsOnlyWrong} alt="Label Relevant Portions Only wrong" className="w-100 pt-4 pb-4" />
+          <img src={labelingLabelRelevantPortionsOnlyWrong} alt="Label Relevant Portions Only wrong" loading="lazy" decoding="async" className="w-100 pt-4 pb-4" />
         </div>
       </div>
     </>
   );
+};
+
+HelpDocsLabeling.propTypes = {
+  anchor: PropTypes.string,
 };
 
 

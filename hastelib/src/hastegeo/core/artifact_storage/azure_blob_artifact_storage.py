@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 import json
 import os
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -12,17 +13,20 @@ from urllib.parse import unquote, urlparse
 import yaml
 from azure.core import MatchConditions
 from azure.core.exceptions import ResourceExistsError
-from azure.identity import DefaultAzureCredential  # type: ignore
 from azure.storage.blob import BlobClient  # type: ignore
 from azure.storage.blob import (
     AccessPolicy,
     BlobSasPermissions,
-    BlobServiceClient,
     ContainerSasPermissions,
     generate_blob_sas,
     generate_container_sas,
 )
+from hastegeo.core.utils.blob import (
+    get_blob_service_client,
+    get_cached_user_delegation_key,
+)
 from hastegeo.core.utils.logs import Logger
+from hastegeo.core.utils.parallel import configured_worker_count, parallel_map
 
 from .abstract_artifact_storage import AbstractArtifactStorage
 
@@ -48,34 +52,22 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
         # which need Storage Blob Delegator / Owner. Write access alone suffices.
         self.serves_read_sas = serves_read_sas
         if connection_string:
-            credential = connection_string
-            self.blob_service_client = (
-                BlobServiceClient.from_connection_string(connection_string)
+            self.blob_service_client = get_blob_service_client(
+                connection_string=connection_string
             )
             self.user_delegation_key = None
             self.account_key = self.blob_service_client.credential.account_key
             self.identity_blob_service_client = (
-                BlobServiceClient(
-                    account_url=account_url,
-                    credential=DefaultAzureCredential(),
-                )
+                get_blob_service_client(account_url=account_url)
                 if account_url and urlparse(account_url).scheme == "https"
                 else None
             )
         else:
-            credential = DefaultAzureCredential()
-            self.blob_service_client = BlobServiceClient(
-                account_url=account_url, credential=credential
+            self.blob_service_client = get_blob_service_client(
+                account_url=account_url
             )
             self.identity_blob_service_client = self.blob_service_client
-            self.user_delegation_key = (
-                self.blob_service_client.get_user_delegation_key(
-                    datetime.now(timezone.utc),
-                    datetime.now(timezone.utc) + timedelta(hours=1),
-                )
-                if serves_read_sas
-                else None
-            )
+            self.user_delegation_key = None
             self.account_key = None
 
         self.container_read_policy = container_read_policy_name
@@ -97,7 +89,9 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
                         f"Container '{container}' created successfully."
                     )
                 except ResourceExistsError:
-                    self.logger.info(f"Container '{container}' already exists.")
+                    self.logger.info(
+                        f"Container '{container}' already exists."
+                    )
                 if self.serves_read_sas:
                     self._create_or_update_managed_access_policy()
                 _INITIALIZED_CONTAINERS.add(cache_key)
@@ -184,12 +178,18 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
 
         # Otherwise generate SAS token
 
+        user_delegation_key = self.user_delegation_key
+        if self.account_key is None:
+            user_delegation_key = get_cached_user_delegation_key(
+                self.blob_service_client
+            )
+
         sas_token = generate_container_sas(
             account_name=self.container_client.account_name,
             container_name=self.container_client.container_name,
             policy_id=self.container_read_policy,
             account_key=self.account_key,
-            user_delegation_key=self.user_delegation_key,
+            user_delegation_key=user_delegation_key,
         )
         return str(f"{blob_client.url}?{sas_token}")
 
@@ -210,15 +210,45 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
             src_path = self.get_file_path(
                 identifier, extra_partition_keys=extra_partition_keys
             )
-        blobs = self.container_client.list_blobs(name_starts_with=src_path)
-        for blob in blobs:
-            file_path = os.path.join(dst_path, blob.name)
+        if not src_path:
+            raise ValueError("A source artifact path is required")
+        if not dst_path:
+            raise ValueError("A destination path is required")
+        src_path = self.resolve_artifact_path(src_path)
+        blob_names = [
+            blob.name
+            for blob in self.container_client.list_blobs(
+                name_starts_with=src_path
+            )
+        ]
+
+        def _download_one(blob_name):
+            relative_path = self.resolve_artifact_path(blob_name)
+            file_path = os.path.join(
+                os.path.abspath(dst_path), *PurePosixPath(relative_path).parts
+            )
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            blob_client = self.container_client.get_blob_client(blob.name)
+            blob_client = self.container_client.get_blob_client(blob_name)
             stream = blob_client.download_blob()
-            with open(file_path, "wb") as f:
-                for chunk in stream.chunks():
-                    f.write(chunk)
+            temp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    dir=os.path.dirname(file_path), delete=False
+                ) as temp_file:
+                    temp_path = temp_file.name
+                    for chunk in stream.chunks():
+                        temp_file.write(chunk)
+                os.replace(temp_path, file_path)
+            except Exception:
+                if temp_path and os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                raise
+
+        if blob_names:
+            workers = configured_worker_count(
+                "HASTE_ARTIFACT_DOWNLOAD_WORKERS", 8
+            )
+            parallel_map(_download_one, blob_names, max_workers=workers)
 
         self.logger.info(f"Downloaded {src_path} to {dst_path}")
         return dst_path
@@ -302,14 +332,22 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
         if parsed.scheme:
             container_url = urlparse(self.container_client.url)
             if parsed.netloc.lower() != container_url.netloc.lower():
-                raise ValueError("Artifact URL does not belong to configured storage")
+                raise ValueError(
+                    "Artifact URL does not belong to configured storage"
+                )
             container_path = container_url.path.rstrip("/") + "/"
             if not parsed.path.startswith(container_path):
-                raise ValueError("Artifact URL does not belong to configured container")
+                raise ValueError(
+                    "Artifact URL does not belong to configured container"
+                )
             location = unquote(parsed.path[len(container_path) :])
 
         normalized = str(PurePosixPath(location.lstrip("/")))
-        if not normalized or normalized == "." or ".." in PurePosixPath(normalized).parts:
+        if (
+            not normalized
+            or normalized == "."
+            or ".." in PurePosixPath(normalized).parts
+        ):
             raise ValueError("Invalid artifact path")
         return normalized
 
@@ -440,11 +478,8 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
                 )
             account_key = None
         if account_key is None:
-            user_delegation_key = (
-                delegation_client.get_user_delegation_key(
-                    now - timedelta(minutes=5),
-                    expiry + timedelta(minutes=5),
-                )
+            user_delegation_key = get_cached_user_delegation_key(
+                delegation_client, now=now
             )
 
         sas_token = generate_blob_sas(

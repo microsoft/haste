@@ -5,6 +5,15 @@ poison-queue handler) for managing disaster assessment projects, processing sate
 imagery, and running AI models for damage assessment. A separate TiTiler-based tile server
 handles geospatial imagery visualization.
 
+## Contents
+
+- [Architecture](#architecture)
+- [Authentication](#authentication)
+- [Base URLs](#base-urls)
+- [Response Formats](#response-formats)
+- [Rate Limits](#rate-limits)
+- [HTTP Status Codes](#http-status-codes)
+
 ## Architecture
 
 The API layer consists of three Azure Functions apps:
@@ -60,6 +69,17 @@ Some write endpoints (e.g. the Model Catalog) return a small status wrapper:
 ```json
 { "success": true, "message": "…", "catalogModel": {} }
 ```
+
+### Conditional Project Details
+
+`GetProjectDetails` returns a bounded process-local cached representation with `ETag`,
+`Cache-Control`, and `X-Haste-Cache` headers. Clients send `If-None-Match` for normal
+polls; a matching fresh representation returns `304` without storage work or a body.
+Clients send `Cache-Control: no-cache` after mutations to force storage refresh.
+
+The cache is per Functions worker and is not a distributed consistency mechanism. The
+`X-Haste-Data-Layer-Calls` and `X-Haste-Data-Layer-Ms` headers describe logical library
+operations; Azure Storage metrics remain the source for REST transaction counts.
 
 ## Rate Limits
 

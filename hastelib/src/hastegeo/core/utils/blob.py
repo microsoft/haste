@@ -20,11 +20,76 @@ dev (and on the Azure backbone in prod).
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import re
 import tempfile
+import threading
+from collections import OrderedDict
+from datetime import datetime, timedelta, timezone
 from typing import NamedTuple, Optional, Tuple
 from urllib.parse import urlparse
+
+_USER_DELEGATION_KEYS = OrderedDict()
+_USER_DELEGATION_KEY_CACHE_SIZE = 8
+_USER_DELEGATION_KEYS_LOCK = threading.Lock()
+
+
+@functools.lru_cache(maxsize=8)
+def get_blob_service_client(
+    connection_string: str | None = None,
+    account_url: str | None = None,
+):
+    """Return a process-wide ``BlobServiceClient`` for one storage account.
+
+    Azure SDK clients are thread-safe and designed for reuse; creating one per
+    call re-parses credentials and re-establishes the connection pool. Caching
+    by credential target keeps that setup cost one-time per process.
+    """
+    from azure.storage.blob import BlobServiceClient
+
+    if connection_string:
+        return BlobServiceClient.from_connection_string(connection_string)
+    if account_url:
+        from azure.identity import DefaultAzureCredential
+
+        return BlobServiceClient(
+            account_url=account_url, credential=DefaultAzureCredential()
+        )
+    raise ValueError("A connection string or account URL is required")
+
+
+def get_cached_user_delegation_key(
+    blob_service_client,
+    now: datetime | None = None,
+):
+    """Return a reusable user-delegation key with a safe refresh margin."""
+    current_time = now or datetime.now(timezone.utc)
+    cache_key = blob_service_client
+    with _USER_DELEGATION_KEYS_LOCK:
+        cached = _USER_DELEGATION_KEYS.get(cache_key)
+        if cached is not None:
+            delegation_key, expires_at = cached
+            if expires_at > current_time + timedelta(minutes=15):
+                _USER_DELEGATION_KEYS.move_to_end(cache_key)
+                return delegation_key
+
+        expires_at = current_time + timedelta(hours=2)
+        delegation_key = blob_service_client.get_user_delegation_key(
+            current_time - timedelta(minutes=5), expires_at
+        )
+        _USER_DELEGATION_KEYS[cache_key] = (delegation_key, expires_at)
+        _USER_DELEGATION_KEYS.move_to_end(cache_key)
+        while len(_USER_DELEGATION_KEYS) > _USER_DELEGATION_KEY_CACHE_SIZE:
+            _USER_DELEGATION_KEYS.popitem(last=False)
+        return delegation_key
+
+
+def clear_blob_client_caches() -> None:
+    """Clear cached Blob clients and delegation keys for isolated tests."""
+    get_blob_service_client.cache_clear()
+    with _USER_DELEGATION_KEYS_LOCK:
+        _USER_DELEGATION_KEYS.clear()
 
 
 def split_blob_url(url: str) -> Tuple[str, str]:
@@ -99,14 +164,9 @@ async def download_blob_to_tempfile(
     caller is responsible for unlinking the returned path when done — use
     ``try/finally``.
     """
-    # Imported here so this module stays cheap to import for callers that
-    # only need split_blob_url(): azure-storage-blob brings in tens of
-    # transitive imports.
-    from azure.storage.blob import BlobServiceClient
-
     conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
     container_name, blob_name = split_blob_url(url)
-    bsc = BlobServiceClient.from_connection_string(conn_str)
+    bsc = get_blob_service_client(connection_string=conn_str)
     if max_bytes is not None and max_bytes < 1:
         raise ValueError("max_bytes must be positive")
 
@@ -128,10 +188,7 @@ async def download_blob_to_tempfile(
                 downloaded_bytes = 0
                 for chunk in blob_client.download_blob().chunks():
                     downloaded_bytes += len(chunk)
-                    if (
-                        max_bytes is not None
-                        and downloaded_bytes > max_bytes
-                    ):
+                    if max_bytes is not None and downloaded_bytes > max_bytes:
                         raise ValueError(
                             "Blob exceeds the allowed download size"
                         )
@@ -201,13 +258,11 @@ async def read_blob_range(
     reads to EOF. ``data`` is clamped to the blob size; an ``offset`` at
     or past EOF yields empty ``data`` (callers should answer ``416``).
     """
-    from azure.storage.blob import BlobServiceClient
-
     conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
     container_name, blob_name = split_blob_url(url)
 
     def _read() -> BlobRange:
-        bsc = BlobServiceClient.from_connection_string(conn_str)
+        bsc = get_blob_service_client(connection_string=conn_str)
         blob_client = bsc.get_container_client(container_name).get_blob_client(
             blob_name
         )

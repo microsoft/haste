@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import json
@@ -8,6 +9,7 @@ from contextlib import redirect_stderr
 from unittest.mock import AsyncMock, Mock, patch
 
 import azure.functions as func
+from hastegeo.core.utils.async_cache import AsyncTTLCache
 
 os.environ.setdefault("DEVELOPMENT_MODE", "true")
 os.environ.setdefault("PUBLISHING_ENABLED", "true")
@@ -79,6 +81,19 @@ def make_dataset(status: str = "PENDING") -> PublishedDataset:
 
 
 class TestPublishingRoutes(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.catalog_cache = AsyncTTLCache(ttl_seconds=5, max_entries=16)
+        self.cache_patcher = patch.object(
+            function_app,
+            "_published_datasets_cache",
+            self.catalog_cache,
+        )
+        self.cache_patcher.start()
+
+    async def asyncTearDown(self) -> None:
+        await self.catalog_cache.clear()
+        self.cache_patcher.stop()
+
     async def test_inference_launch_rejects_client_runtime_state(self) -> None:
         response = await function_app.PutRunInferenceQueueMessage(
             make_request(
@@ -129,6 +144,7 @@ class TestPublishingRoutes(unittest.IsolatedAsyncioTestCase):
             {
                 "userId": "publisher@example.com",
                 "objectId": "OBJECT-ID",
+                "userRoles": ["contributors"],
                 "status": function_app.config.get_user_statuses().ACTIVE.value,
                 "deleted": False,
             }
@@ -144,7 +160,41 @@ class TestPublishingRoutes(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(error)
         self.assertEqual(caller["id"], "object-id")
-        self.assertEqual(caller["roles"], {"authenticated", "contributors"})
+        self.assertEqual(caller["roles"], {"contributors"})
+
+    async def test_publishing_roles_use_principal_acl_intersection(
+        self,
+    ) -> None:
+        principal = {
+            "userId": "OBJECT-ID",
+            "userDetails": "publisher@example.com",
+            "userRoles": ["authenticated", "administrators"],
+        }
+        encoded = base64.b64encode(
+            json.dumps(principal).encode("utf-8")
+        ).decode("ascii")
+        metadata = Mock()
+        metadata.load.return_value = [
+            {
+                "userId": "publisher@example.com",
+                "objectId": "OBJECT-ID",
+                "userRoles": ["contributors"],
+                "status": function_app.config.get_user_statuses().ACTIVE.value,
+                "deleted": False,
+            }
+        ]
+        with patch.object(
+            function_app, "DEVELOPMENT_MODE", False
+        ), patch.object(
+            function_app, "MetadataProcessor", return_value=metadata
+        ):
+            caller, error = await function_app._get_active_publishing_caller(
+                make_request(headers={"x-ms-client-principal": encoded})
+            )
+
+        self.assertIsNone(caller)
+        self.assertEqual(error.status_code, 403)
+        self.assertEqual(response_json(error)["error"]["code"], "FORBIDDEN")
 
     async def test_invalid_principal_header_is_unauthenticated(self) -> None:
         with patch.object(function_app, "DEVELOPMENT_MODE", False):
@@ -281,6 +331,177 @@ class TestPublishingRoutes(unittest.IsolatedAsyncioTestCase):
             sort_key="name",
             sort_direction="asc",
         )
+
+    async def test_catalog_reuses_same_query_after_authorization(self) -> None:
+        caller = {"id": "viewer", "roles": {"authenticated"}}
+        authorize = AsyncMock(return_value=(caller, None))
+        repository = Mock()
+        repository.list_page.return_value = ([make_dataset("PUBLISHED")], 1)
+        with patch.object(
+            function_app,
+            "_get_active_publishing_caller",
+            new=authorize,
+        ), patch.object(
+            function_app, "PublishingRepository", return_value=repository
+        ):
+            first = await function_app.GetPublishedDatasets(make_request())
+            second = await function_app.GetPublishedDatasets(make_request())
+
+        self.assertEqual(first.headers["X-Haste-Cache"], "MISS")
+        self.assertEqual(second.headers["X-Haste-Cache"], "HIT")
+        self.assertEqual(authorize.await_count, 2)
+        repository.list_page.assert_called_once()
+
+    async def test_catalog_concurrent_requests_share_one_read(self) -> None:
+        caller = {"id": "viewer", "roles": {"authenticated"}}
+        repository = Mock()
+        repository.list_page.return_value = ([make_dataset("PUBLISHED")], 1)
+        started = asyncio.Event()
+        release = asyncio.Event()
+        thread_calls = 0
+
+        async def fake_to_thread(function, *args, **kwargs):
+            nonlocal thread_calls
+            thread_calls += 1
+            started.set()
+            await release.wait()
+            return function(*args, **kwargs)
+
+        with patch.object(
+            function_app,
+            "_get_active_publishing_caller",
+            new=AsyncMock(return_value=(caller, None)),
+        ), patch.object(
+            function_app, "PublishingRepository", return_value=repository
+        ), patch.object(
+            function_app.asyncio,
+            "to_thread",
+            new=fake_to_thread,
+        ):
+            first = asyncio.create_task(
+                function_app.GetPublishedDatasets(make_request())
+            )
+            await started.wait()
+            second = asyncio.create_task(
+                function_app.GetPublishedDatasets(make_request())
+            )
+            await asyncio.sleep(0)
+            release.set()
+            responses = await asyncio.gather(first, second)
+
+        self.assertEqual(thread_calls, 1)
+        repository.list_page.assert_called_once()
+        self.assertEqual(
+            {response.headers["X-Haste-Cache"] for response in responses},
+            {"MISS", "HIT"},
+        )
+
+    async def test_catalog_matching_etag_returns_empty_304(self) -> None:
+        caller = {"id": "viewer", "roles": {"authenticated"}}
+        repository = Mock()
+        repository.list_page.return_value = ([make_dataset("PUBLISHED")], 1)
+        with patch.object(
+            function_app,
+            "_get_active_publishing_caller",
+            new=AsyncMock(return_value=(caller, None)),
+        ), patch.object(
+            function_app, "PublishingRepository", return_value=repository
+        ):
+            first = await function_app.GetPublishedDatasets(make_request())
+            response = await function_app.GetPublishedDatasets(
+                make_request(headers={"If-None-Match": first.headers["ETag"]})
+            )
+
+        self.assertEqual(response.status_code, 304)
+        self.assertEqual(response.get_body(), b"")
+        self.assertEqual(response.headers["X-Haste-Cache"], "HIT")
+        repository.list_page.assert_called_once()
+
+    async def test_catalog_query_fields_use_separate_cache_entries(
+        self,
+    ) -> None:
+        caller = {"id": "viewer", "roles": {"authenticated"}}
+        repository = Mock()
+        repository.list_page.return_value = ([], 0)
+        with patch.object(
+            function_app,
+            "_get_active_publishing_caller",
+            new=AsyncMock(return_value=(caller, None)),
+        ), patch.object(
+            function_app, "PublishingRepository", return_value=repository
+        ):
+            await function_app.GetPublishedDatasets(make_request())
+            await function_app.GetPublishedDatasets(
+                make_request(params={"status": "PUBLISHED"})
+            )
+
+        self.assertEqual(repository.list_page.call_count, 2)
+
+    async def test_catalog_no_cache_refreshes_response(self) -> None:
+        caller = {"id": "viewer", "roles": {"authenticated"}}
+        repository = Mock()
+        repository.list_page.side_effect = [
+            ([make_dataset("PENDING")], 1),
+            ([make_dataset("PUBLISHED")], 1),
+        ]
+        with patch.object(
+            function_app,
+            "_get_active_publishing_caller",
+            new=AsyncMock(return_value=(caller, None)),
+        ), patch.object(
+            function_app, "PublishingRepository", return_value=repository
+        ):
+            await function_app.GetPublishedDatasets(make_request())
+            response = await function_app.GetPublishedDatasets(
+                make_request(headers={"Cache-Control": "no-cache"})
+            )
+
+        self.assertEqual(response.headers["X-Haste-Cache"], "MISS")
+        self.assertEqual(
+            response_json(response)["publishedDatasets"][0]["status"],
+            "PUBLISHED",
+        )
+        self.assertEqual(repository.list_page.call_count, 2)
+
+    async def test_successful_mutation_invalidates_catalog_cache(self) -> None:
+        caller = {"id": "publisher-object-id", "roles": {"contributors"}}
+        repository = Mock()
+        repository.list_page.side_effect = [
+            ([make_dataset("PENDING")], 1),
+            ([make_dataset("PUBLISHED")], 1),
+        ]
+        processor = Mock()
+        processor.update_metadata.return_value = make_dataset("PUBLISHED")
+        with patch.object(
+            function_app,
+            "_get_active_publishing_caller",
+            new=AsyncMock(return_value=(caller, None)),
+        ), patch.object(
+            function_app, "PublishingRepository", return_value=repository
+        ), patch.object(
+            function_app, "_publishing_processor", return_value=processor
+        ):
+            first = await function_app.GetPublishedDatasets(make_request())
+            mutation = await function_app.PutUpdatePublishedDataset(
+                make_request(
+                    method="PUT",
+                    body={
+                        "projectId": PROJECT_ID,
+                        "datasetId": DATASET_ID,
+                        "name": "Updated dataset",
+                    },
+                )
+            )
+            second = await function_app.GetPublishedDatasets(make_request())
+
+        self.assertEqual(first.headers["X-Haste-Cache"], "MISS")
+        self.assertEqual(mutation.status_code, 200)
+        self.assertEqual(second.headers["X-Haste-Cache"], "MISS")
+        self.assertEqual(
+            response_json(second)["publishedDatasets"][0]["status"],
+            "PUBLISHED",
+        )
+        self.assertEqual(repository.list_page.call_count, 2)
 
     async def test_catalog_rejects_unbounded_page_size(self) -> None:
         caller = {"id": "viewer", "roles": {"authenticated"}}

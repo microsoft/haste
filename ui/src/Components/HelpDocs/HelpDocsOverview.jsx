@@ -7,14 +7,6 @@ import endToEndExampleVideo from '../../assets/helpDocs/overview/overview-end-to
 
 
 const HelpDocsOverview = ({ anchor, setCurrentHelpDocSection }) => {
-  // PropTypes for the component
-  HelpDocsOverview.propTypes = {
-    anchor: PropTypes.string,
-    setCurrentHelpDocSection: PropTypes.func
-  };
-
-
-
   useEffect(() => {
     if (anchor) {
       const element = document.getElementsByName(anchor)[0];
@@ -35,11 +27,11 @@ const HelpDocsOverview = ({ anchor, setCurrentHelpDocSection }) => {
       <a name="introduction"></a>
       <h2 className='pt-4'></h2>
 
-      <p><strong>HASTE</strong>, or High-speed Assessment and Satellite Tracking for Emergencies, is an AI-powered tool designed by the <strong>Microsoft AI for Good Lab</strong> to quickly identify and evaluate structural damage to buildings after a catastrophe.</p>
+      <p><strong>HASTE</strong>, or High-speed Assessment and Satellite Tracking for Emergencies, is an AI-powered tool designed by the <strong>Microsoft AI for Good Lab</strong> to quickly identify and evaluate structural damage to buildings after a catastrophe.</p>
       <p>Leveraging advanced image analysis and machine learning, it empowers emergency responders and authorities to prioritize critical areas, accelerate recovery efforts, and enhance safety assessments.</p>
       <p>The basic workflow is to add imagery to a project, label a small area of the imagery with some classification labels and use this to train the model. The model will apply these learnings to generate damage predictions across the entire imagery. </p>
 
-      <video src={endToEndExampleVideo} controls className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
+      <video src={endToEndExampleVideo} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
         Your browser does not support the video tag.
       </video>
 
@@ -91,5 +83,10 @@ const HelpDocsOverview = ({ anchor, setCurrentHelpDocSection }) => {
   );
 };
 
+
+HelpDocsOverview.propTypes = {
+  anchor: PropTypes.string,
+  setCurrentHelpDocSection: PropTypes.func,
+};
 
 export default HelpDocsOverview;

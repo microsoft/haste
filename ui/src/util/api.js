@@ -1,15 +1,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-const APIUrl = import.meta.env.VITE_API_URL;
-const APIMSubscriptionKey = import.meta.env.VITE_APIM_SUBSCRIPTION_KEY;
-import { upsertUser } from "../AppHelper.js";
+const APIUrl = import.meta.env?.VITE_API_URL || "";
+const APIMSubscriptionKey = import.meta.env?.VITE_APIM_SUBSCRIPTION_KEY;
 import { sanitizeRedirectPath } from "./validation.js";
-
-function resolveVarConcatChar(text) {
-  if (text === "") return "";
-  return text.includes("?") ? "&" : "?";
-}
+import { fetchJsonResponse } from "./http.js";
 
 export function buildUrl(endpoint) {
   const base = APIUrl + endpoint;
@@ -20,40 +15,25 @@ export function buildUrl(endpoint) {
   return base;
 }
 
-export async function apiValidateUser(setAppParams) {
-  try {
-    const staticAppStatus = await fetch("/.auth/me");
-    const staticAppUserStatus = await staticAppStatus.json();
-    if (staticAppUserStatus.clientPrincipal) {
-      var response = await apiGet("GetUserById?userId=" + staticAppUserStatus.clientPrincipal.userDetails);
-      if (response && response.status === "Active" || response && response.status === "Inactive") {
-        const upsertUserObject = await upsertUser(response);
-        if (upsertUserObject) {
-          setAppParams((prevParams) => ({
-            ...prevParams,
-            userId: upsertUserObject.userId,
-            // SWA principal object id — matches PublishedDataset.publishedByUser
-            // so non-admin publishers are recognized as owners.
-            identityId: staticAppUserStatus.clientPrincipal.userId,
-            userRoles: upsertUserObject.userRoles,
-            userSettings: upsertUserObject.settings,
-            userStatus: upsertUserObject.status
-          }));
-        }
-      } else if (response && response.status === "PendingAcceptance") {
-        setAppParams((prevParams) => ({
-          ...prevParams,
-          userId: response.userId,
-          identityId: staticAppUserStatus.clientPrincipal.userId,
-          userRoles: response.userRoles,
-          userSettings: response.settings,
-          userStatus: response.status
-        }));
-      }
-    }
-  } catch (error) {
-    console.error("Error validating user:", error);
+export async function apiValidateUser(setAppParams, get = apiGet) {
+  const response = await get("GetSessionBootstrap");
+  const user = response?.user;
+  const publishing = response?.publishing;
+  if (!user || !publishing) {
+    throw new Error("Invalid session bootstrap response.");
   }
+
+  setAppParams((previous) => ({
+    ...previous,
+    userId: user.userId,
+    identityId: user.identityId,
+    userRoles: user.userRoles,
+    userSettings: user.settings,
+    userStatus: user.status,
+    publishingEnabled: !!publishing.publishingEnabled,
+    publishingProviders: publishing.providers || [],
+  }));
+  return response;
 }
 
 export async function apiLogout(redirectPath = "/") {
@@ -67,15 +47,16 @@ export async function apiLogout(redirectPath = "/") {
   }
 }
 
-export async function apiGet(endpoint) {
-  try {
-    const response = await fetch(buildUrl(endpoint));
+export async function apiGet(endpoint, options = {}) {
+  const response = await apiGetResponse(endpoint, options);
+  return response.data;
+}
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    return await response.json();
+export async function apiGetResponse(endpoint, options = {}) {
+  try {
+    return await fetchJsonResponse(buildUrl(endpoint), options);
   } catch (error) {
+    if (error.name === "AbortError") throw error;
     console.error("Error fetching.:", error);
     throw new Error("Error fetching.");
   }
@@ -137,7 +118,7 @@ export async function apiPost(endpoint, data, isFormData = false) {
       throw new Error(message.error || `HTTP error! status: ${response.status}`);
     }
     return await response.json();
-  } catch (error) {
+  } catch {
     throw new Error("Error uploading chunk.");
   }
 }
@@ -151,7 +132,7 @@ export async function apiDelete(endpoint) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     return response;
-  } catch (error) {
+  } catch {
     throw new Error("Error deleting element.");
   }
 }

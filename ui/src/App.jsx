@@ -14,7 +14,8 @@ import {
   Toaster,
 } from "@fluentui/react-components";
 import { AppContext } from "./AppContext";
-import { apiValidateUser, apiGet } from "./util/api";
+import { apiValidateUser } from "./util/api";
+import { loadSession } from "./util/sessionStartup";
 import { useTheme } from "./util/ThemeContext";
 import { getPalette } from "./util/theme";
 
@@ -27,22 +28,29 @@ import AppBody from "./Components/AppBody";
 import AppHeader from "./Components/AppHeader";
 import AppSidebar from "./Components/AppSidebar";
 import AppFooter from "./Components/AppFooter";
-import Loading from "./Components/OtherComponents/Loading";
+import {
+  RouteLoading,
+} from "./Components/MapRoute";
+import { getRouteLoadingLabel } from "./Components/routeLoading";
+import WorkspaceLoader from "./Components/WorkspaceLoader";
+import { LABELING_WORKSPACE_STEPS } from "./Components/LabelingTool/labelingToolLoading";
 
 function App() {
-  const { appParams, setDialog, setIsLoading, setAppParams } =
+  const { appParams, setDialog, setAppParams } =
     useContext(AppContext);
   const { palette, setPalette, mode, setTheme } = useTheme();
   const location = useLocation();
   const isHome = location.pathname === '/' || location.pathname === '/home';
 
   const [modalComponent, setModalComponent] = useState(null);
+  const [sessionError, setSessionError] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(() => {
     const stored = localStorage.getItem("haste-nav-collapsed");
     return stored === null ? true : stored === "true";
   });
 
   const isMobileNav = Number(appParams.bootstrapBreakpoint) <= 2;
+  const isStandardLabeling = location.pathname.startsWith("/labeling-tool/");
 
   const toggleNav = () => {
     setNavCollapsed((prev) => {
@@ -52,28 +60,14 @@ function App() {
     });
   };
 
-  useEffect(() => {
-    const validateUser = async () => {
-      setIsLoading(true);
-      await apiValidateUser(setAppParams);
-      try {
-        const publishing = await apiGet("GetPublishingProviders");
-        setAppParams((previous) => ({
-          ...previous,
-          publishingEnabled: !!publishing.publishingEnabled,
-          publishingProviders: publishing.providers || [],
-        }));
-      } catch (error) {
-        console.error("Error loading publishing capabilities:", error);
-        setAppParams((previous) => ({
-          ...previous,
-          publishingEnabled: false,
-          publishingProviders: [],
-        }));
-      }
-      setIsLoading(false);
-    };
+  const validateUser = () =>
+    loadSession({
+      validateUser: apiValidateUser,
+      setAppParams,
+      setSessionError,
+    });
 
+  useEffect(() => {
     validateUser();
 
     //eslint-disable-next-line react-hooks/exhaustive-deps
@@ -152,9 +146,20 @@ function App() {
   return (
     <>
       <div className={`app-container ${isHome ? 'background-color-home' : 'background-color-app'}`}>
-        {appParams.userStatus === "Inactive" || appParams.userStatus === "PendingAcceptance" ? (
+        {sessionError ? (
+          <div
+            className="d-flex flex-column justify-content-center align-items-center vh-100 gap-3"
+            role="alert"
+          >
+            <h2>Session unavailable</h2>
+            <p>HASTE could not load your session. Try again.</p>
+            <Button appearance="primary" onClick={validateUser}>
+              Retry
+            </Button>
+          </div>
+        ) : ["Inactive", "PendingAcceptance", "Deleted"].includes(appParams.userStatus) ? (
           <div className="d-flex flex-column justify-content-center align-items-center vh-100">
-            <h5>{appParams.userId} {appParams.userStatus === "PendingAcceptance" ? "account is pending acceptance" : "account is inactive"}</h5>
+            <h5>{appParams.userId} {appParams.userStatus === "PendingAcceptance" ? "account is pending acceptance" : appParams.userStatus === "Deleted" ? "account has been deleted" : "account is inactive"}</h5>
             <p>{appParams.userStatus === "PendingAcceptance" ? "Please accept the invitation, if it has expired please contact the app administrator." : "Please contact the app administrator."}</p>
           </div>
         ) : (
@@ -184,7 +189,22 @@ function App() {
               </div>
             </>
           ) : (
-            <Loading />
+            <div className="app-startup-loading">
+              {isStandardLabeling ? (
+                <WorkspaceLoader
+                  eyebrow="Standard labeling tool"
+                  title="Preparing your workspace"
+                  steps={LABELING_WORKSPACE_STEPS}
+                  loadState={{ step: 0, loaded: null, total: null }}
+                  error=""
+                  errorTitle="Could not load the labeling workspace"
+                />
+              ) : (
+                <RouteLoading
+                  label={getRouteLoadingLabel(location.pathname)}
+                />
+              )}
+            </div>
           )
         )}
 
