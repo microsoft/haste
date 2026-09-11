@@ -33,7 +33,7 @@ constant-time regardless of project size.
 
 - [ ] `GET GetProjectDetails?includeModels=True` for a 50-layer / ~5-models-per-layer
       project returns in **< 1.5s p95** (from a current baseline measured in Phase 0).
-- [ ] Backend storage round-trips for that request drop from **O(layers × models)**
+- [ ] Backend logical metadata operations for that request drop from **O(layers × models)**
       (~600 for the 50×5 case) to **O(1) small constant** (≤ ~6 partition reads).
 - [ ] UI time-to-interactive for the project page is **< 2s p95** on the same project
       and no longer scales linearly with layer count.
@@ -61,6 +61,7 @@ constant-time regardless of project size.
 
 | Document | Purpose | Status |
 |---|---|---|
+| [user-stories.md](user-stories.md) | Acceptance criteria and agent assignments | draft |
 | [findings.md](findings.md) | Verified bottleneck inventory with file:line evidence | draft |
 | [design.md](design.md) | Technical design of each fix | draft |
 | [plan.md](plan.md) | Phased execution plan | Phase 0 done |

@@ -55,7 +55,7 @@ Phase 0 baselines (50×5, Azurite/dev — lower bound; see [results.md](results.
 - **UI time-to-interactive:** **40.3 s** (large) → target **< 2 s**. TTI is API-bound
   (~2 s render over the API call), so the backend fix drives most of this; the UI
   single-flight/poll guards remove the ~2× amplification and request pile-up.
-- **Backend load:** the 20 s poll currently re-issues the full 603-round-trip call
+- **Backend load:** the 20 s poll currently re-issues the full 603-operation call
   (measured 36.5 s per poll) — worse, response > interval so polls overlap. Fixing the
   poll guard + `304` collapses idle per-open-project storage transactions dramatically.
 - **Queue throughput:** higher with `batchSize`>1; training/inference lose partition scans.
