@@ -20,6 +20,7 @@ import {
 import { FluentIcon } from "../util/icons";
 import { useDrawerAnimation } from "../util/useDrawerAnimation";
 import { filterCountries } from "../util/countries";
+import { formatProjectDate, parseProjectDate } from "../util/projectDate";
 
 import {
   createComponentDefaultState,
@@ -117,6 +118,15 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
       setSelectedCountry(null);
       setCountryQuery("");
     }
+  }
+
+  function handleEventDateValidation({ error }) {
+    setComponentState((currentState) => ({
+      ...currentState,
+      eventDateError: error === "invalid-input"
+        ? "Enter a valid date in MM/DD/YYYY format."
+        : "",
+    }));
   }
 
   function handleEventTypesAddition() {
@@ -276,25 +286,32 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
 
           <div className="row mb-1 mt-4">
             <div className="col-12 p-0">
-              <Field label="Event Date" required>
+              <Field
+                label="Event Date"
+                required
+                validationMessage={componentState.eventDateError}
+                className="mb-3"
+              >
                 <DatePicker
                   id="createEditProjectEventDate"
-                  placeholder="Select a date..."
+                  placeholder="MM/DD/YYYY"
                   aria-label="Select a date"
-                  onSelectDate={(e) =>
-                    onFormChange(
-                      "eventDate",
-                      e,
-                      setComponentState,
-                      componentState
-                    )
+                  allowTextInput
+                  formatDate={formatProjectDate}
+                  parseDateFromString={parseProjectDate}
+                  onValidationResult={handleEventDateValidation}
+                  onSelectDate={(date) =>
+                    setComponentState((currentState) => ({
+                      ...currentState,
+                      eventDate: date ? new Date(date) : "",
+                      eventDateError: "",
+                    }))
                   }
                   value={
                     componentState.eventDate !== ""
                       ? new Date(componentState.eventDate)
                       : null
                   }
-                  className="mb-3"
                 />
               </Field>
             </div>
