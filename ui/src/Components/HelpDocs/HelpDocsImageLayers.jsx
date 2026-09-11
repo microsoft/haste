@@ -8,10 +8,6 @@ import PropTypes from 'prop-types';
 import { useEffect } from 'react';
 
 const HelpDocsImageLayers = ({ anchor }) => {
-  HelpDocsImageLayers.propTypes = {
-    anchor: PropTypes.string,
-  };
-
   useEffect(() => {
     if (anchor) {
       const element = document.getElementsByName(anchor)[0];
@@ -51,7 +47,7 @@ const HelpDocsImageLayers = ({ anchor }) => {
 
       <a name="create-a-new-imageLayer"></a> 
       <h2 className=''>Create a New Image Layer </h2>
-      <p>To create an Image Layer, you must first create a project. Once this is done, select the desired project from the list of projects. The project details will be displayed, which includes a button called "Create Image Layer." Clicking this will take you to the Image Layer creation form. </p>
+      <p>To create an Image Layer, you must first create a project. Once this is done, select the desired project from the list of projects. The project details will be displayed, which includes a button called &quot;Create Image Layer.&quot; Clicking this will take you to the Image Layer creation form. </p>
 
       <h3 className='pt-4'>Browse the Open Data Catalog</h3>
       <p>The <strong>Open Data Catalog</strong> is the fastest way to add public disaster imagery without finding and copying source URLs manually. On the Create Image Layer form, select <strong>Browse Open Data Catalog</strong>, then:</p>
@@ -67,7 +63,7 @@ const HelpDocsImageLayers = ({ anchor }) => {
 
       <p>Add imagery files by providing publicly accessible URLs or uploading files from a local directory that show the Area of Interest (AOI). You can also combine files from both a URL and a local directory. If multiple files are provided in a section, they will be merged into a single GeoTIFF image; therefore, all files in each section must correspond to the same AOI. All files must be valid GeoTIFF (.tif) files. </p>
 
-      <video src={createANewImageLayerVideo} controls className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
+      <video src={createANewImageLayerVideo} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
         Your browser does not support the video tag.
       </video>
 
@@ -78,7 +74,7 @@ const HelpDocsImageLayers = ({ anchor }) => {
       <p>You can update the name and description for an image layer after it was created from the Projects page. </p>
 
 
-      <video src={editAnImageLayerVideo} controls className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
+      <video src={editAnImageLayerVideo} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
         Your browser does not support the video tag.
       </video>
 
@@ -89,12 +85,16 @@ const HelpDocsImageLayers = ({ anchor }) => {
       <p>You can delete an image layer using the ellipse menu on the Projects page.</p>
       <p>Deleting an image layer also deletes all its artifacts such as labels, model training checkpoints and predictions </p>
 
-      <video src={deleteAnImageLayerVideo} controls className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
+      <video src={deleteAnImageLayerVideo} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
         Your browser does not support the video tag.
       </video>
 
     </>
   );
+};
+
+HelpDocsImageLayers.propTypes = {
+  anchor: PropTypes.string,
 };
 
 export default HelpDocsImageLayers;

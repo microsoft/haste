@@ -1,10 +1,59 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 
+import { loadImageLayerFormData } from "./loadImageLayerFormData.js";
 import {
   sourceTypeOptions,
   normalizeSourceTypeKey,
 } from "./sourceTypeOptions.js";
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+test("loads edit layer and project details concurrently", async () => {
+  const layer = deferred();
+  const project = deferred();
+  const calls = [];
+  const loading = loadImageLayerFormData(
+    "layer-1",
+    "project-1",
+    (endpoint) => {
+      calls.push(endpoint);
+      return endpoint.startsWith("GetLayerDetailView")
+        ? layer.promise
+        : project.promise;
+    }
+  );
+
+  assert.equal(calls.length, 2);
+  layer.resolve({ imageLayerId: "layer-1" });
+  project.resolve({ projectId: "project-1" });
+
+  assert.deepEqual(await loading, {
+    imageLayerToEdit: { imageLayerId: "layer-1" },
+    project: { projectId: "project-1" },
+  });
+});
+
+test("create mode requests only project details", async () => {
+  const calls = [];
+  const result = await loadImageLayerFormData(
+    null,
+    "project-1",
+    async (endpoint) => {
+      calls.push(endpoint);
+      return { projectId: "project-1" };
+    }
+  );
+
+  assert.deepEqual(calls, ["GetProjectDetails?projectId=project-1"]);
+  assert.equal(result.imageLayerToEdit, null);
+});
 
 test("lists only the supported visible imagery source types", () => {
   const visibleSourceKeys = sourceTypeOptions
