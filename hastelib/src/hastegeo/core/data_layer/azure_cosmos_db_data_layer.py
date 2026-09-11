@@ -5,7 +5,7 @@ import re
 from azure.cosmos import CosmosClient, exceptions  # type: ignore
 from azure.identity import DefaultAzureCredential  # type: ignore
 
-from ..utils.metadata import matches_metadata_type
+from ..utils.metadata import _known_metadata_types, matches_metadata_type
 from .abstract_data_layer import AbstractDataLayer
 
 
@@ -208,12 +208,18 @@ class AzureCosmosDBDataLayer(AbstractDataLayer):
             f"SELECT TOP {max_records + 1} * FROM c "
             "WHERE STARTSWITH(c.id, @id_prefix)"
         )
+        parameters = [{"name": "@id_prefix", "value": id_prefix}]
+        for index, metadata_type in enumerate(_known_metadata_types()):
+            if metadata_type.startswith(id_prefix):
+                parameter = f"@excluded_prefix_{index}"
+                query += f" AND NOT STARTSWITH(c.id, {parameter})"
+                parameters.append(
+                    {"name": parameter, "value": f"{metadata_type}_"}
+                )
         items = list(
             self.container.query_items(
                 query=query,
-                parameters=[
-                    {"name": "@id_prefix", "value": id_prefix},
-                ],
+                parameters=parameters,
                 enable_cross_partition_query=True,
                 max_item_count=max_records + 1,
             )

@@ -305,7 +305,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
             raise ValueError(
                 f"Metadata exceeds the {max_records:,}-record limit"
             )
-        return [json.loads(result[0]) for result in results]
+        return [self._deserialize_json(result[0]) for result in results]
 
     def delete(self, identifier, data_type):
         partition_key = (
