@@ -57,8 +57,9 @@ label project, the target image-layer ID, event types, and primary classes. The
 route uses the image layer's label-project pointer when available and falls back
 to a project-partition scan for legacy records. It does not cache current labels.
 
-Both routes return `400` for invalid identifiers, `403` for insufficient access,
-`404` for missing records, and a generic `500` response for internal failures.
+Both routes return `401` for missing authentication, `403` for insufficient
+access, `404` for missing records, and a generic `500` for internal failures.
+Only `GetLabelingWorkspace` accepts identifiers and returns `400` when invalid.
 
 ### File Upload
 

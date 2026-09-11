@@ -216,6 +216,8 @@ class LabelingWorkspaceProcessor:
                 for label in raw_labels
                 if label.get("projectId") == self.project_id
                 and label.get("imageLayerId") == self.image_layer_id
+                and isinstance(label.get("labelprojectId"), str)
+                and label["labelprojectId"].strip()
             ),
             None,
         )
