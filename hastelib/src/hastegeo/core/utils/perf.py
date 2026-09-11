@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 """Lightweight, opt-in performance instrumentation.
 
-Counts and times backend storage round-trips for a single logical request so we
+Counts and times logical MetadataProcessor operations for one request so we
 can establish a baseline (Phase 0 of the perf-layer-loading spec) and later prove
 the O(layers x models) -> O(1) improvement.
 
@@ -26,7 +26,7 @@ _current: "contextvars.ContextVar[PerfCounter | None]" = (
 
 
 class PerfCounter:
-    """Thread-safe accumulator of storage round-trip count and duration."""
+    """Thread-safe accumulator of logical metadata operation count and duration."""
 
     def __init__(self):
         self.calls = 0
@@ -83,7 +83,11 @@ def timed(op):
 
 
 def headers(counter, wall_start):
-    """Response headers exposing round-trip count/timing for benchmarking."""
+    """Expose logical metadata counts/timings under legacy Storage header names.
+
+    One logical call can issue multiple SDK/network requests. These headers do
+    not measure network round trips or summed service-side latency.
+    """
     if counter is None:
         return {}
     storage_ms = counter.seconds * 1000.0
