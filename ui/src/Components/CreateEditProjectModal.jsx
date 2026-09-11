@@ -19,6 +19,7 @@ import {
 } from "@fluentui/react-components";
 import { FluentIcon } from "../util/icons";
 import { useDrawerAnimation } from "../util/useDrawerAnimation";
+import { filterCountries } from "../util/countries";
 
 import {
   createComponentDefaultState,
@@ -54,6 +55,7 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
 
   const [componentState, setComponentState] = useState(null);
   const [selectedCountry, setSelectedCountry] = useState(null);
+  const [countryQuery, setCountryQuery] = useState("");
   const [selectedEventType, setSelectedEventType] = useState(null);
   const { setDialog, appParams, setIsLoading } = useContext(AppContext);
   const navigate = useNavigate();
@@ -113,6 +115,7 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
     if (option) {
       addAffectedCountry(setComponentState, componentState, option);
       setSelectedCountry(null);
+      setCountryQuery("");
     }
   }
 
@@ -315,6 +318,8 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
                     placeholder="Select country"
                     freeform
                     autoComplete="on"
+                    value={countryQuery}
+                    onChange={(event) => setCountryQuery(event.target.value)}
                     onOptionSelect={(e, data) => {
                       const option = componentState.countries.find(
                         (c) => c.key === data.optionValue
@@ -324,11 +329,12 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
                       }
                     }}
                   >
-                    {componentState.countries.map((option) => (
-                      <Option key={option.key} value={option.key} text={option.text}>
-                        {option.text}
-                      </Option>
-                    ))}
+                    {filterCountries(componentState.countries, countryQuery)
+                      .map((option) => (
+                        <Option key={option.key} value={option.key} text={option.text}>
+                          {option.text}
+                        </Option>
+                      ))}
                   </Combobox>
                 </Field>
               </div>

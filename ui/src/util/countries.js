@@ -7,6 +7,15 @@
 
 let cache = null;
 
+export function filterCountries(countries, query) {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return countries;
+
+  return countries.filter((country) =>
+    country.text.toLocaleLowerCase().includes(normalizedQuery)
+  );
+}
+
 export async function loadCountryNames() {
   if (cache) return cache;
   cache = (async () => {
