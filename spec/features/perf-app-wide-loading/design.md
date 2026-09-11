@@ -7,6 +7,7 @@
 - [Session Bootstrap](#session-bootstrap)
 - [Security](#security)
 - [Published Datasets](#published-datasets)
+- [Active Jobs](#active-jobs)
 
 ## Route Loading
 
@@ -91,3 +92,19 @@ most five seconds; mutations invalidate the cache.
 The UI stores ETags by query, sends conditional requests, and polls only when a
 visible page contains active work and no request is in flight. Polling never
 overlaps and preserves the current query.
+
+
+## Active Jobs
+
+### `GET /api/GetActiveJobs`
+
+The route returns a compact list of active imagery, training, and inference
+jobs. It reads the project summary once, loads only image-layer and model
+partitions for candidate projects, and excludes labels, validation records,
+artifacts, and terminal work. A short process-local single-flight cache bounds
+repeat work; ETags support empty `304` responses.
+
+The Dashboard makes one conditional request instead of one
+`GetProjectDetails` request per project. Polls run only while visible, never
+overlap, and abort on route unmount. Dashboard content does not wait for the
+optional model catalog or active-jobs widget.
