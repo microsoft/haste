@@ -42,7 +42,7 @@ export function createMapRoute(importRoute, loadMaps) {
       return (
         <div className="route-loading" role="alert">
           <div className="d-flex flex-column align-items-center gap-3">
-            <span>Map assets could not be loaded.</span>
+            <span>This page could not be loaded.</span>
             <Button
               appearance="primary"
               onClick={() => {
