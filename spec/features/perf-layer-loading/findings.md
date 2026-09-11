@@ -13,7 +13,7 @@ For a project with **L** image layers and an average of **M** models per layer, 
 + L × 1                (LABELS full-partition scan — once PER layer, see B1)
 + L × 1                (VALIDATION load per layer)
 + L × M × 2            (MODEL_ARTIFACTS load + TRAIN_LABELS export per model)
-= 3 + 2L + 2LM  sequential, blocking storage round-trips
+= 3 + 2L + 2LM  sequential, blocking logical metadata operations
 ```
 
 For L=50, M=5 that is **~603 sequential round-trips**, each an `await asyncio.to_thread(...)`
@@ -157,7 +157,7 @@ a timer.
 
 **Measured (Phase 0):** the large-project response is **~21–38 s — longer than the 20 s
 poll interval**, so a new poll fires before the previous one returns and overlapping
-603-round-trip requests pile up on the backend. The poll must not fire while a request
+603-operation requests pile up on the backend. The poll must not fire while a request
 is in flight (single-flight guard) and/or the interval must adapt to response time.
 
 ### U7 — HIGH (new, measured): duplicate concurrent `GetProjectDetails` on load

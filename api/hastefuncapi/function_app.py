@@ -724,6 +724,8 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
         }
     """
     logger.info("GetProjectDetails HTTP trigger function processed a request.")
+    _perf = None
+    _perf_wall = time.perf_counter()
     try:
         try:
             project_id = _require_guid_param(req, "projectId")
@@ -849,16 +851,6 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
         )
         _payload = json.dumps(project)
         _perf_headers = perf.headers(_perf, _perf_wall)
-        perf.log_summary(
-            logger,
-            "GetProjectDetails",
-            _perf,
-            _perf_wall,
-            project_id=project_id,
-            include_models=include_models,
-            layers=len(image_layers),
-            payload_bytes=len(_payload),
-        )
         return func.HttpResponse(
             _payload, status_code=200, headers=_perf_headers or None
         )
@@ -873,6 +865,11 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             "Error loading project details.", status_code=500
         )
+    finally:
+        try:
+            perf.log_summary(logger, "GetProjectDetails", _perf, _perf_wall)
+        finally:
+            perf.end()
 
 
 @app.route(route="PutProject", auth_level=AUTH_LEVEL, methods=["PUT"])
