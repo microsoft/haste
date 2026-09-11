@@ -36,6 +36,23 @@ class TestConfiguredWorkerCount(unittest.TestCase):
 
 
 class TestBoundedExecutor(unittest.TestCase):
+    def test_single_item_and_single_worker_use_shared_pool(self) -> None:
+        from threading import current_thread
+
+        for items, workers in [([1], None), ([1, 2], 1)]:
+            with self.subTest(items=items):
+                names = self.executor.map(
+                    lambda value: current_thread().name,
+                    items,
+                    max_workers=workers,
+                )
+                self.assertTrue(
+                    all(
+                        name.startswith(self.executor._thread_prefix)
+                        for name in names
+                    )
+                )
+
     def setUp(self) -> None:
         self.executor = BoundedExecutor(max_workers=2)
 

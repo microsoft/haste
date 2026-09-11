@@ -61,9 +61,9 @@ def assemble_active_jobs(
                     target=f"/project/{project_id}/{layer_id}",
                     indicator=ActiveJobIndicator(
                         id=f"ongoingImagery-{project_id}-{layer_id}",
-                        currentStep=layer.get("currentStep") or 0,
-                        totalSteps=layer.get("totalSteps") or 0,
-                        progressPct=layer.get("progressPct") or 0.0,
+                        currentStep=layer.get("currentStep"),
+                        totalSteps=layer.get("totalSteps"),
+                        progressPct=layer.get("progressPct"),
                         status=str(layer["status"]),
                         statusMessage=str(layer.get("statusMessage") or ""),
                         prefix="Imagery",
@@ -89,9 +89,9 @@ def assemble_active_jobs(
                         target=target,
                         indicator=ActiveJobIndicator(
                             id=f"ongoingTraining-{project_id}-{model_id}",
-                            currentStep=model.get("currentStep") or 0,
-                            totalSteps=model.get("totalSteps") or 0,
-                            progressPct=model.get("progressPct") or 0.0,
+                            currentStep=model.get("currentStep"),
+                            totalSteps=model.get("totalSteps"),
+                            progressPct=model.get("progressPct"),
                             status=str(model["status"]),
                             statusMessage=str(
                                 model.get("statusMessage") or ""
@@ -111,10 +111,9 @@ def assemble_active_jobs(
                         target=target,
                         indicator=ActiveJobIndicator(
                             id=f"ongoingInference-{project_id}-{model_id}",
-                            currentStep=model.get("inferenceCurrentStep") or 0,
-                            totalSteps=model.get("inferenceTotalSteps") or 0,
-                            progressPct=model.get("inferenceProgressPct")
-                            or 0.0,
+                            currentStep=model.get("inferenceCurrentStep"),
+                            totalSteps=model.get("inferenceTotalSteps"),
+                            progressPct=model.get("inferenceProgressPct"),
                             status=str(model["inferenceStatus"]),
                             statusMessage=str(
                                 model.get("inferenceStatusMessage") or ""

@@ -1,3 +1,10 @@
+import { activeJobIndicatorProps } from "./activeJobsRequest.js";
+
+test("missing progress uses the legacy status fallback without erasing zero", () => {
+  assert.equal(activeJobIndicatorProps({ currentStep: null }).currentStep, undefined);
+  assert.equal(activeJobIndicatorProps({ currentStep: 0 }).currentStep, 0);
+  assert.equal(activeJobIndicatorProps({ status: "Queued" }).status, "Queued");
+});
 import assert from "node:assert/strict";
 import test from "node:test";
 

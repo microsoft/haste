@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 """Lightweight, opt-in performance instrumentation.
 
-Counts and times logical data-layer operations for a single request. A bulk
+Counts and times logical metadata operations for a single request. A bulk
 operation can issue multiple backend SDK requests, so these values are not
 storage transaction counts.
 
@@ -26,7 +26,7 @@ _current: "contextvars.ContextVar[PerfCounter | None]" = (
 
 
 class PerfCounter:
-    """Thread-safe accumulator of logical data-layer calls and duration."""
+    """Thread-safe accumulator of logical metadata operation count and duration."""
 
     def __init__(self):
         self.calls = 0
@@ -98,7 +98,11 @@ def timed(op):
 
 
 def headers(counter, wall_start):
-    """Response headers exposing data-layer call timing for benchmarking."""
+    """Expose logical metadata counts/timings under legacy Storage header names.
+
+    One logical call can issue multiple SDK/network requests. These headers do
+    not measure network round trips or summed service-side latency.
+    """
     if counter is None:
         return {}
     storage_ms = counter.seconds * 1000.0
