@@ -6,6 +6,25 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .projects import LabelProject, PrimaryClass
+
+
+class LabelingImageLayer(BaseModel):
+    """Allowlisted image-layer fields required by the labeling UI."""
+
+    imageLayerId: str
+    name: str | None = None
+    sourceTypePostEvent: str | None = None
+
+
+class LabelingWorkspace(BaseModel):
+    """Data required to initialize one standard labeling workspace."""
+
+    labelProject: LabelProject
+    imageLayer: LabelingImageLayer
+    eventTypes: list[str] = Field(default_factory=list)
+    primaryClasses: list[PrimaryClass] = Field(default_factory=list)
+
 
 class ActiveJobIndicator(BaseModel):
     """Progress fields consumed by the dashboard status indicator."""

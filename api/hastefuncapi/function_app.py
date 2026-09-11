@@ -45,7 +45,10 @@ from hastegeo.core.processors.assessment import AssessmentReportProcessor
 from hastegeo.core.processors.embedding import EmbeddingPreprocessor
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
-from hastegeo.core.processors.loading import ActiveJobsProcessor
+from hastegeo.core.processors.loading import (
+    ActiveJobsProcessor,
+    LabelingWorkspaceProcessor,
+)
 from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.processors.project_details import ProjectDetailsProcessor
 from hastegeo.core.processors.publishing import (
@@ -1718,6 +1721,51 @@ async def GetLayerLabelingToolData(req: func.HttpRequest) -> func.HttpResponse:
         )
         return func.HttpResponse(
             "Error loading label projects.", status_code=500
+        )
+
+
+@app.route(
+    route="GetLabelingWorkspace",
+    auth_level=AUTH_LEVEL,
+    methods=["GET"],
+)
+async def GetLabelingWorkspace(req: func.HttpRequest) -> func.HttpResponse:
+    """Return the minimum records for one standard labeling workspace."""
+    try:
+        project_id = _require_guid_param(req, "projectId")
+        image_layer_id = _require_guid_param(req, "imageLayerId")
+    except ValueError as error:
+        return _bad_request(f"GetLabelingWorkspace: {error}")
+
+    auth_error = await _require_roles(req, {"administrators", "contributors"})
+    if auth_error:
+        return auth_error
+
+    try:
+        workspace = await LabelingWorkspaceProcessor(
+            project_id=project_id,
+            image_layer_id=image_layer_id,
+            config=config,
+        ).load()
+        return func.HttpResponse(
+            json.dumps(workspace.model_dump(mode="json")),
+            status_code=200,
+            mimetype="application/json",
+        )
+    except FileNotFoundError as error:
+        logger.error(f"Labeling workspace not found: {error}")
+        return _publishing_error_response(
+            "NOT_FOUND", "Labeling workspace was not found.", 404
+        )
+    except Exception as error:
+        logger.error(
+            f"Error loading labeling workspace: {error}\n"
+            f"{traceback.format_exc()}"
+        )
+        return _publishing_error_response(
+            "INTERNAL_ERROR",
+            "Labeling workspace could not be loaded.",
+            500,
         )
 
 
