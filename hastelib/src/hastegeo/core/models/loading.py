@@ -11,9 +11,9 @@ class ActiveJobIndicator(BaseModel):
     """Progress fields consumed by the dashboard status indicator."""
 
     id: str
-    currentStep: int = 0
-    totalSteps: int = 0
-    progressPct: float = 0.0
+    currentStep: int | None = None
+    totalSteps: int | None = None
+    progressPct: float | None = None
     status: str
     statusMessage: str = ""
     prefix: str
