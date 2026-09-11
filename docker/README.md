@@ -254,6 +254,19 @@ VITE_AZURE_MAPS_CLIENT_ID=<YOUR_AZURE_MAPS_CLIENT_ID>
 > uses. If it is wrong (or missing), the browser won't be able to reach the API
 > or load map tiles.
 
+The Compose file sets `COMPUTE_OUTPUT_CONTAINER_URL` on both Function
+services to `http://azurite:10000/devstoreaccount1/data`. Keep it aligned
+with `BLOB_ACCOUNT_URL` and `BLOB_CONTAINER` if you customize local storage.
+This is an internal Docker-network URL, not the browser-facing `HOST_IP`.
+Leaving it unset falls back to the legacy Batch configuration, whose
+placeholder output container is not valid for local jobs.
+
+Local jobs upload outputs into the Azurite `data` container under
+`<project-hash>/<task-id>/`. The account path (`devstoreaccount1`) is not
+part of the container name or blob prefix. Upload failures fail the task
+and retain its working files rather than reporting success with missing
+imagery URLs.
+
 ### Azure Maps Authentication
 
 The **Visualizer** component uses Azure Maps for before/after satellite imagery

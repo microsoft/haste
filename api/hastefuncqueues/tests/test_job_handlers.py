@@ -60,9 +60,11 @@ def test_queue_timer_runs_independently_of_local_staging(mocker) -> None:
     repository.reconcile_queues.assert_called_once_with()
 
 
-def test_batch_runtime_never_constructs_local_docker_controller(
+def test_runtime_without_local_receipts_never_constructs_docker_controller(
     mocker,
+    tmp_path,
 ) -> None:
+    mocker.patch("hastegeo.core.runners.local.TASK_WORK_DIR", tmp_path)
     config = mocker.Mock(runner_type="azure_batch")
     docker = mocker.patch(
         "docker.from_env",
@@ -70,3 +72,15 @@ def test_batch_runtime_never_constructs_local_docker_controller(
     )
     assert reconcile_local_tasks(config) == 0
     docker.assert_not_called()
+
+
+def test_receipts_still_reconcile_after_default_backend_changes(
+    mocker, tmp_path
+) -> None:
+    mocker.patch("hastegeo.core.runners.local.TASK_WORK_DIR", tmp_path)
+    (tmp_path / ".lifecycle").mkdir()
+    runner = mocker.patch("hastegeo.core.runners.local.LocalRunner")
+    runner.return_value.reconcile_tasks.return_value = 1
+    config = mocker.Mock(runner_type="azure_batch")
+    assert reconcile_local_tasks(config) == 1
+    runner.assert_called_once_with(config=config)

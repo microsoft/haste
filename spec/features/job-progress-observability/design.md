@@ -1,5 +1,14 @@
 # Design: shared job progress and workflow observability
 
+## Contents
+
+- [Scope](#scope)
+- [Output discovery](#output-discovery)
+- [Shared progress processing](#shared-progress-processing)
+- [Workflow logs](#workflow-logs)
+- [UI](#ui)
+- [Compatibility](#compatibility)
+
 ## Scope
 
 Reuse TensorBoard event files and `logs/workflow_progress.log` for every

@@ -12,6 +12,7 @@ azure-storage-queue==12.17.0
 azure-mgmt-containerregistry==15.0.0
 azure-mgmt-web
 azure-batch==14.2.0
+azure-ai-ml==1.34.1
 azure-core==1.41.0
 azure-identity==1.25.3
 email_validator==2.3.0

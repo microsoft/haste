@@ -29,6 +29,9 @@ param batchSubnetName string
 @description('Shared hub batch-subnet resource id (where the SHARED multi-tenant pools are VNet-injected). Empty for single-tenant envs (prod) that run their own in-env pool. See spec/features/batch-compute-expansion/networking.md.')
 param sharedBatchSubnetId string = ''
 
+@description('AML compute subnet resource id to allow through the HASTE blob-storage firewall in Create mode. Empty when AML is Disabled or Existing.')
+param amlComputeSubnetId string = ''
+
 @description('Resource tags.')
 param tags object = {}
 
@@ -74,9 +77,16 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
           id: batchSubnetId
           action: 'Allow'
         }
-      ], empty(sharedBatchSubnetId) ? [] : [
+      ],
+      empty(sharedBatchSubnetId) ? [] : [
         {
           id: sharedBatchSubnetId
+          action: 'Allow'
+        }
+      ],
+      empty(amlComputeSubnetId) || amlComputeSubnetId == batchSubnetId ? [] : [
+        {
+          id: amlComputeSubnetId
           action: 'Allow'
         }
       ])

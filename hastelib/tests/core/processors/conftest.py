@@ -21,6 +21,12 @@ def state(tmp_path: Path, mocker) -> SimpleNamespace:
             "METADATA_STORAGE_TYPE": "local",
             "ARTIFACT_STORAGE_TYPE": "local",
             "RUNNER_TYPE": "local",
+            "COMPUTE_BACKEND_DEFAULT": "local",
+            "COMPUTE_IMAGE_TRAINING": "haste-training:latest",
+            "COMPUTE_IMAGE_IMAGERYPREP": "haste-imageryprep:latest",
+            "COMPUTE_OUTPUT_CONTAINER_URL": (
+                "https://account.blob.core.windows.net/data"
+            ),
             "DATA_PATH": str(tmp_path),
         },
     )

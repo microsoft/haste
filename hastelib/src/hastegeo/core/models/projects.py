@@ -5,6 +5,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from .compute import ComputeBackend, ComputeJobHandle
 from .publishing import SourceImageryRef
 
 
@@ -191,6 +192,15 @@ class TrainingJob(BaseModel):
         artifactZipJobUid: Reference to zip job for packaging training artifacts
         creationDate: ISO formatted timestamp when job was created
         completedDate: ISO formatted timestamp when job finished
+        computeJob: Server-owned runtime compute submission handle
+            (``hastegeo.core.models.compute.ComputeJobHandle``), populated
+            once this job is actually submitted — never accepted as
+            client input. Absent on
+            job records created before the backend-neutral compute layer;
+            ``jobId``/``taskId`` remain the source of truth for those
+            legacy records. See
+            ``hastegeo.core.utils.compute_jobs.resolve_compute_job_handle``
+            to resolve either representation uniformly.
         dependsOn: Dependency tuple specifying parent resource type and ID
 
     Example:
@@ -220,6 +230,7 @@ class TrainingJob(BaseModel):
     artifactZipJobUid: Optional[str] = Field(default=None)
     creationDate: Optional[str] = Field(default=None)
     completedDate: Optional[str] = Field(default=None)
+    computeJob: Optional[ComputeJobHandle] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(default=("Model", "modelId"))
 
 
@@ -242,6 +253,12 @@ class InferenceJob(BaseModel):
         completedDate: ISO formatted timestamp when job finished
         logs: Inference logs and output messages from the job execution
         artifactZipJobUid: Reference to zip job for packaging inference results
+        computeJob: Server-owned runtime compute submission handle
+            (``hastegeo.core.models.compute.ComputeJobHandle``), populated
+            once this job is actually submitted — never accepted as
+            client input. Absent on job records created before the
+            backend-neutral compute layer; ``jobId``/``taskId`` remain
+            the source of truth for those legacy records.
         dependsOn: Dependency tuple specifying parent resource type and ID
 
     Example:
@@ -265,6 +282,7 @@ class InferenceJob(BaseModel):
     completedDate: Optional[str] = Field(default=None)
     logs: Optional[str] = Field(default="")
     artifactZipJobUid: Optional[str] = Field(default=None)
+    computeJob: Optional[ComputeJobHandle] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(default=("Model", "modelId"))
 
 
@@ -388,6 +406,17 @@ class Model(BaseModel):
         predictedDamageLayerUrl: URL to predicted damage layer output
         gpkgUrl: URL to GeoPackage output file with predictions
         labelsUrl: URL to labels file used for training
+        computeBackend: Optional, explicit per-job compute backend
+            preference (``hastegeo.core.models.compute.ComputeBackend``),
+            e.g. requesting ``azure_ml`` for this model's training/
+            inference/embedding runs. Additive: a client/request-side
+            preference that a caller (UI or automated caller) may supply
+            on this record — unset (``None``) preserves prior behavior
+            (backend resolved by workload/global default). Carries the
+            preference through the existing queue message for this
+            record until the job is submitted, at which point the
+            server-owned runtime ``computeJob`` handle is persisted on
+            the resulting ``TrainingJob``/``InferenceJob`` instead.
         dependsOn: Dependency tuple specifying parent resource type and ID
 
     Example:
@@ -461,6 +490,7 @@ class Model(BaseModel):
     # once at session start and looks vectors up by id; the PMTiles
     # archive itself only carries id + overture_id (no f_* columns).
     featuresSidecarUrl: Optional[str] = Field(default=None)
+    computeBackend: Optional[ComputeBackend] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("ImageLayer", "imageLayerId")
     )
@@ -503,6 +533,12 @@ class ZipJob(BaseModel):
         dstZipPath: Destination path for the generated zip file
         creationDate: ISO formatted timestamp when job was created
         completedDate: ISO formatted timestamp when job finished
+        computeJob: Server-owned runtime compute submission handle
+            (``hastegeo.core.models.compute.ComputeJobHandle``), populated
+            once this job is actually submitted — never accepted as
+            client input. Absent on job records created before the
+            backend-neutral compute layer; ``jobId``/``taskId`` remain
+            the source of truth for those legacy records.
         dependsOn: Dependency tuple specifying parent resource type and ID
 
     Example:
@@ -529,6 +565,7 @@ class ZipJob(BaseModel):
     dstZipPath: Optional[str] = Field(default=None)
     creationDate: Optional[str] = Field(default=None)
     completedDate: Optional[str] = Field(default=None)
+    computeJob: Optional[ComputeJobHandle] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("ModelArtifacts", "modelId")
     )
@@ -551,6 +588,13 @@ class ModelArtifacts(BaseModel):
         zipStatus: Current status of the zip packaging operation
         zipStatusMessage: Detailed message about zip operation status
         zipJobs: List of zip jobs associated with this model's artifacts
+        computeBackend: Optional, explicit per-job compute backend
+            preference (``hastegeo.core.models.compute.ComputeBackend``)
+            for the artifact-packaging zip job. Additive: a client/
+            request-side preference that a caller may supply on this
+            record — unset (``None``) preserves prior behavior. Once the
+            zip job is submitted, the server-owned runtime ``computeJob``
+            handle is persisted on the resulting ``ZipJob`` instead.
         dependsOn: Dependency tuple specifying parent resource type and ID
 
     Example:
@@ -576,6 +620,7 @@ class ModelArtifacts(BaseModel):
     zipStatus: Optional[str] = Field(default=None)
     zipStatusMessage: Optional[str] = Field(default="")
     zipJobs: Optional[List[ZipJob]] = Field(default_factory=list)
+    computeBackend: Optional[ComputeBackend] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(default=("Model", "modelId"))
 
 
@@ -596,6 +641,12 @@ class ImageryPreprocessJob(BaseModel):
         logs: Processing logs and output messages from the job execution
         creationDate: ISO formatted timestamp when job was created
         completedDate: ISO formatted timestamp when job finished
+        computeJob: Server-owned runtime compute submission handle
+            (``hastegeo.core.models.compute.ComputeJobHandle``), populated
+            once this job is actually submitted — never accepted as
+            client input. Absent on job records created before the
+            backend-neutral compute layer; ``jobId``/``taskId`` remain
+            the source of truth for those legacy records.
         dependsOn: Dependency tuple specifying parent resource type and ID
 
     Example:
@@ -616,6 +667,7 @@ class ImageryPreprocessJob(BaseModel):
     logs: Optional[str] = Field(default=None)
     creationDate: Optional[str] = Field(default=None)
     completedDate: Optional[str] = Field(default=None)
+    computeJob: Optional[ComputeJobHandle] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("ImageLayer", "imageLayerId")
     )
@@ -695,6 +747,17 @@ class ImageLayer(BaseModel):
             post-event mosaic, i.e. the imagery's actual AOI excluding
             nodata. Populated by the imageryprep workflow; surfaced as a
             downloadable artifact in the UI.
+        computeBackend: Optional, explicit per-job compute backend
+            preference (``hastegeo.core.models.compute.ComputeBackend``)
+            for this layer's imagery-preparation job. Additive: a
+            client/request-side preference that a caller (UI or
+            automated caller) may supply on this record — unset
+            (``None``) preserves prior behavior (backend resolved by
+            workload/global default). Carries the preference through the
+            existing queue message for this record until the job is
+            submitted, at which point the server-owned runtime
+            ``computeJob`` handle is persisted on the resulting
+            ``ImageryPreprocessJob``.
         dependsOn: Dependency tuple specifying parent resource type and ID
 
     Example:
@@ -772,6 +835,7 @@ class ImageLayer(BaseModel):
     # Catalog "clip to area" flow.
     clipBbox: Optional[list[float]] = Field(default=None)
     validAreaMaskUrl: Optional[str] = Field(default=None)
+    computeBackend: Optional[ComputeBackend] = Field(default=None)
     dependsOn: Optional[tuple[str, str]] = Field(
         default=("Project", "projectId")
     )

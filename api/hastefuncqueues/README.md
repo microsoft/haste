@@ -1,8 +1,23 @@
 # HASTE Queue Functions
 
-Azure Functions backend for asynchronous, queue-driven processing in HASTE. These functions act as **orchestrators** — they receive a queue message, submit a job to **Azure Batch** for the actual compute, and poll for completion across subsequent invocations by re-queuing themselves.
+Azure Functions backend for asynchronous, queue-driven processing in HASTE.
+Thin triggers delegate to `hastegeo.core.processors.job_queue`, which submits
+and polls **local Docker, Azure Batch, or Azure Machine Learning** through
+persisted compute handles. Queue messages are wake-ups: current metadata, not
+the message snapshot, controls each revision-fenced processing turn.
 
-All functions are defined in `function_app.py`.
+Bindings are defined in `function_app.py`; business logic remains in `hastegeo`.
+
+## Contents
+
+- [Architecture](#architecture)
+- [Azure Batch pools](#azure-batch-pools)
+- [Queue triggers](#queue-triggers)
+- [Recovery timers](#recovery-timers)
+- [Error handling](#error-handling)
+- [Configuration](#configuration)
+- [Deployment](#deployment)
+- [Development setup](#development-setup)
 
 ---
 
@@ -12,11 +27,11 @@ All functions are defined in `function_app.py`.
 HTTP API → Azure Storage Queue → Azure Function (trigger)
                                         │
                                         ▼
-                               Submit task to Azure Batch
+                               Submit backend-neutral job
                                         │
                                         ▼
-                            Azure Batch Pool (GPU VMs)
-                            runs Docker container task
+                            Local Docker / Batch / AML
+                            executes the accepted job
                                         │
                                ┌────────┴────────┐
                                │  IN_PROGRESS?   │
@@ -29,7 +44,15 @@ HTTP API → Azure Storage Queue → Azure Function (trigger)
                                   queue artifact zip
 ```
 
-Each function invocation either **starts** a new Batch task or **checks the status** of an existing one. When a task is still running, the function re-queues itself and exits — the Azure Functions runtime picks up the next message and checks again. This means a single training or inference job can span many function invocations over hours.
+Each invocation submits or polls the current execution, commits only its
+runtime fields, and queues another turn if needed. Accepted identities and
+handles survive worker restarts. Cancellation and finalization use the
+stored backend/profile, so changing defaults cannot redirect an existing job.
+
+Local submission returns before input staging or container execution.
+Durable receipts on the shared volume and deterministic Docker containers
+own its lifecycle. The default host limit is one active job; queued work
+waits for a slot, and successful exit is not success until outputs persist.
 
 ---
 
@@ -77,8 +100,8 @@ Orchestrates ML model training. On each invocation:
 - **PENDING** → submits a Batch training task; input files include labels (GeoJSON), pre/post-event COG imagery, optional initial weights, and experiment config (YAML)
 - **IN_PROGRESS** → parses TensorBoard event files from the task working directory to extract per-epoch metrics (completed epochs, time per epoch, ETA), then re-queues
 - **COMPLETED** → extracts final metrics; if `autoRunInference` is set, automatically enqueues an inference job
-- **CANCELLED** → calls `TrainPostprocessor.cancel()` which terminates the Batch task
-- **Post-run (separate error scope)** → queues artifact zipping for **FAILED/CANCELLED** training runs when `trainingOutputPath` exists (completed runs can be zipped on-demand via `PutArtifactsZipQueueMessage`)
+- **CANCELLED** → cancels the exact persisted compute handle
+- **Post-run** → durably records artifact zipping for **FAILED/CANCELLED** training runs when `trainingOutputPath` exists (completed runs can be zipped on-demand via `PutArtifactsZipQueueMessage`)
 
 ---
 
@@ -89,8 +112,8 @@ Runs model inference on a geospatial image layer. On each invocation:
 - **PENDING** → submits a Batch inference task; inputs include COG imagery, building footprints GeoPackage, training checkpoint (`last.ckpt`), and experiment config
 - **IN_PROGRESS** → reads `workflow_progress.log` from the task for user-visible progress messages, then re-queues
 - **COMPLETED** → surfaces output artifact URLs: predicted damage layer (GeoTIFF) and vector predictions (GeoPackage)
-- **CANCELLED** → calls `InferencePostprocessor.cancel()` which terminates the Batch task
-- **Post-run (separate error scope)** → queues artifact zipping if output path exists
+- **CANCELLED** → cancels the exact persisted compute handle
+- **Post-run** → durably records artifact zipping if an output path exists
 
 > **Note:** Raw `stderr.txt` from the Batch task is never returned to the client — only sanitized `workflow_progress.log` messages are surfaced.
 
@@ -110,23 +133,44 @@ Packages training/inference output files into a downloadable zip archive via `Ar
 
 ---
 
-### ImagePoisonQueueHandler
-**Queue:** `{image_queue_name}-poison` (dead-letter)
+### Poison queue handlers
+**Queues:** imagery, training, embedding, inference, and artifact `-poison` queues
 
-Handles image layer messages that exceeded the max dequeue count (`maxDequeueCount=1` in `host.json`). Marks the image layer as FAILED in metadata so the UI reflects the error. Training and inference failures are caught inline and do not have a poison handler.
+Handlers record interrupted delivery for the current attempt. A poison
+message does not prove the compute failed and cannot overwrite a newer run.
+Recovery is independent of `maxDequeueCount=1` in `host.json`.
+
+## Recovery timers
+
+`ReconcileLocalTasks` runs every 15 seconds while durable local receipts
+exist. It resumes staging, inspects the owned Docker execution, persists
+outputs, and releases admission slots without repeating completed compute.
+
+`ReconcileJobQueues` runs every 30 seconds and wakes pending, running,
+cancelling, or unfinished follow-on work after delivery or worker failure.
+It is independent of local staging, so a long download does not block state
+polling or cancellation. Cleanup is deferred until a fenced metadata commit;
+failed persistence always retains local evidence.
 
 ---
 
 ## Error Handling
 
-- **Poison queue:** Failed image processing messages are routed to the `-poison` dead-letter queue by the Azure Functions runtime after 1 failed attempt.
-- **Tiered try/catch:** Training and inference use separate error scopes for each phase (main processing, artifact zipping, inference trigger) so a failure in one phase does not block the others.
-- **Status persistence:** All failure paths attempt to write a FAILED or CANCELLED status back to metadata, even when the primary operation throws.
+- **Poison queue:** Interrupted deliveries are recorded and recovered without assuming compute failed.
+- **Follow-ons:** Inference and artifact requests are durable, idempotent actions; a failed queue send can be retried without repeating compute.
+- **Status persistence:** Storage-native conditional writes fence attempts and claims. Transient polling/submission-recording errors remain recoverable rather than manufacturing success or a terminal compute failure.
 - **Batch retry:** The `AzureBatchRunner` uses exponential backoff (4–10 s, up to 5 attempts) via `tenacity` for transient Azure Batch API errors (5xx).
 
 ---
 
 ## Configuration
+
+Neutral backend/image/output settings are documented in the
+[compute design](../../spec/features/aml-compute-backend/design.md).
+`HASTE_LOCAL_MAX_ACTIVE_TASKS` defaults to `1` and accepts `1` through `64`;
+all controllers sharing a Docker host must agree. See the
+[local rollout requirements](../../spec/features/local-compute-lifecycle/design.md#configuration-and-rollout)
+before changing this limit or rolling back.
 
 ### Azure Batch
 
@@ -183,9 +227,9 @@ docker build -t hastefuncqueues .
 ```
 
 **host.json concurrency settings:**
-- `batchSize=1` — process one queue message at a time per worker (one heavy job at a time)
+- `batchSize=1` — process one queue message at a time per worker; local compute admission is separately host-wide
 - `maxDequeueCount=1` — immediately dead-letter on failure
-- Function timeout: `23:59:59` — supports long-running training and inference jobs
+- Function timeout: `23:59:59` — the orchestration invocation limit, not the lifetime of a submitted compute job
 
 ---
 

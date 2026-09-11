@@ -12,7 +12,18 @@ conventions are documented in [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- Backend-neutral compute and Azure Machine Learning support for imagery,
+  training, inference, embedding, and artifact packaging. Existing AML
+  workspaces and compute identities can be referenced without recreating
+  infrastructure; per-job handles preserve routing across restarts.
+
+### Fixed
+
+- Local execution now publishes state before computation finishes, recovers
+  interrupted orchestration, and preserves outputs until upload and cleanup
+  succeed. Shared workflow/TensorBoard progress is visible while jobs run.
 
 ---
 

@@ -22,9 +22,7 @@ Function timers. See the [feature design](../../features/local-compute-lifecycle
 Persist atomically updated execution receipts on the existing shared task
 volume and use deterministic, ownership-labelled Docker containers.
 Unstarted Docker reservation containers provide race-safe host-wide
-admission, defaulting to one active workload. A persistent, unstarted policy
-container pins a consistent limit across controllers; changing it requires
-draining the host. Independent periodic
+admission, defaulting to one active workload. Independent periodic
 reconciliation advances queued receipts and recovers interrupted work.
 
 Keep `BaseRunner` signatures and Batch compatibility. Gate success and
@@ -40,6 +38,7 @@ require secrets in receipts, another Azure service, or duplicate compute.
 Receipts and admission reservations need durable retention and ownership
 checks; deployment and rollback require draining legacy unnamed jobs.
 
-The progress/log/UI prerequisite and later backend-neutral/AML migration
-must preserve these invariants. ADR-0005 remains reserved for the AML
-feature; this decision is independent of that new contract.
+The progress/log/UI implementation and the backend-neutral/AML contract
+preserve these invariants together. See [ADR-0005](0005-backend-neutral-compute-runner-and-aml-backend.md)
+for neutral handles and routing. Queue finalization and cancellation use the
+persisted handle, while the local adapter owns Docker admission and receipts.

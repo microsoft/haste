@@ -143,6 +143,25 @@ jobs:
           BATCH_IMAGERYPREP_POOL_IDS: ${{ secrets.BATCH_IMAGERYPREP_POOL_IDS }}
           BATCH_USE_SAS: ${{ secrets.BATCH_USE_SAS }}
           BATCH_MANAGE_POOLS: ${{ secrets.BATCH_MANAGE_POOLS }}
+          # Backend-neutral compute and AML Existing-mode configuration.
+          # Modes/defaults are non-sensitive Environment variables. Resource
+          # identifiers remain Environment secrets so public Actions logs mask
+          # the deployment topology, matching the Batch naming settings above.
+          COMPUTE_BACKEND_DEFAULT: ${{ vars.COMPUTE_BACKEND_DEFAULT }}
+          AML_MODE: ${{ vars.AML_MODE }}
+          AML_IDENTITY_MODE: ${{ vars.AML_IDENTITY_MODE }}
+          AML_SUBSCRIPTION_ID: ${{ secrets.AML_SUBSCRIPTION_ID }}
+          AML_RESOURCE_GROUP: ${{ secrets.AML_RESOURCE_GROUP }}
+          AML_WORKSPACE_NAME: ${{ secrets.AML_WORKSPACE_NAME }}
+          AML_DATASTORE_NAME: ${{ secrets.AML_DATASTORE_NAME }}
+          AML_COMPUTE_TRAINING: ${{ secrets.AML_COMPUTE_TRAINING }}
+          AML_COMPUTE_INFERENCE: ${{ secrets.AML_COMPUTE_INFERENCE }}
+          AML_COMPUTE_EMBEDDING: ${{ secrets.AML_COMPUTE_EMBEDDING }}
+          AML_COMPUTE_IMAGERYPREP: ${{ secrets.AML_COMPUTE_IMAGERYPREP }}
+          AML_COMPUTE_ARTIFACTS: ${{ secrets.AML_COMPUTE_ARTIFACTS }}
+          AML_ENVIRONMENT_TRAINING: ${{ secrets.AML_ENVIRONMENT_TRAINING }}
+          AML_ENVIRONMENT_IMAGERYPREP: ${{ secrets.AML_ENVIRONMENT_IMAGERYPREP }}
+          AML_MANAGED_IDENTITY_ID: ${{ secrets.AML_MANAGED_IDENTITY_ID }}
         run: |
           chmod +x .github/scripts/deploy_apps.sh
           .github/scripts/deploy_apps.sh \

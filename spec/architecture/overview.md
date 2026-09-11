@@ -1,6 +1,6 @@
 # HASTE Architecture Overview
 
-**Last updated:** 2026-04-27
+**Last updated:** 2026-09-01
 
 ## System Context
 
@@ -40,10 +40,10 @@ HASTE (High-speed Assessment and Satellite Tracking for Emergencies) is an AI-dr
 │  workflows/prepare_imagery · workflows/zip_artifacts             │
 └──────┬───────────┬───────────┬───────────┬──────────────────────┘
        │           │           │           │
-  ┌────▼───┐  ┌───▼────┐  ┌──▼───┐  ┌───▼──────────┐
-  │ Blob   │  │ Cosmos │  │ Data │  │ Azure Batch  │
-  │ Storage│  │ DB     │  │ Lake │  │ (GPU pools)  │
-  └────────┘  └────────┘  └──────┘  └──────────────┘
+  ┌────▼───┐  ┌───▼────┐  ┌──▼───┐  ┌───▼──────────────┐
+  │ Blob   │  │ Cosmos │  │ Data │  │ Azure Batch /     │
+  │ Storage│  │ DB     │  │ Lake │  │ Azure ML / local  │
+  └────────┘  └────────┘  └──────┘  └──────────────────┘
 ```
 
 ## Components
@@ -72,7 +72,7 @@ HASTE (High-speed Assessment and Satellite Tracking for Emergencies) is an AI-dr
 - `core/models/` — Data models and schemas
 - `core/processors/` — Imagery and data processing logic
 - `core/data_layer/` — Cosmos DB, Blob Storage, Data Lake, Queue access
-- `core/runners/` — Azure Batch job submission and management
+- `core/runners/` — backend-neutral compute submission (`ComputeExecutionService`, `RunnerRegistry`, `ComputeRouter`) dispatching to Azure Batch, Azure Machine Learning, or local Docker adapters (see [ADR-0005](decisions/0005-backend-neutral-compute-runner-and-aml-backend.md))
 - `core/utils/` — Shared utilities
 - `core/artifact_storage/` — Model artifact management
 - `workflows/` — Multi-step workflows (imagery preparation, artifact packaging)
@@ -83,7 +83,7 @@ HASTE (High-speed Assessment and Satellite Tracking for Emergencies) is an AI-dr
 `UI → SWA → hastefuncapi → Cosmos DB / Blob Storage → response`
 
 ### Asynchronous (processing jobs)
-`UI → hastefuncapi → Queue Storage → hastefuncqueues → hastegeo → Azure Batch (GPU) → Blob Storage / Data Lake`
+`UI → hastefuncapi → Queue Storage → hastefuncqueues → hastegeo → Azure Batch / Azure Machine Learning / local (compute) → Blob Storage / Data Lake`
 
 ### Tile Serving
 `UI → SWA → titilerfuncapi → Blob Storage (COG) → rendered tile`
@@ -91,7 +91,7 @@ HASTE (High-speed Assessment and Satellite Tracking for Emergencies) is an AI-dr
 ## Infrastructure
 
 ### Azure Services
-- **Compute:** Azure Functions (consumption), Azure Batch (GPU pools)
+- **Compute:** Azure Functions (consumption), Azure Batch (GPU pools), Azure Machine Learning (optional, opt-in compute backend — see [ADR-0005](decisions/0005-backend-neutral-compute-runner-and-aml-backend.md); disabled by default, and this rollout applies only a pure `Existing`-mode reference to an operator-provided workspace, with no HASTE-created resources)
 - **Storage:** Blob Storage, Data Lake Storage Gen2, Queue Storage
 - **Database:** Cosmos DB
 - **Hosting:** Azure Static Web Apps

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from ..config import Config
 from ..data_layer.conditional import JsonDocument
+from ..models.compute import ComputeBackend, ComputeJobHandle, ComputeWorkload
 from ..models.projects import (
     ImageLayer,
     ImageryPreprocessJob,
@@ -21,6 +22,7 @@ from ..models.projects import (
     TrainingJob,
     ZipJob,
 )
+from ..utils.compute_specs import output_prefix, resolve_backend_preference
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
@@ -36,6 +38,15 @@ class Workload(str, Enum):
     INFERENCE = "inference"
     EMBEDDING = "embedding"
     ZIP = "zip"
+
+
+COMPUTE_WORKLOADS = {
+    Workload.IMAGERY: ComputeWorkload.IMAGERY_PREPARATION,
+    Workload.TRAINING: ComputeWorkload.TRAINING,
+    Workload.INFERENCE: ComputeWorkload.INFERENCE,
+    Workload.EMBEDDING: ComputeWorkload.EMBEDDING,
+    Workload.ZIP: ComputeWorkload.ARTIFACT_PACKAGING,
+}
 
 
 @dataclass(frozen=True)
@@ -59,6 +70,7 @@ PROGRESS_FIELDS = {
     "currentStep",
     "totalSteps",
     "progressPct",
+    "computeBackend",
 }
 WORKFLOWS = {
     Workload.IMAGERY: Workflow(
@@ -87,6 +99,7 @@ WORKFLOWS = {
                 "previewSourceImageryUrls",
                 "normalizationMeans",
                 "normalizationStds",
+                "normalizationFactor",
                 "buildingFootprintsUrl",
                 "validAreaMaskUrl",
                 "labelProjectId",
@@ -137,6 +150,7 @@ WORKFLOWS = {
                 "inferenceOutputPath",
                 "predictedDamageLayerUrl",
                 "gpkgUrl",
+                "computeBackend",
             }
         ),
         "currentInferenceTaskId",
@@ -182,6 +196,7 @@ WORKFLOWS = {
                 "trainingZipSize",
                 "inferenceZipUrl",
                 "inferenceZipSize",
+                "computeBackend",
             }
         ),
         "currentZipJobUid",
@@ -192,6 +207,7 @@ WORKFLOWS = {
 class TaskIdentity(BaseModel):
     job_id: str
     task_id: str
+    handle: ComputeJobHandle | None = None
 
 
 class RuntimeTurn(BaseModel):
@@ -231,11 +247,9 @@ def ensure_pending_identity(
 ) -> None:
     workflow = WORKFLOWS[workload]
     existing = current_job(data, workload)
-    if existing.get("jobId") and existing.get("taskId"):
+    if existing.get("taskId"):
         return
     values = {
-        "jobId": existing.get("jobId")
-        or config.get_azure_batch_config()[workflow.batch_job][:64],
         "taskId": existing.get("taskId")
         or f"{workflow.prefix}-{MetadataUtils.generate_id()}",
         "projectId": data["projectId"],
@@ -250,6 +264,7 @@ def ensure_pending_identity(
         job = ZipJob(
             modelId=data["modelId"],
             imageLayerId=data.get("imageLayerId"),
+            dstZipPath=output_prefix(data["projectId"], values["taskId"]),
             **values,
         )
     else:
@@ -281,6 +296,10 @@ class JobStateRepository:
         self.processor_factory = processor_factory
         self.clock = clock
         self.claim_seconds = claim_seconds
+        if not 0 < renewal_interval_seconds < claim_seconds:
+            raise ValueError(
+                "Claim renewal interval must be below its lease duration"
+            )
         self.renewal_interval_seconds = renewal_interval_seconds
         self.logger = Logger.get_logger(__name__)
         self.statuses = config.get_status_types()
@@ -320,7 +339,22 @@ class JobStateRepository:
         attempt = attempt_id(data, workload)
         if not attempt:
             raise ValueError("Job record has no pending execution identity")
-        return RuntimeTurn(attempt=attempt, backend=self.config.runner_type)
+        return RuntimeTurn(
+            attempt=attempt, backend=self._backend(data, workload)
+        )
+
+    def _backend(self, data: dict, workload: Workload) -> str:
+        handle = current_job(data, workload).get("computeJob")
+        if handle:
+            return ComputeJobHandle.model_validate(
+                handle
+            ).selectedBackend.value
+        requested = data.get("computeBackend")
+        return resolve_backend_preference(
+            requested=ComputeBackend(requested) if requested else None,
+            workload=COMPUTE_WORKLOADS[workload],
+            config=self.config,
+        ).value
 
     @staticmethod
     def _set_turn(data: dict, workload: Workload, turn: RuntimeTurn) -> None:
@@ -426,7 +460,9 @@ class JobStateRepository:
                     )
                     if request_id and old_turn.get("request_id") == request_id:
                         return None
-                    if self.needs_processing(data, workload):
+                    if attempt_id(data, workload) and self.needs_processing(
+                        data, workload
+                    ):
                         if request_id:
                             raise RuntimeError(
                                 "Another execution is active; follow-on work "
@@ -475,7 +511,7 @@ class JobStateRepository:
                 ensure_pending_identity(data, workload, self.config)
                 turn = RuntimeTurn(
                     attempt=attempt_id(data, workload),
-                    backend=self.config.runner_type,
+                    backend=self._backend(data, workload),
                     request_id=request_id,
                 )
             turn.revision += 1
@@ -510,10 +546,6 @@ class JobStateRepository:
                 return None
             ensure_pending_identity(raw, workload, self.config)
             turn = self.turn(raw, workload)
-            if turn.backend != self.config.runner_type:
-                raise RuntimeError(
-                    "Job backend differs from the configured runner"
-                )
             if turn.claim and turn.lease_until > self.clock():
                 return None
             turn.revision += 1
@@ -532,6 +564,85 @@ class JobStateRepository:
             )
             return None
         return result
+
+    def require_current_submission(
+        self, workload: Workload, baseline: dict
+    ) -> None:
+        project_id, record_id = self._identity(baseline, workload)
+        current = self.processor(workload, project_id).load(record_id)
+        expected = self.turn(baseline, workload)
+        turn = self.turn(current, workload)
+        if (
+            turn.attempt != expected.attempt
+            or turn.claim != expected.claim
+            or turn.revision != expected.revision
+            or turn.lease_until <= self.clock()
+            or current.get(WORKFLOWS[workload].status)
+            != self.statuses.PENDING.value
+        ):
+            raise ValueError(
+                "Submission is no longer the current pending turn"
+            )
+
+    def record_submission(
+        self,
+        workload: Workload,
+        baseline: dict,
+        handle: ComputeJobHandle,
+    ) -> bool:
+        project_id, record_id = self._identity(baseline, workload)
+        expected = self.turn(baseline, workload)
+        if handle.executionId != expected.attempt:
+            raise ValueError(
+                "Provider changed the accepted execution identity"
+            )
+        accepted = False
+
+        def change(raw: JsonDocument | None) -> dict | None:
+            nonlocal accepted
+            accepted = False
+            if (
+                not isinstance(raw, dict)
+                or attempt_id(raw, workload) != expected.attempt
+            ):
+                return None
+            job = current_job(raw, workload)
+            stored = job.get("computeJob")
+            if stored:
+                previous = ComputeJobHandle.model_validate(stored)
+                if (
+                    previous.selectedBackend != handle.selectedBackend
+                    or previous.providerJobId != handle.providerJobId
+                    or previous.providerTaskId != handle.providerTaskId
+                ):
+                    raise ValueError(
+                        "Execution already belongs to another provider"
+                    )
+                if job.get("status") in {
+                    self.statuses.COMPLETED.value,
+                    self.statuses.FAILED.value,
+                    self.statuses.CANCELLED.value,
+                }:
+                    accepted = True
+                    return None
+            elif raw.get(WORKFLOWS[workload].status) in {
+                self.statuses.COMPLETED.value,
+                self.statuses.FAILED.value,
+            }:
+                return None
+            job.update(
+                jobId=handle.providerJobId,
+                computeJob=handle.model_dump(mode="json"),
+                status=self.statuses.IN_PROGRESS.value,
+            )
+            turn = self.turn(raw, workload)
+            turn.backend = handle.selectedBackend.value
+            self._set_turn(raw, workload, turn)
+            accepted = True
+            return raw
+
+        self.processor(workload, project_id).mutate(record_id, change)
+        return accepted
 
     def _update_claim(
         self,
@@ -606,7 +717,12 @@ class JobStateRepository:
                 {
                     key: values[key]
                     for key in workflow.fields
-                    if key in values and values[key] != baseline.get(key)
+                    if key in values
+                    and values[key] != baseline.get(key)
+                    and (
+                        key != "computeBackend"
+                        or data.get(key) == baseline.get(key)
+                    )
                 }
             )
             turn.cleanup = cleanup
@@ -729,10 +845,7 @@ class JobStateRepository:
                     continue
                 if attempt_id(data, workload):
                     turn = self.turn(data, workload)
-                    if (
-                        turn.backend != self.config.runner_type
-                        or max(turn.lease_until, turn.next_poll) > self.clock()
-                    ):
+                    if max(turn.lease_until, turn.next_poll) > self.clock():
                         continue
                 self.enqueue(workload, data)
                 count += 1
@@ -740,7 +853,7 @@ class JobStateRepository:
 
 
 class JobClaimRenewal:
-    """Renew only a persisted coordination lease; timers/Docker own progress."""
+    """Renew a coordination lease; provider state remains authoritative."""
 
     def __init__(
         self,
