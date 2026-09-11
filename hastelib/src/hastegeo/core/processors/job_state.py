@@ -5,6 +5,7 @@ import json
 import time
 from dataclasses import dataclass
 from enum import Enum
+from threading import Event, Thread
 from typing import Callable
 
 from pydantic import BaseModel, Field
@@ -289,11 +290,17 @@ class JobStateRepository:
         ] = MetadataProcessor,
         clock: Callable[[], float] = time.time,
         claim_seconds: float = 300,
+        renewal_interval_seconds: float = 60,
     ) -> None:
         self.config = config
         self.processor_factory = processor_factory
         self.clock = clock
         self.claim_seconds = claim_seconds
+        if not 0 < renewal_interval_seconds < claim_seconds:
+            raise ValueError(
+                "Claim renewal interval must be below its lease duration"
+            )
+        self.renewal_interval_seconds = renewal_interval_seconds
         self.logger = Logger.get_logger(__name__)
         self.statuses = config.get_status_types()
 
@@ -363,14 +370,49 @@ class JobStateRepository:
             self.statuses.IN_PROGRESS.value,
         }:
             return True
-        if (
-            status == self.statuses.CANCELLED.value
-            and current_job(data, workload).get("status")
-            != self.statuses.CANCELLED.value
-        ):
+        if self.needs_cancellation(data, workload):
             return True
         raw = data.get(RUNTIME_KEY, {}).get(workload.value)
         return bool(raw and (raw.get("actions") or raw.get("cleanup")))
+
+    def needs_cancellation(self, data: dict, workload: Workload) -> bool:
+        return data.get(
+            WORKFLOWS[workload].status
+        ) == self.statuses.CANCELLED.value and current_job(data, workload).get(
+            "status"
+        ) not in {
+            self.statuses.CANCELLED.value,
+            self.statuses.COMPLETED.value,
+            self.statuses.FAILED.value,
+        }
+
+    def renew_claim(self, workload: Workload, baseline: dict) -> bool:
+        project_id, record_id = self._identity(baseline, workload)
+        expected = self.turn(baseline, workload)
+        renewed = False
+
+        def change(raw: JsonDocument | None) -> dict | None:
+            nonlocal renewed
+            renewed = False
+            if (
+                not isinstance(raw, dict)
+                or attempt_id(raw, workload) != expected.attempt
+            ):
+                return None
+            current = self.turn(raw, workload)
+            if (
+                current.claim != expected.claim
+                or current.claim is None
+                or current.lease_until <= self.clock()
+            ):
+                return None
+            current.lease_until = self.clock() + self.claim_seconds
+            self._set_turn(raw, workload, current)
+            renewed = True
+            return raw
+
+        self.processor(workload, project_id).mutate(record_id, change)
+        return renewed
 
     def begin(
         self,
@@ -421,6 +463,11 @@ class JobStateRepository:
                     if attempt_id(data, workload) and self.needs_processing(
                         data, workload
                     ):
+                        if request_id:
+                            raise RuntimeError(
+                                "Another execution is active; follow-on work "
+                                "must wait rather than losing its request"
+                            )
                         return None
                     if attempt_id(incoming, workload) and attempt_id(
                         incoming, workload
@@ -803,6 +850,55 @@ class JobStateRepository:
                 self.enqueue(workload, data)
                 count += 1
         return count
+
+
+class JobClaimRenewal:
+    """Renew a coordination lease; provider state remains authoritative."""
+
+    def __init__(
+        self,
+        repository: JobStateRepository,
+        workload: Workload,
+        baseline: dict,
+    ) -> None:
+        self.repository = repository
+        self.workload = workload
+        self.baseline = baseline
+        self.stop = Event()
+        self.error: Exception | None = None
+        self.thread = Thread(
+            target=self._renew, daemon=True, name="haste-job-claim-renewal"
+        )
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def _renew(self) -> None:
+        while not self.stop.wait(self.repository.renewal_interval_seconds):
+            try:
+                if not self.repository.renew_claim(
+                    self.workload, self.baseline
+                ):
+                    self.error = RuntimeError(
+                        "Processing claim is no longer owned"
+                    )
+                    return
+            except Exception as error:
+                self.error = error
+                self.repository.logger.error(
+                    "Job claim renewal failed (%s)", type(error).__name__
+                )
+                return
+
+    def check(self) -> None:
+        if self.error is not None:
+            raise RuntimeError(
+                "Processing claim renewal failed"
+            ) from self.error
+
+    def close(self) -> None:
+        self.stop.set()
+        self.thread.join(timeout=5)
 
 
 def persist_and_enqueue(

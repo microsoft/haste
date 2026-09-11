@@ -6,6 +6,7 @@ from copy import deepcopy
 import pytest
 from hastegeo.core.models.compute import (
     ComputeJobHandle,
+    ComputeJobState,
     synthesize_legacy_batch_handle,
 )
 from hastegeo.core.models.projects import Model
@@ -244,6 +245,10 @@ def test_cancel_invocation_stops_persisted_identity_not_stale_payload(
     )
     processor = JobQueueProcessor(state.config, repository=state.repository)
     service = mocker.patch.object(processor, "execution_service")
+    service.get_status.side_effect = [
+        ComputeJobState.RUNNING,
+        ComputeJobState.CANCELLED,
+    ]
     mocker.patch.object(processor, "_perform_action")
     processor.process(Workload.TRAINING, cancelled.model_dump(mode="json"))
     service.cancel.assert_called_once_with(handle)
@@ -260,6 +265,7 @@ def test_cancel_failure_keeps_the_intent_and_retries_actual_stop(
     )
     processor = JobQueueProcessor(state.config, repository=state.repository)
     service = mocker.patch.object(processor, "execution_service")
+    service.get_status.return_value = ComputeJobState.RUNNING
     service.cancel.side_effect = OSError("Provider unavailable")
     with pytest.raises(OSError):
         processor.process(Workload.TRAINING, message)
@@ -267,6 +273,43 @@ def test_cancel_failure_keeps_the_intent_and_retries_actual_stop(
     assert load(state)["trainingJob"]["status"] != "Cancelled"
     state.now.value += 31
     assert state.repository.reconcile_queues() == 1
+
+
+def test_cancel_does_not_misreport_an_already_completed_provider_job(
+    state, mocker
+) -> None:
+    message, handle = submitted(state)
+    cancelled = state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, state.repository)
+    service = mocker.patch.object(processor, "execution_service")
+    service.get_status.return_value = ComputeJobState.SUCCEEDED
+    mocker.patch.object(processor, "_perform_action")
+    processor.process(Workload.TRAINING, cancelled.model_dump(mode="json"))
+    service.cancel.assert_not_called()
+    service.finalize.assert_called_once_with(handle)
+    assert load(state)["trainingJob"]["status"] == "Processed"
+    assert "already reached Processed" in load(state)["statusMessage"]
+    assert not state.repository.needs_cancellation(
+        load(state), Workload.TRAINING
+    )
+
+
+def test_cancel_waits_for_the_provider_to_become_terminal(
+    state, mocker
+) -> None:
+    message, _ = submitted(state)
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, state.repository)
+    service = mocker.patch.object(processor, "execution_service")
+    service.get_status.return_value = ComputeJobState.RUNNING
+    with pytest.raises(RuntimeError, match="waiting for provider"):
+        processor.process(Workload.TRAINING, message)
+    service.finalize.assert_not_called()
+    assert state.repository.needs_cancellation(load(state), Workload.TRAINING)
 
 
 def test_training_queue_and_local_lifecycle_publish_inflight_then_persisted_terminal_state(

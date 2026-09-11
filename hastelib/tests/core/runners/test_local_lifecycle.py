@@ -676,6 +676,28 @@ def test_cloud_container_named_after_account_is_not_stripped() -> None:
     ) == ("account", "input.tif")
 
 
+def test_restart_cannot_change_the_receipt_storage_account(setup) -> None:
+    identity = submit(setup.runner)
+    setup.blobs.url = "https://different.blob.core.windows.net/"
+    with pytest.raises(RuntimeError, match="storage account changed"):
+        setup.runner.reconcile_task(*identity)
+    assert setup.engine.executions() == []
+
+
+def test_pre_descriptor_receipts_remain_idempotent_after_upgrade(
+    setup,
+) -> None:
+    identity = submit(setup.runner)
+    receipt = setup.runner.receipts.load(execution_key(*identity))
+    receipt.request.storage_account = None
+    receipt.request.storage_endpoint = None
+    setup.runner.receipts.save(receipt)
+    assert submit(setup.runner) == identity
+    setup.runner.reconcile_task(*identity)
+    assert len(setup.engine.executions()) == 1
+    assert setup.engine.executions()[0].starts == 1
+
+
 def test_capacity_is_queueable_while_an_owned_execution_has_the_only_slot(
     setup,
 ) -> None:

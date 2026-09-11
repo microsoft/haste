@@ -2,26 +2,19 @@
 // Licensed under the MIT License.
 
 import { apiGet } from "../util/api";
+import {
+  buildBaseModelOptionKey,
+  buildModelCatalogEndpoint,
+} from "./BaseModelDropdownHelper";
 
 export async function fetchModelCatalog(imageLayer, eventTypes) {
   const cataloguedModels = [];
   try {
-    let eventTypesL = "eventTypes=" + eventTypes;
-
-    if (
-      imageLayer.sourceTypePostEvent !== "" &&
-      imageLayer.sourceTypePostEvent !== null &&
-      imageLayer.sourceTypePostEvent !== undefined
-    ) {
-      const concatChar = eventTypesL === "" ? "" : "&";
-      eventTypesL += concatChar + "imagerySource=" + imageLayer.sourceTypePostEvent;
-    }
-
-    await apiGet(`GetModelCatalog?${eventTypesL}`)
+    await apiGet(buildModelCatalogEndpoint(imageLayer, eventTypes))
       .then((response) => {
         cataloguedModels.push(
           ...response.modelCatalog.map((model) => ({
-            key: model.modelId,
+            key: buildBaseModelOptionKey(model),
             text: model.baseModelName,
             value: model,
           }))
@@ -65,6 +58,8 @@ export function createComponentDefaultState(modelToEdit, imageLayer, projectId) 
         batchSizeError: "",
         maxEpochs: "3",
         maxEpochsError: "",
+        baseModelId: "",
+        baseModelIdError: "",
         initialWeightsUrl: "",
         cataloguedModels: [],
         catalogLoading: true,

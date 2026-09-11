@@ -48,6 +48,8 @@ const LabelingTool = ({ setModalComponent }) => {
   const [isMapReady, setIsMapReady] = useState(false);
   const [selectedShape, setSelectedShape] = useState(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [eventTypes, setEventTypes] = useState([]);
+  const [imageLayer, setImageLayer] = useState(null);
   const { undo, redo } = useDrawingUndoRedo(drawingManager, mapRef);
 
   useEffect(() => {
@@ -181,6 +183,12 @@ const LabelingTool = ({ setModalComponent }) => {
     const projectDetails = await apiGet(
       "GetProjectDetails?projectId=" + projectId
     );
+    setEventTypes(projectDetails.eventTypes || []);
+    setImageLayer(
+      projectDetails.imageLayer?.find(
+        (layer) => layer.imageLayerId === imageLayerId
+      ) || null
+    );
 
     const map = new window.atlas.Map(mapRef.current, {
       center: [0, 0],
@@ -310,6 +318,8 @@ const LabelingTool = ({ setModalComponent }) => {
               setDrawingCount={setDrawingCount}
               selectedShape={selectedShape}
               imageLayerId={imageLayerId}
+              imageLayer={imageLayer}
+              eventTypes={eventTypes}
               undo={undo}
               redo={redo}
             />

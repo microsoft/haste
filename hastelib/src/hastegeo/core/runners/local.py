@@ -7,6 +7,7 @@ import shutil
 import time
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
@@ -222,9 +223,23 @@ class LocalRunner(BaseRunner, ComputeRunner):
             except FileNotFoundError:
                 existing = None
             if existing is not None:
+                comparable = request
+                if existing.request is not None:
+                    # Existing version-one receipts predate storage descriptors.
+                    comparable = request.model_copy(
+                        update={
+                            field: None
+                            for field in (
+                                "storage_account",
+                                "storage_endpoint",
+                            )
+                            if getattr(existing.request, field) is None
+                        }
+                    )
                 if (
                     existing.request is not None
-                    and existing.request.fingerprint() != request.fingerprint()
+                    and existing.request.fingerprint()
+                    != comparable.fingerprint()
                 ):
                     raise ValueError(
                         "Local execution identity already has another request"
@@ -300,6 +315,8 @@ class LocalRunner(BaseRunner, ComputeRunner):
             image=self.container_images.get(
                 image_name, image_name or "haste-training"
             ),
+            storage_account=account,
+            storage_endpoint=self._storage_endpoint(),
             command=command,
             arguments=arguments,
             environment=env_vars or {},
@@ -371,6 +388,22 @@ class LocalRunner(BaseRunner, ComputeRunner):
         key = execution_key(job_id, task_id)
         with self.receipts.lock(key, operation=True, timeout=0):
             pending = self.receipts.load(key)
+            if pending.request is not None and (
+                (
+                    pending.request.storage_account is not None
+                    and pending.request.storage_account
+                    != self.blob_client.account_name
+                )
+                or (
+                    pending.request.storage_endpoint is not None
+                    and pending.request.storage_endpoint
+                    != self._storage_endpoint()
+                )
+            ):
+                raise RuntimeError(
+                    "Local task storage account changed; restore its configured "
+                    "account before staging or persisting outputs"
+                )
             if (
                 pending.cancel_requested
                 and pending.phase not in TERMINAL_PHASES | {"uploading"}
@@ -398,6 +431,13 @@ class LocalRunner(BaseRunner, ComputeRunner):
                 if receipt.phase in TERMINAL_PHASES:
                     self._release_capacity(receipt)
                     self._cleanup_if_safe(receipt)
+
+    def _storage_endpoint(self) -> str:
+        parsed = urlsplit(self.blob_client.url)
+        if parsed.username or parsed.password:
+            raise ValueError("Storage endpoints cannot contain credentials")
+        endpoint = parsed._replace(query="", fragment="").geturl()
+        return _normalize_azurite_url(endpoint).rstrip("/")
 
     def _set_phase(self, receipt: LocalReceipt, phase: Phase) -> None:
         receipt.phase = phase

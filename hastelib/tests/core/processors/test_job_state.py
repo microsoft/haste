@@ -451,6 +451,44 @@ def test_duplicate_submission_handle_does_not_regress_terminal_job(
     assert load(state) == before
 
 
+def test_renewed_claim_can_commit_after_its_original_deadline(state) -> None:
+    baseline = state.repository.claim(Workload.TRAINING, accepted(state))
+    state.now.value += 250
+    assert state.repository.renew_claim(Workload.TRAINING, baseline)
+    state.now.value += 100
+    result = state.repository.commit(
+        Workload.TRAINING,
+        baseline,
+        output_for(baseline, Workload.TRAINING, "InProgress"),
+        [],
+    )
+    assert result is not None
+
+
+def test_cancelled_claim_cannot_be_renewed_by_the_old_worker(state) -> None:
+    message = accepted(state)
+    baseline = state.repository.claim(Workload.TRAINING, message)
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    assert not state.repository.renew_claim(Workload.TRAINING, baseline)
+
+
+def test_distinct_follow_on_waits_instead_of_acknowledging_busy_target(
+    state,
+) -> None:
+    message = accepted(state)
+    with pytest.raises(RuntimeError, match="follow-on work"):
+        state.repository.begin(
+            Workload.TRAINING,
+            Model.model_validate(message),
+            request_id="another-parent-request",
+        )
+    assert attempt_id(load(state), Workload.TRAINING) == attempt_id(
+        message, Workload.TRAINING
+    )
+
+
 def test_submission_after_record_deletion_is_rejected_without_recreation(
     state,
 ) -> None:

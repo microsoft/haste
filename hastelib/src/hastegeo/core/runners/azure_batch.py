@@ -281,6 +281,11 @@ class AzureBatchRunner(BaseRunner, ComputeRunner):
         # raised from deep inside pool creation.
         validate_batch_config(self.batch_config, self.manage_pools)
 
+        if job_id and task_id:
+            existing_job = self._find_existing_task(job_id, task_id)
+            if existing_job is not None:
+                return existing_job, task_id
+
         # Capacity-aware routing (v2.1.0): pick the pool at submit time from the
         # ordered candidates (preference-first, spillover-second), then bind the
         # job to it.
@@ -331,21 +336,48 @@ class AzureBatchRunner(BaseRunner, ComputeRunner):
         )
         job_id = self.batch_cluster.create_job(job_id)
 
-        self.batch_cluster.add_task(
-            job_id=job_id,
-            task_id=task_id,
-            image_name=image_name,
-            command=command,
-            arguments=arguments,
-            work_dir=work_dir,
-            output_container_url=output_container_url,
-            output_prefix=output_prefix,
-            resource_files_for_upload=resource_files_for_upload,
-            file_pattern=file_pattern,
-            env_vars=env_vars,
-            retention_time=self.batch_config["task_retention_time"],
-        )
+        try:
+            self.batch_cluster.add_task(
+                job_id=job_id,
+                task_id=task_id,
+                image_name=image_name,
+                command=command,
+                arguments=arguments,
+                work_dir=work_dir,
+                output_container_url=output_container_url,
+                output_prefix=output_prefix,
+                resource_files_for_upload=resource_files_for_upload,
+                file_pattern=file_pattern,
+                env_vars=env_vars,
+                retention_time=self.batch_config["task_retention_time"],
+            )
+        except BatchErrorException as error:
+            if batch_error_code(error) != "TaskExists":
+                raise
+            self.batch_cluster.batch_client.task.get(job_id, task_id)
         return job_id, task_id
+
+    def _find_existing_task(self, job_id: str, task_id: str) -> str | None:
+        job_ids = dict.fromkeys(
+            [
+                job_id,
+                *(
+                    resolve_job_id(job_id, pool, self.candidate_pool_ids)
+                    for pool in self.candidate_pool_ids
+                ),
+            ]
+        )
+        for candidate in job_ids:
+            try:
+                self.batch_cluster.batch_client.task.get(candidate, task_id)
+                return candidate
+            except BatchErrorException as error:
+                if batch_error_code(error) not in {
+                    "TaskNotFound",
+                    "JobNotFound",
+                }:
+                    raise
+        return None
 
     def cleanup_task(self, job_id, task_id):
         try:

@@ -18,6 +18,12 @@ the existing shared Docker volume. They survive task cleanup and contain
 safe resource descriptors, execution identity, phases, cancellation intent,
 and persistence evidence, never storage credentials or signed URLs.
 
+New receipts pin the credential-free storage account/endpoint as well as
+the output container. Reconciliation rejects a changed account instead of
+uploading an accepted execution into a different environment. Older
+receipts remain readable and idempotent; keep their original storage
+configuration until they are drained.
+
 `LocalRunner.submit` returns the corresponding neutral compute handle.
 Canonical `HASTE_JOB_WORKDIR` and legacy workspace variables are derived at
 container launch, rather than persisted as caller-supplied environment.
@@ -112,6 +118,11 @@ identities are allocated in the existing job models and persisted before
 messages are sent. Consumers load the current document, check the attempt,
 and claim a revision-fenced processing turn. An expired claim permits
 restart recovery; an old claim cannot publish state.
+
+Processing claims renew while a turn is active. This heartbeat owns only a
+coordination lease, not compute execution; a lost or superseded claim fences
+the writer. Different follow-on requests wait for an occupied target rather
+than acknowledging another job as their own.
 
 Pending identities contain no provider job ID or fabricated Batch handle.
 Once submission succeeds, the real handle is saved under the current

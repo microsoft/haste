@@ -4,7 +4,11 @@
 import json
 
 from ..config import Config
-from ..models.compute import ComputeBackend, ComputeJobHandle
+from ..models.compute import (
+    TERMINAL_JOB_STATES,
+    ComputeBackend,
+    ComputeJobHandle,
+)
 from ..models.projects import (
     ImageLayer,
     LabelProject,
@@ -20,6 +24,7 @@ from ..utils.compute_specs import (
     follow_on_backend,
     follow_on_backend_for_record,
     handle_log_fields,
+    map_state_to_status,
     output_prefix,
     output_uri,
 )
@@ -33,6 +38,7 @@ from .inference import InferencePostprocessor, InferencePreprocessor
 from .job_state import (
     COMPUTE_WORKLOADS,
     WORKFLOWS,
+    JobClaimRenewal,
     JobRecord,
     JobStateRepository,
     TaskIdentity,
@@ -101,17 +107,16 @@ class JobQueueProcessor:
                 ComputeJobHandle.model_validate(handle) if handle else None
             ),
         )
+        renewal = JobClaimRenewal(self.repository, workload, baseline)
+        renewal.start()
         try:
             status = baseline.get(workflow.status)
-            cancelled = self.config.get_status_types().CANCELLED.value
             if status in {
                 self.config.get_status_types().PENDING.value,
                 self.config.get_status_types().IN_PROGRESS.value,
-            } or (
-                status == cancelled
-                and current_job(baseline, workload).get("status") != cancelled
-            ):
+            } or self.repository.needs_cancellation(baseline, workload):
                 output, cleanup = self._process_current(workload, baseline)
+                renewal.check()
                 baseline = self.repository.commit(
                     workload, baseline, output, cleanup
                 )
@@ -119,6 +124,7 @@ class JobQueueProcessor:
                     return
             turn = self.repository.turn(baseline, workload)
             if turn.cleanup:
+                renewal.check()
                 for identity in turn.cleanup:
                     if identity.handle is None:
                         raise ValueError(
@@ -133,6 +139,7 @@ class JobQueueProcessor:
             for action, request_id in (
                 self.repository.turn(baseline, workload).actions.copy().items()
             ):
+                renewal.check()
                 self._perform_action(
                     baseline, action, request_id, source_workload=workload
                 )
@@ -160,6 +167,8 @@ class JobQueueProcessor:
                         workload, baseline
                     )
             raise
+        finally:
+            renewal.close()
 
     def _process_current(
         self, workload: Workload, baseline: dict
@@ -299,8 +308,17 @@ class JobQueueProcessor:
             ),
         )
         cleanup = []
+        outcome = self.config.get_status_types().CANCELLED.value
         if handle is not None:
-            self.execution_service.cancel(handle)
+            state = self.execution_service.get_status(handle)
+            if state not in TERMINAL_JOB_STATES:
+                self.execution_service.cancel(handle)
+                state = self.execution_service.get_status(handle)
+                if state not in TERMINAL_JOB_STATES:
+                    raise RuntimeError(
+                        "Cancellation requested; waiting for provider terminal state"
+                    )
+            outcome = map_state_to_status(state, self.config)
             cleanup.append(
                 TaskIdentity(
                     job_id=handle.providerJobId,
@@ -308,7 +326,7 @@ class JobQueueProcessor:
                     handle=handle,
                 )
             )
-        job["status"] = self.config.get_status_types().CANCELLED.value
+        job["status"] = outcome
         job["completedDate"] = MetadataUtils.get_timestamp()
         if handle is not None and workload == Workload.TRAINING:
             values["trainingOutputPath"] = output_prefix(
@@ -316,7 +334,10 @@ class JobQueueProcessor:
             )
         workflow = WORKFLOWS[workload]
         values[workflow.message] = MetadataUtils.append_status_message(
-            values.get(workflow.message), "Task cancelled"
+            values.get(workflow.message),
+            "Task cancelled"
+            if outcome == self.config.get_status_types().CANCELLED.value
+            else f"Task already reached {outcome} before cancellation",
         )
         return workflow.model.model_validate(values), cleanup
 

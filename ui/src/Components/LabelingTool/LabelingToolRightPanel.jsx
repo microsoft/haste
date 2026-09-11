@@ -37,6 +37,8 @@ const LabelingToolRightPanel = ({
   setDrawingCount,
   selectedShape,
   imageLayerId,
+  imageLayer,
+  eventTypes,
   undo,
   redo,
 }) => {
@@ -57,6 +59,8 @@ const LabelingToolRightPanel = ({
     setDrawingCount: PropType.func.isRequired,
     selectedShape: PropType.object,
     imageLayerId: PropType.string.isRequired,
+    imageLayer: PropType.object.isRequired,
+    eventTypes: PropType.array.isRequired,
     undo: PropType.func.isRequired,
     redo: PropType.func.isRequired,
   };
@@ -162,9 +166,10 @@ const LabelingToolRightPanel = ({
           <CreateEditModelTrainingModal
             onClose={() => setModalComponent(null)}
             projectId={projectId}
-            imageLayer={labelingToolDataRef.current}
+            imageLayer={imageLayer}
             guidedTour="createEditModelTrainingModalGuide"
             autoLaunchGuidedTour={true}
+            eventTypes={eventTypes}
           />
         );
       }

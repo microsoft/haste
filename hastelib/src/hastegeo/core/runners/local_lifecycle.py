@@ -95,6 +95,7 @@ def blob_descriptor(
         same_emulator = (
             parsed.hostname in local_hosts
             and configured.hostname in local_hosts
+            and parsed.port == configured.port
         )
         if (
             parsed.scheme not in {"http", "https"}
@@ -146,6 +147,8 @@ class LocalTaskRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     image: str
+    storage_account: str | None = None
+    storage_endpoint: str | None = None
     command: str | list[str] | None = None
     arguments: str | list[str] | None = None
     environment: dict[str, str] = Field(default_factory=dict)
@@ -161,7 +164,7 @@ class LocalTaskRequest(BaseModel):
             raise ValueError("Local tasks require an output pattern")
         return [safe_relative_path(pattern) for pattern in value]
 
-    @field_validator("image", "output_prefix")
+    @field_validator("image", "output_prefix", "storage_endpoint")
     @classmethod
     def safe_text(cls, value: str | None) -> str | None:
         return reject_credentials(value) if value is not None else None
