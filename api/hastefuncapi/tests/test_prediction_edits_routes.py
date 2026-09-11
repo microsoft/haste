@@ -5,10 +5,12 @@ import json
 import os
 import shutil
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import azure.functions as func
+from azure.core.exceptions import HttpResponseError
 
 os.environ.setdefault("DEVELOPMENT_MODE", "true")
 os.environ.setdefault("METADATA_STORAGE_TYPE", "local")
@@ -221,6 +223,48 @@ class TestPredictionEditingRoutes(
         )
         self.assertNotIn("private-token", str(self.logger.mock_calls))
         self.assertNotIn(b"private-token", response.get_body())
+
+    async def test_storage_500_logs_safe_service_diagnostics(self) -> None:
+        error = HttpResponseError("https://storage/blob?sig=private-token")
+        error.status_code = 403
+        error.error_code = "AuthorizationPermissionMismatch"
+        with patch.object(
+            function_app.PredictionEditsProcessor,
+            "save",
+            side_effect=error,
+        ):
+            response = await self.save_http()
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            json.loads(response.get_body())["error"]["code"], "internal_error"
+        )
+        diagnostics = self.logger.error.call_args.args[2][0]
+        self.assertEqual(diagnostics["status"], 403)
+        self.assertEqual(
+            diagnostics["code"], "AuthorizationPermissionMismatch"
+        )
+        self.assertTrue(diagnostics["frames"])
+        self.assertNotIn("private-token", str(self.logger.mock_calls))
+        self.assertNotIn(b"private-token", response.get_body())
+
+    async def test_renewal_lease_loss_returns_conflict_without_a_version(
+        self,
+    ) -> None:
+        lease = Mock()
+        error = HttpResponseError("lease lost")
+        error.status_code = 409
+        error.error_code = "LeaseIdMismatchWithLeaseOperation"
+        lease.renew.side_effect = error
+        with patch(
+            "hastegeo.core.processors.prediction_edits.prediction_edit_lock",
+            return_value=nullcontext(lease),
+        ):
+            response = await self.save_http()
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            json.loads(response.get_body())["error"]["code"], "save_conflict"
+        )
+        self.assertEqual(self.current().editedPredictions, [])
 
     async def test_wrong_layer_is_rejected_across_version_consumers(
         self,

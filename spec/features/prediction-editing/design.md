@@ -148,6 +148,19 @@ saved version without attributes remains downloadable, but its map selection
 is disabled with explicit missing-artifact guidance; opening it does not enqueue
 a backfill. This implementation does not migrate the user's local projects.
 
+For cloud saves, Blob access-policy initialization must preserve existing
+policies and avoid an ACL write when the configured policy is already valid.
+Explicit renewal failures that identify a lost write lease return a conflict;
+authorization, transport and unrelated Azure failures remain server errors.
+Lease cleanup must not replace a primary operation or renewal exception. A
+cleanup failure after publication can still leave a write unconfirmed, so an
+error response alone is not proof that metadata was never saved.
+
+Internal prediction-save logs include bounded exception/cause classes, Azure
+status/error codes and file/function/line locations. They exclude exception
+messages, source lines, payloads, credentials and signed URLs. Public failure
+responses retain their existing sanitized contracts.
+
 Assessment may return a successful partial report with aggregate predictions,
 a population estimate, and a diagnostic explaining unavailable label-based
 metrics. Display those aggregates and the diagnostic together; HTTP failures

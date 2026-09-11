@@ -100,6 +100,7 @@ from hastegeo.core.utils.blob import (
     parse_byte_range,
 )
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
+from hastegeo.core.utils.errors import exception_diagnostics
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
 from hastegeo.core.utils.source_types import normalize_source_type
@@ -2519,7 +2520,9 @@ def _prediction_edit_error_response(
         )
     else:
         logger.error(
-            "Prediction edit operation failed (%s)", type(error).__name__
+            "Prediction edit operation failed (%s): %s",
+            type(error).__name__,
+            exception_diagnostics(error),
         )
         status, code, message = (
             internal_status,
@@ -2655,7 +2658,11 @@ async def PutBuildingPredictions(
             "Invalid prediction request.", status_code=400
         )
     except Exception as error:
-        logger.error("Prediction save failed (%s)", type(error).__name__)
+        logger.error(
+            "Prediction save failed (%s): %s",
+            type(error).__name__,
+            exception_diagnostics(error),
+        )
         return func.HttpResponse(
             "Error saving building predictions.", status_code=500
         )

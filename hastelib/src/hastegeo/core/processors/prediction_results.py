@@ -21,6 +21,7 @@ from ..models.prediction_results import (
     ResultsRequest,
 )
 from ..models.projects import ImageLayer, Model
+from ..publishing.lease import renew_lease
 from ..utils.blob import BlobRange, read_blob_range
 from ..utils.footprint_artifacts import validate_layer_footprint_url
 from ..utils.metadata import MetadataUtils
@@ -185,7 +186,7 @@ class PredictionResultsProcessor:
                     "Model predictions changed before publication"
                 )
             if lease is not None:
-                lease.renew()
+                renew_lease(lease)
             self.metadata(current.projectId).save(current.modelId, fields)
         return current.model_copy(update=fields)
 

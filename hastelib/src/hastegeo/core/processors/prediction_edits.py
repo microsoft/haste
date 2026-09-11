@@ -20,7 +20,11 @@ from ..models.prediction_edits import (
     SaveEditedPredictionsRequest,
 )
 from ..models.projects import Model
-from ..publishing.lease import LeaseRenewalError, LeaseUnavailableError
+from ..publishing.lease import (
+    LeaseRenewalError,
+    LeaseUnavailableError,
+    renew_lease,
+)
 from ..utils.metadata import MetadataUtils
 from ..utils.prediction_edit_lock import prediction_edit_lock
 from ..utils.prediction_readiness import raw_predictions_readiness
@@ -195,7 +199,7 @@ class PredictionEditsProcessor(PredictionResultsProcessor):
                 current = self.model(model.projectId, model.modelId)
                 self._validate_source(current, request)
                 if lease is not None:
-                    lease.renew()
+                    renew_lease(lease)
                 entry = EditedPredictionVersion(
                     version=version,
                     gpkgUrl=storage.get_download_url(

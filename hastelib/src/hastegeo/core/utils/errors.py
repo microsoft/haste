@@ -20,11 +20,50 @@ The Azure error shape is matched structurally (``.error.code`` /
 utility with no SDK import.
 """
 
+import re
+import traceback
+from pathlib import Path
 from typing import Any, Optional
 
 # RequestId/Time are appended by the service to the message body; they are
 # useful in logs but noise in a UI status message.
 _SERVICE_TRAILER_MARKERS = ("\nRequestId:", "\nTime:")
+
+
+def exception_diagnostics(exc: BaseException) -> list[dict[str, Any]]:
+    """Describe failure locations/SDK codes without messages or payloads."""
+    chain = []
+    seen = set()
+    current = exc
+    while current is not None and id(current) not in seen and len(chain) < 5:
+        seen.add(id(current))
+        entry: dict[str, Any] = {"type": type(current).__name__}
+        status = getattr(current, "status_code", None)
+        if type(status) is int and 100 <= status <= 599:
+            entry["status"] = status
+        code = getattr(current, "error_code", None)
+        if code is None:
+            code = getattr(getattr(current, "error", None), "code", None)
+        if isinstance(code, str) and re.fullmatch(
+            r"[A-Za-z][A-Za-z0-9_]{0,99}", code
+        ):
+            entry["code"] = code
+        frames = traceback.extract_tb(current.__traceback__)
+        if len(frames) > 12:
+            frames = frames[:6] + frames[-6:]
+        entry["frames"] = [
+            {
+                "file": Path(frame.filename).name,
+                "line": frame.lineno,
+                "function": frame.name,
+            }
+            for frame in frames
+        ]
+        chain.append(entry)
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return chain
 
 
 def _unwrap_message(message: Any) -> Optional[str]:

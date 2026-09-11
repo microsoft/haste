@@ -4,10 +4,12 @@
 import json
 import os
 import unittest
+from contextlib import nullcontext
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import azure.functions as func
+from azure.core.exceptions import HttpResponseError
 
 os.environ.setdefault("DEVELOPMENT_MODE", "true")
 os.environ.setdefault("DATA_PATH", "/tmp/haste-results-api-tests")
@@ -143,6 +145,49 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
             self.http(self.request().model_dump())
         )
         self.assertEqual(response.status_code, 500)
+
+    async def test_storage_500_logs_safe_service_diagnostics(self) -> None:
+        error = HttpResponseError("https://storage/blob?sig=private-token")
+        error.status_code = 403
+        error.error_code = "AuthorizationPermissionMismatch"
+        with patch.object(
+            function_app.PredictionResultsProcessor,
+            "save_building_predictions",
+            side_effect=error,
+        ), patch.object(function_app, "logger") as logger:
+            response = await function_app.PutBuildingPredictions(
+                self.http(self.request().model_dump())
+            )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.get_body(), b"Error saving building predictions."
+        )
+        diagnostics = logger.error.call_args.args[2][0]
+        self.assertEqual(diagnostics["status"], 403)
+        self.assertEqual(
+            diagnostics["code"], "AuthorizationPermissionMismatch"
+        )
+        self.assertTrue(diagnostics["frames"])
+        self.assertNotIn("private-token", str(logger.mock_calls))
+
+    async def test_renewal_lease_loss_returns_conflict_without_publication(
+        self,
+    ) -> None:
+        lease = MagicMock()
+        error = HttpResponseError("lease lost")
+        error.status_code = 409
+        error.error_code = "LeaseIdMismatchWithLeaseOperation"
+        lease.renew.side_effect = error
+        with patch(
+            "hastegeo.core.processors.prediction_results.prediction_edit_lock",
+            return_value=nullcontext(lease),
+        ):
+            response = await function_app.PutBuildingPredictions(
+                self.http(self.request(predictions=[]).model_dump())
+            )
+        self.assertEqual(response.status_code, 409)
+        self.metadata.save.assert_not_called()
+        self.assertEqual(self.record["predictionRevision"], "old")
 
     async def test_protected_artifact_query_range_and_cache(self) -> None:
         with patch.object(

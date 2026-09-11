@@ -47,6 +47,20 @@ cases. Model-only edit tests cover concurrent/idempotent saves, partial uploads,
 source changes, historical versions, protected downloads and reports. Tests for
 the removed shadow authority, reservation counters and receipt ledger are gone.
 
+The deployed save-failure investigation compared wheel `1.0.44rc11` with
+`9ded358`: all 104 non-version Python modules match. Both reported response
+bodies identify the Python generic-error paths, not an absent APIM operation.
+This establishes code parity and transport location, not the remote exception.
+
+Additional regressions exercise Azure SDK policy-list handling, unchanged-policy
+no-op behavior, preservation of unrelated policies, lease renewal/release error
+classification, and credential-free error diagnostics on both save routes.
+These use deterministic SDK mocks; no remote account access, prediction
+submission, deployment, or existing project-data mutation is implied.
+The combined policy/lease/storage/processor/API gate passed 95 cases. A separate
+offline run in the API image passed 31 policy/lease/diagnostic cases using the
+deployment's Azure Blob SDK 12.30.0, rather than only the host's SDK version.
+
 The final merged editor's Node suite passed 206 cases, including the parent's
 additional raw-download tests. Real Chrome/Azure Maps SDK/WebGL fixtures covered
 gestures, complete pins, version selection, report/download choices, navigation
