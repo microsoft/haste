@@ -10,3 +10,6 @@
 # Synthetic credential-shape fixtures used by TestLooksLikeCredential.
 f8659a041950b22b7b8b0735a97910a423feea7e:hastelib/tests/core/models/test_compute.py:generic-api-key:217
 f8659a041950b22b7b8b0735a97910a423feea7e:hastelib/tests/core/models/test_compute.py:jwt:232
+# Mock Cosmos item/partition assertion, not an authentication credential.
+dab7ad874e0e9b92817b13f4fe9baf1fc1a05dc2:hastelib/tests/core/data_layer/test_conditional_metadata.py:generic-api-key:163
+bf23e64b12f9d87ad3ffb29216f29a2456651c06:hastelib/tests/core/data_layer/test_conditional_metadata.py:generic-api-key:163
