@@ -29,6 +29,24 @@ class ProcessorTestCase(unittest.IsolatedAsyncioTestCase):
 
 
 class TestLabelingWorkspaceProcessor(ProcessorTestCase):
+    async def test_fallback_rejects_missing_or_empty_label_identifier(
+        self,
+    ) -> None:
+        self.labels.load.side_effect = FileNotFoundError
+        for identifier in [None, "", "   "]:
+            with self.subTest(identifier=identifier):
+                self.labels.load_all_from_partition.return_value = [
+                    {
+                        "projectId": "project-1",
+                        "imageLayerId": "layer-1",
+                        "labelprojectId": identifier,
+                    }
+                ]
+                with self.assertRaises(FileNotFoundError):
+                    await LabelingWorkspaceProcessor(
+                        "project-1", "layer-1", self.config, self.factory
+                    ).load()
+
     def setUp(self) -> None:
         super().setUp()
         self.processor(
