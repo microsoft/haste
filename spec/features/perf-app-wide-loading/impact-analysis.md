@@ -33,10 +33,13 @@
 
 ## Security
 
-The bootstrap accepts no caller-controlled identity. It uses the decoded SWA
-principal and current ACL state, and does not weaken authorization on any
-sensitive endpoint. No secrets, CORS changes, public storage, or new roles are
-introduced.
+The bootstrap accepts no identity query/body parameters. Its decoded SWA
+principal is trustworthy only behind trusted SWA/APIM ingress or proper signed
+identity validation. Until that prerequisite is enforced, direct callers to the
+public Function endpoint can supply the asserted identity header. Current ACL
+checks do not authenticate that assertion; deployment remains blocked on this
+existing trust-boundary issue. No secrets, CORS changes, public storage, or new
+roles are introduced here.
 
 ## Rollback
 
