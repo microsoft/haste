@@ -12,6 +12,10 @@ class MetadataUtils:
         return str(uuid.uuid4())
 
     @staticmethod
+    def generate_deterministic_id(*parts: str) -> str:
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, "\0".join(parts)))
+
+    @staticmethod
     def generate_int_id():
         return str(uuid.uuid4().int)
 

@@ -16,6 +16,20 @@ echo "[TRAINING-ENTRYPOINT] Args: $*"
 export PYTHONPATH="/app:${PYTHONPATH:-}"
 echo "[TRAINING-ENTRYPOINT] Updated PYTHONPATH: $PYTHONPATH"
 
+if [ "${HASTE_LOCAL_SHARED_WORKSPACE:-0}" = "1" ]; then
+    finish_local_workspace() {
+        local exit_code=$?
+        trap - EXIT
+        if ! (cd /app && python -m hastegeo.core.utils.local_permissions \
+            "${HASTE_JOB_WORKDIR:-${AZ_BATCH_TASK_WORKING_DIR:-}}"); then
+            echo "[TRAINING-ENTRYPOINT] Local output permissions could not be prepared" >&2
+            if [ "$exit_code" -eq 0 ]; then exit_code=1; fi
+        fi
+        exit "$exit_code"
+    }
+    trap finish_local_workspace EXIT
+fi
+
 TASK_DIR=$(pwd)
 echo "[TRAINING-ENTRYPOINT] Task directory: $TASK_DIR"
 
