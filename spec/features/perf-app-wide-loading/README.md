@@ -1,7 +1,7 @@
 # App-Wide Loading Performance
 
-This branch contains slices 1 through 5 of the seven-part split of PR #194.
-The remaining slices are planned, not included in this branch.
+This branch contains slices 1 through 6 of the seven-part split of PR #194.
+The remaining slice is planned, not included in this branch.
 
 ## Scope
 
@@ -12,6 +12,7 @@ The remaining slices are planned, not included in this branch.
 - Published Datasets
 - Active Jobs
 - Labeling Workspace
+- Interactive Labeler
 
 See [design](design.md) and [user stories](user-stories.md) for the applicable
 contracts and acceptance criteria. Each slice carries focused regression tests.

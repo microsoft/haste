@@ -9,6 +9,7 @@
 - [Published Datasets](#published-datasets)
 - [Active Jobs](#active-jobs)
 - [Labeling Workspace](#labeling-workspace)
+- [Interactive Labeler](#interactive-labeler)
 
 ## Route Loading
 
@@ -126,3 +127,14 @@ control and drawing assets. It displays one route-owned staged workspace loader
 until data, map readiness, drawing controls, and the first stable map frame are
 ready. The map starts at the workspace bounds without an animated camera flight
 and is disposed if navigation interrupts initialization.
+
+## Interactive Labeler
+
+Imagery, model metadata, and saved labels load concurrently. Model metadata is
+required; unavailable optional imagery or saved labels do not block startup.
+PMTiles and feature-sidecar transfers start together and both are required.
+
+If either required transfer fails, its sibling is aborted and allowed to settle
+before retry. Navigation aborts owned metadata and artifact work. The existing
+Interactive Labeler loader delegates presentation to the shared workspace loader
+without changing its stages or readiness contract.
