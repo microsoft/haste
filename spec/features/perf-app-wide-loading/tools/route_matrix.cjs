@@ -79,6 +79,11 @@ const routes = [
     ready: ".pgrid-page--layers",
   },
   {
+    name: "project-expanded-layer",
+    path: `/project/${project}/${layer}`,
+    ready: ".pgrid-page--layers",
+  },
+  {
     name: "image-layer",
     path: `/project/${project}/imageLayer/${layer}`,
     readyText: "Imagery Preview",
@@ -250,9 +255,16 @@ async function measure(browser, route, profile, mode) {
   const httpErrors = [];
   const consoleErrors = [];
   const pageErrors = [];
-  page.on("request", (request) => requests.push(request.url()));
+  const inflight = new Set();
+  let priorNavigationRequests = new Set();
+  page.on("request", (request) => {
+    inflight.add(request);
+    requests.push(request.url());
+  });
+  page.on("requestfinished", (request) => inflight.delete(request));
   page.on("requestfailed", (request) => {
-    if (!isExpectedNavigationAbort(request)) failures.push(request.url());
+    inflight.delete(request);
+    if (!isExpectedNavigationAbort(request, priorNavigationRequests)) failures.push(request.url());
   });
   page.on("response", (response) => {
     if (response.status() >= 400) httpErrors.push(response.status());
@@ -270,6 +282,7 @@ async function measure(browser, route, profile, mode) {
   pageErrors.length = 0;
   await page.evaluate(() => performance.clearResourceTimings());
 
+  priorNavigationRequests = new Set(inflight);
   const started = Date.now();
   if (mode.startsWith("in-app")) {
     await navigateInApp(page, route.path);
