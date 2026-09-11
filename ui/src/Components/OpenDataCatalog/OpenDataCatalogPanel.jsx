@@ -216,7 +216,7 @@ const OpenDataCatalogPanel = ({
   useEffect(() => {
     if (!isOpen) return undefined;
     let active = true;
-    loadAzureMaps()
+    loadAzureMaps(document, { drawing: true, swipe: false })
       .then(() => {
         if (active) setMapsReady(true);
       })
