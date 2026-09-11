@@ -2,8 +2,6 @@ name: Build hastegeo wheel
 
 on:
   pull_request:
-    branches:
-      - main
     paths:
       - "hastelib/**"
       - ".github/scripts/resolve_hastegeo_version.py"
