@@ -14,6 +14,15 @@ from hastegeo.core.data_layer.azure_blob_storage_data_layer import (
 
 
 class TestAzureBlobStorageDataLayerLoad(unittest.TestCase):
+    def test_load_all_scopes_initial_listing_to_partition_and_type(
+        self,
+    ) -> None:
+        self.layer.container_client.walk_blobs.return_value = []
+        self.assertEqual(self.layer.load_all("model"), [])
+        self.layer.container_client.walk_blobs.assert_called_once_with(
+            name_starts_with="partition/model_"
+        )
+
     def setUp(self) -> None:
         self.layer = AzureBlobStorageDataLayer.__new__(
             AzureBlobStorageDataLayer
