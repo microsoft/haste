@@ -101,3 +101,14 @@ class AsyncTTLCache(Generic[KeyT, ValueT]):
             self._entries.clear()
         for task in tasks:
             task.cancel()
+
+    async def invalidate(self) -> None:
+        """Drop cached values without cancelling current readers.
+
+        In-flight loads are detached so callers after invalidation start a
+        fresh load. Detached results can still return to their original
+        callers, but ``_complete`` will not cache them.
+        """
+        async with self._lock:
+            self._inflight.clear()
+            self._entries.clear()

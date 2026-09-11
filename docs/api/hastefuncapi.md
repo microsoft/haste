@@ -97,6 +97,10 @@ These endpoints use `FUNCTION`-level auth regardless of development mode (intend
 and performs no user write for a stable active session. Blocked accounts retain
 their status response but receive no application roles.
 
+`GetPublishedDatasets` supports `ETag`/`If-None-Match` and returns an empty
+`304` for an unchanged fresh representation. Its process-local cache is bounded
+to five seconds and is invalidated after publishing mutations.
+
 ### Utilities
 
 | Method | Route | Description |

@@ -173,6 +173,45 @@ class TestAsyncTTLCache(unittest.IsolatedAsyncioTestCase):
             await request
         await asyncio.sleep(0)
 
+    async def test_invalidate_removes_cached_values(self) -> None:
+        factory = AsyncMock(side_effect=["first", "second"])
+        await self.cache.get_or_create("key", factory)
+
+        await self.cache.invalidate()
+        value, reused = await self.cache.get_or_create("key", factory)
+
+        self.assertEqual(value, "second")
+        self.assertFalse(reused)
+        self.assertEqual(factory.await_count, 2)
+
+    async def test_invalidate_detaches_stale_inflight_load(self) -> None:
+        old_started = asyncio.Event()
+        old_release = asyncio.Event()
+
+        async def old_factory() -> str:
+            old_started.set()
+            await old_release.wait()
+            return "old"
+
+        old_request = asyncio.create_task(
+            self.cache.get_or_create("key", old_factory)
+        )
+        await old_started.wait()
+
+        await self.cache.invalidate()
+        fresh, reused = await self.cache.get_or_create(
+            "key", lambda: asyncio.sleep(0, result="fresh")
+        )
+        old_release.set()
+        old, _ = await old_request
+        cached, cached_reused = await self.cache.get_or_create(
+            "key", lambda: asyncio.sleep(0, result="unexpected")
+        )
+
+        self.assertEqual((old, fresh, cached), ("old", "fresh", "fresh"))
+        self.assertFalse(reused)
+        self.assertTrue(cached_reused)
+
     def test_rejects_invalid_configuration(self) -> None:
         with self.assertRaises(ValueError):
             AsyncTTLCache(ttl_seconds=-1, max_entries=1)
