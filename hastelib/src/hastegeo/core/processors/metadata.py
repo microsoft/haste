@@ -5,6 +5,11 @@ import json
 from hastegeo.core.config import Config
 
 from ..data_layer.unified import UnifiedDataLayer
+from ..utils.parallel import (
+    configured_worker_count,
+    parallel_map,
+    validate_worker_count,
+)
 from ..utils.perf import timed
 
 
@@ -159,6 +164,98 @@ class MetadataProcessor:
             status=status,
             project_id=project_id,
             max_records=max_records,
+        )
+
+    def load_map(
+        self,
+        keys: list[str],
+        data_format: str = "json",
+        max_workers: int | None = None,
+    ) -> dict[str, dict | None]:
+        """Load many records by key concurrently.
+
+        Returns ``{key: record}``; a key whose record is missing maps to
+        ``None`` (mirrors a per-key ``load`` that raises ``FileNotFoundError``).
+        Bounded parallelism overlaps per-key storage operations while the
+        process-wide executor caps aggregate concurrency. Preserves perf
+        instrumentation across worker threads by binding the active counter
+        inside each task.
+        """
+        from ..utils.perf import bind, get_counter
+
+        keys = list(dict.fromkeys(keys))
+        if not keys:
+            return {}
+        workers = (
+            configured_worker_count("HASTE_METADATA_LOAD_WORKERS", 8)
+            if max_workers is None
+            else validate_worker_count(max_workers)
+        )
+        if self.storage.supports_load_map():
+            with timed("load_map"):
+                return self.storage.load_map(
+                    identifiers=keys,
+                    data_type=self.data_type,
+                    data_format=data_format,
+                    max_workers=workers,
+                )
+        counter = get_counter()
+
+        def _one(key):
+            with bind(counter):
+                try:
+                    return key, self.load(key, data_format=data_format)
+                except FileNotFoundError:
+                    return key, None
+
+        return dict(parallel_map(_one, keys, max_workers=workers))
+
+    def load_filtered(
+        self, predicate: dict[str, object], data_format: str = "json"
+    ) -> list[dict]:
+        """Load partition records matching every key/value in ``predicate``.
+
+        This is an explicit client-side fallback: the partition is loaded once
+        and then filtered in process. Backends need a separate query primitive
+        before this can reduce transferred records.
+        """
+        if not isinstance(predicate, dict) or not predicate:
+            raise ValueError("predicate must be a non-empty dictionary")
+        records = self.load_all_from_partition(data_format=data_format)
+        return [
+            record
+            for record in records
+            if isinstance(record, dict)
+            and all(
+                key in record and record[key] == value
+                for key, value in predicate.items()
+            )
+        ]
+
+    def list_keys(self, data_format="json"):
+        """List the identifiers present for this data type in the partition.
+
+        A cheap, metadata-only alternative to ``load_all_from_partition`` for
+        bulk existence checks (does not download record contents).
+        """
+        with timed("list_keys"):
+            return self.storage.list_identifiers(
+                data_type=self.data_type, data_format=data_format
+            )
+
+    def build_url(self, key, data_format="json"):
+        """Build a remote URL for a record without a per-item existence check.
+
+        Intended for callers that have already confirmed the record exists in
+        bulk via :meth:`list_keys`. On the blob backend this avoids a network
+        round-trip per key (the container read SAS is shared), so it is a local
+        operation and is not counted as a storage round-trip.
+        """
+        return self.storage.get_file_remote_path(
+            identifier=key,
+            data_type=self.data_type,
+            data_format=data_format,
+            check_exists=False,
         )
 
     def load_and_combine_sub_data_types(self, key, data_types):
