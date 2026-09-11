@@ -129,6 +129,7 @@ class TestPublishingRoutes(unittest.IsolatedAsyncioTestCase):
             {
                 "userId": "publisher@example.com",
                 "objectId": "OBJECT-ID",
+                "userRoles": ["contributors"],
                 "status": function_app.config.get_user_statuses().ACTIVE.value,
                 "deleted": False,
             }
@@ -144,7 +145,41 @@ class TestPublishingRoutes(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(error)
         self.assertEqual(caller["id"], "object-id")
-        self.assertEqual(caller["roles"], {"authenticated", "contributors"})
+        self.assertEqual(caller["roles"], {"contributors"})
+
+    async def test_publishing_roles_use_principal_acl_intersection(
+        self,
+    ) -> None:
+        principal = {
+            "userId": "OBJECT-ID",
+            "userDetails": "publisher@example.com",
+            "userRoles": ["authenticated", "administrators"],
+        }
+        encoded = base64.b64encode(
+            json.dumps(principal).encode("utf-8")
+        ).decode("ascii")
+        metadata = Mock()
+        metadata.load.return_value = [
+            {
+                "userId": "publisher@example.com",
+                "objectId": "OBJECT-ID",
+                "userRoles": ["contributors"],
+                "status": function_app.config.get_user_statuses().ACTIVE.value,
+                "deleted": False,
+            }
+        ]
+        with patch.object(
+            function_app, "DEVELOPMENT_MODE", False
+        ), patch.object(
+            function_app, "MetadataProcessor", return_value=metadata
+        ):
+            caller, error = await function_app._get_active_publishing_caller(
+                make_request(headers={"x-ms-client-principal": encoded})
+            )
+
+        self.assertIsNone(caller)
+        self.assertEqual(error.status_code, 403)
+        self.assertEqual(response_json(error)["error"]["code"], "FORBIDDEN")
 
     async def test_invalid_principal_header_is_unauthenticated(self) -> None:
         with patch.object(function_app, "DEVELOPMENT_MODE", False):
