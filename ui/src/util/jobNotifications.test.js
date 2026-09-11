@@ -1,3 +1,11 @@
+import { isSuccessfulJobStatus } from "./jobNotifications.js";
+
+test("training and completed jobs are successful, not error notifications", () => {
+  assert.equal(isSuccessfulJobStatus("Trained"), true);
+  assert.equal(isSuccessfulJobStatus("Completed"), true);
+  assert.equal(isSuccessfulJobStatus("Processed"), true);
+  assert.equal(isSuccessfulJobStatus("Failed"), false);
+});
 import test from "node:test";
 import assert from "node:assert/strict";
 

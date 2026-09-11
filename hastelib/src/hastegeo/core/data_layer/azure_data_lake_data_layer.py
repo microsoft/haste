@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 import json
 
+from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import DefaultAzureCredential  # type: ignore
 from azure.storage.filedatalake import DataLakeServiceClient  # type: ignore
 
@@ -120,8 +121,11 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
             raise ValueError("Data Lake metadata reads support only json")
         file_name = self.get_file_path(identifier, data_type, data_format)
         file_client = self.file_system_client.get_file_client(file_name)
-        download = file_client.download_file()
-        file_contents = download.readall()
+        try:
+            download = file_client.download_file()
+            file_contents = download.readall()
+        except ResourceNotFoundError as error:
+            raise FileNotFoundError(file_name) from error
         return json.loads(file_contents)
 
     def load_all(self, data_type, data_format="json"):

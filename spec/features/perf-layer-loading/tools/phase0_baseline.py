@@ -24,11 +24,10 @@ import tempfile
 os.environ.setdefault("METADATA_STORAGE_TYPE", "local")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))  # for seed import
-from seed_synthetic_project import seed  # noqa: E402
-
 from hastegeo.core.config import Config  # noqa: E402
 from hastegeo.core.processors.metadata import MetadataProcessor  # noqa: E402
 from hastegeo.core.utils import perf  # noqa: E402
+from seed_synthetic_project import seed  # noqa: E402
 
 SIZES = [
     ("small", 5, 2),
@@ -51,7 +50,9 @@ def replay_get_project_details(project_id, include_models=True):
     types = Config.get_metadata_types()
 
     project = _mp(types.PROJECT.value, project_id).load(project_id)
-    image_layers = _mp(types.IMAGELAYER.value, project_id).load_all_from_partition()
+    image_layers = _mp(
+        types.IMAGELAYER.value, project_id
+    ).load_all_from_partition()
     models = []
     if include_models:
         models = _mp(types.MODEL.value, project_id).load_all_from_partition()
@@ -84,12 +85,17 @@ def replay_get_project_details(project_id, include_models=True):
             types.LABELS.value, project_id
         ).load_all_from_partition()
         match = next(
-            (lp for lp in label_projects
-             if lp["imageLayerId"] == image_layer_id),
+            (
+                lp
+                for lp in label_projects
+                if lp["imageLayerId"] == image_layer_id
+            ),
             None,
         )
-        if match is not None and match.get("labels") is not None:
-            image_layer["labelProjectCount"] = len(match["labels"])
+        if match is not None:
+            image_layer["labelProjectCount"] = len(match.get("labels") or [])
+            if not image_layer.get("labelsUrl"):
+                image_layer["labelsUrl"] = None
 
         try:
             validation = _mp(types.VALIDATION.value, project_id).load(
@@ -112,10 +118,15 @@ def run():
     for name, layers, models_per in SIZES:
         with tempfile.TemporaryDirectory(prefix=f"haste-bench-{name}-") as d:
             os.environ["DATA_PATH"] = d
-            project_id = f"00000000-0000-4000-8000-{layers:06d}{models_per:06d}"
+            project_id = (
+                f"00000000-0000-4000-8000-{layers:06d}{models_per:06d}"
+            )
             total_models = seed(
-                project_id, layers, models_per,
-                labels_per_layer=20, validation_per_layer=10,
+                project_id,
+                layers,
+                models_per,
+                labels_per_layer=20,
+                validation_per_layer=10,
                 with_labels_url=False,
             )
 
@@ -123,6 +134,7 @@ def run():
             for _ in range(REPEATS):
                 counter = perf.begin(True)
                 import time
+
                 t0 = time.perf_counter()
                 payload = replay_get_project_details(project_id)
                 walls.append((time.perf_counter() - t0) * 1000.0)
