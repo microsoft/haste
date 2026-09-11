@@ -6,6 +6,12 @@ Remove only the default-branch filter on existing `pull_request` triggers.
 Keep path filters, push/schedule behavior, permissions, action pins, and
 build/publish conditions unchanged.
 
+Secret-scan failures must include actionable file/line diagnostics while
+fully redacting matched values. Verbose output stays paired with
+`--redact=100` and a nonzero findings exit code in every scan mode. Historical
+false positives are handled by exact fingerprints, never by excluding
+whole test directories or weakening detection rules.
+
 ## Trust boundary
 
 The wheel build remains credential-free. The trusted publisher continues
