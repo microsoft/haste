@@ -807,9 +807,7 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
         etag = cached_response["etag"]
         _perf_headers = perf.headers(_perf, _perf_wall)
         cache_headers = {
-            "Cache-Control": (
-                f"private, max-age={_PROJECT_DETAILS_CACHE_SECONDS}"
-            ),
+            "Cache-Control": "private, no-cache",
             "ETag": etag,
             "X-Haste-Cache": "HIT" if cache_hit else "MISS",
         }
