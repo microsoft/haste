@@ -38,6 +38,7 @@ import {
   collectProjectJobStates,
   findJobStatusTransitions,
   hasActiveProjectJobs,
+  isSuccessfulJobStatus,
 } from "../util/jobNotifications";
 import { createSingleFlight } from "../util/singleFlight";
 
@@ -248,7 +249,7 @@ const Project = ({ setModalComponent }) => {
             previousJobs,
             currentJobStates
           )) {
-            const succeeded = transition.status === "Processed";
+            const succeeded = isSuccessfulJobStatus(transition.status);
             dispatchToast(
               <Toast>
                 <ToastTitle>{`${transition.title} ${succeeded ? "completed" : transition.status.toLowerCase()}`}</ToastTitle>
@@ -459,9 +460,9 @@ const Project = ({ setModalComponent }) => {
                       onClick={() =>
                         setModalComponent(
                           <CreateEditProjectModal
-                            onClose={() => {
+                            onClose={(saved = false) => {
                               setModalComponent(null);
-                              fetchProjectDetails(false, true);
+                              if (saved) fetchProjectDetails(false, true);
                             }}
                             projectId={projectId}
                           />

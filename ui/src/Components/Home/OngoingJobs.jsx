@@ -14,6 +14,7 @@ import StatusIndicator from "../OtherComponents/StatusIndicator";
 import NoResultsMessage from "../NoResultsMessage";
 import {
   ACTIVE_JOBS_ENDPOINT,
+  activeJobIndicatorProps,
   activeJobsAfterResponse,
   activeJobsHeaders,
   shouldPollActiveJobs,
@@ -134,7 +135,7 @@ const OngoingJobs = () => {
             <span className="dash-job-project">{job.projectName}</span>
           </button>
           <div className="dash-job-status">
-            <StatusIndicator {...job.indicator} />
+            <StatusIndicator {...activeJobIndicatorProps(job.indicator)} />
           </div>
         </div>
       ))}

@@ -72,6 +72,7 @@ process-wide concurrency, and avoid duplicate or idle refresh work.
 
 | Document | Purpose | Status |
 |---|---|---|
+| [user-stories.md](user-stories.md) | Acceptance criteria and agent assignments | draft |
 | [findings.md](findings.md) | Verified bottleneck inventory with file:line evidence | draft |
 | [design.md](design.md) | Technical design of each fix | draft |
 | [plan.md](plan.md) | Phased execution plan | Phase 0 done |

@@ -1,3 +1,12 @@
+export function activeJobIndicatorProps(indicator) {
+  return {
+    ...indicator,
+    currentStep: indicator.currentStep ?? undefined,
+    totalSteps: indicator.totalSteps ?? undefined,
+    progressPct: indicator.progressPct ?? undefined,
+  };
+}
+
 export const ACTIVE_JOBS_ENDPOINT = "GetActiveJobs";
 
 export function activeJobsHeaders(etag) {

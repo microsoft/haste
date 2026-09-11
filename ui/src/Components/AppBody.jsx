@@ -4,6 +4,7 @@ import { Route, Routes, useLocation } from "react-router-dom";
 import { lazy, Suspense, useContext } from "react";
 
 import Loading from "./OtherComponents/Loading";
+import RouteErrorBoundary from "./RouteErrorBoundary";
 import PropType from "prop-types";
 
 import { AppContext } from "../AppContext";
@@ -55,7 +56,7 @@ const AppBody = ({ setModalComponent }) => {
       }`}
     >
       {appParams.isLoading && <Loading />}
-      {routesReady && <Suspense fallback={appParams.isLoading ? null : <RouteLoading label={getRouteLoadingLabel(location.pathname)} />}><Routes>
+  {routesReady && <RouteErrorBoundary><Suspense fallback={appParams.isLoading ? null : <RouteLoading label={getRouteLoadingLabel(location.pathname)} />}><Routes>
         {appParams.userRoles !== null && appParams.publishingEnabled && (
           <Route path="/published-datasets" element={<PublishedDatasets />} />
         )}
@@ -129,7 +130,7 @@ const AppBody = ({ setModalComponent }) => {
           )}
 
         <Route path="*" element={<Error404 />} />
-      </Routes></Suspense>}
+      </Routes></Suspense></RouteErrorBoundary>}
     </div>
   );
 };
