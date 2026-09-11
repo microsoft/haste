@@ -15,7 +15,7 @@
 // Run (playwright installed in a scratch dir):
 //   NODE_PATH=/tmp/haste-uibench/node_modules \
 //   node spec/features/perf-layer-loading/tools/ui_bench.cjs \
-//     --ui http://localhost:4280 --api http://localhost:7071 \
+//     --ui http://localhost:4280 \
 //     --project 00000000-0000-4000-8000-000050000005
 const { chromium } = require("playwright");
 
@@ -185,7 +185,7 @@ const mockSession = {
       await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
     }
 
-    const interactiveAt = Date.now();
+    const interactiveAt = tti === null ? t0 : t0 + tti;
     const initialCalls = gpd.filter(
       (call) => call.startedAt <= interactiveAt
     );

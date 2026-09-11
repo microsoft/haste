@@ -29,6 +29,24 @@ class ProcessorTestCase(unittest.IsolatedAsyncioTestCase):
 
 
 class TestLabelingWorkspaceProcessor(ProcessorTestCase):
+    async def test_fallback_rejects_missing_or_empty_label_identifier(
+        self,
+    ) -> None:
+        self.labels.load.side_effect = FileNotFoundError
+        for identifier in [None, "", "   "]:
+            with self.subTest(identifier=identifier):
+                self.labels.load_all_from_partition.return_value = [
+                    {
+                        "projectId": "project-1",
+                        "imageLayerId": "layer-1",
+                        "labelprojectId": identifier,
+                    }
+                ]
+                with self.assertRaises(FileNotFoundError):
+                    await LabelingWorkspaceProcessor(
+                        "project-1", "layer-1", self.config, self.factory
+                    ).load()
+
     def setUp(self) -> None:
         super().setUp()
         self.processor(
@@ -174,10 +192,34 @@ class TestAssembleActiveJobs(unittest.TestCase):
             ["Imagery", "Inference", "Training"],
         )
         self.assertEqual(len({job.key for job in result.jobs}), 3)
+        self.assertEqual(result.jobs[0].indicator.currentStep, 1)
         for job in result.jobs:
-            self.assertIsInstance(job.indicator.currentStep, int)
-            self.assertIsInstance(job.indicator.totalSteps, int)
-            self.assertIsInstance(job.indicator.progressPct, float)
+            self.assertIsNone(job.indicator.totalSteps)
+            self.assertIsNone(job.indicator.progressPct)
+        self.assertIsNone(result.jobs[1].indicator.currentStep)
+        self.assertIsNone(result.jobs[2].indicator.currentStep)
+
+    def test_preserves_real_zero_progress(self) -> None:
+        result = assemble_active_jobs(
+            [{"projectId": "project-1"}],
+            {
+                "project-1": (
+                    [
+                        {
+                            "imageLayerId": "layer-1",
+                            "status": "Queued",
+                            "currentStep": 0,
+                            "totalSteps": 4,
+                            "progressPct": 0,
+                        }
+                    ],
+                    [],
+                )
+            },
+        )
+        self.assertEqual(result.jobs[0].indicator.currentStep, 0)
+        self.assertEqual(result.jobs[0].indicator.totalSteps, 4)
+        self.assertEqual(result.jobs[0].indicator.progressPct, 0.0)
 
     def test_excludes_empty_and_terminal_statuses(self) -> None:
         result = assemble_active_jobs(
