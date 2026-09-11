@@ -296,7 +296,13 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
             )
             return in_partition and matches_metadata_type(blob_name, data_type)
 
-        blobs = self.container_client.walk_blobs()
+        blobs = (
+            self.container_client.walk_blobs(
+                name_starts_with=f"{self.partition_key}/{data_type}_"
+            )
+            if self.partition_key
+            else self.container_client.walk_blobs()
+        )
         for blob in blobs:
             # Ignore stats file
             if "stats" in blob.name:
