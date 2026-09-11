@@ -41,16 +41,17 @@ azd's `resourceToken`) so `what-if` stays clean against existing deployments.
 
 ## Project detail performance
 
-The API and queue workers use the following optional runtime settings. Defaults are
-validated at process startup, so invalid values fail fast instead of creating an
-unbounded executor or cache.
+The API and queue workers use the following optional runtime settings. Blob
+executor and project cache settings are validated at process startup. Metadata
+map and artifact worker limits are validated when their associated operation is
+first used; invalid settings may therefore fail a later request or job.
 
 | Function App setting | Default | Allowed | Purpose |
 |---|---:|---:|---|
 | `HASTE_BLOB_DOWNLOAD_WORKERS` | 16 | 1–64 | Process-wide blocking Blob I/O budget. |
 | `HASTE_METADATA_LOAD_WORKERS` | 8 | 1–64 | Per-map limit within the process budget. |
 | `HASTE_ARTIFACT_DOWNLOAD_WORKERS` | 8 | 1–64 | Per-artifact limit within the process budget. |
-| `HASTE_PROJECTDETAILS_CACHE_SECONDS` | 15 | 0–300 | Process-local response freshness and HTTP `max-age`. |
+| `HASTE_PROJECTDETAILS_CACHE_SECONDS` | 15 | 0–300 | Process-local response freshness; browsers must revalidate (`private, no-cache`). |
 | `HASTE_PROJECTDETAILS_CACHE_ENTRIES` | 64 | 1–512 | Maximum cached project response variants per worker. |
 
 These controls have code defaults and are not yet exposed as Bicep parameters. Treat

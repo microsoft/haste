@@ -71,7 +71,7 @@ class TestGetProjectDetails(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.get_body()), self.project)
         self.assertEqual(
-            response.headers["Cache-Control"], "private, max-age=15"
+            response.headers["Cache-Control"], "private, no-cache"
         )
         self.assertEqual(response.headers["X-Haste-Cache"], "MISS")
         self.assertTrue(response.headers["ETag"].startswith('"'))
