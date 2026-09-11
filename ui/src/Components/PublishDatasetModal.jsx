@@ -156,7 +156,7 @@ const PublishDatasetModal = ({
         if (!cancelled) setLoading(false);
       });
 
-    apiGet(`GetAssessmentReport?${query}`)
+    apiGet(`GetAssessmentReport?${query}&version=0`)
       .then((report) => {
         if (cancelled || descriptionTouched.current) return;
         setDescription(buildAssessmentSummary(report));

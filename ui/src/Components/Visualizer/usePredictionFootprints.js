@@ -11,6 +11,8 @@ const COLOR_TOKENS = {
   unknown: tokens.colorNeutralForeground3,
   pending: tokens.colorNeutralBackground5,
   outline: tokens.colorNeutralStrokeAccessible,
+  edited: tokens.colorBrandStroke1,
+  selected: tokens.colorNeutralForeground1,
 };
 
 export default function usePredictionFootprints({ maps, registerCleanup, artifacts, visible, themeHostRef, isDark, palette }) {
@@ -33,7 +35,7 @@ export default function usePredictionFootprints({ maps, registerCleanup, artifac
       rendererRef.current = renderer;
       unregister = registerCleanup?.(() => renderer.dispose());
       renderer.ready.then(() => {
-        if (active) setState({ key, maps, ready: true });
+        if (active) setState({ key, maps, renderer, ready: true });
       }).catch(failed);
     } catch (error) {
       queueMicrotask(() => failed(error));
@@ -60,5 +62,5 @@ export default function usePredictionFootprints({ maps, registerCleanup, artifac
     rendererRef.current?.setColors(resolveMapColors(COLOR_TOKENS, (name) => style.getPropertyValue(name)));
   }, [isDark, palette, themeHostRef, maps, key, archiveKey, layersReady]);
 
-  return { layersReady, error: current ? state.error : "" };
+  return { layersReady, renderer: layersReady ? state.renderer : null, error: current ? state.error : "" };
 }

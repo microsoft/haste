@@ -1,6 +1,5 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { useEffect, useState } from "react";
 import {
   Button,
   Spinner,
@@ -17,8 +16,11 @@ import {
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 import PropTypes from "prop-types";
-import { apiGet } from "../../util/api";
 import { buildAssessmentSummary } from "../../util/assessmentSummary";
+import PredictionVersionPicker from "../OtherComponents/PredictionVersionPicker";
+import usePredictionReport from "./usePredictionReport";
+import { versionLabel } from "../Visualizer/predictionVersions.js";
+import { precisionRecallPresentation } from "./assessmentReportHelper.js";
 
 /* ── Theme-aware design tokens (follow light/dark via Fluent) ─── */
 const tokens = {
@@ -105,7 +107,7 @@ HeroCard.propTypes = {
 
 // ─── Precision-recall chart (full width SVG) ──────────────────────────────
 
-const PrecisionRecallChart = ({ precision, recall }) => {
+const PrecisionRecallChart = ({ precision, recall, mode }) => {
   if (!precision || !recall || precision.length === 0) return null;
   const h = 180;
   const pad = 32;
@@ -121,7 +123,7 @@ const PrecisionRecallChart = ({ precision, recall }) => {
         viewBox={`0 0 ${w} ${h}`}
         preserveAspectRatio="xMidYMid meet"
         role="img"
-        aria-label="Precision-recall curve"
+        aria-label={mode === "operating_point" ? "Precision-recall operating point" : "Precision-recall curve"}
         style={{ border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadius, display: "block" }}
       >
         <line x1={pad} y1={h - pad} x2={w - pad} y2={h - pad} stroke={tokens.colorNeutralStroke1} />
@@ -140,12 +142,15 @@ const PrecisionRecallChart = ({ precision, recall }) => {
         })}
         <text x={w / 2} y={h - 4} fontSize="10" fill={tokens.colorNeutralForeground2} textAnchor="middle">Recall (damaged)</text>
         <text x={10} y={h / 2} fontSize="10" fill={tokens.colorNeutralForeground2} textAnchor="middle" transform={`rotate(-90 10 ${h / 2})`}>Precision (damaged)</text>
-        <polyline
+        {mode === "operating_point" ? (
+          <circle cx={pad + recall[0] * (w - 2 * pad)} cy={h - pad - precision[0] * (h - 2 * pad)}
+            r="5" fill={tokens.colorBrandForeground1} />
+        ) : <polyline
           points={points.map(([r, p]) => `${(pad + r * (w - 2 * pad)).toFixed(1)},${(h - pad - p * (h - 2 * pad)).toFixed(1)}`).join(" ")}
           fill="none"
           stroke={tokens.colorBrandForeground1}
           strokeWidth="2"
-        />
+        />}
       </svg>
     </div>
   );
@@ -153,6 +158,7 @@ const PrecisionRecallChart = ({ precision, recall }) => {
 PrecisionRecallChart.propTypes = {
   precision: PropTypes.arrayOf(PropTypes.number),
   recall: PropTypes.arrayOf(PropTypes.number),
+  mode: PropTypes.string,
 };
 
 // ─── Modal ────────────────────────────────────────────────────────────────
@@ -162,42 +168,19 @@ const AssessmentReportModal = ({
   imageLayerId,
   modelId,
   modelName,
+  currentRevision,
   onDismiss,
 }) => {
-  const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  const fetchReport = () => {
-    setLoading(true);
-    setError(null);
-    setReport(null);
-    apiGet(
-      `GetAssessmentReport?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}`
-    )
-      .then((data) => {
-        if (data && data.error && !data.predictions) {
-          setError(data.error);
-        } else {
-          setReport(data);
-        }
-      })
-      .catch(() => setError("Failed to load assessment report."))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    // State updates occur after the report request resolves.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchReport();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, imageLayerId, modelId]);
+  const { report, loading, error, version, selectVersion, retry: fetchReport, manifest } =
+    usePredictionReport("GetAssessmentReport", { projectId, imageLayerId, modelId });
+  const edited = (report?.predictionVersion ?? 0) > 0;
 
   const preds = report?.predictions;
   const pop = report?.populationEstimate;
   const metrics = report?.metrics;
   const sample = report?.evaluationSample;
   const hasLabels = (report?.matched ?? 0) > 0;
+  const pr = precisionRecallPresentation(report);
 
   const summarySentence = buildAssessmentSummary(report);
 
@@ -226,6 +209,13 @@ const AssessmentReportModal = ({
             </div>
           </DialogTitle>
           <DialogContent>
+            <PredictionVersionPicker versions={manifest.data?.versions || []} value={version}
+              onChange={selectVersion} disabled={loading || manifest.loading}
+              currentRevision={manifest.data?.currentPredictionRevision ?? currentRevision} label="Report on" />
+            {manifest.error && <MessageBar intent="warning"><MessageBarBody>
+              {manifest.error} <Button onClick={manifest.retry}>Retry versions</Button>
+            </MessageBarBody></MessageBar>}
+            {report && <Text block>Report source: {versionLabel(report.predictionVersion ?? 0)}</Text>}
             {!loading && !error && summarySentence && (
               <Text style={{ display: "block", color: tokens.colorNeutralForeground2, marginBottom: 16 }}>
                 {summarySentence}
@@ -249,6 +239,9 @@ const AssessmentReportModal = ({
 
             {!loading && report && !error && (
               <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                {report.error && <MessageBar intent="warning">
+                  <MessageBarBody>{report.error}</MessageBarBody>
+                </MessageBar>}
                 {/* Predictions — 2 columns, 2 per row */}
                 <div>
                   <SectionTitle>Predictions</SectionTitle>
@@ -258,20 +251,23 @@ const AssessmentReportModal = ({
                         <MetricCard label="Buildings with a prediction" value={int(preds?.total)} />
                       </div>
                       <div style={{ flexGrow: 1, ...halfItemStyle }}>
-                        <MetricCard label="Non-cloudy" value={int(preds?.knownNonCloudy)} />
+                        <MetricCard label="Known predictions" value={int(preds?.knownNonCloudy)} />
                       </div>
                     </div>
                     <div style={rowStyle}>
                       <div style={{ flexGrow: 1, ...halfItemStyle }}>
-                        <MetricCard label="Cloud-covered (excluded)" value={int(preds?.cloudy)} />
+                        <MetricCard label="Unknown / cloud-covered (excluded)" value={int(preds?.cloudy)} />
                       </div>
                       <div style={{ flexGrow: 1, ...halfItemStyle }}>
-                        <MetricCard label={`Predicted damaged (> ${report.threshold})`} value={`${int(preds?.predictedDamaged)} (${preds?.predictedDamagedPctOfKnown ?? 0}% of non-cloudy)`} accent={tokens.colorDangerForeground1} />
+                        <MetricCard label={edited ? "Damaged (saved analyst classes)" : `Predicted damaged (> ${report.threshold})`} value={`${int(preds?.predictedDamaged)} (${preds?.predictedDamagedPctOfKnown ?? 0}% of known predictions)`} accent={tokens.colorDangerForeground1} />
                       </div>
                     </div>
                   </div>
                 </div>
 
+                {(report.labeledUnknownPredictions ?? 0) > 0 && <MessageBar intent="info"><MessageBarBody>
+                  {report.labeledUnknownPredictions} labeled buildings have Unknown predictions and are excluded from binary metrics, not counted as Not Damaged.
+                </MessageBarBody></MessageBar>}
                 {/* Population estimate — 2 columns, 2 per row */}
                 <div>
                   <SectionTitle>Damaged-building population estimate</SectionTitle>
@@ -331,7 +327,7 @@ const AssessmentReportModal = ({
                             <MetricCard label="Recall" value={pct(metrics?.recall)} />
                           </div>
                           <div style={{ flexGrow: 1, ...halfItemStyle }}>
-                            <MetricCard label="Average precision" value={pct(metrics?.averagePrecision)} />
+                            <MetricCard label="Average precision" value={pct(pr.averagePrecision)} />
                           </div>
                         </div>
                         <div style={rowStyle}>
@@ -353,11 +349,13 @@ const AssessmentReportModal = ({
                     )}
 
                     <div>
-                      <SectionTitle>Precision-recall curve</SectionTitle>
+                      <SectionTitle>{pr.mode === "operating_point" ? "Precision-recall operating point" : "Precision-recall curve"}</SectionTitle>
                       <PrecisionRecallChart
-                        precision={report.precisionRecallCurve?.precision}
-                        recall={report.precisionRecallCurve?.recall}
+                        precision={pr.precision}
+                        recall={pr.recall}
+                        mode={pr.mode}
                       />
+                      {pr.mode === "operating_point" && !pr.precision.length && <Text>Operating point unavailable for this sample.</Text>}
                     </div>
 
                     {report.labeledMissingFromPredictions > 0 && (
@@ -387,6 +385,7 @@ AssessmentReportModal.propTypes = {
   imageLayerId: PropTypes.string.isRequired,
   modelId: PropTypes.string.isRequired,
   modelName: PropTypes.string,
+  currentRevision: PropTypes.string,
   onDismiss: PropTypes.func.isRequired,
 };
 

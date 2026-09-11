@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 // Adapted from PR136. Atlas has ONE handler per scheme; both screens must
 // register archives in the same Protocol or one screen steals the other's reads.
-import { Protocol } from "pmtiles";
+import { FetchSource, PMTiles, Protocol } from "pmtiles";
 
 let protocolInstance;
 const registered = new WeakSet();
@@ -29,15 +29,58 @@ export function footprintArchiveUrl(url) {
   return `${path}?${params}`;
 }
 
-// SWA's API proxy does not reliably honor ranges. Fetch a bounded archive
-// once, then satisfy pmtiles' byte reads from memory.
-export class InMemoryPMTilesSource {
-  constructor(key, buffer) {
-    this.key = key;
-    this.buffer = buffer;
+export class HttpPMTilesSource extends FetchSource {
+  constructor(url, { signal, timeoutMs = 120000 } = {}) {
+    super(url);
+    this.initialSignal = signal;
+    this.timeoutMs = timeoutMs;
   }
-  getKey() { return this.key; }
-  async getBytes(offset, length) {
-    return { data: this.buffer.slice(offset, offset + length) };
+
+  async getBytes(offset, length, signal, etag) {
+    const controller = new AbortController();
+    const signals = [this.initialSignal, signal].filter(Boolean);
+    const cancel = () => controller.abort(signals.find((item) => item.aborted)?.reason);
+    for (const item of signals) {
+      item.addEventListener("abort", cancel, { once: true });
+      if (item.aborted) cancel();
+    }
+    const timer = setTimeout(() => controller.abort(
+      new Error("PMTiles range request timed out.")
+    ), this.timeoutMs);
+    try {
+      controller.signal.throwIfAborted();
+      const result = await super.getBytes(offset, length, controller.signal, etag);
+      controller.signal.throwIfAborted();
+      return result;
+    } finally {
+      clearTimeout(timer);
+      for (const item of signals) item.removeEventListener("abort", cancel);
+      controller.abort();
+    }
+  }
+}
+
+export async function loadFootprintArchive(url, signal) {
+  signal?.throwIfAborted();
+  const archiveKey = footprintArchiveUrl(url);
+  const protocol = getPmtilesProtocol();
+  let archive = protocol.get(archiveKey);
+  if (archive) {
+    const header = await archive.getHeader();
+    signal?.throwIfAborted();
+    return { archiveKey, header };
+  }
+
+  const source = new HttpPMTilesSource(archiveKey, { signal });
+  archive = new PMTiles(source);
+  try {
+    const header = await archive.getHeader();
+    signal?.throwIfAborted();
+    protocol.add(archive);
+    return { archiveKey, header };
+  } finally {
+    // Only the first header read belongs to this caller. Cached archives
+    // outlive routes; subsequent tile reads use the renderer's own signal.
+    source.initialSignal = undefined;
   }
 }

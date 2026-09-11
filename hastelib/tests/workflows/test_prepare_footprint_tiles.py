@@ -10,6 +10,7 @@ embeddings join to the footprints GeoPackage positionally, so ``id`` has
 to be 0..N-1 in the file's native order, and every row has to survive.
 """
 
+import json
 import os
 import tempfile
 import unittest
@@ -59,13 +60,13 @@ class TestFootprintsToTilingGeojson(unittest.TestCase):
             count = workflow.footprints_to_tiling_geojson(src, dst)
             self.assertEqual(count, 3)
 
-            with fiona.open(dst) as read_back:
-                rows = [feat["properties"] for feat in read_back]
+            with open(dst, encoding="utf-8") as read_back:
+                rows = json.load(read_back)["features"]
 
         # The positional join key: 0..N-1 in the footprints file's order.
         self.assertEqual([row["id"] for row in rows], [0, 1, 2])
         self.assertEqual(
-            [row["overture_id"] for row in rows],
+            [row["properties"]["overture_id"] for row in rows],
             ["over-a", "over-b", "over-c"],
         )
 

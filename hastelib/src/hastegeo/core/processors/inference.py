@@ -15,6 +15,7 @@ from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.prediction_attrs import attrs_artifact_name
+from ..utils.prediction_edit_lock import prediction_edit_lock
 from ..utils.queues import AzureQueueHandler
 from .artifacts import ArtifactProcessor, _slugify_model_name
 from .metadata import MetadataProcessor
@@ -82,36 +83,39 @@ def process_inference_request(
         )
         processor = InferencePostprocessor(model, layer, experiment, config)
         output = processor.process()
-    try:
-        latest = Model.model_validate(metadata.load(model.modelId))
-    except FileNotFoundError:
-        return None
-    if (
-        latest.currentInferenceTaskId,
-        latest.inferenceStatus,
-        latest.predictionRevision,
-    ) != (task_id, status, revision):
-        return None
-    fields = {
-        key: value
-        for key, value in output.model_dump().items()
-        if key.startswith("inference")
-        or key in ("currentInferenceTaskId", "predictionGpkgFilename")
-    }
-    if output.inferenceStatus == config.get_status_types().COMPLETED.value:
-        fields.update(
-            output.model_dump(
-                include={
-                    "gpkgUrl",
-                    "predictionAttrsUrl",
-                    "predictionRevision",
-                    "predictedBuildingCount",
-                    "predictedAt",
-                    "predictedDamageLayerUrl",
-                }
+    with prediction_edit_lock(config, model.projectId, model.modelId) as lease:
+        try:
+            latest = Model.model_validate(metadata.load(model.modelId))
+        except FileNotFoundError:
+            return None
+        if (
+            latest.currentInferenceTaskId,
+            latest.inferenceStatus,
+            latest.predictionRevision,
+        ) != (task_id, status, revision):
+            return None
+        fields = {
+            key: value
+            for key, value in output.model_dump().items()
+            if key.startswith("inference")
+            or key in ("currentInferenceTaskId", "predictionGpkgFilename")
+        }
+        if output.inferenceStatus == config.get_status_types().COMPLETED.value:
+            fields.update(
+                output.model_dump(
+                    include={
+                        "gpkgUrl",
+                        "predictionAttrsUrl",
+                        "predictionRevision",
+                        "predictedBuildingCount",
+                        "predictedAt",
+                        "predictedDamageLayerUrl",
+                    }
+                )
             )
-        )
-    metadata.save(output.modelId, fields)
+        if lease is not None:
+            lease.renew()
+        metadata.save(output.modelId, fields)
     if output.inferenceStatus == config.get_status_types().IN_PROGRESS.value:
         processor.queue_client.put_message(output.model_dump_json())
     return output
@@ -225,23 +229,35 @@ class InferencePreprocessor:
                     "", "Queued for inference"
                 ),
             )
-        metadata.save(model.modelId, fields)
+        with prediction_edit_lock(
+            self.config, model.projectId, model.modelId
+        ) as lease:
+            if lease is not None:
+                lease.renew()
+            metadata.save(model.modelId, fields)
         self.model_data = model.model_copy(update=fields)
         try:
             self.queue_client.put_message(self.model_data.model_dump_json())
         except Exception:
-            latest = metadata.load(model.modelId)
-            if (
-                status != self.config.get_status_types().CANCELLED.value
-                and latest.get("currentInferenceTaskId")
-                == self.model_data.currentInferenceTaskId
-            ):
-                metadata.save(
-                    model.modelId,
-                    {
-                        "inferenceStatus": self.config.get_status_types().FAILED.value
-                    },
-                )
+            with prediction_edit_lock(
+                self.config, model.projectId, model.modelId
+            ) as lease:
+                latest = metadata.load(model.modelId)
+                if (
+                    latest
+                    and status
+                    != self.config.get_status_types().CANCELLED.value
+                    and latest.get("currentInferenceTaskId")
+                    == self.model_data.currentInferenceTaskId
+                ):
+                    if lease is not None:
+                        lease.renew()
+                    metadata.save(
+                        model.modelId,
+                        {
+                            "inferenceStatus": self.config.get_status_types().FAILED.value
+                        },
+                    )
             raise
         return self.model_data
 

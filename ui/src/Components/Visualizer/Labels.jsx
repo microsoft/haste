@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Dependencies 
-import { Button, Text, Link, makeStyles, tokens } from "@fluentui/react-components";
+import { Button, Text, Link, Tooltip, makeStyles, tokens } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 import { useNavigate } from "react-router-dom";
 import { convertDateToString } from "../../util/conversion";
@@ -25,6 +25,7 @@ const useStyles = makeStyles({
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     boxShadow: tokens.shadow8,
   },
+  navigation: { flexDirection: "row" },
 });
 
 const Labels = ({
@@ -34,7 +35,12 @@ const Labels = ({
   resetMapPosition,
   visualizerResults,
   setSwipeStateMobile,
-  swipeStateMobile
+  swipeStateMobile,
+  isEditMode = false,
+  canEdit = false,
+  editTooltip = "Loading predicted buildings…",
+  onToggleEditMode,
+  busy = false,
 }) => {
   const navigate = useNavigate();
   const styles = useStyles();
@@ -80,17 +86,27 @@ const Labels = ({
 
   return (
     <>
-      <div className="labeling-tool-surface labeling-navigation-controls">
+      <div className={`labeling-tool-surface labeling-navigation-controls ${styles.navigation}`}>
         <Button
           appearance="transparent"
           id="visualizerBackButton"
           icon={<FluentIcon name="ChevronLeft" />}
           onClick={handleBackNavigation}
+          disabled={busy}
         >
           Back
         </Button>
+        {onToggleEditMode && (
+          <Tooltip content={isEditMode ? "Leave edit mode" : editTooltip} relationship="label">
+            <Button id="visualizerEditButton" appearance={isEditMode ? "primary" : "transparent"}
+              icon={<FluentIcon name={isEditMode ? "checkmark" : "edit"} />}
+              disabledFocusable={busy || (!isEditMode && !canEdit)} onClick={onToggleEditMode}>
+              {isEditMode ? "Done" : "Edit"}
+            </Button>
+          </Tooltip>
+        )}
       </div>
-      {visualizerResults.projectName && (
+      {visualizerResults.projectName && !isEditMode && (
         <>
           {/* PRE DISASTER */}
 
@@ -167,6 +183,11 @@ Labels.propTypes = {
   visualizerResults: PropType.object.isRequired,
   setSwipeStateMobile: PropType.func.isRequired,
   swipeStateMobile: PropType.string.isRequired,
+  isEditMode: PropType.bool,
+  canEdit: PropType.bool,
+  editTooltip: PropType.string,
+  onToggleEditMode: PropType.func,
+  busy: PropType.bool,
 };
 
 export default Labels;

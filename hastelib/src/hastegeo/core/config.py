@@ -175,6 +175,12 @@ class ArtifactTypes(Enum):
     BUILDING_FEATURES_SIDECAR = Template("building_features_${modelName}")
     BUILDING_PREDICTIONS_GPKG = Template("building_predictions_${modelName}")
     PREDICTION_ATTRS = Template("prediction_attrs_${modelId}")
+    EDITED_PREDICTIONS_GPKG = Template(
+        "edited_predictions_${modelId}_v${version}"
+    )
+    PREDICTION_ATTRS_VERSION = Template(
+        "prediction_attrs_${modelId}_v${version}"
+    )
 
 
 class InviteConfig(NamedTuple):

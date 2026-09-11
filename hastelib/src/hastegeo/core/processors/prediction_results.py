@@ -10,7 +10,7 @@ transaction. GIS/upload failure leaves the last successful pair untouched.
 import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, Callable
 
 from ..artifact_storage.unified_artifact_storage import UnifiedArtifactStorage
 from ..config import Config
@@ -21,11 +21,13 @@ from ..models.prediction_results import (
     ResultsRequest,
 )
 from ..models.projects import ImageLayer, Model
+from ..publishing.lease import renew_lease
 from ..utils.blob import BlobRange, read_blob_range
 from ..utils.footprint_artifacts import validate_layer_footprint_url
 from ..utils.metadata import MetadataUtils
 from ..utils.prediction_attrs import attrs_artifact_name
 from ..utils.prediction_download import prediction_download_filename
+from ..utils.prediction_edit_lock import prediction_edit_lock
 from ..utils.prediction_readiness import (
     artifact_api_url,
     raw_predictions_readiness,
@@ -33,6 +35,12 @@ from ..utils.prediction_readiness import (
 )
 from .building_predictions import write_building_predictions
 from .metadata import MetadataProcessor
+from .prediction_sources import (
+    prediction_source_url,
+    prediction_versions,
+    resolve_prediction_source,
+    source_readiness,
+)
 
 MAX_ATTRIBUTES_BYTES = 64 * 1024**2
 
@@ -122,13 +130,18 @@ async def read_result_artifact(
 
 
 class PredictionResultsProcessor:
-    def __init__(self, config: Config | None = None) -> None:
+    def __init__(
+        self,
+        config: Config | None = None,
+        processor_factory: Callable[..., MetadataProcessor] | None = None,
+    ) -> None:
         self.config = config or Config()
+        self.processor_factory = processor_factory or MetadataProcessor
 
     def metadata(
         self, project_id: str, kind: str = "model"
     ) -> MetadataProcessor:
-        return MetadataProcessor(kind, project_id, self.config)
+        return self.processor_factory(kind, project_id, self.config)
 
     def model(self, project_id: str, model_id: str) -> Model:
         record = self.metadata(project_id).load(model_id)
@@ -161,15 +174,20 @@ class PredictionResultsProcessor:
         return model, self.layer(request.projectId, request.imageLayerId)
 
     def _publish(self, baseline: Model, fields: dict[str, Any]) -> Model:
-        current = self.model(baseline.projectId, baseline.modelId)
-        if (
-            current.imageLayerId != baseline.imageLayerId
-            or current.predictionRevision != baseline.predictionRevision
-        ):
-            raise PredictionSupersededError(
-                "Model predictions changed before publication"
-            )
-        self.metadata(current.projectId).save(current.modelId, fields)
+        with prediction_edit_lock(
+            self.config, baseline.projectId, baseline.modelId
+        ) as lease:
+            current = self.model(baseline.projectId, baseline.modelId)
+            if (
+                current.imageLayerId != baseline.imageLayerId
+                or current.predictionRevision != baseline.predictionRevision
+            ):
+                raise PredictionSupersededError(
+                    "Model predictions changed before publication"
+                )
+            if lease is not None:
+                renew_lease(lease)
+            self.metadata(current.projectId).save(current.modelId, fields)
         return current.model_copy(update=fields)
 
     def save_building_predictions(
@@ -267,27 +285,54 @@ class PredictionResultsProcessor:
         self, project_id: str, layer_id: str
     ) -> list[dict[str, Any]]:
         layer = self.layer(project_id, layer_id)
-        rows = self.metadata(project_id).load_all_from_partition()
-        for row in rows:
-            if row.get("imageLayerId") == layer_id:
-                state = self.response(Model.model_validate(row), layer)
-                row.update(
-                    {
-                        k: v
-                        for k, v in state.items()
-                        if k not in ("gpkgUrl", "predictionAttrsUrl")
-                    }
-                )
-        return [row for row in rows if row.get("imageLayerId") == layer_id]
+        records = self.metadata(project_id).load_all_from_partition()
+        return [
+            self.model_view(raw, layer)
+            for raw in records
+            if raw.get("imageLayerId") == layer_id
+        ]
+
+    @classmethod
+    def model_view(
+        cls, raw: dict[str, Any], layer: ImageLayer
+    ) -> dict[str, Any]:
+        """Project result readiness without losing artifact/label row details."""
+        model = Model.model_validate(raw)
+        if (
+            model.projectId != layer.projectId
+            or model.imageLayerId != layer.imageLayerId
+        ):
+            raise PredictionRequestError("Model does not belong to this layer")
+        selected = resolve_prediction_source(model, default="latest_current")
+        readiness = source_readiness(model, layer, selected)
+        return {
+            **raw,
+            **cls.response(model, layer),
+            **selected.descriptor(),
+            "gpkgUrl": prediction_source_url(model, selected, "gpkg")
+            if selected.gpkgUrl
+            else None,
+            "predictionAttrsUrl": prediction_source_url(
+                model, selected, "prediction_attrs"
+            )
+            if selected.predictionAttrsUrl
+            else None,
+            "buildingCount": selected.buildingCount,
+            "predictionsReady": readiness["ready"],
+            "predictionsReadiness": readiness,
+            "editedPredictions": prediction_versions(model, layer),
+            "hasEditedPredictions": bool(model.editedPredictions),
+        }
 
     def download_filename(self, request: ModelArtifactRequest) -> str:
         model = self.model(request.projectId, request.modelId)
-        if (
-            request.predictionRevision
-            and request.predictionRevision != model.predictionRevision
-        ):
-            raise FileNotFoundError("Prediction output is no longer current")
-        return prediction_download_filename(model)
+        selected = resolve_prediction_source(
+            model,
+            request.version,
+            default="raw",
+            prediction_revision=request.predictionRevision,
+        )
+        return prediction_download_filename(model, selected.predictionVersion)
 
     def resolve_artifact(
         self, request: ModelArtifactRequest
@@ -315,22 +360,25 @@ class PredictionResultsProcessor:
                     raise PredictionRequestError(str(error)) from error
         else:
             if request.kind in ("gpkg", "prediction_attrs"):
-                if (
-                    request.predictionRevision
-                    and request.predictionRevision != model.predictionRevision
-                ):
-                    raise FileNotFoundError(
-                        "Prediction output is no longer current"
-                    )
-                if not raw_predictions_readiness(model)["ready"]:
-                    raise FileNotFoundError("Raw predictions are unavailable")
-            field = {
-                "gpkg": "gpkgUrl",
-                "prediction_attrs": "predictionAttrsUrl",
-                "sidecar": "featuresSidecarUrl",
-                "geojson": "embeddingsGeoJSONUrl",
-            }[request.kind]
-            url = getattr(model, field)
+                selected = resolve_prediction_source(
+                    model,
+                    request.version,
+                    default="raw",
+                    prediction_revision=request.predictionRevision,
+                )
+                url = (
+                    selected.gpkgUrl
+                    if request.kind == "gpkg"
+                    else selected.predictionAttrsUrl
+                )
+            else:
+                url = getattr(
+                    model,
+                    {
+                        "sidecar": "featuresSidecarUrl",
+                        "geojson": "embeddingsGeoJSONUrl",
+                    }[request.kind],
+                )
         if not url:
             raise FileNotFoundError("Artifact is unavailable")
         return url, request.kind in ("gpkg", "prediction_attrs")

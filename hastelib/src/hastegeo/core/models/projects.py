@@ -5,6 +5,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from .prediction_edits import EditedPredictionVersion
 from .publishing import SourceImageryRef
 
 
@@ -446,6 +447,9 @@ class Model(BaseModel):
     # Raw generation identity, never an edited version number.
     predictionRevision: Optional[str] = Field(default=None)
     predictionGpkgFilename: Optional[str] = Field(default=None)
+    editedPredictions: Optional[List[EditedPredictionVersion]] = Field(
+        default_factory=list
+    )
     labelsUrl: Optional[str] = Field(default=None)
     # ── Building labeling workflow (embedding sub-row) ──────────────────
     # A Model with modelType="embedding" represents a building-embedding

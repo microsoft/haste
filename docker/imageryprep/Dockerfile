@@ -1,4 +1,6 @@
-FROM mcr.microsoft.com/azure-functions/python:4-nightly-python3.11-slim
+FROM mcr.microsoft.com/azureml/curated/minimal-py311-inference:59@sha256:89a46a46b71b4692731654d0523f53c8d14929e41ea8129293dc4e39fcabb14c
+
+USER root
 
 RUN apt-get update && apt-get install -y \
     vim \
@@ -11,10 +13,13 @@ RUN apt-get update && apt-get install -y \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Keep worker dependencies separate from the base image's inference server.
+RUN python -m venv /opt/haste-venv
+ENV VIRTUAL_ENV=/opt/haste-venv
+ENV PATH="/opt/haste-venv/bin:${PATH}"
+
 # Set the working directory
 WORKDIR /app
-
-USER root
 
 # Create non-root user before COPY so --chown can reference it
 RUN groupadd -r appgroup && useradd -r -g appgroup -m -s /bin/bash appuser
@@ -25,7 +30,11 @@ COPY --chown=appuser:appgroup docker/imageryprep/scripts /app/scripts/
 COPY --chown=appuser:appgroup docker/imageryprep/requirements.txt /app/
 
 # Install dependencies (no need to install haste package since we copy source directly)
-RUN pip install -r /app/requirements.txt
+# Optional unauthenticated index override for managed developer machines.
+# Build arguments are visible in build metadata; never pass credentials here.
+ARG PIP_INDEX_URL
+RUN python -m pip install --no-cache-dir -r /app/requirements.txt \
+    && python -m pip check
 
 # Provide CLI entrypoints expected by the workflows without requiring a separate package install
 RUN printf '#!/bin/bash\nexec python -m hastegeo.workflows.prepare_imagery "$@"\n' > /usr/local/bin/prepare-imagery \

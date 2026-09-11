@@ -5,7 +5,10 @@
 
 import unittest
 
-from hastegeo.core.utils.errors import describe_exception
+from hastegeo.core.utils.errors import (
+    describe_exception,
+    exception_diagnostics,
+)
 
 
 class _Message:
@@ -85,6 +88,52 @@ class TestDescribeException(unittest.TestCase):
     def test_handles_a_plain_string_message(self):
         exc = _AzureStyleException(_BatchError("NodeNotFound", "node is gone"))
         self.assertEqual(describe_exception(exc), "NodeNotFound: node is gone")
+
+
+class TestExceptionDiagnostics(unittest.TestCase):
+    def test_cause_codes_and_locations_exclude_messages_and_source_lines(
+        self,
+    ) -> None:
+        from azure.core.exceptions import HttpResponseError
+
+        cause = HttpResponseError("https://storage/blob?sig=private-token")
+        cause.status_code = 403
+        cause.error_code = "AuthorizationPermissionMismatch"
+        try:
+            try:
+                raise cause
+            except HttpResponseError as error:
+                raise RuntimeError("AccountKey=private-token") from error
+        except RuntimeError as error:
+            details = exception_diagnostics(error)
+        self.assertEqual(details[0]["type"], "RuntimeError")
+        self.assertEqual(details[1]["status"], 403)
+        self.assertEqual(details[1]["code"], "AuthorizationPermissionMismatch")
+        self.assertEqual(details[1]["frames"][-1]["file"], "test_errors.py")
+        self.assertNotIn("private-token", str(details))
+        self.assertNotIn("https://", str(details))
+        self.assertNotIn("raise", str(details))
+
+    def test_unexpected_code_payloads_and_cyclic_causes_are_bounded(
+        self,
+    ) -> None:
+        error = RuntimeError("private-message")
+        error.error_code = "https://storage/?sig=private-token"
+        error.__cause__ = error
+        details = exception_diagnostics(error)
+        self.assertEqual(len(details), 1)
+        self.assertNotIn("code", details[0])
+        self.assertNotIn("private", str(details))
+
+    def test_suppressed_context_is_not_logged(self) -> None:
+        try:
+            try:
+                raise ValueError("ignored context")
+            except ValueError:
+                raise RuntimeError("outer") from None
+        except RuntimeError as error:
+            details = exception_diagnostics(error)
+        self.assertEqual(len(details), 1)
 
 
 if __name__ == "__main__":

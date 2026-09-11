@@ -1,0 +1,349 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+import test from "node:test";
+import assert from "node:assert/strict";
+import { normalizeAttrs } from "./predictionClassify.js";
+import {
+  buildSavePayload, canAdjustThresholds, classifyDraft, deriveClass,
+  initialDraft, isDraftDirty, modelClassAt, nextReviewIndex, overrideList,
+  reviewLocation, reviewRows, saveAttempt, setOverrides,
+} from "./predictionEditing.js";
+import {
+  buildVersionGpkgUrl, defaultPredictionVersion, predictionSourceOptions,
+  validateSelectedSource, validateVersionManifest, versionEndpoint,
+} from "./predictionVersions.js";
+import { canEditResults, predictionRenderKey, visualizerSceneKey } from "./predictionResults.js";
+import { requestPredictionJson, predictionErrorMessage } from "./predictionHttp.js";
+import { publishPredictionEdit } from "./predictionEditWorkflow.js";
+import { buildAssessmentSummary } from "../../util/assessmentSummary.js";
+
+const ids = { projectId: "project", imageLayerId: "layer", modelId: "model" };
+const source = {
+  flavor: "inference", supportsThreshold: true, predictionRevision: "raw-generation",
+  predictionVersion: 0, buildingCount: 3, defaultThreshold: 0, defaultUnknownThreshold: 0,
+  predictionsReady: true, editReadiness: { ready: true }, threshold: 0, unknownThreshold: 0,
+};
+function rawAttrs() {
+  return {
+    schemaVersion: 1, predictionRevision: source.predictionRevision, flavor: "inference",
+    n: 3, ids: [0, 1, 2], overtureIds: ["a", "b", "c"],
+    damage: [0.6, 0.2, null], unknown: [0, 0, null], damaged: [1, 1, null],
+    classes: ["Damaged", "Damaged", "Unknown"],
+  };
+}
+function editedAttrs() {
+  return {
+    ...rawAttrs(), predictionVersion: 2, isEdited: true, threshold: 0.5, unknownThreshold: 0,
+    classes: ["NotDamaged", "NotDamaged", "Damaged"],
+    modelClasses: ["Damaged", "Damaged", "Unknown"],
+    overrideClasses: ["NotDamaged", null, "Damaged"],
+  };
+}
+function editingSource(version = 0) {
+  return {
+    ...source, predictionVersion: version, currentPredictionRevision: source.predictionRevision,
+    threshold: version ? 0.5 : 0, unknownThreshold: 0, editReadiness: { ready: true },
+  };
+}
+const saved = {
+  version: 3, predictionRevision: source.predictionRevision, buildingCount: 3, editedCount: 2,
+  gpkgUrl: "GetModelArtifact?kind=gpkg&version=3",
+  predictionAttrsUrl: "GetModelArtifact?kind=prediction_attrs&version=3",
+};
+
+test("standard models support damage thresholds on raw and saved versions", () => {
+  const attrs = normalizeAttrs(rawAttrs(), source);
+  assert.equal(modelClassAt(attrs, 2), "Unknown");
+  assert.equal(canAdjustThresholds(source), true);
+  assert.equal(canAdjustThresholds({ ...source, flavor: "embedding", supportsThreshold: false }), false);
+  assert.equal(canAdjustThresholds({ ...source, predictionVersion: 2 }), true);
+  assert.equal(canAdjustThresholds({ ...source, predictionVersion: 2, flavor: "embedding" }), false);
+  attrs.damage = [1, 0, null];
+  assert.equal(canAdjustThresholds(source), true);
+});
+
+test("edited sidecars validate effective classes separately from null-score model baselines", () => {
+  const attrs = normalizeAttrs(editedAttrs(), { ...source, predictionVersion: 2 });
+  assert.equal(attrs.classes[2], "Damaged");
+  assert.equal(attrs.modelClasses[2], "Unknown");
+  assert.throws(() => normalizeAttrs(attrs, source), /versions differ/);
+  assert.throws(() => normalizeAttrs({ ...attrs, modelClasses: ["Damaged", "Damaged", "Damaged"] }), /unscored row/);
+  assert.throws(() => normalizeAttrs({ ...attrs, isEdited: false }), /provenance/);
+  assert.throws(() => normalizeAttrs({ ...attrs, overrideClasses: [null] }), /exactly 3 rows/);
+  assert.throws(() => normalizeAttrs({ ...attrs, overrideClasses: ["bad", null, "Damaged"] }), /invalid override/);
+  assert.throws(() => normalizeAttrs({ ...attrs, overrideClasses: ["Damaged", null, "Damaged"] }), /override and effective/);
+  assert.throws(() => normalizeAttrs({ ...rawAttrs(), isEdited: true }), /raw output/);
+});
+
+test("editing uses visualizer readiness and validated source thresholds", () => {
+  assert.equal(canEditResults(source), true);
+  for (const change of [
+    { predictionsReady: false }, { buildingCount: 0 },
+    { editReadiness: undefined }, { editReadiness: { ready: false, reason: "source_changed" } },
+  ]) assert.equal(canEditResults({ ...source, ...change }), false);
+  assert.throws(() => initialDraft(rawAttrs(), { ...source, threshold: null }), /thresholds/);
+  assert.throws(() => initialDraft(editedAttrs(), { ...editingSource(2), threshold: 0.2 }), /thresholds do not match/);
+});
+
+test("saved draft preserves thresholds and the complete explicit assignment snapshot", () => {
+  const attrs = editedAttrs();
+  const draft = initialDraft(attrs, editingSource(2));
+  assert.equal(draft.threshold, 0.5);
+  assert.deepEqual(overrideList(draft.overrides), [{ id: 0, class: "NotDamaged" }, { id: 2, class: "Damaged" }]);
+  const payload = buildSavePayload(ids, { ...source, predictionVersion: 2 }, draft, "request-id");
+  assert.equal(payload.baseVersion, 2);
+  assert.equal(payload.predictionRevision, source.predictionRevision);
+  assert.equal(payload.clientRequestId, "request-id");
+  assert.deepEqual(payload.overrides, overrideList(draft.overrides));
+});
+
+test("right-click model reset is an explicit pin, even against different selected thresholds", () => {
+  const attrs = editedAttrs();
+  const baseline = initialDraft(attrs, editingSource(2));
+  const draft = {
+    ...baseline,
+    overrides: setOverrides(baseline.overrides, [1], modelClassAt(attrs, 1)),
+  };
+  assert.equal(deriveClass(attrs.damage[1], attrs.unknown[1], draft.threshold), "NotDamaged");
+  assert.equal(draft.overrides[1], "Damaged");
+  assert.deepEqual(overrideList(draft.overrides), [
+    { id: 0, class: "NotDamaged" }, { id: 1, class: "Damaged" }, { id: 2, class: "Damaged" },
+  ]);
+  assert.equal(classifyDraft(attrs, { ...source, predictionVersion: 2 }, draft, baseline).classes[1], "Damaged");
+  assert.equal(isDraftDirty(draft, baseline), true);
+});
+
+test("raw sliders update local classes immediately; manual pins and null Unknown win", () => {
+  const attrs = rawAttrs();
+  const baseline = initialDraft(attrs, editingSource());
+  const draft = { ...baseline, threshold: 0.5, overrides: { 1: "Damaged" } };
+  const classes = classifyDraft(attrs, source, draft, baseline);
+  assert.deepEqual(classes.classes, ["Damaged", "Damaged", "Unknown"]);
+  assert.equal(deriveClass(0.5, 0, 0.5), "NotDamaged");
+  assert.equal(deriveClass(0.9, 0.1, 0, 0), "Unknown");
+  assert.equal(deriveClass(null, null, 0, 1), "Unknown");
+  assert.deepEqual(attrs.classes, ["Damaged", "Damaged", "Unknown"]);
+  assert.deepEqual(classifyDraft(attrs, source, { ...baseline, threshold: 1 }, baseline).classes,
+    ["NotDamaged", "NotDamaged", "Unknown"]);
+});
+
+test("pins equal to current derived classes are not minimized away", () => {
+  const baseline = initialDraft(rawAttrs(), editingSource());
+  const draft = { ...baseline, overrides: { 0: "Damaged" } };
+  assert.equal(isDraftDirty(draft, baseline), true);
+  assert.deepEqual(overrideList(draft.overrides), [{ id: 0, class: "Damaged" }]);
+  assert.deepEqual(baseline.overrides, {});
+});
+
+test("saved thresholds reclassify only unassigned buildings and preserve manual null-score assignments", () => {
+  const attrs = editedAttrs(), base = editingSource(2);
+  const baseline = initialDraft(attrs, base);
+  const changed = { ...baseline, threshold: 0.1 };
+  assert.deepEqual(classifyDraft(attrs, base, changed, baseline).classes,
+    ["NotDamaged", "Damaged", "Damaged"]);
+  assert.deepEqual(changed.overrides, baseline.overrides);
+  assert.equal(changed.unknownThreshold, baseline.unknownThreshold);
+  assert.deepEqual(classifyDraft(attrs, base, baseline, baseline).classes, attrs.classes);
+});
+
+test("unchanged and restored drafts are not dirty, including existing manual assignments", () => {
+  const baseline = initialDraft(editedAttrs(), editingSource(2));
+  assert.equal(isDraftDirty({ ...baseline }, baseline), false);
+  assert.equal(isDraftDirty({
+    ...baseline, overrides: setOverrides(baseline.overrides, [0], "NotDamaged"),
+  }, baseline), false);
+  assert.equal(isDraftDirty({ ...baseline, activeClass: "Unknown" }, baseline), false);
+  assert.equal(isDraftDirty({ ...baseline, threshold: 0.1 }, baseline), true);
+  assert.equal(isDraftDirty(baseline, baseline), false);
+});
+
+test("class review continues in row order after reclassifying the highlighted building", () => {
+  const attrs = rawAttrs(), baseline = initialDraft(attrs, editingSource());
+  const first = classifyDraft(attrs, source, baseline, baseline);
+  assert.deepEqual(reviewRows(attrs, first, "Damaged"), [0, 1]);
+  assert.equal(nextReviewIndex([0, 1], -1, 1), 0);
+  const draft = { ...baseline, overrides: { 0: "NotDamaged" } };
+  const updated = reviewRows(attrs, classifyDraft(attrs, source, draft, baseline), "Damaged");
+  assert.deepEqual(updated, [1]);
+  assert.equal(nextReviewIndex(updated, 0, 1), 1);
+  assert.equal(nextReviewIndex(updated, 1, 1), 1);
+  assert.equal(nextReviewIndex([0, 2, 4], 3, 1), 4);
+  assert.equal(nextReviewIndex([0, 2, 4], 3, -1), 2);
+  assert.equal(nextReviewIndex([0, 2], -1, -1), 2);
+  assert.equal(nextReviewIndex([], 2, 1), null);
+  assert.deepEqual(reviewRows(attrs, first, "Unknown"), [2]);
+  assert.deepEqual(reviewRows(attrs, first, "all"), [0, 1, 2]);
+});
+
+test("fallback review locations require the exact source identity and valid WGS84 coordinates", () => {
+  const feature = {
+    properties: { rowId: 0, id: "a" },
+    geometry: { type: "Point", coordinates: [-122, 47] },
+  };
+  assert.deepEqual(reviewLocation({ features: [feature] }, 0, "a"), [-122, 47]);
+  for (const bad of [
+    { features: [] }, { features: [feature, feature] },
+    { features: [{ ...feature, properties: { rowId: "0", id: "a" } }] },
+    { features: [{ ...feature, properties: { rowId: 0, id: "other" } }] },
+    { features: [{ ...feature, geometry: { type: "Point", coordinates: [181, 47] } }] },
+    { features: [{ ...feature, geometry: { type: "Point", coordinates: [null, 47] } }] },
+  ]) assert.throws(() => reviewLocation(bad, 0, "a"), /does not match/);
+});
+
+test("retry reuses the exact body and UUID; changed logical payload creates a new attempt", () => {
+  let count = 0;
+  const uuid = () => `request-${++count}`;
+  const draft = initialDraft(rawAttrs(), editingSource());
+  const first = saveAttempt(null, ids, source, draft, uuid);
+  const retry = saveAttempt(first, ids, source, { ...draft, overrides: {} }, uuid);
+  assert.equal(retry, first);
+  assert.equal(retry.body, first.body);
+  const next = saveAttempt(first, ids, source, { ...draft, overrides: { 2: "Unknown" } }, uuid);
+  assert.equal(next.body.clientRequestId, "request-2");
+  assert.equal(count, 2);
+});
+
+test("versions default to current generation but keep historical downloads/reports selectable", () => {
+  const versions = [
+    { version: 9, predictionRevision: "old", gpkgUrl: "old.gpkg" },
+    { version: 3, predictionRevision: "current", gpkgUrl: "new.gpkg", predictionAttrsUrl: "new.json" },
+  ];
+  assert.equal(defaultPredictionVersion(versions, "current"), 3);
+  assert.equal(defaultPredictionVersion(versions, "next"), 0);
+  assert.equal(predictionSourceOptions(versions, "current").find((item) => item.version === 9).disabled, false);
+  assert.equal(predictionSourceOptions(versions, "current", true).find((item) => item.version === 9).disabled, true);
+});
+
+test("versioned requests preserve explicit zero, revision and raw report threshold defaults", () => {
+  for (const version of [0, 9]) {
+    const url = new URL(buildVersionGpkgUrl({ ...ids, version, predictionRevision: "raw generation" }), "https://haste.invalid");
+    assert.equal(url.pathname, "/GetModelArtifact");
+    assert.equal(url.searchParams.get("version"), String(version));
+    assert.equal(url.searchParams.get("predictionRevision"), "raw generation");
+    const report = new URL(versionEndpoint("GetAssessmentReport", ids, version), "https://haste.invalid");
+    assert.equal(report.searchParams.get("version"), String(version));
+    assert.equal(report.searchParams.has("threshold"), false);
+  }
+  assert.equal(new URL(versionEndpoint("GetAssessmentReport", ids), "https://haste.invalid").searchParams.has("version"), false);
+  assert.throws(() => buildVersionGpkgUrl({ ...ids, version: -1 }), /Invalid/);
+  assert.throws(() => validateSelectedSource({ version: 2 }, 2), /Invalid/);
+  assert.throws(() => validateSelectedSource({ predictionVersion: 0 }, 2), /different prediction version/);
+  assert.throws(() => validateVersionManifest([{ version: 1 }, { version: 1 }]), /ambiguous/);
+  assert.throws(() => validateVersionManifest({}), /invalid/);
+  assert.throws(() => overrideList({ invalid: "Unknown" }), /Invalid explicit/);
+});
+
+test("versions change the render identity but not imagery scene identity or camera", () => {
+  const before = { ...source, preDisasterImagery: { url: "/pre" }, studyArea: [] };
+  const after = { ...before, predictionVersion: 3, predictionAttrsUrl: "/version3" };
+  assert.notEqual(predictionRenderKey(before), predictionRenderKey(after));
+  assert.equal(visualizerSceneKey(before, "route"), visualizerSceneKey(after, "route"));
+  assert.notEqual(visualizerSceneKey(before, "route"), visualizerSceneKey(before, "other-route"));
+  assert.equal(visualizerSceneKey(before, "route"), visualizerSceneKey({ ...after, predictedDamageLayer: { url: "/changed-overlay" } }, "route"));
+});
+
+for (const code of ["source_changed", "save_conflict", "request_conflict"]) {
+  test(`scoped HTTP preserves 409 ${code} without a global helper fallback`, async () => {
+    await assert.rejects(requestPredictionJson("/api/PutEditedPredictions", {
+      body: { overrides: [] }, fetchResponse: async () => Response.json({ error: { code, message: "Specific conflict" } }, { status: 409 }),
+    }), (error) => {
+      assert.equal(error.status, 409);
+      assert.equal(error.code, code);
+      assert.equal(error.message, "Specific conflict");
+      assert.ok(predictionErrorMessage(error).includes("draft"));
+      return true;
+    });
+  });
+}
+
+test("unknown-version 404 and 500/network errors never become successful raw reports", async () => {
+  for (const status of [404, 500]) {
+    await assert.rejects(requestPredictionJson("/api/GetAssessmentReport?version=99", {
+      fetchResponse: async () => Response.json({ error: "Requested version unavailable" }, { status }),
+    }), { status, message: "Requested version unavailable" });
+  }
+  await assert.rejects(requestPredictionJson("/api/results", { fetchResponse: async () => { throw new TypeError("Network failed"); } }), /Network/);
+});
+
+test("Assessment retains aggregates and its diagnostic only on an explicit successful report read", async () => {
+  const partial = {
+    error: "No sure-labeled buildings matched known predictions.",
+    predictions: { total: 12 }, populationEstimate: { N: 12 },
+    predictionVersion: 0,
+  };
+  const options = { allowPartialAssessment: true, fetchResponse: async () => Response.json(partial) };
+  assert.deepEqual(await requestPredictionJson("/api/GetAssessmentReport", options), partial);
+  await assert.rejects(requestPredictionJson("/api/other", {
+    fetchResponse: options.fetchResponse,
+  }), /No sure-labeled/);
+  await assert.rejects(requestPredictionJson("/api/PutEditedPredictions", {
+    ...options, body: {},
+  }), /No sure-labeled/);
+  for (const status of [400, 404, 500]) {
+    await assert.rejects(requestPredictionJson("/api/GetAssessmentReport", {
+      ...options, fetchResponse: async () => Response.json(partial, { status }),
+    }), { status });
+  }
+  for (const invalid of [
+    { error: "Failure" },
+    { ...partial, predictions: null },
+    { ...partial, populationEstimate: {} },
+    { ...partial, error: { message: "Failure" } },
+  ]) {
+    await assert.rejects(requestPredictionJson("/api/GetAssessmentReport", {
+      ...options, fetchResponse: async () => Response.json(invalid),
+    }));
+  }
+});
+
+test("confirmed save reloads the RETURNED version and generation, not the prior selection", async () => {
+  const events = [];
+  const body = buildSavePayload(ids, source, initialDraft(rawAttrs(), editingSource()), "same-id");
+  const candidate = { results: { ...source, predictionVersion: 3 }, attrs: { ...editedAttrs(), predictionVersion: 3 } };
+  const outcome = await publishPredictionEdit(body, {
+    write: async (value) => { events.push(["put", value]); return saved; },
+    onSaved: (result) => events.push(["saved", result.version]),
+    loadVersion: async (version, revision) => { events.push(["get", version, revision]); return candidate; },
+    buildingCount: 3,
+  });
+  assert.deepEqual(events.map((event) => event[0]), ["put", "saved", "get"]);
+  assert.deepEqual(events[2], ["get", 3, source.predictionRevision]);
+  assert.equal(outcome.candidate, candidate);
+});
+
+test("save success followed by GET failure stays saved and never resubmits the PUT", async () => {
+  let puts = 0;
+  const outcome = await publishPredictionEdit({ predictionRevision: source.predictionRevision }, {
+    write: async () => { puts++; return saved; },
+    onSaved: () => {},
+    loadVersion: async () => { throw new Error("HTTP 404"); },
+  });
+  assert.equal(puts, 1);
+  assert.equal(outcome.result.version, 3);
+  assert.match(outcome.displayError, /Version 3 was saved but could not be displayed/);
+  assert.equal(outcome.candidate, undefined);
+});
+
+test("rejected and obsolete save responses cannot advertise success or reload a source", async () => {
+  let savedCalls = 0, getCalls = 0;
+  const options = { onSaved: () => savedCalls++, loadVersion: async () => { getCalls++; } };
+  await assert.rejects(publishPredictionEdit({}, { ...options, write: async () => { throw new Error("409"); } }), /409/);
+  await assert.rejects(publishPredictionEdit({ predictionRevision: source.predictionRevision }, {
+    ...options, write: async () => saved, isCurrent: () => false,
+  }), { name: "AbortError" });
+  await assert.rejects(publishPredictionEdit({ predictionRevision: source.predictionRevision }, {
+    ...options, write: async () => ({ ...saved, predictionAttrsUrl: null }),
+  }), /paired artifacts/);
+  assert.equal(savedCalls, 0);
+  assert.equal(getCalls, 0);
+});
+
+test("assessment wording distinguishes saved analyst classes, preserving Unknown exclusion", () => {
+  const report = {
+    matched: 0,
+    predictions: { total: 3, cloudy: 1, knownNonCloudy: 2, predictedDamaged: 1, predictedDamagedPctOfKnown: 50 },
+  };
+  assert.match(buildAssessmentSummary(report), /model predicted/);
+  assert.match(buildAssessmentSummary({ ...report, predictionVersion: 3 }), /saved analyst classes in version 3/);
+  assert.match(buildAssessmentSummary({ ...report, predictionVersion: 3 }), /Unknown/);
+});
