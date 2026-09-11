@@ -16,7 +16,7 @@
 // Run (playwright installed in a scratch dir):
 //   NODE_PATH=/tmp/haste-uibench/node_modules \
 //   node spec/features/perf-layer-loading/tools/ui_bench.cjs \
-//     --ui http://localhost:4280 --api http://localhost:7071 \
+//     --ui http://localhost:4280 \
 //     --project 00000000-0000-4000-8000-000050000005
 const { chromium } = require("playwright");
 
@@ -26,7 +26,9 @@ function arg(name, def) {
 }
 
 const UI = arg("ui", "http://localhost:4280");
-const API = arg("api", "http://localhost:7071");
+if (process.argv.includes("--api")) {
+  throw new Error("--api is unsupported; configure VITE_API_URL in the UI being benchmarked.");
+}
 const PROJECT = arg("project", "00000000-0000-4000-8000-000050000005");
 const POLL_WAIT_MS = parseInt(arg("pollwait", "26000"), 10);
 
