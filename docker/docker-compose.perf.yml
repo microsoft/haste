@@ -1,0 +1,20 @@
+# Perf-baseline overlay for the perf-layer-loading spec (Phase 0).
+#
+# Enables the opt-in HASTE_PERF instrumentation and bind-mounts the working-tree
+# copies of the API handler + hastegeo library over the image's runtime paths, so
+# the current branch's code runs without an image rebuild.
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.perf.yml \
+#     up -d hastefuncapi api-proxy
+services:
+  hastefuncapi:
+    environment:
+      HASTE_PERF: "true"
+    volumes:
+      # hastegeo exists in two places (a site-packages install and a wwwroot
+      # copy); sys.path order varies by process, so overlay the working-tree
+      # source over BOTH to guarantee the worker imports the updated code.
+      - ../hastelib/src/hastegeo:/usr/local/lib/python3.11/site-packages/hastegeo:ro
+      - ../hastelib/src/hastegeo:/home/site/wwwroot/hastegeo:ro
+      - ../api/hastefuncapi/function_app.py:/home/site/wwwroot/function_app.py:ro

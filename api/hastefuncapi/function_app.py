@@ -8,6 +8,7 @@ import json
 import os
 import re
 import tempfile
+import time
 import traceback
 
 import azure.functions as func  # type: ignore
@@ -72,6 +73,7 @@ from hastegeo.core.publishing.source import (
     PublishingSourceNotFoundError,
     PublishingSourceResolver,
 )
+from hastegeo.core.utils import perf
 from hastegeo.core.utils.blob import (
     download_blob_to_tempfile,
     parse_byte_range,
@@ -722,6 +724,8 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
         }
     """
     logger.info("GetProjectDetails HTTP trigger function processed a request.")
+    _perf = None
+    _perf_wall = time.perf_counter()
     try:
         try:
             project_id = _require_guid_param(req, "projectId")
@@ -734,6 +738,12 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
         logger.info(
             f"GetProjectDetails HTTP trigger function processed a request for project id: {project_id} with includeModels: {include_models}"
         )
+
+        # Phase 0 baseline instrumentation (spec/features/perf-layer-loading).
+        # Opt-in via HASTE_PERF=true; zero overhead when disabled.
+        _perf_on = os.environ.get("HASTE_PERF", "false").lower() == "true"
+        _perf = perf.begin(_perf_on)
+        _perf_wall = time.perf_counter()
 
         project = await asyncio.to_thread(
             MetadataProcessor(
@@ -839,7 +849,11 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
         project["imageLayer"].sort(
             key=lambda x: x["creationDate"], reverse=True
         )
-        return func.HttpResponse(json.dumps(project), status_code=200)
+        _payload = json.dumps(project)
+        _perf_headers = perf.headers(_perf, _perf_wall)
+        return func.HttpResponse(
+            _payload, status_code=200, headers=_perf_headers or None
+        )
 
     except FileNotFoundError as e:
         logger.error(f"Project not found: {e}\n{traceback.format_exc()}")
@@ -851,6 +865,11 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             "Error loading project details.", status_code=500
         )
+    finally:
+        try:
+            perf.log_summary(logger, "GetProjectDetails", _perf, _perf_wall)
+        finally:
+            perf.end()
 
 
 @app.route(route="PutProject", auth_level=AUTH_LEVEL, methods=["PUT"])
@@ -1470,9 +1489,9 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
     # interactive labeler's other artifacts are fetched by range and parsed
     # in-browser, so they must NOT be forced as downloads).
     if kind == "gpkg":
-        headers[
-            "Content-Disposition"
-        ] = f'attachment; filename="building_predictions_{model_id}.gpkg"'
+        headers["Content-Disposition"] = "; ".join(
+            ["attachment", f'filename="building_predictions_{model_id}.gpkg"']
+        )
     if result.etag:
         headers["ETag"] = (
             result.etag if result.etag.startswith('"') else f'"{result.etag}"'
