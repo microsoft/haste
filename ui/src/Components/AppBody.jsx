@@ -4,6 +4,7 @@ import { Route, Routes } from "react-router-dom";
 import { lazy, Suspense, useContext } from "react";
 
 import Loading from "./OtherComponents/Loading";
+import RouteErrorBoundary from "./RouteErrorBoundary";
 import PropType from "prop-types";
 
 import { AppContext } from "../AppContext";
@@ -47,7 +48,7 @@ const AppBody = ({ setModalComponent }) => {
   return (
     <div className="app-body-shell d-flex flex-grow-1 justify-content-center">
       {appParams.isLoading && <Loading />}
-      {routesReady && <Suspense fallback={<Loading />}><Routes>
+      {routesReady && <RouteErrorBoundary><Suspense fallback={<Loading />}><Routes>
         {appParams.userRoles !== null && appParams.publishingEnabled && (
           <Route path="/published-datasets" element={<PublishedDatasets />} />
         )}
@@ -117,7 +118,7 @@ const AppBody = ({ setModalComponent }) => {
           )}
 
         <Route path="*" element={<Error404 />} />
-      </Routes></Suspense>}
+      </Routes></Suspense></RouteErrorBoundary>}
     </div>
   );
 };

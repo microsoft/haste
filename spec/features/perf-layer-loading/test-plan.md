@@ -49,6 +49,10 @@ Full detail in [results.md](results.md). Captured via `tools/phase0_baseline.py`
 | Medium (20×5) | **243** | 6.18 s | 6.71 s | 33.2 KB | 12.36 s |
 | Large (50×5) | **603** | **20.77 s** | **21.78 s** | 82.8 KB | **40.27 s** |
 
+Payload values in this table belong to the historical HTTP fixtures. The
+local-FS replay uses a different seed revision (205.8 KB before replay-field
+corrections, about 206.8 KiB afterward); compare payloads only for matched fixtures.
+
 Logical calls match `3 + L·(2M+2)` exactly. Large breakdown: 301 `load`, 52
 `load_all_from_partition` (50 redundant `LABELS` scans = B1), 250 `export` (B2).
 API latency measured via `tools/bench_api_http.py`; UI TTI via `tools/ui_bench.cjs`
