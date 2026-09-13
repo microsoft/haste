@@ -220,7 +220,9 @@ class PredictionResultsProcessor:
             ]
             gpkg_name = f"building_predictions_{model.modelId}.gpkg"
             attrs_name = attrs_artifact_name(model.modelId)
-            with TemporaryDirectory(dir=self.config.TEMP_DIR) as directory:
+            # GeoPackage uses SQLite transactions; TEMP_DATA_PATH may be an
+            # Azure Files mount, so use instance-local OS scratch instead.
+            with TemporaryDirectory(prefix="haste_predictions_") as directory:
                 footprints = fetch_prediction_file(
                     storage, layer.buildingFootprintsUrl, directory
                 )

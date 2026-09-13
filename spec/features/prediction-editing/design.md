@@ -154,6 +154,15 @@ Lease cleanup must not replace a primary operation or renewal exception. A
 cleanup failure after publication can still leave a write unconfirmed, so an
 error response alone is not proof that metadata was never saved.
 
+Both raw and edited prediction saves stage their input GeoPackages, output
+GeoPackage and sidecar in an instance-local OS temporary directory (normally
+`/tmp` on Azure Functions), not `Config.TEMP_DIR` / `TEMP_DATA_PATH`. The latter
+can point at the shared Azure Files mount `/data`, whose filesystem semantics
+are unsuitable for these SQLite transaction writes. Keep OS temporary-directory
+settings local; do not disable SQLite locking, journaling or transactions.
+Close the GeoPackage, upload the finished artifacts, then publish metadata.
+Other workloads using `TEMP_DATA_PATH` and persistent `/data` are unchanged.
+
 Internal prediction-save logs include bounded exception/cause classes, Azure
 status/error codes and file/function/line locations. They exclude exception
 messages, source lines, payloads, credentials and signed URLs. Public failure

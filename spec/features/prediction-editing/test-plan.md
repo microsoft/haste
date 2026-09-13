@@ -61,6 +61,16 @@ The combined policy/lease/storage/processor/API gate passed 95 cases. A separate
 offline run in the API image passed 31 policy/lease/diagnostic cases using the
 deployment's Azure Blob SDK 12.30.0, rather than only the host's SDK version.
 
+Dev1 telemetry subsequently confirmed five raw-save and six edit-save HTTP 500
+requests with Fiona `TransactionError` in GeoPackage record writes. Correlated
+download logs show `/data` staging, matching the deployment's Azure Files-backed
+`TEMP_DATA_PATH`. The underlying SQLite transaction message is not present.
+Regression cases now prove that both writers succeed without using the
+configured shared temporary path and clean up their local scratch files.
+Moving these SQLite writes off the network mount does not disable transactions
+or modify existing artifacts; remote success still needs confirmation after
+deploying the updated core wheel.
+
 The final merged editor's Node suite passed 206 cases, including the parent's
 additional raw-download tests. Real Chrome/Azure Maps SDK/WebGL fixtures covered
 gestures, complete pins, version selection, report/download choices, navigation

@@ -131,7 +131,7 @@ class ResultsTestCase(unittest.TestCase):
         gpkg: str,
         sidecar: str,
         *,
-        prediction_revision: str
+        prediction_revision: str,
     ) -> Any:
         Path(gpkg).write_bytes(b"new GPKG transport fixture")
         Path(sidecar).write_text(json.dumps(attrs(prediction_revision)))
@@ -153,6 +153,22 @@ class ResultsTestCase(unittest.TestCase):
 
 
 class TestPredictionResults(ResultsTestCase):
+    def test_prediction_workspace_does_not_use_shared_temp_data_path(
+        self,
+    ) -> None:
+        shared = Path(self.directory, "azure-files-scratch")
+        self.config.TEMP_DIR = str(shared)
+
+        result = self.processor.save_building_predictions(self.request())
+
+        self.assertEqual(result["buildingCount"], 2)
+        self.assertFalse(shared.exists())
+        for path in (
+            self.writer.call_args.args[0:1] + self.writer.call_args.args[2:4]
+        ):
+            self.assertFalse(Path(path).is_relative_to(shared))
+            self.assertFalse(Path(path).exists())
+
     def test_pair_is_published_once_after_both_uploads(self) -> None:
         original = UnifiedArtifactStorage.store_artifact
 

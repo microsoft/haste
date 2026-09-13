@@ -157,6 +157,18 @@ class EditTestCase(unittest.TestCase):
 
 
 class TestPairedEditPublication(EditTestCase):
+    def test_edit_workspace_does_not_use_shared_temp_data_path(self) -> None:
+        shared = Path(self.directory, "azure-files-scratch")
+        self.config.TEMP_DIR = str(shared)
+        with patch.object(
+            prediction_edits, "TemporaryDirectory", wraps=TemporaryDirectory
+        ) as workspace:
+            saved = self.edit()
+        self.assertEqual(saved.version, 1)
+        self.assertEqual(len(self.current().editedPredictions), 1)
+        self.assertFalse(shared.exists())
+        self.assertNotIn("dir", workspace.call_args.kwargs)
+
     def test_pair_matches_selected_version_without_overwriting_raw(
         self,
     ) -> None:

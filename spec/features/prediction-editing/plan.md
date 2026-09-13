@@ -12,6 +12,7 @@
 | Exercise editor actions and responsive shared map | `ui-validation` | PE-1 to PE-7 | complete |
 | Simplify painting and keyboard review, remove separate edit sessions, and support saved damage thresholds | `ui`, `backend-dev` | PE-1 to PE-4, PE-7 | complete |
 | Correct Blob policy handling and save/lease diagnostics for deployed failures | `backend-dev` | PE-4 | implemented; regression-backed corrections, remote root cause not confirmed |
+| Stage prediction GeoPackages locally instead of on Azure Files | `backend-dev` | PE-4 | implemented; telemetry confirms both Fiona transaction failures and `/data` staging; remote post-deployment confirmation still required |
 
 ## Delivery
 
