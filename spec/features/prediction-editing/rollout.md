@@ -13,6 +13,11 @@ If a save still fails after deployment, its API log records safe exception/cause
 classes, Azure status/error codes and failure locations without signed URLs or
 request payloads. Client error messages remain intentionally sanitized.
 
+The GeoPackage scratch correction requires the updated core wheel in the API.
+Prediction saves now use the OS temporary directory independently of the
+deployment's shared `TEMP_DATA_PATH=/data`. No Azure Files mount removal, data
+migration, model rerun, or changes to other workloads' temporary paths are needed.
+
 ## Existing Versions
 
 Do not migrate project data during implementation. A historical saved version

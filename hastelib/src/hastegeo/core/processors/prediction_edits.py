@@ -143,7 +143,11 @@ class PredictionEditsProcessor(PredictionResultsProcessor):
                     model.modelId,
                     MetadataUtils.generate_id(),
                 ]
-                with TemporaryDirectory(dir=self.config.TEMP_DIR) as directory:
+                # Keep SQLite-backed GeoPackages off the shared Azure Files
+                # TEMP_DATA_PATH; upload only after local writes are closed.
+                with TemporaryDirectory(
+                    prefix="haste_prediction_edits_"
+                ) as directory:
                     raw = download_prediction_input(
                         self, model.gpkgUrl, str(Path(directory, "raw"))
                     )
