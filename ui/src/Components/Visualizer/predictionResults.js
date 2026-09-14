@@ -17,8 +17,14 @@ export function canViewResults(model) {
   return model?.predictionsReady === true && model?.buildingCount !== 0;
 }
 
-export function buildVisualizerResultsUrl({ projectId, imageLayerId, modelId }) {
-  return `GetVisualizerResults?${new URLSearchParams({ projectId, imageLayerId, modelId })}`;
+export function canEditResults(results) {
+  return canViewResults(results) && results.editReadiness?.ready === true;
+}
+
+export function buildVisualizerResultsUrl({ projectId, imageLayerId, modelId, version }) {
+  const params = new URLSearchParams({ projectId, imageLayerId, modelId });
+  if (version !== undefined && version !== null) params.set("version", String(version));
+  return `GetVisualizerResults?${params}`;
 }
 
 // Shared by BOTH model-row families, including legacy/no-edits downloads.
@@ -54,7 +60,7 @@ export function resolvePredictionArtifacts(results) {
 export function predictionRenderKey(results) {
   if (!results) return "";
   return JSON.stringify([
-    results.predictionRevision, results.predictionAttrsUrl, results.footprintTilesUrl,
+    results.predictionVersion ?? 0, results.predictionRevision, results.predictionAttrsUrl, results.footprintTilesUrl,
     results.flavor, results.buildingCount, results.predictionsReady,
     results.predictionsReadiness?.reason, results.predictionsReadiness?.tilesReady,
     results.predictionsReadiness?.attrsReady,
@@ -62,6 +68,9 @@ export function predictionRenderKey(results) {
 }
 
 export function validateResultsMetadata(results) {
+  if (!Number.isSafeInteger(results?.predictionVersion ?? 0) || (results?.predictionVersion ?? 0) < 0) {
+    throw new Error("Results contain an invalid prediction version.");
+  }
   if (!["inference", "embedding"].includes(results?.flavor)) {
     throw new Error("Results do not identify their prediction workflow.");
   }
@@ -92,7 +101,18 @@ export function readinessDetail(results) {
   if (readiness?.tilesReady === false) {
     return "The image layer's footprint tiles are not available yet. Retry after layer processing finishes.";
   }
+  if (results?.predictionVersion > 0) {
+    return "This saved version has no matching attributes. Select another version; its GeoPackage may still be downloaded. No backfill is started.";
+  }
   return "These results lack matching prediction attributes. Rerun inference or predict all buildings in the Interactive Labeler.";
+}
+
+/** Prediction-only changes must not recreate the imagery maps or move the camera. */
+export function visualizerSceneKey(results, routeKey = "") {
+  if (!results) return "";
+  return JSON.stringify([
+    routeKey, results.preDisasterImagery, results.postDisasterImagery, results.studyArea,
+  ]);
 }
 
 export function describeFootprintStatus(status, detail = "") {

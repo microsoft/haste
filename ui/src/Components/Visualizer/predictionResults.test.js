@@ -4,6 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { PMTiles } from "pmtiles";
 import { normalizeAttrs, indexById, classifyAll } from "./predictionClassify.js";
 import {
   buildRawGpkgUrl, buildVisualizerResultsUrl, canViewResults, DEFAULT_THRESHOLD,
@@ -14,7 +15,7 @@ import {
 import {
   dividerPositionForKey, isMobileResultsLayout, RESULTS_DESKTOP_MIN_WIDTH, swipeLeftPaneLabel,
 } from "./visualizerSwipe.js";
-import { fetchArtifactBuffer, loadPredictionAttributes } from "./predictionArtifactLoader.js";
+import { fetchArtifactBuffer, loadPredictionArtifacts, loadPredictionAttributes } from "./predictionArtifactLoader.js";
 import { readResponseBuffer } from "../InteractiveLabeler/interactiveLabelerLoading.js";
 
 function sampleAttrs(overrides = {}) {
@@ -108,6 +109,14 @@ test("server readiness gates both workflows, independently from a downloadable r
   for (const flavor of ["inference", "embedding"]) {
     assert.equal(canViewResults(sampleResults({ flavor })), true);
   }
+});
+
+test("saved versions with sidecars still require complete server readiness", () => {
+  const entry = { version: 1, predictionAttrsUrl: "/attrs", gpkgUrl: "/gpkg", buildingCount: 12 };
+  assert.equal(canViewResults(entry), false);
+  assert.equal(canViewResults({ ...entry, predictionsReady: false }), false);
+  assert.equal(canViewResults({ ...entry, predictionsReady: true }), true);
+  assert.equal(canViewResults({ ...entry, predictionsReady: true, buildingCount: 0 }), false);
 });
 
 test("missing, invalid and empty results cannot retain a ready footprint status", () => {
@@ -221,6 +230,22 @@ test("protected attribute loading is GET-only and validates the response revisio
   );
 });
 
+test("results load attributes and the PMTiles header without prefetching archive geometry", async (t) => {
+  globalThis.window = { atlas: { addProtocol() {} } };
+  t.after(() => { delete globalThis.window; });
+  const fetch = t.mock.method(globalThis, "fetch", async () => Response.json(sampleAttrs()));
+  const header = t.mock.method(PMTiles.prototype, "getHeader", async () => ({
+    minLon: 1, minLat: 2, maxLon: 3, maxLat: 4,
+  }));
+  const loaded = await loadPredictionArtifacts(sampleResults(), (url) => `/api/${url}`);
+  assert.equal(loaded.attrs.n, 3);
+  assert.deepEqual(loaded.bounds, [1, 2, 3, 4]);
+  assert.match(loaded.archiveKey, /kind=footprint_pmtiles/);
+  assert.equal(header.mock.callCount(), 1);
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.match(fetch.mock.calls[0].arguments[0], /kind=prediction_attrs/);
+});
+
 test("attribute 404 is actionable and does not issue another request", async (t) => {
   const fetch = t.mock.method(globalThis, "fetch", async () => new Response("", { status: 404 }));
   await assert.rejects(loadPredictionAttributes(sampleResults(), (url) => url), /Rerun inference/);
@@ -257,19 +282,24 @@ test("cancelling a pending stream read cannot return partial attributes", async 
   await assert.rejects(read, { name: "AbortError" });
 });
 
-test("read-only modules do not import editor or preparation machinery", async () => {
+test("shared artifact hooks stay read-only while the results page gains an editor", async () => {
   for (const file of [
-    "Visualizer.jsx", "usePredictionArtifacts.js", "usePredictionFootprints.js",
+    "usePredictionArtifacts.js", "usePredictionFootprints.js", "predictionFootprintMap.js",
     "useVisualizerResults.js", "predictionArtifactLoader.js", "PredictionStatusNote.jsx",
   ]) {
     const source = await readFile(new URL(file, import.meta.url), "utf8");
     assert.doesNotMatch(source, /predictionPrep|PutPreparePrediction|GetPredictionEditSession|apiPut|PredictionEditPanel|PredictionVersionControls|setInterval/);
   }
   const source = await readFile(new URL("Labels.jsx", import.meta.url), "utf8");
-  assert.doesNotMatch(source, /visualizerEditButton/);
+  assert.match(source, /visualizerEditButton/);
+  for (const file of ["Visualizer.jsx", "usePredictionEditor.js", "predictionVersions.js", "usePredictionEditorMap.js"]) {
+    const code = await readFile(new URL(file, import.meta.url), "utf8");
+    assert.doesNotMatch(code, /predictionPrep|PutPreparePrediction|setInterval/);
+  }
   for (const file of ["ModelResultsButton.jsx", "EmbeddingModelRow.jsx"]) {
     const row = await readFile(new URL(`../ProjectManagement/${file}`, import.meta.url), "utf8");
-    assert.match(row, /buildRawGpkgUrl/);
+    assert.match(row, /onClick: \(\) => setShowDownloadPredictions\(true\)/);
     assert.doesNotMatch(row, /handleDownload\(model\.gpkgUrl\)/);
+    assert.doesNotMatch(row, /fileDownload\(buildUrl\(buildRawGpkgUrl/);
   }
 });

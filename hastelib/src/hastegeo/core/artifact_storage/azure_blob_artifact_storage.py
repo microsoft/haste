@@ -15,15 +15,14 @@ from azure.core.exceptions import ResourceExistsError
 from azure.identity import DefaultAzureCredential  # type: ignore
 from azure.storage.blob import BlobClient  # type: ignore
 from azure.storage.blob import (
-    AccessPolicy,
     BlobSasPermissions,
     BlobServiceClient,
-    ContainerSasPermissions,
     generate_blob_sas,
     generate_container_sas,
 )
 from hastegeo.core.utils.logs import Logger
 
+from ..utils.blob_access_policy import ensure_container_read_policy
 from .abstract_artifact_storage import AbstractArtifactStorage
 
 _INITIALIZED_CONTAINERS = set()
@@ -97,41 +96,19 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
                         f"Container '{container}' created successfully."
                     )
                 except ResourceExistsError:
-                    self.logger.info(f"Container '{container}' already exists.")
+                    self.logger.info(
+                        f"Container '{container}' already exists."
+                    )
                 if self.serves_read_sas:
                     self._create_or_update_managed_access_policy()
                 _INITIALIZED_CONTAINERS.add(cache_key)
 
-    def _create_or_update_managed_access_policy(self):
-        expiration_date = datetime.now(timezone.utc) + timedelta(
-            days=self.sas_expiration_days
+    def _create_or_update_managed_access_policy(self) -> None:
+        ensure_container_read_policy(
+            self.container_client,
+            self.container_read_policy,
+            expiration_days=self.sas_expiration_days,
         )
-        # Check if the policy already exists
-        existing_policies = self.container_client.get_container_access_policy()
-        if self.container_read_policy in existing_policies.get(
-            "signed_identifiers", {}
-        ):
-            policy = existing_policies["signed_identifiers"][
-                self.container_read_policy
-            ]
-            if policy["expiry"] < datetime.now(timezone.utc):
-                # Policy exists but is expired, extend the expiration date
-                policy["expiry"] = expiration_date
-                self.container_client.set_container_access_policy(
-                    signed_identifiers={self.container_read_policy: policy}
-                )
-        else:
-            # Policy does not exist, create a new one
-            self.logger.info("Policy does not exist, create a new one")
-            read_policy = AccessPolicy(
-                permission=ContainerSasPermissions(read=True),
-                expiry=expiration_date,
-            )
-            identifiers = {self.container_read_policy: read_policy}
-            self.container_client.set_container_access_policy(
-                signed_identifiers=identifiers
-            )
-            self.logger.info("Policy set")
 
     def get_file_path(
         self, identifier: str, extra_partition_keys: list | str = None
@@ -229,6 +206,8 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
         data: str = None,
         src_path: str = None,
         namespace: str | list = None,
+        *,
+        overwrite: bool = True,
     ) -> str:
         """Upload the artifact to Azure Blob Storage.
 
@@ -264,21 +243,23 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
         try:
             if src_path is not None:
                 with open(src_path, "rb") as file_data:
-                    blob_client.upload_blob(file_data, overwrite=True)
+                    blob_client.upload_blob(file_data, overwrite=overwrite)
                 self.logger.info(
                     f"Uploaded file '{src_path}' to blob '{dst_path}'"
                 )
             else:
                 # Handle string data upload
                 if self.is_bytes(data):
-                    blob_client.upload_blob(data, overwrite=True)
+                    blob_client.upload_blob(data, overwrite=overwrite)
                 elif self.is_json(data):
-                    blob_client.upload_blob(json.dumps(data), overwrite=True)
+                    blob_client.upload_blob(
+                        json.dumps(data), overwrite=overwrite
+                    )
                 elif self.is_yaml(data):
                     self.logger.info("data is yaml, dumping to blob")
                     blob_client.upload_blob(
                         yaml.dump(data, default_flow_style=False),
-                        overwrite=True,
+                        overwrite=overwrite,
                     )
                 else:
                     raise ValueError(
@@ -302,14 +283,22 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
         if parsed.scheme:
             container_url = urlparse(self.container_client.url)
             if parsed.netloc.lower() != container_url.netloc.lower():
-                raise ValueError("Artifact URL does not belong to configured storage")
+                raise ValueError(
+                    "Artifact URL does not belong to configured storage"
+                )
             container_path = container_url.path.rstrip("/") + "/"
             if not parsed.path.startswith(container_path):
-                raise ValueError("Artifact URL does not belong to configured container")
+                raise ValueError(
+                    "Artifact URL does not belong to configured container"
+                )
             location = unquote(parsed.path[len(container_path) :])
 
         normalized = str(PurePosixPath(location.lstrip("/")))
-        if not normalized or normalized == "." or ".." in PurePosixPath(normalized).parts:
+        if (
+            not normalized
+            or normalized == "."
+            or ".." in PurePosixPath(normalized).parts
+        ):
             raise ValueError("Invalid artifact path")
         return normalized
 
@@ -440,11 +429,9 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
                 )
             account_key = None
         if account_key is None:
-            user_delegation_key = (
-                delegation_client.get_user_delegation_key(
-                    now - timedelta(minutes=5),
-                    expiry + timedelta(minutes=5),
-                )
+            user_delegation_key = delegation_client.get_user_delegation_key(
+                now - timedelta(minutes=5),
+                expiry + timedelta(minutes=5),
             )
 
         sas_token = generate_blob_sas(

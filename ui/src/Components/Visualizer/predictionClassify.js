@@ -34,12 +34,26 @@ export function normalizeAttrs(raw, expected) {
     invalid("missing prediction revision");
   }
   if (!Number.isSafeInteger(raw.n) || raw.n < 0) invalid("invalid row count");
+  const version = raw.predictionVersion ?? 0;
+  if (!Number.isSafeInteger(version) || version < 0) invalid("invalid prediction version");
+  const edited = version > 0;
+  if (edited && raw.isEdited !== true) invalid("edited provenance is missing");
+  if (!edited && raw.isEdited === true) invalid("raw output cannot have edited provenance");
   for (const column of COLUMNS) {
     if (!Array.isArray(raw[column]) || raw[column].length !== raw.n) {
       invalid(`${column} must contain exactly ${raw.n} rows`);
     }
   }
+  if (edited) {
+    for (const column of ["modelClasses", "overrideClasses"]) {
+      if (!Array.isArray(raw[column]) || raw[column].length !== raw.n) invalid(`${column} must contain exactly ${raw.n} rows`);
+    }
+    for (const field of ["threshold", "unknownThreshold"]) {
+      if (raw[field] === null || !isScore(raw[field])) invalid(`invalid ${field}`);
+    }
+  }
   if (expected) {
+    if (version !== (expected.predictionVersion ?? 0)) invalid("result and sidecar versions differ");
     if (raw.n !== expected.buildingCount) invalid("result and sidecar counts differ");
     if (raw.flavor !== expected.flavor) invalid("result and sidecar flavors differ");
     if (raw.predictionRevision !== expected.predictionRevision) {
@@ -61,9 +75,16 @@ export function normalizeAttrs(raw, expected) {
     }
     if (![0, 1, null].includes(raw.damaged[i])) invalid(`invalid damaged flag at row ${i}`);
     if (!PREDICTION_CLASSES.includes(raw.classes[i])) invalid(`invalid class at row ${i}`);
+    const modelClass = edited ? raw.modelClasses[i] : raw.classes[i];
+    if (!PREDICTION_CLASSES.includes(modelClass)) invalid(`invalid model class at row ${i}`);
+    if (edited) {
+      const override = raw.overrideClasses[i];
+      if (override !== null && !PREDICTION_CLASSES.includes(override)) invalid(`invalid override class at row ${i}`);
+      if (override !== null && override !== raw.classes[i]) invalid(`override and effective class differ at row ${i}`);
+    }
     if (
       (raw.damage[i] === null || raw.unknown[i] === null) &&
-      raw.classes[i] !== CLASS_UNKNOWN
+      modelClass !== CLASS_UNKNOWN
     ) {
       invalid(`unscored row ${i} must be Unknown`);
     }

@@ -19,10 +19,9 @@ import { AppContext } from "../../AppContext";
 import ModelResultsStatusIndicator from "../OtherComponents/ModelResultsStatusIndicator";
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
+import DownloadPredictionsDialog from "../OtherComponents/DownloadPredictionsDialog";
 import PublishDatasetModal from "../PublishDatasetModal";
-import { buildUrl } from "../../util/api";
-import { buildRawGpkgUrl, canViewResults, readinessDetail } from "../Visualizer/predictionResults.js";
-import useRawPredictionDownload from "../Visualizer/useRawPredictionDownload";
+import { canViewResults, readinessDetail } from "../Visualizer/predictionResults.js";
 
 
 function formatFileSize(bytes) {
@@ -41,9 +40,9 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
   const [showValidationReport, setShowValidationReport] = useState(false);
   const [showAssessmentReport, setShowAssessmentReport] = useState(false);
   const [showPublishDataset, setShowPublishDataset] = useState(false);
-  const rawDownload = useRawPredictionDownload(buildUrl(buildRawGpkgUrl({
-    projectId, imageLayerId, modelId: model.modelId,
-  })));
+  const [showDownloadPredictions, setShowDownloadPredictions] = useState(false);
+  const hasVersions = model.hasEdits === true || (model.editedPredictions || []).some((entry) => entry.gpkgUrl);
+  const hasViewableVersion = (model.editedPredictions || []).some(canViewResults);
 
   function handleDownload(url) {
     try {
@@ -74,7 +73,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
   const resultsMenuOptions = (model) => ({
     items: [
       {
-        disabled: !canViewResults(model),
+        disabled: !canViewResults(model) && !hasViewableVersion,
         tooltip: readinessDetail(model),
         key: "viewResults",
         text: "View",
@@ -94,11 +93,10 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
         key: "downloadGeopackage",
         text: "Download Geopackage (.gpkg)",
         icon: <FluentIcon name="download" />,
-        onClick: async () => {
-          const outcome = await rawDownload.download();
-          if (outcome.error) setDialog("Download failed", outcome.error);
-        },
-        disabled: !model.gpkgUrl || !!rawDownload.loading,
+        // Cached rows are not a version manifest. Always discover fresh history
+        // and use the scoped downloader, including genuinely raw-only models.
+        onClick: () => setShowDownloadPredictions(true),
+        disabled: !model.gpkgUrl && !hasVersions,
       },
       {
         key: "downloadTrainingArtifacts",
@@ -122,7 +120,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
         key: "validationReport",
         text: "Validation Report",
         icon: <FluentIcon name="ReportDocument" />,
-        disabled: model.inferenceStatus !== "Processed" || !(validationLabelCount > 0),
+        disabled: (model.inferenceStatus !== "Processed" && !hasVersions) || !(validationLabelCount > 0),
         onClick: () => setShowValidationReport(true),
       },
       {
@@ -132,7 +130,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
         // Predictions alone (+ cached footprints) are enough for the
         // damage-count estimate; labels are optional and just unlock the
         // precision/recall section inside the modal.
-        disabled: model.inferenceStatus !== "Processed",
+        disabled: model.inferenceStatus !== "Processed" && !hasVersions,
         onClick: () => setShowAssessmentReport(true),
       },
       ...(appParams.publishingEnabled
@@ -193,12 +191,17 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
             />
           )}
         </div>
+        {showDownloadPredictions && (
+          <DownloadPredictionsDialog projectId={projectId} imageLayerId={imageLayerId} modelId={model.modelId}
+            modelName={model.name} currentRevision={model.predictionRevision} onDismiss={() => setShowDownloadPredictions(false)} />
+        )}
         {showValidationReport && (
           <ValidationReportModal
             projectId={projectId}
             imageLayerId={imageLayerId}
             modelId={model.modelId}
             modelName={model.name}
+            currentRevision={model.predictionRevision}
             onDismiss={() => setShowValidationReport(false)}
           />
         )}
@@ -208,6 +211,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
             imageLayerId={imageLayerId}
             modelId={model.modelId}
             modelName={model.name}
+            currentRevision={model.predictionRevision}
             onDismiss={() => setShowAssessmentReport(false)}
           />
         )}

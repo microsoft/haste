@@ -19,15 +19,15 @@ import { useContext, useState } from "react";
 import React from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
-import { apiDelete, buildUrl } from "../../util/api";
+import { apiDelete } from "../../util/api";
 import { AppContext } from "../../AppContext";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
+import DownloadPredictionsDialog from "../OtherComponents/DownloadPredictionsDialog";
 import PublishDatasetModal from "../PublishDatasetModal";
 import { limitTextLength } from "../../util/conversion";
-import { buildRawGpkgUrl, canViewResults, readinessDetail } from "../Visualizer/predictionResults.js";
-import useRawPredictionDownload from "../Visualizer/useRawPredictionDownload";
+import { canViewResults, readinessDetail } from "../Visualizer/predictionResults.js";
 
 // Friendly per-row label for the embedding backbone column. The Model schema
 // stores ``embeddingModel`` as the raw backbone name passed to the workflow
@@ -82,12 +82,12 @@ const EmbeddingModelRow = ({
   const [showValidationReport, setShowValidationReport] = useState(false);
   const [showAssessmentReport, setShowAssessmentReport] = useState(false);
   const [showPublishDataset, setShowPublishDataset] = useState(false);
-  const rawDownload = useRawPredictionDownload(buildUrl(buildRawGpkgUrl({
-    projectId, imageLayerId, modelId: model.modelId,
-  })));
+  const [showDownloadPredictions, setShowDownloadPredictions] = useState(false);
 
   const isProcessed = model.status === "Processed";
-  const hasPredictions = !!model.gpkgUrl;
+  const hasVersions = model.hasEdits === true || (model.editedPredictions || []).some((entry) => entry.gpkgUrl);
+  const hasViewableVersion = (model.editedPredictions || []).some(canViewResults);
+  const hasPredictions = !!model.gpkgUrl || hasVersions;
   const createdDate = model.creationDate
     ? `${model.creationDate.substring(0, 10)} ${model.creationDate.substring(
         11,
@@ -116,7 +116,7 @@ const EmbeddingModelRow = ({
         key: "viewResults",
         text: "View",
         icon: <FluentIcon name="Forward" />,
-        disabled: !canViewResults(model),
+        disabled: !canViewResults(model) && !hasViewableVersion,
         tooltip: readinessDetail(model),
         onClick: () => navigate(`/visualizer/${projectId}/${imageLayerId}/${model.modelId}`),
       },
@@ -124,11 +124,8 @@ const EmbeddingModelRow = ({
         key: "downloadGeopackage",
         text: "Download Geopackage (.gpkg)",
         icon: <FluentIcon name="download" />,
-        disabled: !hasPredictions || !!rawDownload.loading,
-        onClick: async () => {
-          const outcome = await rawDownload.download();
-          if (outcome.error) setDialog("Download failed", outcome.error);
-        },
+        disabled: !hasPredictions,
+        onClick: () => setShowDownloadPredictions(true),
       },
       {
         key: "validationReport",
@@ -156,7 +153,7 @@ const EmbeddingModelRow = ({
               key: "publishDataset",
               text: "Publish dataset…",
               icon: <FluentIcon name="Upload" />,
-              disabled: !isProcessed || !hasPredictions,
+              disabled: !isProcessed || !model.gpkgUrl,
               onClick: () => setShowPublishDataset(true),
             },
           ]
@@ -205,12 +202,17 @@ const EmbeddingModelRow = ({
 
   const reportModals = (
     <>
+      {showDownloadPredictions && (
+        <DownloadPredictionsDialog projectId={projectId} imageLayerId={imageLayerId} modelId={model.modelId}
+          modelName={model.name} currentRevision={model.predictionRevision} onDismiss={() => setShowDownloadPredictions(false)} />
+      )}
       {showValidationReport && (
         <ValidationReportModal
           projectId={projectId}
           imageLayerId={imageLayerId}
           modelId={model.modelId}
           modelName={model.name}
+          currentRevision={model.predictionRevision}
           onDismiss={() => setShowValidationReport(false)}
         />
       )}
@@ -220,6 +222,7 @@ const EmbeddingModelRow = ({
           imageLayerId={imageLayerId}
           modelId={model.modelId}
           modelName={model.name}
+          currentRevision={model.predictionRevision}
           onDismiss={() => setShowAssessmentReport(false)}
         />
       )}

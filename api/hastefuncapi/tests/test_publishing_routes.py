@@ -360,6 +360,7 @@ class TestPublishingRoutes(unittest.IsolatedAsyncioTestCase):
             "layer-1",
             "42",
             max_total_bytes=function_app._PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES,
+            version=0,
         )
 
     async def test_publish_replay_skips_assessment_generation(self) -> None:

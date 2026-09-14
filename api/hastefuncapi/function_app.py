@@ -13,10 +13,15 @@ import azure.functions as func  # type: ignore
 from azure.core.exceptions import ResourceNotFoundError
 from hastegeo.core.config import Config
 from hastegeo.core.models.admin import AdminConfig
+from hastegeo.core.models.prediction_edits import (
+    PredictionReportRequest,
+    PredictionSelectionRequest,
+    PredictionVersionsRequest,
+    SaveEditedPredictionsRequest,
+)
 from hastegeo.core.models.prediction_results import (
     BuildingPredictionsRequest,
     ModelArtifactRequest,
-    ResultsRequest,
 )
 from hastegeo.core.models.projects import (
     BuildingValidation,
@@ -47,6 +52,10 @@ from hastegeo.core.processors.footprint_tiles import FOOTPRINT_TILE_FIELDS
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
 from hastegeo.core.processors.metadata import MetadataProcessor
+from hastegeo.core.processors.prediction_edits import (
+    PredictionEditConflict,
+    PredictionEditsProcessor,
+)
 from hastegeo.core.processors.prediction_results import (
     PredictionRequestError,
     PredictionResultsProcessor,
@@ -65,6 +74,9 @@ from hastegeo.core.processors.stats import StatsPreProcessor
 from hastegeo.core.processors.train import TrainPreprocessor
 from hastegeo.core.processors.uploader import FileUploader
 from hastegeo.core.processors.validation import BuildingValidationProcessor
+from hastegeo.core.processors.validation_reports import (
+    ValidationReportProcessor,
+)
 from hastegeo.core.processors.visualizer import VisualizerProcessor
 from hastegeo.core.publishing.lease import LeaseUnavailableError
 from hastegeo.core.publishing.registry import (
@@ -88,6 +100,7 @@ from hastegeo.core.utils.blob import (
     parse_byte_range,
 )
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
+from hastegeo.core.utils.errors import exception_diagnostics
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
 from hastegeo.core.utils.source_types import normalize_source_type
@@ -803,7 +816,11 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
                         # This is a noop until the export method is properly
                         # implemented
                         model["labelsUrl"] = None
-                image_layer["models"] = match_models
+                layer = ImageLayer.model_validate(image_layer)
+                image_layer["models"] = [
+                    PredictionResultsProcessor.model_view(model, layer)
+                    for model in match_models
+                ]
                 image_layer["modelCount"] = len(match_models)
             label_projects = await asyncio.to_thread(
                 MetadataProcessor(
@@ -1259,7 +1276,11 @@ async def GetLayerDetailView(req: func.HttpRequest) -> func.HttpResponse:
             for model in models
             if model["imageLayerId"] == image_layer_id
         ]
-        image_layer["models"] = match_models
+        layer = ImageLayer.model_validate(image_layer)
+        image_layer["models"] = [
+            PredictionResultsProcessor.model_view(model, layer)
+            for model in match_models
+        ]
         image_layer["modelCount"] = len(match_models)
         return func.HttpResponse(json.dumps(image_layer), status_code=200)
     except FileNotFoundError as e:
@@ -1421,7 +1442,9 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
     try:
         request = ModelArtifactRequest.model_validate(dict(req.params))
     except ValueError:
-        return _bad_request("Invalid artifact request")
+        return _prediction_edit_error_response(
+            PredictionRequestError("Invalid artifact request.")
+        )
     try:
         processor = PredictionResultsProcessor(config)
         blob_url, generation_scoped = await asyncio.to_thread(
@@ -1432,17 +1455,10 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
             if request.kind == "gpkg"
             else None
         )
-    except PredictionRequestError:
-        return _bad_request("Invalid artifact request")
-    except FileNotFoundError:
-        return func.HttpResponse(
-            "Artifact not available.",
-            status_code=404,
-            headers={"Cache-Control": "private, no-store"},
-        )
+    except (PredictionRequestError, FileNotFoundError) as error:
+        return _prediction_edit_error_response(error)
     except Exception as error:
-        logger.error("Artifact resolution failed (%s)", type(error).__name__)
-        return func.HttpResponse("Error resolving artifact.", status_code=500)
+        return _prediction_edit_error_response(error)
     kind = request.kind
 
     try:
@@ -1453,18 +1469,10 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         result = await read_result_artifact(blob_url, offset, length, config)
-    except (FileNotFoundError, ResourceNotFoundError):
-        return func.HttpResponse(
-            "Artifact not available.",
-            status_code=404,
-            headers={"Cache-Control": "private, no-store"},
-        )
-    except ValueError:
-        logger.error("GetModelArtifact invalid stored artifact location")
-        return func.HttpResponse("Artifact unavailable.", status_code=500)
+    except (FileNotFoundError, ResourceNotFoundError, ValueError) as error:
+        return _prediction_edit_error_response(error)
     except Exception as error:
-        logger.error("GetModelArtifact read failed (%s)", type(error).__name__)
-        return func.HttpResponse("Error reading artifact.", status_code=502)
+        return _prediction_edit_error_response(error, internal_status=502)
 
     content_type = _MODEL_ARTIFACT_CONTENT_TYPES.get(kind, result.content_type)
     headers = {
@@ -2213,9 +2221,11 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
         "GetVisualizerResults HTTP trigger function processed a request."
     )
     try:
-        request = ResultsRequest.model_validate(dict(req.params))
+        request = PredictionSelectionRequest.model_validate(dict(req.params))
     except ValueError:
-        return _bad_request("Invalid visualizer request")
+        return _prediction_edit_error_response(
+            PredictionRequestError("Invalid visualizer request.")
+        )
     try:
         visualizer = await asyncio.to_thread(
             VisualizerProcessor(config).load, request
@@ -2225,15 +2235,8 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
             status_code=200,
             mimetype="application/json",
         )
-    except PredictionRequestError:
-        return _bad_request("Invalid visualizer request")
-    except FileNotFoundError:
-        return func.HttpResponse("Results source not found.", status_code=404)
     except Exception as error:
-        logger.error("Visualizer read failed (%s)", type(error).__name__)
-        return func.HttpResponse(
-            "Error loading visualizer results.", status_code=500
-        )
+        return _prediction_edit_error_response(error)
 
 
 @app.route(
@@ -2501,6 +2504,107 @@ async def GetBuildingEmbeddingsGeoJSON(
                 pass
 
 
+def _prediction_edit_error_response(
+    error: Exception, internal_status: int = 500
+) -> func.HttpResponse:
+    """Map execution failures to the editing transport contract, without payloads."""
+    if isinstance(error, PredictionEditConflict):
+        status, code, message = 409, error.code, str(error)
+    elif isinstance(error, PredictionRequestError):
+        status, code, message = 400, "invalid_request", str(error)
+    elif isinstance(error, (FileNotFoundError, ResourceNotFoundError)):
+        status, code, message = (
+            404,
+            "not_found",
+            "Prediction source or version is unavailable.",
+        )
+    else:
+        logger.error(
+            "Prediction edit operation failed (%s): %s",
+            type(error).__name__,
+            exception_diagnostics(error),
+        )
+        status, code, message = (
+            internal_status,
+            "internal_error",
+            "Prediction operation failed.",
+        )
+    return func.HttpResponse(
+        json.dumps({"error": {"code": code, "message": message}}),
+        status_code=status,
+        mimetype="application/json",
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@app.route(
+    route="GetEditedPredictionVersions", auth_level=AUTH_LEVEL, methods=["GET"]
+)
+async def GetEditedPredictionVersions(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    try:
+        request = PredictionVersionsRequest.model_validate(dict(req.params))
+    except ValueError:
+        return _prediction_edit_error_response(
+            PredictionRequestError("Invalid prediction-version parameters.")
+        )
+    try:
+        result = await asyncio.to_thread(
+            PredictionEditsProcessor(config).list_versions, request
+        )
+        return func.HttpResponse(
+            json.dumps(result),
+            status_code=200,
+            mimetype="application/json",
+            headers={"Cache-Control": "private, no-store"},
+        )
+    except Exception as error:
+        return _prediction_edit_error_response(error)
+
+
+@app.route(
+    route="PutEditedPredictions", auth_level=AUTH_LEVEL, methods=["PUT"]
+)
+async def PutEditedPredictions(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        request = SaveEditedPredictionsRequest.model_validate(req.get_json())
+    except ValueError:
+        return _prediction_edit_error_response(
+            PredictionRequestError("Invalid edit-save body.")
+        )
+    try:
+        caller, auth_error = await _get_active_publishing_caller(req)
+        if auth_error is not None:
+            return auth_error
+        if not _publishing_mutation_authorized(caller):
+            return func.HttpResponse(
+                json.dumps(
+                    {
+                        "error": {
+                            "code": "forbidden",
+                            "message": "Editing requires contributor access.",
+                        }
+                    }
+                ),
+                status_code=403,
+                mimetype="application/json",
+            )
+        result = await asyncio.to_thread(
+            PredictionEditsProcessor(config).save,
+            request,
+            created_by=caller["id"],
+        )
+        return func.HttpResponse(
+            result.model_dump_json(),
+            status_code=200,
+            mimetype="application/json",
+            headers={"Cache-Control": "private, no-store"},
+        )
+    except Exception as error:
+        return _prediction_edit_error_response(error)
+
+
 @app.route(
     route="PutBuildingPredictions",
     auth_level=AUTH_LEVEL,
@@ -2554,7 +2658,11 @@ async def PutBuildingPredictions(
             "Invalid prediction request.", status_code=400
         )
     except Exception as error:
-        logger.error("Prediction save failed (%s)", type(error).__name__)
+        logger.error(
+            "Prediction save failed (%s): %s",
+            type(error).__name__,
+            exception_diagnostics(error),
+        )
         return func.HttpResponse(
             "Error saving building predictions.", status_code=500
         )
@@ -3424,20 +3532,23 @@ async def GetBuildingFootprintsGeoJSON(
         sample (int, optional): Maximum number of buildings to return
             (default 200). Clamped to the inclusive range [1, 2000] to bound
             response size and server-side memory.
+        buildingId (str, optional): Return only this building's WGS84
+            representative point and source row ID, without sampling.
     """
     logger.info(
         "GetBuildingFootprintsGeoJSON HTTP trigger function processed a request."
     )
     tmp_path = None
     try:
-        import geopandas as gpd
-
-        # Imported here rather than at module scope: footprints pulls in
-        # geopandas, which is too heavy for the function app's cold start.
-        from hastegeo.core.utils.footprints import sample_indices
-
         project_id = req.params.get("projectId")
         image_layer_id = req.params.get("imageLayerId")
+        building_id = req.params.get("buildingId")
+        if building_id is not None and (
+            not building_id
+            or building_id != building_id.strip()
+            or len(building_id) > 1024
+        ):
+            return _bad_request("Invalid buildingId")
         try:
             requested_sample = int(
                 req.params.get("sample", DEFAULT_VALIDATION_SAMPLE)
@@ -3471,6 +3582,23 @@ async def GetBuildingFootprintsGeoJSON(
         tmp_path = await download_blob_to_tempfile(
             footprints_url, suffix=".gpkg"
         )
+
+        if building_id is not None:
+            from hastegeo.core.utils.footprint_location import (
+                footprint_location,
+            )
+
+            location = await asyncio.to_thread(
+                footprint_location, tmp_path, building_id
+            )
+            return func.HttpResponse(
+                json.dumps(location),
+                status_code=200,
+                mimetype="application/json",
+            )
+
+        import geopandas as gpd
+        from hastegeo.core.utils.footprints import sample_indices
 
         gdf = await asyncio.to_thread(gpd.read_file, tmp_path)
 
@@ -3752,20 +3880,6 @@ async def PutBuildingValidationConfig(
         )
 
 
-def _validation_label_source(model_data: dict, image_layer_id: str) -> dict:
-    """Pick the label store for a model's Validation/Assessment report.
-
-    Always the layer-scoped Building Validation (VALIDATION) store. This is
-    the canonical workflow-agnostic place users label, regardless of model
-    type — including the building-labeling workflow's embedding models.
-    (The model-scoped interactive-labeler labels are a per-model workspace
-    that drives the in-browser training pass; they intentionally don't
-    flow back into the Validation/Assessment report metrics.)
-    """
-    types = config.get_metadata_types()
-    return {"type": types.VALIDATION.value, "key": image_layer_id}
-
-
 @app.route(
     route="GetInteractiveLabels",
     auth_level=AUTH_LEVEL,
@@ -3911,255 +4025,26 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         "GetValidationReport HTTP trigger function processed a request."
     )
     try:
-        source_request = ResultsRequest(
-            projectId=req.params.get("projectId"),
-            imageLayerId=req.params.get("imageLayerId"),
-            modelId=req.params.get("modelId"),
+        source_request = PredictionSelectionRequest.model_validate(
+            dict(req.params)
         )
     except ValueError:
-        return _bad_request("Invalid validation report request")
+        return _prediction_edit_error_response(
+            PredictionRequestError("Invalid validation report request.")
+        )
     try:
-        project_id = source_request.projectId
-        image_layer_id = source_request.imageLayerId
-
-        model_data = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=project_id,
-            ).load,
-            source_request.modelId,
-        )
-        gpkg_url = model_data.get("gpkgUrl")
-        if not gpkg_url or model_data.get("predictedBuildingCount") == 0:
-            return func.HttpResponse(
-                "Raw report source unavailable.", status_code=404
-            )
-
-        # ── 2. Load labels from the Building Validation store ──────────────────
-        # The report always reads the layer-scoped Building Validation labels,
-        # regardless of model type (see _validation_label_source).
-        label_meta = _validation_label_source(model_data, image_layer_id)
-        try:
-            validation_data = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=label_meta["type"],
-                    partition_key=project_id,
-                    config=config,
-                ).load,
-                label_meta["key"],
-            )
-        except FileNotFoundError:
-            return func.HttpResponse(
-                json.dumps(
-                    {
-                        "error": (
-                            "No validation labels found. Run Building "
-                            "Validation for this image layer first."
-                        )
-                    }
-                ),
-                status_code=404,
-                mimetype="application/json",
-            )
-
-        labels_dict = validation_data.get("labels") or {}
-        if not labels_dict:
-            return func.HttpResponse(
-                json.dumps(
-                    {
-                        "error": (
-                            "No validation labels found. Run Building "
-                            "Validation for this image layer first."
-                        )
-                    }
-                ),
-                status_code=404,
-                mimetype="application/json",
-            )
-
-        # ── 2. Load labels from the right store ────────────────────────────────
-        # Embedding models (building workflow) use the model-scoped interactive
-        # labels; standard models use the layer-scoped Building Validation store.
-        label_meta = _validation_label_source(model_data, image_layer_id)
-        try:
-            validation_data = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=label_meta["type"],
-                    partition_key=project_id,
-                    config=config,
-                ).load,
-                label_meta["key"],
-            )
-        except FileNotFoundError:
-            return func.HttpResponse(
-                json.dumps({"error": "No validation labels found."}),
-                status_code=404,
-                mimetype="application/json",
-            )
-
-        labels_dict = validation_data.get("labels") or {}
-        if not labels_dict:
-            return func.HttpResponse(
-                json.dumps({"error": "No validation labels found."}),
-                status_code=404,
-                mimetype="application/json",
-            )
-
-        # ── 3. Load image layer to get buildingFootprintsUrl ──────────────────
-        image_layer_data = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().IMAGELAYER.value,
-                partition_key=project_id,
-            ).load,
-            image_layer_id,
-        )
-        footprints_url = image_layer_data.get("buildingFootprintsUrl")
-        if not footprints_url:
-            return func.HttpResponse(
-                json.dumps(
-                    {
-                        "error": "No building footprints available for this image layer."
-                    }
-                ),
-                status_code=404,
-                mimetype="application/json",
-            )
-
-        # ── 4. Download both GeoPackages and join row-order → overture id ─────
-        import fiona
-
-        footprints_path = await download_blob_to_tempfile(
-            footprints_url, suffix=".gpkg"
-        )
-        gpkg_path = await download_blob_to_tempfile(gpkg_url, suffix=".gpkg")
-
-        try:
-            # Build index → overture_id from the building footprints file.
-            # Cast to str so the eventual lookup against labels_dict (which
-            # always has string keys, since JSON object keys are strings)
-            # matches even if the footprints file's id column is integer
-            # typed (common for user-supplied GPKGs).
-            with fiona.open(footprints_path) as src_fp:
-                idx_to_overture = {
-                    i: str(feat["properties"]["id"])
-                    for i, feat in enumerate(src_fp)
-                }
-
-            # Build int_id → damaged from the inference results
-            with fiona.open(gpkg_path) as src_inf:
-                int_id_to_damaged = {
-                    feat["properties"]["id"]: feat["properties"]["damaged"]
-                    for feat in src_inf
-                }
-        finally:
-            os.unlink(footprints_path)
-            os.unlink(gpkg_path)
-
-        # Build overture_id → predicted_damaged
-        overture_to_pred = {
-            overture_id: int_id_to_damaged[int_id]
-            for int_id, overture_id in idx_to_overture.items()
-            if int_id in int_id_to_damaged
-        }
-
-        # ── 6. Compute metrics ─────────────────────────────────────────────────
-        label_counts = {"Damaged": 0, "NotDamaged": 0, "Unknown": 0}
-        for lbl_obj in labels_dict.values():
-            lbl = lbl_obj.get("label", "Unknown")
-            label_counts[lbl] = label_counts.get(lbl, 0) + 1
-
-        # Matched pairs (exclude Unknown)
-        pairs = []
-        for overture_id, lbl_obj in labels_dict.items():
-            actual_label = lbl_obj.get("label")
-            if actual_label == "Unknown":
-                continue
-            pred = overture_to_pred.get(overture_id)
-            if pred is None:
-                continue
-            pred_label = "Damaged" if pred == 1 else "NotDamaged"
-            pairs.append((actual_label, pred_label))
-
-        matched = len(pairs)
-
-        if matched == 0:
-            return func.HttpResponse(
-                json.dumps(
-                    {
-                        "matched": 0,
-                        "totalValidationLabels": len(labels_dict),
-                        "labelCounts": label_counts,
-                        "error": "No validation labels could be matched to inference results.",
-                    }
-                ),
-                status_code=200,
-                mimetype="application/json",
-            )
-
-        # Confusion matrix: rows=actual, cols=predicted, for [Damaged, NotDamaged]
-        classes = ["Damaged", "NotDamaged"]
-        cm = {a: {p: 0 for p in classes} for a in classes}
-        for actual, predicted in pairs:
-            cm[actual][predicted] += 1
-
-        matrix = [[cm[a][p] for p in classes] for a in classes]
-        correct = sum(cm[c][c] for c in classes)
-        accuracy = correct / matched
-
-        def _safe_div(num, den):
-            return num / den if den > 0 else 0.0
-
-        per_class = {}
-        f1_scores = []
-        for cls in classes:
-            tp = cm[cls][cls]
-            fp = sum(cm[other][cls] for other in classes if other != cls)
-            fn = sum(cm[cls][other] for other in classes if other != cls)
-            precision = _safe_div(tp, tp + fp)
-            recall = _safe_div(tp, tp + fn)
-            f1 = _safe_div(2 * precision * recall, precision + recall)
-            per_class[cls] = {
-                "precision": round(precision, 4),
-                "recall": round(recall, 4),
-                "f1": round(f1, 4),
-            }
-            f1_scores.append(f1)
-
-        macro_f1 = sum(f1_scores) / len(f1_scores)
-
-        report = {
-            "matched": matched,
-            "totalValidationLabels": len(labels_dict),
-            "labelCounts": label_counts,
-            "accuracy": round(accuracy, 4),
-            "confusionMatrix": {
-                "labels": classes,
-                "matrix": matrix,
-            },
-            "perClass": per_class,
-            "macroF1": round(macro_f1, 4),
-        }
+        report = await ValidationReportProcessor(
+            config=config, downloader=download_blob_to_tempfile
+        ).generate_validation(source_request)
 
         return func.HttpResponse(
-            json.dumps(report),
+            json.dumps(report, allow_nan=False),
             status_code=200,
             mimetype="application/json",
         )
 
-    except PredictionRequestError:
-        return _bad_request("Invalid validation report source")
-    except (FileNotFoundError, ResourceNotFoundError):
-        return func.HttpResponse(
-            "Raw report source unavailable.", status_code=404
-        )
     except Exception as error:
-        logger.error(
-            "GetValidationReport failed (%s)",
-            type(error).__name__,
-        )
-        return func.HttpResponse(
-            "Error generating validation report.", status_code=500
-        )
+        return _prediction_edit_error_response(error)
 
 
 @app.route(
@@ -4197,125 +4082,24 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
         "GetAssessmentReport HTTP trigger function processed a request."
     )
     try:
-        source_request = ResultsRequest(
-            projectId=req.params.get("projectId"),
-            imageLayerId=req.params.get("imageLayerId"),
-            modelId=req.params.get("modelId"),
+        source_request = PredictionReportRequest.model_validate(
+            dict(req.params)
         )
     except ValueError:
-        return _bad_request("Invalid assessment report request")
+        return _prediction_edit_error_response(
+            PredictionRequestError("Invalid assessment report request.")
+        )
     try:
-        from hastegeo.core.utils.assessment import (
-            build_assessment_inputs_from_gpkgs,
-            compute_assessment_report,
-        )
-
-        project_id = source_request.projectId
-        image_layer_id = source_request.imageLayerId
-
-        # Parse optional knobs with bounded fallbacks; surfacing 400s on
-        # garbage so the modal doesn't try to render an opaque 500.
-        try:
-            threshold = float(req.params.get("threshold", "0.1"))
-        except ValueError:
-            return func.HttpResponse(
-                "threshold must be a number between 0 and 1.",
-                status_code=400,
-            )
-        if not 0.0 <= threshold <= 1.0:
-            return func.HttpResponse(
-                "threshold must be between 0 and 1.", status_code=400
-            )
-        try:
-            min_area_m2 = float(req.params.get("minAreaM2", "50"))
-        except ValueError:
-            return func.HttpResponse(
-                "minAreaM2 must be a number >= 0.", status_code=400
-            )
-        if min_area_m2 < 0:
-            return func.HttpResponse(
-                "minAreaM2 must be >= 0.", status_code=400
-            )
-
-        model_data = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=project_id,
-            ).load,
+        report = await AssessmentReportProcessor(
+            config=config, downloader=download_blob_to_tempfile
+        ).generate(
+            source_request.projectId,
+            source_request.imageLayerId,
             source_request.modelId,
-        )
-        gpkg_url = model_data.get("gpkgUrl")
-        if not gpkg_url or model_data.get("predictedBuildingCount") == 0:
-            return func.HttpResponse(
-                "Raw report source unavailable.", status_code=404
-            )
-        image_layer_data = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().IMAGELAYER.value,
-                partition_key=project_id,
-            ).load,
-            image_layer_id,
-        )
-        footprints_url = image_layer_data.get("buildingFootprintsUrl")
-        if not footprints_url:
-            return func.HttpResponse(
-                json.dumps(
-                    {
-                        "error": "No building footprints available for this image layer."
-                    }
-                ),
-                status_code=404,
-                mimetype="application/json",
-            )
-
-        # Validation labels are optional for the assessment report — the
-        # CLI script can produce the damage-count estimate without labels,
-        # and the modal renders that section regardless. The metrics
-        # section is what needs labels. Embedding models read their labels
-        # from the model-scoped interactive-labeler store.
-        label_meta = _validation_label_source(model_data, image_layer_id)
-        try:
-            validation_data = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=label_meta["type"],
-                    partition_key=project_id,
-                    config=config,
-                ).load,
-                label_meta["key"],
-            )
-            labels_dict = validation_data.get("labels") or {}
-        except FileNotFoundError:
-            labels_dict = {}
-
-        labels_pairs = [
-            (bid, obj.get("label"))
-            for bid, obj in labels_dict.items()
-            if obj.get("label")
-        ]
-
-        footprints_path = await download_blob_to_tempfile(
-            footprints_url, suffix=".gpkg"
-        )
-        gpkg_path = await download_blob_to_tempfile(gpkg_url, suffix=".gpkg")
-        try:
-            inputs = await asyncio.to_thread(
-                build_assessment_inputs_from_gpkgs,
-                footprints_path,
-                gpkg_path,
-                labels=labels_pairs,
-            )
-        finally:
-            for path in (footprints_path, gpkg_path):
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
-
-        report = await asyncio.to_thread(
-            compute_assessment_report,
-            inputs,
-            threshold=threshold,
-            min_area_m2=min_area_m2,
+            threshold=source_request.threshold,
+            min_area_m2=source_request.minAreaM2,
+            version=source_request.version,
+            prediction_revision=source_request.predictionRevision,
         )
 
         return func.HttpResponse(
@@ -4324,20 +4108,8 @@ async def GetAssessmentReport(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
         )
 
-    except PredictionRequestError:
-        return _bad_request("Invalid assessment report source")
-    except (FileNotFoundError, ResourceNotFoundError):
-        return func.HttpResponse(
-            "Raw report source unavailable.", status_code=404
-        )
     except Exception as error:
-        logger.error(
-            "GetAssessmentReport failed (%s)",
-            type(error).__name__,
-        )
-        return func.HttpResponse(
-            "Error generating assessment report.", status_code=500
-        )
+        return _prediction_edit_error_response(error)
 
 
 @app.route(
@@ -4518,6 +4290,7 @@ async def PutPublishDatasetQueueMessage(
                     request.imageLayerId,
                     request.modelId,
                     max_total_bytes=_PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES,
+                    version=0,
                 )
             except Exception as assessment_error:
                 logger.warning(
