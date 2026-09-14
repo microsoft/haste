@@ -22,9 +22,12 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Matches the python version in a base image reference, e.g.
-# `FROM mcr.microsoft.com/azure-functions/python:4-python3.11-slim`.
-_FROM_PYTHON = re.compile(r"^FROM\s+.*?python(\d+\.\d+)", re.IGNORECASE)
+# Functions use python3.11; Azure ML uses compact py311 references.
+_FROM_PYTHON = re.compile(
+    r"^FROM\s+(?:--platform=\S+\s+)?\S*?(?:python:?(?P<dotted>\d+\.\d+)"
+    r"|py(?P<major>\d)(?P<minor>\d{1,2})(?=[-:@]|$))",
+    re.IGNORECASE,
+)
 
 
 def base_python_version(dockerfile_text: str) -> Optional[str]:
@@ -34,7 +37,9 @@ def base_python_version(dockerfile_text: str) -> Optional[str]:
             continue
         match = _FROM_PYTHON.match(line.strip())
         if match:
-            return match.group(1)
+            return match.group("dotted") or (
+                f"{match.group('major')}.{match.group('minor')}"
+            )
         # A FROM without a python tag (e.g. a build stage) is not the
         # runtime base we care about; keep looking.
     return None

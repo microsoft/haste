@@ -7,8 +7,19 @@
 | Remove only pull-request target-branch restrictions | backend-dev | complete |
 | Add regression coverage and retain publisher safeguards | backend-dev | complete |
 | Run release-policy unit tests | backend-validation | complete; 82 tests passed |
+| Reuse published imagery-base and ACR compatibility fixes | backend-dev | complete |
+| Freeze candidate identity and verify idempotent publication | backend-dev | complete |
+| Require matched image/wheel evidence for RC deployment | backend-dev | complete |
+| Exercise parallel, retry, checksum and provenance regressions | backend-validation | complete; 112 release/build cases passed |
 
 ## Boundaries
 
-This prerequisite does not repair a remote image build, register AML
-assets, deploy HASTE, or modify shared compute. Those remain separate gates.
+The published imagery-base/ACR fixes are included without unrelated
+prediction-editing code. Native image smoke coverage passed in the existing
+pinned-base runtime, and two real wheel builds produced identical bytes with
+a fixed source timestamp. Frozen resolution also matched real, read-only
+GitHub run/release metadata.
+
+No Azure deployment, shared-compute change, live release overwrite, or
+default-branch merge was performed. Activating the trusted publisher and
+proving a fresh complete ACR artifact set remain approval-gated work.
