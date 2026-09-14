@@ -8,6 +8,7 @@ on:
       - ".github/scripts/publish_hastegeo_wheel.py"
       - ".github/scripts/publish_hastegeo_artifacts.py"
       - ".github/workflows/hastegeo-build.yml"
+      - ".github/hastegeo-artifacts.json"
   push:
     branches:
       - main
@@ -57,6 +58,8 @@ jobs:
       already_published: ${{ steps.resolve.outputs.already_published }}
       rc_build_identity: ${{ steps.resolve.outputs.rc_build_identity }}
       source_date_epoch: ${{ steps.resolve.outputs.source_date_epoch }}
+      artifact_name: ${{ steps.resolve.outputs.artifact_name }}
+      artifact_protocol: ${{ steps.resolve.outputs.artifact_protocol }}
     steps:
       - name: Checkout source without persisted credentials
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -79,16 +82,20 @@ jobs:
           BUMP: ${{ github.event.inputs.bump || 'patch' }}
           SET_VERSION: ${{ github.event.inputs.set_version || '' }}
           BUILD_RUN_ID: ${{ github.run_id }}
+          BUILD_ATTEMPT: ${{ github.run_attempt }}
         run: |
-          EXTRA=()
-          if [[ "$CHANNEL" == "rc" && "${{ github.event_name }}" == "pull_request" ]]; then
-            EXTRA=(--build-run-id "$BUILD_RUN_ID")
+          PROTOCOL=auto
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            PROTOCOL=legacy
           fi
           python .github/scripts/resolve_hastegeo_version.py \
             --channel "$CHANNEL" \
             --source-sha "$SOURCE_SHA" \
             --bump "$BUMP" \
-            --set-version "$SET_VERSION" "${EXTRA[@]}"
+            --set-version "$SET_VERSION" \
+            --build-run-id "$BUILD_RUN_ID" \
+            --build-attempt "$BUILD_ATTEMPT" \
+            --artifact-protocol "$PROTOCOL"
 
   build-wheel:
     needs: resolve-version
@@ -154,7 +161,7 @@ jobs:
       - name: Upload validated wheel artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: hastegeo-wheel-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ needs.resolve-version.outputs.artifact_name }}
           if-no-files-found: error
           retention-days: 7
           path: |
