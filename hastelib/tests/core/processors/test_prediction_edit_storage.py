@@ -26,7 +26,7 @@ class TestCreateOnlyPredictionStorage(unittest.TestCase):
     def test_default_upload_behavior_is_unchanged(self) -> None:
         path = self.storage.store_artifact("attrs.json", data={"value": 1})
         self.storage.store_artifact("attrs.json", data={"value": 2})
-        self.assertIn(b"2", self.storage.read_artifact_bytes(path, 100))
+        self.assertIn(b"2", Path(path).read_bytes())
 
     def test_create_only_never_overwrites_existing_artifact(self) -> None:
         path = self.storage.store_artifact(
