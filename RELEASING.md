@@ -64,10 +64,17 @@ pass explicit product image tags for stable deployments.
 
 ## Verified branch artifacts
 
-Automatic PR candidates use `X.Y.Zrc<build-run-id>`, not a shared
-next-available RC counter. Their stable release baseline is frozen at the
-build run's creation time. A rerun retains that version; later releases
-cannot make the publisher look for a differently named wheel.
+Producers first read `.github/hastegeo-artifacts.json` from the actual
+default branch to determine which format the running publisher supports.
+Until it advertises `run-bound-v1`, builds retain the existing RC counter
+and `hastegeo-wheel-<run-id>` artifact name. A PR must not switch formats
+just because its own checkout contains an updated publisher.
+
+After that capability is active, automatic PR candidates use
+`X.Y.Zrc<build-run-id>`, not a shared next-available RC counter. Their stable
+release baseline is frozen at the build run's creation time. A rerun retains
+that version; later releases cannot make the publisher look for a differently
+named wheel.
 
 The credential-free build emits `build-manifest.json` with source/run
 identity and the wheel checksum. The default-branch publisher independently
@@ -84,12 +91,18 @@ registry-independent references and a fingerprint instead.
 An RC deployment must select the exact application source and a complete
 matching manifest. It verifies registry identity and locked digests before
 updating the environment, and pins the wheel URL with its checksum.
-Pre-upgrade builds without this metadata require a fresh updated build.
+Legacy wheels and images remain publishable during the migration, but they
+do not provide this verified deployment manifest. Legacy counter allocation
+also retains its existing concurrency limitations. Use a fresh run-bound
+build when the stronger deployment contract is required.
 
 Changes to the trusted publisher must be reviewed and merged into the
-default branch before activation. Updating a PR alone does not authorize a
-deployment or overwrite an existing release. Existing asset-retention
-approval and stable-release rules remain in place.
+default branch before activation. The updated publisher accepts both old
+and new producer formats, and producers only switch after that capability
+is present. Existing artifacts keep a rerun on its original protocol; a
+missing or unsupported protocol fails explicitly rather than guessing.
+Updating a PR alone does not authorize a deployment or overwrite an
+existing release. Asset-retention and stable-release rules remain in place.
 
 ## Cutting a product release
 
@@ -137,8 +150,9 @@ deployed Function Apps install from those pins at build time.
 
 Its stable asset history is also the **version database**:
 [`haste_release.py`](hastelib/haste_release.py) derives the next stable
-version by parsing asset filenames. CI RC suffixes come from immutable
-build identity, not a race-prone shared counter.
+version by parsing asset filenames. With the run-bound protocol active,
+CI RC suffixes come from immutable build identity rather than the legacy
+shared counter.
 
 Both facts mean assets must **never be renamed, moved to another release,
 or deleted** without first migrating every pin and moving version

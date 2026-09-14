@@ -358,8 +358,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--json-output")
     parser.add_argument("--build-identity", type=Path)
     parser.add_argument("--manifest", type=Path)
+    parser.add_argument(
+        "--legacy-rc",
+        action="store_true",
+        help="use the existing no-overwrite policy for a trusted legacy build",
+    )
     args = parser.parse_args(argv)
 
+    if args.legacy_rc and (
+        args.channel != "rc" or args.build_identity or args.manifest
+    ):
+        raise ValueError("Legacy RC mode cannot bypass build provenance")
     if args.manifest and not args.manifest.is_file():
         raise ValueError(
             "RC build manifest is missing; start a fresh build using the "
@@ -388,8 +397,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ValueError(
             "A wheel manifest requires the expected build identity"
         )
-    if args.channel == "rc" and not args.validate_only and manifest is None:
+    if (
+        args.channel == "rc"
+        and not args.validate_only
+        and manifest is None
+        and not args.legacy_rc
+    ):
         raise ValueError("RC publication requires verified build provenance")
+    if args.legacy_rc:
+        print(
+            "Legacy RC compatibility: retain no-overwrite publication; "
+            "this is not a verified deployment-set manifest."
+        )
     url = ""
     if not args.validate_only:
         url = publish(
