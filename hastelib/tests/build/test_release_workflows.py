@@ -186,6 +186,22 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn('POLICY="../release-policy/', image_block)
         self.assertNotIn("2>/dev/null", image_block)
 
+    def test_existing_rc_image_lookup_requests_tag_details(self) -> None:
+        workflow = (
+            REPO_ROOT / ".github/workflows/hastegeo-publish.yml"
+        ).read_text(encoding="utf-8")
+        image_block = workflow.split("  build-rc-images:", 1)[1].split(
+            "  rc-artifact-summary:", 1
+        )[0]
+        lookup = re.search(
+            r"MATCHES=\$\(az acr repository show-tags\s+(.*?)\)",
+            image_block,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(lookup)
+        self.assertIn("--detail", lookup.group(1).split())
+        self.assertIn("--query \"[?name=='${VERSION}']\"", lookup.group(1))
+
     def test_candidate_identity_is_frozen_across_build_and_publication(self):
         build = (
             REPO_ROOT / ".github/workflows/hastegeo-build.yml"
