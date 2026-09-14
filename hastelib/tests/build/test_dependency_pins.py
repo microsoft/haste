@@ -53,7 +53,6 @@ _GDAL_WHEEL_RE = re.compile(
     r"GDAL-(?P<version>\d+\.\d+\.\d+)-cp(?P<py>\d+)-", re.IGNORECASE
 )
 _PYPROJECT_GDAL_RE = re.compile(r'"gdal==(?P<version>\d+\.\d+\.\d+)"')
-_DOCKER_PYTHON_RE = re.compile(r"python(?P<py>3\.\d+)")
 
 
 def _read(relative_path):
@@ -106,13 +105,11 @@ class GdalPinConsistencyTests(unittest.TestCase):
         """A cp311 wheel cannot be installed on a 3.12 base image."""
         image_pythons = {}
         for relative_path in DOCKERFILES:
-            for line in _read(relative_path).splitlines():
-                if not line.startswith("FROM "):
-                    continue
-                match = _DOCKER_PYTHON_RE.search(line)
-                if match:
-                    image_pythons[relative_path] = match.group("py")
-                    break
+            version = check_image_python.base_python_version(
+                _read(relative_path)
+            )
+            if version is not None:
+                image_pythons[relative_path] = version
 
         self.assertEqual(
             sorted(image_pythons),
@@ -261,7 +258,70 @@ class ReactPinScriptTests(unittest.TestCase):
         )
 
 
+class ImageryBuildCompatibilityTests(unittest.TestCase):
+    def test_pip_install_remains_compatible_with_acr_quick_build(self) -> None:
+        dockerfile = _read("docker/imageryprep/Dockerfile")
+
+        self.assertNotRegex(dockerfile, r"(?m)^RUN\s+--mount=")
+        self.assertIn("RUN python -m pip install --no-cache-dir", dockerfile)
+        self.assertIn("&& python -m pip check", dockerfile)
+
+    def test_local_index_override_has_no_default_or_runtime_setting(
+        self,
+    ) -> None:
+        dockerfile = _read("docker/imageryprep/Dockerfile")
+
+        self.assertRegex(dockerfile, r"(?m)^ARG PIP_INDEX_URL$")
+        self.assertNotRegex(dockerfile, r"(?m)^ENV\s+PIP_INDEX_URL(?:=|\s)")
+
+
 class ImagePythonScriptTests(unittest.TestCase):
+    def test_mcr_python_reference_formats(self) -> None:
+        cases = (
+            ("azureml/curated/minimal-py311-inference:59", "3.11"),
+            ("azureml/curated/minimal-py312-inference:10", "3.12"),
+            ("azureml/minimal-ubuntu22.04-py39-cpu-inference:latest", "3.9"),
+            ("devcontainers/python:3.11-bookworm", "3.11"),
+            ("azurelinux/base/python:3.12", "3.12"),
+            ("azure-functions/python:4-python3.11-slim", "3.11"),
+        )
+        for image, version in cases:
+            with self.subTest(image=image):
+                self.assertEqual(
+                    version,
+                    check_image_python.base_python_version(
+                        f"FROM mcr.microsoft.com/{image}"
+                    ),
+                )
+
+    def test_digest_does_not_change_the_python_version(self) -> None:
+        self.assertEqual(
+            "3.11",
+            check_image_python.base_python_version(
+                "FROM mcr.microsoft.com/azureml/curated/"
+                "minimal-py311-inference:59@sha256:" + "a" * 64
+            ),
+        )
+
+    def test_platform_selector_keeps_the_python_version_readable(self) -> None:
+        self.assertEqual(
+            "3.11",
+            check_image_python.base_python_version(
+                "FROM --platform=linux/amd64 mcr.microsoft.com/azureml/"
+                "curated/minimal-py311-inference:59 AS runtime"
+            ),
+        )
+
+    def test_compact_mcr_version_mismatch_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = _write(
+                directory,
+                "Dockerfile",
+                "FROM mcr.microsoft.com/azureml/curated/"
+                "minimal-py312-inference:latest\n",
+            )
+            self.assertEqual(1, check_image_python.main([str(path), "3.11"]))
+
     def test_matching_version_passes(self):
         with tempfile.TemporaryDirectory() as directory:
             path = _write(

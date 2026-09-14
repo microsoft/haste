@@ -7,6 +7,7 @@ import {
   getLoadProgress,
   parseContentLength,
   readResponseBuffer,
+  throwFootprintTilesLoadError,
   waitForMapReady,
 } from "./interactiveLabelerLoading.js";
 
@@ -70,6 +71,26 @@ function createMapEvents() {
     },
   };
 }
+
+test("footprint tile cancellation preserves AbortError without logging", (t) => {
+  const logged = t.mock.method(console, "error", () => {});
+  const error = new DOMException("Download cancelled", "AbortError");
+
+  assert.throws(() => throwFootprintTilesLoadError(error), (thrown) => thrown === error);
+  assert.equal(logged.mock.callCount(), 0);
+});
+
+test("footprint tile failure reports the unavailable archive", (t) => {
+  const logged = t.mock.method(console, "error", () => {});
+  const error = new Error("HTTP 404");
+
+  assert.throws(
+    () => throwFootprintTilesLoadError(error),
+    /building footprint tiles for this image layer are not ready/
+  );
+  assert.equal(logged.mock.callCount(), 1);
+  assert.equal(logged.mock.calls[0].arguments[1], error);
+});
 
 test("formatBytes keeps one decimal for megabytes", () => {
   assert.equal(formatBytes(31 * 1024 * 1024), "31.0 MB");

@@ -56,6 +56,12 @@ class AbstractDataLayer(ABC):
         """
         pass
 
+    def merge_json(
+        self, identifier: str, data_type: str, fields: dict
+    ) -> dict:
+        """Atomically merge top-level metadata fields."""
+        raise NotImplementedError("Atomic JSON merge is not supported")
+
     @abstractmethod
     def save_chunk(
         self,
@@ -184,9 +190,7 @@ class AbstractDataLayer(ABC):
         """
         pass
 
-    def load_bounded(
-        self, data_type, max_records, data_format="json"
-    ):
+    def load_bounded(self, data_type, max_records, data_format="json"):
         """Load no more than ``max_records`` or fail before full materialization."""
         raise NotImplementedError(
             f"{self.__class__.__name__} does not support bounded reads"

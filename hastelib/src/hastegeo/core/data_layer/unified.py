@@ -35,9 +35,7 @@ class UnifiedDataLayer:
 
         if storage_type in storage_class_map:
             module_name, class_name = storage_class_map[storage_type]
-            module = importlib.import_module(
-                f"{__package__}.{module_name}"
-            )
+            module = importlib.import_module(f"{__package__}.{module_name}")
             data_layer_class = getattr(module, class_name)
             self.data_layer = data_layer_class(
                 partition_key=self.partition_key, **kwargs
@@ -60,6 +58,11 @@ class UnifiedDataLayer:
             data_file_path=data_file_path,
             data_format=data_format,
         )
+
+    def merge_json(
+        self, identifier: str, data_type: str, fields: dict
+    ) -> dict:
+        return self.data_layer.merge_json(identifier, data_type, fields)
 
     def save_chunk(
         self,

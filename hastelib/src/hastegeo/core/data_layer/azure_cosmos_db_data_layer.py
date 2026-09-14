@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 import re
 
+from azure.core import MatchConditions
 from azure.cosmos import CosmosClient, exceptions  # type: ignore
 from azure.identity import DefaultAzureCredential  # type: ignore
 
@@ -44,6 +45,36 @@ class AzureCosmosDBDataLayer(AbstractDataLayer):
             self.partition_key if self.partition_key else identifier
         )
         self.container.upsert_item(data)
+
+    def merge_json(
+        self, identifier: str, data_type: str, fields: dict
+    ) -> dict:
+        item_id = f"{data_type}_{identifier}"
+        partition = self.partition_key or identifier
+        for attempt in range(5):
+            try:
+                current = self.container.read_item(item_id, partition)
+            except exceptions.CosmosResourceNotFoundError:
+                current = {}
+            merged = {
+                **current,
+                **fields,
+                "id": item_id,
+                "partition_key": partition,
+            }
+            try:
+                if current:
+                    return self.container.replace_item(
+                        item_id,
+                        merged,
+                        etag=current["_etag"],
+                        match_condition=MatchConditions.IfNotModified,
+                    )
+                return self.container.create_item(merged)
+            except exceptions.CosmosHttpResponseError as error:
+                if error.status_code not in (409, 412) or attempt == 4:
+                    raise
+        raise AssertionError("Unreachable")
 
     def update(self, data, identifier, data_type, data_format="json"):
         if data_format != "json":

@@ -12,6 +12,8 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
     def __init__(self, account_url, file_system, partition_key=None):
         super().__init__(partition_key)
         credential = DefaultAzureCredential()
+        self.account_url = account_url
+        self.credential = credential
         self.service_client = DataLakeServiceClient(
             account_url=account_url, credential=credential
         )
@@ -82,6 +84,24 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
             raise ValueError(
                 "Unsupported data format. Only dict and bytes are supported."
             )
+
+    def merge_json(
+        self, identifier: str, data_type: str, fields: dict
+    ) -> dict:
+        from azure.storage.blob import BlobServiceClient
+
+        from .json_merge import merge_blob_json
+
+        # ADLS Gen2 exposes the same file through its atomic Blob endpoint.
+        with BlobServiceClient(
+            self.account_url.replace(".dfs.", ".blob."),
+            credential=self.credential,
+        ) as service:
+            blob = service.get_blob_client(
+                self.file_system_client.file_system_name,
+                self.get_file_path(identifier, data_type, "json"),
+            )
+            return merge_blob_json(blob, fields)
 
     def save_chunk(
         self,

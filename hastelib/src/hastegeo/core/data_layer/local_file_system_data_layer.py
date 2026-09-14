@@ -169,6 +169,35 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
                     f"{self.__class__.__name__}.save: Unsupported data format. Only json and bytes are supported."
                 )
 
+    def merge_json(
+        self, identifier: str, data_type: str, fields: dict
+    ) -> dict:
+        from pathlib import Path
+        from tempfile import NamedTemporaryFile
+
+        from ..utils.file_lock import file_lock
+
+        path = Path(self.get_file_path(identifier, data_type, "json"))
+        with file_lock(path.with_suffix(".lock")):
+            try:
+                with path.open() as source:
+                    current = json.load(source)
+            except FileNotFoundError:
+                current = {}
+            merged = {**current, **fields}
+            with NamedTemporaryFile(
+                mode="w", dir=path.parent, delete=False
+            ) as output:
+                temporary = Path(output.name)
+                try:
+                    json.dump(merged, output)
+                    output.flush()
+                    os.fsync(output.fileno())
+                    os.replace(temporary, path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            return merged
+
     def save_chunk(
         self,
         identifier,
@@ -318,9 +347,9 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
                         )
                     if not entry.is_file(follow_symlinks=False):
                         continue
-                    if not entry.name.startswith(f"{data_type}_") or not entry.name.endswith(
-                        f".{data_format}"
-                    ):
+                    if not entry.name.startswith(
+                        f"{data_type}_"
+                    ) or not entry.name.endswith(f".{data_format}"):
                         continue
                     with open(entry.path, "r") as file:
                         records.append(
