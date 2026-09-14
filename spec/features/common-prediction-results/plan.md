@@ -17,7 +17,8 @@ production/test/diff sizes with the original +8,705 lines; reduction must come
 from removing unnecessary architecture and redundant scaffolding, not weakened
 feature coverage. Run targeted native/API/Node regressions and the UI build.
 
-Restacked onto refreshed #183 at `a6e4a6c` on 2026-09-13. Preserve the original
-merge's footprint-namespace guard and artifact-route fixtures. Application and
-runtime files remain identical to the pre-rebase #200 tip; the new base carries
-the updated GitHub Actions pins.
+Restacked onto refreshed #183 on 2026-09-13. Preserve the original merge's
+footprint-namespace guard and artifact-route fixtures. The base now carries both
+the updated GitHub Actions pins and the maintained imagery runtime/ACR build
+fix, so the lower stack no longer builds the expired Debian image. Common
+prediction-results behavior is unchanged.
