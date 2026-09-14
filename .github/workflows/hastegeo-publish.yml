@@ -31,6 +31,8 @@ jobs:
       already_published: ${{ steps.resolve.outputs.already_published }}
       pr_number: ${{ steps.guard.outputs.pr_number }}
       rc_build_identity: ${{ steps.resolve.outputs.rc_build_identity }}
+      artifact_name: ${{ steps.resolve.outputs.artifact_name }}
+      artifact_protocol: ${{ steps.resolve.outputs.artifact_protocol }}
     steps:
       - name: Checkout trusted release policy
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -85,32 +87,35 @@ jobs:
           SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
           CHANNEL: ${{ github.event.workflow_run.event == 'pull_request' && 'rc' || 'release' }}
           BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
+          BUILD_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
-          EXTRA=()
-          if [[ "$CHANNEL" == "rc" ]]; then
-            EXTRA=(--build-run-id "$BUILD_RUN_ID" --json-output expected-build.json)
-          fi
           python .github/scripts/resolve_hastegeo_version.py \
             --channel "$CHANNEL" \
-            --source-sha "$SOURCE_SHA" "${EXTRA[@]}"
+            --source-sha "$SOURCE_SHA" \
+            --build-run-id "$BUILD_RUN_ID" \
+            --build-attempt "$BUILD_ATTEMPT" \
+            --artifact-protocol produced \
+            --json-output expected-build.json
 
       - name: Download wheel artifact
         if: steps.resolve.outputs.already_published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
-          BUILD_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          WHEEL_ARTIFACT: ${{ steps.resolve.outputs.artifact_name }}
         run: |
           gh run download "$RUN_ID" \
             --repo "${{ github.repository }}" \
-            --name "hastegeo-wheel-${RUN_ID}-${BUILD_ATTEMPT}" \
+            --name "$WHEEL_ARTIFACT" \
             --dir release-artifact
 
       - name: Revalidate downloaded wheel
         if: steps.resolve.outputs.already_published != 'true'
+        env:
+          RC_BUILD_IDENTITY: ${{ steps.resolve.outputs.rc_build_identity }}
         run: |
           EXTRA=()
-          if [[ "${{ steps.resolve.outputs.channel }}" == "rc" ]]; then
+          if [[ -n "$RC_BUILD_IDENTITY" ]]; then
             EXTRA=(--build-identity expected-build.json --manifest release-artifact/build-manifest.json)
           fi
           python .github/scripts/publish_hastegeo_wheel.py \
@@ -154,11 +159,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
-          BUILD_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          WHEEL_ARTIFACT: ${{ needs.prepare.outputs.artifact_name }}
         run: |
           gh run download "$RUN_ID" \
             --repo "${{ github.repository }}" \
-            --name "hastegeo-wheel-${RUN_ID}-${BUILD_ATTEMPT}" \
+            --name "$WHEEL_ARTIFACT" \
             --dir release-artifact
 
       - name: Publish immutable RC wheel
@@ -167,22 +172,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RC_BUILD_IDENTITY: ${{ needs.prepare.outputs.rc_build_identity }}
         run: |
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          Path("expected-build.json").write_text(
-              json.dumps(json.loads(os.environ["RC_BUILD_IDENTITY"])),
-              encoding="utf-8",
-          )
-          PY
+          EXTRA=(--legacy-rc)
+          if [[ -n "$RC_BUILD_IDENTITY" ]]; then
+            printf '%s' "$RC_BUILD_IDENTITY" > expected-build.json
+            EXTRA=(--build-identity expected-build.json --manifest release-artifact/build-manifest.json)
+          fi
           python .github/scripts/publish_hastegeo_wheel.py \
             --wheel "release-artifact/${{ needs.prepare.outputs.wheel_name }}" \
             --expected-version "${{ needs.prepare.outputs.version }}" \
             --channel rc \
             --source-sha "${{ needs.prepare.outputs.source_sha }}" \
-            --build-identity expected-build.json \
-            --manifest release-artifact/build-manifest.json
+            "${EXTRA[@]}"
 
   # Stable publication is automatic on merge to the default branch: the PR
   # review required to land the commit there is the release approval. A second
@@ -219,11 +219,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
-          BUILD_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          WHEEL_ARTIFACT: ${{ needs.prepare.outputs.artifact_name }}
         run: |
           gh run download "$RUN_ID" \
             --repo "${{ github.repository }}" \
-            --name "hastegeo-wheel-${RUN_ID}-${BUILD_ATTEMPT}" \
+            --name "$WHEEL_ARTIFACT" \
             --dir release-artifact
 
       - name: Publish immutable stable wheel
@@ -321,7 +321,9 @@ jobs:
           IMAGE_REF="${IMAGE_NAME}:${VERSION}"
           POLICY="../release-policy/.github/scripts/publish_hastegeo_artifacts.py"
           mkdir -p ../image-evidence
-          printf '%s' "$RC_BUILD_IDENTITY" > ../expected-build.json
+          if [[ -n "$RC_BUILD_IDENTITY" ]]; then
+            printf '%s' "$RC_BUILD_IDENTITY" > ../expected-build.json
+          fi
           REPOSITORIES=$(az acr repository list \
             --subscription "$SUBSCRIPTION_ID" --name "$ACR_NAME" -o json)
           IMAGE_EXISTS=false
@@ -345,10 +347,25 @@ jobs:
           else
             echo "Verifying existing RC image before reuse: $IMAGE_REF"
           fi
-          REGISTRY=$(az acr show --subscription "$SUBSCRIPTION_ID" \
-            --name "$ACR_NAME" --query loginServer -o tsv)
           az acr repository show --subscription "$SUBSCRIPTION_ID" \
             --name "$ACR_NAME" --image "$IMAGE_REF" -o json > ../image-before.json
+          if [[ -z "$RC_BUILD_IDENTITY" ]]; then
+            if [[ "$IMAGE_EXISTS" == true ]]; then
+              test "$(jq -r '.changeableAttributes.writeEnabled' ../image-before.json)" = false || {
+                echo "::error::Existing legacy RC image is not locked"
+                exit 1
+              }
+            else
+              az acr repository update \
+                --subscription "$SUBSCRIPTION_ID" --name "$ACR_NAME" \
+                --image "$IMAGE_REF" --write-enabled false --delete-enabled false \
+                --output none
+            fi
+            echo "Legacy RC image locked; no verified-set provenance is claimed."
+            exit 0
+          fi
+          REGISTRY=$(az acr show --subscription "$SUBSCRIPTION_ID" \
+            --name "$ACR_NAME" --query loginServer -o tsv)
           DIGEST=$(jq -r '.digest' ../image-before.json)
           az acr login --subscription "$SUBSCRIPTION_ID" --name "$ACR_NAME"
           docker buildx imagetools inspect \
@@ -373,6 +390,7 @@ jobs:
 
       - name: Check existing image evidence before retry upload
         id: evidence
+        if: needs.prepare.outputs.rc_build_identity != ''
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_NAME: rc-image-${{ matrix.image_dir }}-${{ needs.prepare.outputs.version }}
@@ -425,18 +443,19 @@ jobs:
           persist-credentials: false
 
       - name: Publish matching RC deployment values
+        if: needs.prepare.outputs.rc_build_identity != ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
           RC_BUILD_IDENTITY: ${{ needs.prepare.outputs.rc_build_identity }}
           RUN_ID: ${{ github.event.workflow_run.id }}
-          BUILD_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          WHEEL_ARTIFACT: ${{ needs.prepare.outputs.artifact_name }}
         run: |
           printf '%s' "$RC_BUILD_IDENTITY" > expected-build.json
           gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" \
             --pattern "rc-image-*-${VERSION}" --dir image-evidence
           gh run download "$RUN_ID" --repo "${{ github.repository }}" \
-            --name "hastegeo-wheel-${RUN_ID}-${BUILD_ATTEMPT}" --dir release-artifact
+            --name "$WHEEL_ARTIFACT" --dir release-artifact
           python .github/scripts/publish_hastegeo_artifacts.py complete \
             --identity expected-build.json \
             --wheel-manifest release-artifact/build-manifest.json \
@@ -454,3 +473,14 @@ jobs:
           EOF
           )
           echo "$BODY" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report legacy RC compatibility artifacts
+        if: needs.prepare.outputs.rc_build_identity == ''
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          {
+            echo "### Legacy RC artifacts published"
+            echo "Wheel and both locked worker images use version \`${VERSION}\`."
+            echo "This compatibility build does not provide a verified deployment-set manifest."
+          } >> "$GITHUB_STEP_SUMMARY"

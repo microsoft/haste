@@ -16,6 +16,12 @@ from typing import Sequence
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "hastelib"))
 
+from haste_artifact_protocol import (  # noqa: E402
+    Protocol,
+    artifact_name,
+    producer_protocol,
+    published_protocol,
+)
 from haste_artifacts import RCBuild, resolve_ci_build  # noqa: E402
 from haste_release import (  # noqa: E402
     Resolution,
@@ -31,6 +37,8 @@ def emit_outputs(
     *,
     build: RCBuild | None = None,
     source_date_epoch: int | None = None,
+    protocol: Protocol = "legacy",
+    name: str = "",
 ) -> None:
     """Write GitHub Actions outputs when GITHUB_OUTPUT is available."""
     values = {
@@ -44,6 +52,8 @@ def emit_outputs(
             json.dumps(build.to_dict(), sort_keys=True) if build else ""
         ),
         "source_date_epoch": str(source_date_epoch or 0),
+        "artifact_protocol": protocol,
+        "artifact_name": name,
     }
     for key, value in values.items():
         print(f"{key}={value}")
@@ -67,10 +77,39 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--set-version", default="")
     parser.add_argument("--json-output")
     parser.add_argument("--build-run-id")
+    parser.add_argument("--build-attempt", default="1")
+    parser.add_argument(
+        "--artifact-protocol",
+        choices=["legacy", "run-bound-v1", "auto", "produced"],
+        default="run-bound-v1",
+    )
     args = parser.parse_args(argv)
 
+    protocol = args.artifact_protocol
+    defer_protocol = protocol == "produced" and args.channel == "release"
+    name = ""
+    if args.build_run_id:
+        if protocol == "auto":
+            protocol = producer_protocol(args.build_run_id, args.build_attempt)
+        elif protocol == "produced" and not defer_protocol:
+            protocol = published_protocol(
+                args.build_run_id, args.build_attempt
+            )
+        if not defer_protocol:
+            name = artifact_name(
+                args.build_run_id, args.build_attempt, protocol
+            )
+    elif protocol in {"auto", "produced"}:
+        raise ValueError("Artifact protocol negotiation requires a build run")
+    else:
+        protocol = "legacy"
+
     build = None
-    if args.channel == "rc" and args.build_run_id:
+    if (
+        args.channel == "rc"
+        and args.build_run_id
+        and protocol == "run-bound-v1"
+    ):
         if args.bump != "patch" or args.set_version:
             raise ValueError(
                 "Build-bound RC versions use the frozen patch baseline and "
@@ -112,7 +151,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ]
             ).strip()
         )
-    emit_outputs(resolution, build=build, source_date_epoch=source_epoch)
+    if defer_protocol:
+        protocol = "legacy"
+        if not resolution.already_published:
+            protocol = published_protocol(
+                args.build_run_id, args.build_attempt
+            )
+            name = artifact_name(
+                args.build_run_id, args.build_attempt, protocol
+            )
+    emit_outputs(
+        resolution,
+        build=build,
+        source_date_epoch=source_epoch,
+        protocol=protocol,
+        name=name,
+    )
 
     if args.json_output:
         Path(args.json_output).write_text(

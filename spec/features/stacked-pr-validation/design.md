@@ -6,6 +6,7 @@
 - [Trust boundary](#trust-boundary)
 - [Validation](#validation)
 - [RC identity and publication](#rc-identity-and-publication)
+- [Compatible protocol rollout](#compatible-protocol-rollout)
 
 ## Scope
 
@@ -64,3 +65,24 @@ fingerprint and the locked image digests before changing app settings.
 Stable release rules, protected default-branch publication, exact-head/fork
 guards and explicit deployment approval remain unchanged. Legacy candidates
 without provenance cannot be treated as new verified deployment sets.
+
+## Compatible protocol rollout
+
+Producers negotiate against `.github/hastegeo-artifacts.json` on the
+repository's actual default branch, never their PR checkout. Until the
+running publisher advertises the new protocol, preserve both its legacy
+artifact name and its legacy RC version rules. A missing capability file
+selects this explicit compatibility mode; authentication, network, malformed
+metadata, and unknown protocol errors fail instead of silently downgrading.
+
+The updated trusted publisher accepts both legacy artifacts and the new
+run-attempt artifacts, selecting the contract from the triggering run's
+actual artifacts. Older PR branches therefore keep working after a publisher
+upgrade. A rerun with existing artifacts retains its original protocol.
+Ambiguous, expired, or wrong-attempt inputs fail closed.
+
+Legacy publication retains the existing no-overwrite policy and image
+locking, but must not claim new verified-set provenance. Only run-bound
+builds can publish complete source/checksum/digest manifests. This migration
+restores existing publishing without deploying apps, changing Azure
+configuration, or requiring a repository-variable toggle.
