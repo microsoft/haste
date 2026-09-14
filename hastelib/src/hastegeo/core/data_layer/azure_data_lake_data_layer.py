@@ -3,9 +3,11 @@
 import json
 
 from azure.identity import DefaultAzureCredential  # type: ignore
+from azure.storage.blob import BlobServiceClient
 from azure.storage.filedatalake import DataLakeServiceClient  # type: ignore
 
 from .abstract_data_layer import AbstractDataLayer
+from .conditional import JsonDocument, read_blob_document, write_blob_document
 
 
 class AzureDataLakeDataLayer(AbstractDataLayer):
@@ -18,6 +20,10 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
         self.file_system_client = self.service_client.get_file_system_client(
             file_system
         )
+        self.metadata_blob_container = BlobServiceClient(
+            account_url=account_url.replace(".dfs.", ".blob."),
+            credential=credential,
+        ).get_container_client(file_system)
 
     def get_file_path(
         self,
@@ -83,6 +89,26 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
                 "Unsupported data format. Only dict and bytes are supported."
             )
 
+    def load_json_versioned(
+        self, identifier: str, data_type: str
+    ) -> tuple[JsonDocument, str]:
+        client = self.metadata_blob_container.get_blob_client(
+            self.get_file_path(identifier, data_type)
+        )
+        return read_blob_document(client)
+
+    def save_json_if_version(
+        self,
+        identifier: str,
+        data_type: str,
+        data: JsonDocument,
+        expected_version: str | None,
+    ) -> None:
+        client = self.metadata_blob_container.get_blob_client(
+            self.get_file_path(identifier, data_type)
+        )
+        write_blob_document(client, data, expected_version)
+
     def save_chunk(
         self,
         identifier,
@@ -111,21 +137,26 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
     def update(self, data, identifier, data_type):
         self.save(data, identifier, data_type)
 
-    def load(self, identifier, data_type):
-        file_name = self.get_file_path(identifier, data_type)
-        file_client = self.file_system_client.get_file_client(file_name)
-        download = file_client.download_file()
-        file_contents = download.readall()
-        return json.loads(file_contents)
+    def load(self, identifier, data_type, data_format="json"):
+        if data_format != "json":
+            raise ValueError("Data Lake metadata supports only JSON")
+        return self.load_json_versioned(identifier, data_type)[0]
 
-    def load_all(self, data_type):
+    def load_all(self, data_type, data_format="json"):
+        if data_format != "json":
+            raise ValueError("Data Lake metadata supports only JSON")
         data = []
         paths = self.file_system_client.get_paths()
         for path in paths:
+            parts = path.name.split("/")
             if (
-                path.name.startswith(f"{self.partition_key}/{data_type}_")
-                if self.partition_key
-                else path.name.startswith(f"{data_type}_")
+                len(parts) <= 2
+                and parts[-1].startswith(f"{data_type}_")
+                and parts[-1].endswith(".json")
+                and (
+                    not self.partition_key
+                    or path.name.startswith(f"{self.partition_key}/")
+                )
             ):
                 file_client = self.file_system_client.get_file_client(
                     path.name
@@ -135,8 +166,8 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
                 data.append(json.loads(file_contents))
         return data
 
-    def load_all_from_partition(self, data_type):
-        data = self.load_all(data_type)
+    def load_all_from_partition(self, data_type, data_format="json"):
+        data = self.load_all(data_type, data_format=data_format)
         return data
 
     def load_bounded(self, data_type, max_records, data_format="json"):

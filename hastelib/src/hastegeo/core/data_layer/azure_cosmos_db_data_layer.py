@@ -2,10 +2,12 @@
 # Licensed under the MIT License.
 import re
 
+from azure.core import MatchConditions
 from azure.cosmos import CosmosClient, exceptions  # type: ignore
 from azure.identity import DefaultAzureCredential  # type: ignore
 
 from .abstract_data_layer import AbstractDataLayer
+from .conditional import JsonDocument, RevisionConflictError
 
 
 class AzureCosmosDBDataLayer(AbstractDataLayer):
@@ -45,6 +47,43 @@ class AzureCosmosDBDataLayer(AbstractDataLayer):
         )
         self.container.upsert_item(data)
 
+    def load_json_versioned(
+        self, identifier: str, data_type: str
+    ) -> tuple[JsonDocument, str]:
+        document = self.load(identifier, data_type)
+        return document, document["_etag"]
+
+    def save_json_if_version(
+        self,
+        identifier: str,
+        data_type: str,
+        data: JsonDocument,
+        expected_version: str | None,
+    ) -> None:
+        if not isinstance(data, dict):
+            raise ValueError("Cosmos metadata must be a JSON object")
+        document = {
+            key: value
+            for key, value in data.items()
+            if key not in {"_etag", "_rid", "_self", "_attachments", "_ts"}
+        }
+        document["id"] = f"{data_type}_{identifier}"
+        document["partition_key"] = self.partition_key or identifier
+        try:
+            if expected_version is None:
+                self.container.create_item(body=document)
+            else:
+                self.container.replace_item(
+                    item=document["id"],
+                    body=document,
+                    etag=expected_version,
+                    match_condition=MatchConditions.IfNotModified,
+                )
+        except exceptions.CosmosHttpResponseError as error:
+            if error.status_code not in {404, 409, 412}:
+                raise
+            raise RevisionConflictError("Metadata revision changed") from error
+
     def update(self, data, identifier, data_type, data_format="json"):
         if data_format != "json":
             raise ValueError(
@@ -77,7 +116,9 @@ class AzureCosmosDBDataLayer(AbstractDataLayer):
             "Method not implemented and supported for Azure Cosmos DB."
         )
 
-    def load(self, identifier, data_type):
+    def load(self, identifier, data_type, data_format="json"):
+        if data_format != "json":
+            raise ValueError("Cosmos metadata supports only JSON")
         partition_key = (
             self.partition_key if self.partition_key else identifier
         )
@@ -91,7 +132,9 @@ class AzureCosmosDBDataLayer(AbstractDataLayer):
                 f"No data found for identifier: {identifier} and data_type: {data_type}"
             )
 
-    def load_all(self, data_type):
+    def load_all(self, data_type, data_format="json"):
+        if data_format != "json":
+            raise ValueError("Cosmos metadata supports only JSON")
         id_prefix = self._id_prefix(data_type)
         query = "SELECT * FROM c WHERE STARTSWITH(c.id, @id_prefix)"
         items = list(
@@ -103,7 +146,9 @@ class AzureCosmosDBDataLayer(AbstractDataLayer):
         )
         return items
 
-    def load_all_from_partition(self, data_type):
+    def load_all_from_partition(self, data_type, data_format="json"):
+        if data_format != "json":
+            raise ValueError("Cosmos metadata supports only JSON")
         id_prefix = self._id_prefix(data_type)
         query = (
             "SELECT * FROM c WHERE c.partition_key = @partition_key "
