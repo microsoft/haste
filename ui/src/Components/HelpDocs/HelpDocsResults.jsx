@@ -9,10 +9,6 @@ import PropTypes from 'prop-types';
 import { useEffect } from 'react';
 
 const HelpDocsModelTraining = ({ anchor }) => {
-  HelpDocsModelTraining.propTypes = {
-    anchor: PropTypes.string,
-  };
-
   useEffect(() => {
     if (anchor) {
       const element = document.getElementsByName(anchor)[0];
@@ -61,13 +57,22 @@ const HelpDocsModelTraining = ({ anchor }) => {
 
 
       <h3 className='pt-4'>Intermediate Outputs</h3>
-      <p>All intermediate outputs, such as the saved labels, training checkpoint files, downloaded  building footprints and predictions can be downloaded as a zip file. This is useful for troubleshooting training failures. </p>
+      <p>
+        Intermediate outputs are available as two separate ZIP archives.
+        Training artifacts include saved labels, checkpoints, and logs for
+        troubleshooting training. Inference artifacts include predictions and
+        building footprints for troubleshooting inference.
+      </p>
 
       <img src={resultsDownloadTrainingArtifactsImage} alt="Download Training artifacts" className="img-fluid pe-5 pt-4 pb-4" />
       <img src={resultsDownloadInferenceArtifactsImage} alt="Download Inference artifacts" className="img-fluid pe-5 pt-4 pb-4" />
 
     </>
   );
+};
+
+HelpDocsModelTraining.propTypes = {
+  anchor: PropTypes.string,
 };
 
 export default HelpDocsModelTraining;
