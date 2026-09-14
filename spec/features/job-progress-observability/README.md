@@ -7,8 +7,9 @@ reporting path. Correct output discovery, incomplete telemetry handling,
 terminal progress, live subprocess logs, and status presentation without
 changing model training semantics.
 
-This prerequisite follows local lifecycle/state fixes and remains independent
-of the backend-neutral/AML feature that will be integrated above it.
+This concern is integrated with the local lifecycle and backend-neutral/AML
+work for live validation. Any later PR separation must preserve the shared
+reporting path and the verified in-flight behavior.
 
 ## Documents
 

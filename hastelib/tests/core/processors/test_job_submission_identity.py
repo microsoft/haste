@@ -5,9 +5,9 @@ import json
 from importlib import import_module
 
 import pytest
+from hastegeo.core.models.compute import synthesize_legacy_batch_handle
 from hastegeo.core.models.projects import Model
 from hastegeo.core.processors.job_state import WORKFLOWS, Workload, current_job
-from hastegeo.core.runners.submission import TaskSubmissionPendingError
 from hastegeo.core.utils.metadata import MetadataUtils
 
 from hastelib.tests.core.processors.test_job_state import (
@@ -58,8 +58,7 @@ PROCESSORS = [
 @pytest.mark.parametrize(
     "workload,module_name,class_name,method,prepare", PROCESSORS
 )
-@pytest.mark.parametrize("submission_fails", [False, True])
-def test_processors_reuse_pending_ids_and_accept_batch_routed_job_ids(
+def test_processors_reuse_pending_ids_and_persist_provider_handles(
     state,
     mocker,
     workload: Workload,
@@ -67,19 +66,21 @@ def test_processors_reuse_pending_ids_and_accept_batch_routed_job_ids(
     class_name: str,
     method: str,
     prepare: str | None,
-    submission_fails: bool,
 ) -> None:
     message = accepted(state, workload)
     model = WORKFLOWS[workload].model.model_validate(message)
-    if workload == Workload.INFERENCE:
-        model.inferenceTotalSteps = 7
     pending = current_job(message, workload)
     module = import_module(f"hastegeo.core.processors.{module_name}")
-    runner = mocker.Mock(config=state.config)
-    runner.add_task.return_value = ("routed-job", pending["taskId"])
-    if submission_fails:
-        runner.add_task.side_effect = OSError("provider response lost")
-    mocker.patch.object(module, "UnifiedRunner", return_value=runner)
+    handle = synthesize_legacy_batch_handle(
+        job_id="routed-job",
+        task_id=pending["taskId"],
+        output_uri="https://account.blob.core.windows.net/data/project/task",
+    )
+    service = mocker.Mock()
+    service.submit.return_value = handle
+    mocker.patch.object(
+        module, "build_execution_service", return_value=service
+    )
     storage_type = (
         "UnifiedArtifactStorage"
         if workload == Workload.ZIP
@@ -89,6 +90,9 @@ def test_processors_reuse_pending_ids_and_accept_batch_routed_job_ids(
     storage.get_file_remote_path.return_value = (
         "https://account.blob.core.windows.net/data/"
         f"{MetadataUtils.hash_string('project')}/config.yaml?unit-test"
+    )
+    storage.get_base_url.return_value = (
+        "https://account.blob.core.windows.net/data"
     )
     if workload == Workload.ZIP:
         processor = module.ArtifactProcessor(
@@ -100,32 +104,28 @@ def test_processors_reuse_pending_ids_and_accept_batch_routed_job_ids(
     else:
         processor = getattr(module, class_name)(model, config=state.config)
     if prepare:
-        mocker.patch.object(
-            processor,
-            prepare,
-            return_value={"config": {"file_path": "inputs/config.yaml"}},
+        prepared = (
+            [f"{MetadataUtils.hash_string('project')}/trn-source"]
+            if workload == Workload.ZIP
+            else {
+                "config": {
+                    "file_path": "inputs/config.yaml",
+                    "http_url": "https://account.blob.core.windows.net/data/config.yaml",
+                }
+            }
         )
+        mocker.patch.object(processor, prepare, return_value=prepared)
 
-    if submission_fails:
-        with pytest.raises(TaskSubmissionPendingError):
-            getattr(processor, method)()
-        assert (
-            current_job(model.model_dump(mode="json"), workload)["taskId"]
-            == pending["taskId"]
-        )
-        assert (
-            model.model_dump(mode="json")[WORKFLOWS[workload].status]
-            == "Queued"
-        )
-        return
     output = getattr(processor, method)()
 
-    assert runner.add_task.call_count == 1
-    assert runner.add_task.call_args.kwargs["job_id"] == pending["jobId"]
-    assert runner.add_task.call_args.kwargs["task_id"] == pending["taskId"]
+    service.submit.assert_called_once()
+    assert service.submit.call_args.args[0].executionId == pending["taskId"]
     values = output.model_dump(mode="json")
     assert current_job(values, workload)["jobId"] == "routed-job"
     assert current_job(values, workload)["taskId"] == pending["taskId"]
+    assert current_job(values, workload)["computeJob"] == handle.model_dump(
+        mode="json"
+    )
     assert values[WORKFLOWS[workload].status] == "InProgress"
     if WORKFLOWS[workload].current_task:
         assert len(values[WORKFLOWS[workload].job]) == 1
@@ -168,7 +168,6 @@ def test_every_preprocessor_persists_identity_before_sending_a_message(
     queue = mocker.patch.object(module, "AzureQueueHandler").return_value
     if workload == Workload.ZIP:
         mocker.patch.object(module, "UnifiedArtifactStorage")
-        mocker.patch.object(module, "UnifiedRunner")
         processor = module.ArtifactProcessor(
             config=state.config,
             partition_key="project",

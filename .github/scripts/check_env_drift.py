@@ -81,6 +81,70 @@ ALLOWLIST = {
     "CLEANUP_CONTAINERS": "local runner only",
     "PRESERVE_LOCAL_TASK_DIRS": "local runner only",
     "FAIL_ON_EMPTY_OUTPUT_LOG": "local runner only",
+    # AML per-workload compute/environment settings (aml-compute-backend,
+    # ADR-0005) ARE genuinely read by hastegeo.core.config.Config.get_aml_config()
+    # and ARE genuinely emitted by both deploy paths (deploy_apps.sh,
+    # infra/modules/functions.bicep) -- this allowlist entry documents a
+    # scanner limitation, not a real gap. Config reads each with a
+    # dynamically-constructed name (an f-string / dict-resolved variable:
+    # `os.getenv(f"AML_COMPUTE_{suffix}")`, `os.getenv(env_var)`), never a
+    # string literal, so this AST-literal-only scanner can never resolve the
+    # name and mark it "seen" -- it would report these as unread/dead no
+    # matter what either deploy path does. Verify manually against
+    # Config.get_aml_config() / _COMPUTE_WORKLOAD_ENV_SUFFIX /
+    # _AML_ENVIRONMENT_FAMILY_ENV if these names ever change.
+    "AML_COMPUTE_TRAINING": (
+        "read via dynamic os.getenv(f\"AML_COMPUTE_{suffix}\") in "
+        "Config.get_aml_config(); genuinely emitted by both deploy paths"
+    ),
+    "AML_COMPUTE_INFERENCE": (
+        "read via dynamic os.getenv(f\"AML_COMPUTE_{suffix}\") in "
+        "Config.get_aml_config(); genuinely emitted by both deploy paths"
+    ),
+    "AML_COMPUTE_EMBEDDING": (
+        "read via dynamic os.getenv(f\"AML_COMPUTE_{suffix}\") in "
+        "Config.get_aml_config(); genuinely emitted by both deploy paths"
+    ),
+    "AML_COMPUTE_IMAGERYPREP": (
+        "read via dynamic os.getenv(f\"AML_COMPUTE_{suffix}\") in "
+        "Config.get_aml_config(); genuinely emitted by both deploy paths"
+    ),
+    "AML_COMPUTE_ARTIFACTS": (
+        "read via dynamic os.getenv(f\"AML_COMPUTE_{suffix}\") in "
+        "Config.get_aml_config(); genuinely emitted by both deploy paths"
+    ),
+    "AML_ENVIRONMENT_TRAINING": (
+        "read via Config.get_aml_environment_reference_for_workload()'s "
+        "os.getenv(env_var) (dynamic name, not a literal); genuinely "
+        "emitted by both deploy paths"
+    ),
+    "AML_ENVIRONMENT_IMAGERYPREP": (
+        "read via Config.get_aml_environment_reference_for_workload()'s "
+        "os.getenv(env_var) (dynamic name, not a literal); genuinely "
+        "emitted by both deploy paths"
+    ),
+    # Optional backend-neutral compute overrides (aml-compute-backend,
+    # ADR-0005). Each is read with no default *at this call site* only
+    # because `Config.get_compute_runtime_config()` falls back, in order,
+    # to the per-workload variant of the same setting, then to the legacy
+    # `AZURE_BATCH_*` setting it replaces (which every deploy path already
+    # emits), then to a real built-in default. Deploying them would add
+    # settings that duplicate values the deployment already supplies, so
+    # they stay opt-in: set one only to override the legacy value for a
+    # specific environment. See
+    # spec/features/aml-compute-backend/data-model.md#configuration-changes.
+    "COMPUTE_OUTPUT_CONTAINER_URL": (
+        "optional neutral override; falls back to "
+        "AZURE_BATCH_OUTPUT_CONTAINER_URL"
+    ),
+    "COMPUTE_SHARED_MEMORY_MB": (
+        "optional neutral override; falls back to "
+        "COMPUTE_SHARED_MEMORY_MB_<WORKLOAD> then a per-workload default"
+    ),
+    "COMPUTE_TIMEOUT_SECONDS": (
+        "optional neutral override; falls back to "
+        "COMPUTE_TIMEOUT_SECONDS_<WORKLOAD> then a per-workload default"
+    ),
     # Set by the Batch node agent / supplied inside the task container.
     "WORKDIR": "set inside the task container",
     "INPUT_DIR": "set inside the task container",
