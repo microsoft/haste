@@ -21,10 +21,13 @@ ready. Open a separate stacked PR targeting the common-results branch.
 Keep the live local stack and saved project data untouched.
 
 Base: the simplified [#200](https://github.com/microsoft/haste/pull/200) at
-`8059d0a`. History and save coordination stay on Model; the discarded raw
+`fa62708`. History and save coordination stay on Model; the discarded raw
 authority/reservation framework is not moved into this PR.
 
 Restacked on 2026-09-13 after #200 moved onto refreshed #183. Preserve the
 Model-backed simplification and review fixes from the old integration merges.
 Application/runtime files remain identical to the pre-rebase `a0bb20b` tip,
 including Blob-policy diagnostics and instance-local GeoPackage staging.
+The maintained imagery runtime and ACR compatibility fixes now originate in
+#183 rather than only this top PR. Their duplicate commits were dropped while
+restacking; the final application/runtime tree remains unchanged.
