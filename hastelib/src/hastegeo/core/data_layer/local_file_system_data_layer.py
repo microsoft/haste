@@ -347,9 +347,9 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
                         )
                     if not entry.is_file(follow_symlinks=False):
                         continue
-                    if not entry.name.startswith(f"{data_type}_") or not entry.name.endswith(
-                        f".{data_format}"
-                    ):
+                    if not entry.name.startswith(
+                        f"{data_type}_"
+                    ) or not entry.name.endswith(f".{data_format}"):
                         continue
                     with open(entry.path, "r") as file:
                         records.append(

@@ -16,3 +16,8 @@ Keep #200 based on #183 and restack #201 after simplification. Compare actual
 production/test/diff sizes with the original +8,705 lines; reduction must come
 from removing unnecessary architecture and redundant scaffolding, not weakened
 feature coverage. Run targeted native/API/Node regressions and the UI build.
+
+Restacked onto refreshed #183 at `a6e4a6c` on 2026-09-13. Preserve the original
+merge's footprint-namespace guard and artifact-route fixtures. Application and
+runtime files remain identical to the pre-rebase #200 tip; the new base carries
+the updated GitHub Actions pins.
