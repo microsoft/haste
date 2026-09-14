@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from .prediction_edits import EditedPredictionVersion, PredictionEditReceipt
+from .prediction_edits import EditedPredictionVersion
 from .publishing import SourceImageryRef
 
 
@@ -449,10 +449,6 @@ class Model(BaseModel):
     predictionGpkgFilename: Optional[str] = Field(default=None)
     editedPredictions: Optional[List[EditedPredictionVersion]] = Field(
         default_factory=list
-    )
-    predictionEditVersionCounter: int = Field(default=0, ge=0, strict=True)
-    predictionEditReceipts: dict[str, PredictionEditReceipt] = Field(
-        default_factory=dict
     )
     labelsUrl: Optional[str] = Field(default=None)
     # ── Building labeling workflow (embedding sub-row) ──────────────────
