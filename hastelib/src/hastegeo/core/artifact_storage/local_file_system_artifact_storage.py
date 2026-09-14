@@ -179,14 +179,18 @@ class LocalFileSystemArtifactStorage(AbstractArtifactStorage):
 
     def resolve_artifact_path(self, location: str) -> str:
         parsed = urlparse(location)
-        raw_path = unquote(parsed.path) if parsed.scheme == "file" else location
+        raw_path = (
+            unquote(parsed.path) if parsed.scheme == "file" else location
+        )
         candidate = Path(raw_path)
         if not candidate.is_absolute():
             candidate = Path(self.directory, candidate)
         resolved = candidate.resolve()
         root = Path(self.directory).resolve()
         if resolved != root and root not in resolved.parents:
-            raise ValueError("Artifact path escapes the configured storage root")
+            raise ValueError(
+                "Artifact path escapes the configured storage root"
+            )
         return str(resolved.relative_to(root))
 
     def copy_artifact(

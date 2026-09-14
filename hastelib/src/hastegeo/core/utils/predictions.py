@@ -20,6 +20,13 @@ import fiona
 
 from .gdal_security import harden_gdal
 from .logs import Logger
+from .prediction_attrs import (
+    FootprintPredictionMismatchError,
+    binary_damage,
+    normalize_fraction,
+    read_footprint_ids,
+    source_id,
+)
 
 harden_gdal()
 logger = Logger.get_logger(__name__)
@@ -40,10 +47,6 @@ FOOTPRINT_ID_FIELD = "id"
 OVERTURE_ID_FIELD = "overture_id"
 EMBEDDING_LAYER_NAME = "predictions"
 EDITED_CLASS_FIELD = "edited_class"
-
-
-class FootprintPredictionMismatchError(ValueError):
-    """Predictions do not match the immutable layer's source row IDs."""
 
 
 @dataclass
@@ -67,47 +70,6 @@ class PredictionSet:
 
     def __len__(self) -> int:
         return len(self.rows)
-
-
-def source_id(value: Any) -> str:
-    """Normalize a source identifier, rejecting missing or ambiguous IDs."""
-    if isinstance(value, bool) or not isinstance(value, (str, Integral)):
-        raise FootprintPredictionMismatchError(
-            "Footprints and predictions must carry non-null source IDs."
-        )
-    result = str(value)
-    if not result or result != result.strip():
-        raise FootprintPredictionMismatchError(
-            "Source IDs must be nonempty and have no surrounding whitespace."
-        )
-    return result
-
-
-def normalize_fraction(value: Any) -> float | None:
-    """Keep unavailable scores unknown; reject finite out-of-range scores."""
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, Real):
-        raise ValueError(
-            "Prediction scores must be numeric fractions or null."
-        )
-    result = float(value)
-    if not math.isfinite(result):
-        return None
-    if not 0.0 <= result <= 1.0:
-        raise ValueError("Prediction scores must be between zero and one.")
-    return result
-
-
-def binary_damage(value: Any) -> int:
-    """Validate the producer's binary call without truncation/coercion."""
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, Integral)
-        or value not in (0, 1)
-    ):
-        raise ValueError("damaged must be the integer zero or one.")
-    return int(value)
 
 
 def validate_prediction_class(value: Any) -> str:
@@ -173,26 +135,6 @@ def prediction_layer(predictions_path: str) -> str:
     return (
         EMBEDDING_LAYER_NAME if EMBEDDING_LAYER_NAME in layers else layers[0]
     )
-
-
-def read_footprint_ids(footprints_path: str) -> list[str]:
-    """Read unique source IDs in the exact order used by layer tiles."""
-    with fiona.open(footprints_path) as src:
-        if not src.crs:
-            raise ValueError("Footprint GeoPackage must declare a CRS.")
-        if FOOTPRINT_ID_FIELD not in src.schema["properties"]:
-            raise FootprintPredictionMismatchError(
-                "Footprint GeoPackage is missing its source id column."
-            )
-        ids = [
-            source_id(feature["properties"][FOOTPRINT_ID_FIELD])
-            for feature in src
-        ]
-    if len(set(ids)) != len(ids):
-        raise FootprintPredictionMismatchError(
-            "Footprint GeoPackage contains duplicate source IDs."
-        )
-    return ids
 
 
 def raw_prediction_class(row: PredictionRow) -> str:

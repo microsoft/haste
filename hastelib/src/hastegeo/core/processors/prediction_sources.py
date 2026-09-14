@@ -88,12 +88,7 @@ def resolve_prediction_source(
             model.predictionRevision,
             model.predictionRevision,
             model.gpkgUrl if available else None,
-            model.predictionAttrsUrl
-            if (
-                available
-                and model.predictionReadyRevision == model.predictionRevision
-            )
-            else None,
+            model.predictionAttrsUrl if available else None,
             prediction_flavor(model),
             model.predictedBuildingCount,
         )

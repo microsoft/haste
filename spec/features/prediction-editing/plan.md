@@ -20,4 +20,11 @@ Create this branch from the common-results PR head only after that stage is
 ready. Open a separate stacked PR targeting the common-results branch.
 Keep the live local stack and saved project data untouched.
 
-Base: [#200](https://github.com/microsoft/haste/pull/200), commit `9bec81a`.
+Base: the simplified [#200](https://github.com/microsoft/haste/pull/200) at
+`8059d0a`. History and save coordination stay on Model; the discarded raw
+authority/reservation framework is not moved into this PR.
+
+Restacked on 2026-09-13 after #200 moved onto refreshed #183. Preserve the
+Model-backed simplification and review fixes from the old integration merges.
+Application/runtime files remain identical to the pre-rebase `a0bb20b` tip,
+including Blob-policy diagnostics and instance-local GeoPackage staging.

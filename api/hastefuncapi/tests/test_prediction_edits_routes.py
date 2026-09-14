@@ -18,7 +18,7 @@ os.environ.setdefault("ARTIFACT_STORAGE_TYPE", "local")
 os.environ.setdefault("DATA_PATH", "/tmp/haste-edit-api-tests")
 os.environ.setdefault("TEMP_DATA_PATH", "/tmp/haste-edit-api-tests")
 
-from hastegeo.core.processors.prediction_generations import (  # noqa: E402
+from hastegeo.core.processors.prediction_edits import (  # noqa: E402
     PredictionEditConflict,
 )
 
@@ -153,7 +153,7 @@ class TestPredictionEditingRoutes(
                 json.loads(response.get_body())["error"]["code"],
                 "invalid_request",
             )
-        self.assertEqual(self.current().predictionEditVersionCounter, 0)
+        self.assertEqual(self.current().editedPredictions, [])
 
     async def test_exact_building_location_uses_existing_footprint_endpoint(
         self,
@@ -337,7 +337,7 @@ class TestPredictionEditingRoutes(
         with patch.object(function_app, "DEVELOPMENT_MODE", False):
             response = await self.save_http()
         self.assertEqual(response.status_code, 401)
-        self.assertEqual(self.current().predictionEditVersionCounter, 0)
+        self.assertEqual(self.current().editedPredictions, [])
 
     async def test_positive_download_keeps_range_and_version_filename(
         self,

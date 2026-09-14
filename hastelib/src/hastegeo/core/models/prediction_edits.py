@@ -56,16 +56,9 @@ class EditedPredictionVersion(BaseModel):
     clientRequestId: StoredRequestId | None = None
     flavor: Literal["embedding", "inference"] | None = None
     overridesApplied: RowId | None = None
-
-
-class PredictionEditReceipt(BaseModel):
-    fingerprint: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    version: PositiveVersion
-    attemptId: Revision
-    state: Literal["reserved", "committed"]
-    sourcePredictionRevision: Revision
-    createdAt: str
-    createdBy: str | None = None
+    requestFingerprint: Annotated[
+        str, Field(pattern=r"^[0-9a-f]{64}$")
+    ] | None = None
 
 
 class PredictionOverrideRequest(BaseModel):
