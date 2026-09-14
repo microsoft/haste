@@ -328,7 +328,8 @@ jobs:
           if jq -e --arg name "$IMAGE_NAME" 'index($name) != null' <<<"$REPOSITORIES" >/dev/null; then
             MATCHES=$(az acr repository show-tags \
               --subscription "$SUBSCRIPTION_ID" --name "$ACR_NAME" \
-              --repository "$IMAGE_NAME" --query "[?name=='${VERSION}']" -o json)
+              --repository "$IMAGE_NAME" --detail \
+              --query "[?name=='${VERSION}']" -o json)
             if [[ "$(jq length <<<"$MATCHES")" -gt 0 ]]; then
               IMAGE_EXISTS=true
             fi
