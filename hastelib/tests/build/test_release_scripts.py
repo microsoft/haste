@@ -51,6 +51,64 @@ def create_wheel(
 
 
 class WheelPublisherTests(unittest.TestCase):
+    def test_legacy_publication_is_explicit_and_retains_no_overwrite(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = create_wheel(Path(directory), "1.0.26rc2")
+            arguments = [
+                "--wheel",
+                str(wheel),
+                "--expected-version",
+                "1.0.26rc2",
+                "--channel",
+                "rc",
+                "--source-sha",
+                "a" * 40,
+            ]
+            with patch.object(publish_hastegeo_wheel, "publish") as publish:
+                with self.assertRaisesRegex(
+                    ValueError, "verified build provenance"
+                ):
+                    publish_hastegeo_wheel.main(arguments)
+                publish.assert_not_called()
+            with patch.object(
+                publish_hastegeo_wheel, "publish", return_value=""
+            ) as publish:
+                self.assertEqual(
+                    publish_hastegeo_wheel.main([*arguments, "--legacy-rc"]),
+                    0,
+                )
+                publish.assert_called_once()
+                self.assertIsNone(publish.call_args.kwargs["manifest"])
+            with (
+                patch.object(
+                    publish_hastegeo_wheel,
+                    "list_release_assets",
+                    return_value=[wheel.name],
+                ),
+                self.assertRaisesRegex(ValueError, "will not be overwritten"),
+            ):
+                publish_hastegeo_wheel.main([*arguments, "--legacy-rc"])
+
+    def test_legacy_switch_cannot_bypass_supplied_provenance(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cannot bypass"):
+            publish_hastegeo_wheel.main(
+                [
+                    "--wheel",
+                    "unused.whl",
+                    "--expected-version",
+                    "1.0.26rc2",
+                    "--channel",
+                    "rc",
+                    "--source-sha",
+                    "a" * 40,
+                    "--legacy-rc",
+                    "--build-identity",
+                    "unused.json",
+                ]
+            )
+
     def test_retry_reuses_identical_rc_and_repairs_missing_provenance(self):
         build = RCBuild(
             "a" * 40,

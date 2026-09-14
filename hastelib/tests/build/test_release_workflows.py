@@ -229,9 +229,14 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             publish,
         )
         self.assertIn(
-            "hastegeo-wheel-${{ github.run_id }}-${{ github.run_attempt }}",
+            "name: ${{ needs.resolve-version.outputs.artifact_name }}",
             build,
         )
+        self.assertIn("PROTOCOL=auto", build)
+        self.assertIn('--artifact-protocol "$PROTOCOL"', build)
+        self.assertIn("--artifact-protocol produced", publish)
+        self.assertEqual(publish.count('--name "$WHEEL_ARTIFACT"'), 4)
+        self.assertNotIn('--name "hastegeo-wheel-${RUN_ID}"', publish)
         self.assertIn(
             "BUILD_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}",
             publish,
@@ -244,6 +249,22 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             "--manifest release-artifact/build-manifest.json", publish
         )
         self.assertNotIn("gh pr comment", publish)
+
+    def test_legacy_compatibility_does_not_claim_verified_manifests(
+        self,
+    ) -> None:
+        publish = (
+            REPO_ROOT / ".github/workflows/hastegeo-publish.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("EXTRA=(--legacy-rc)", publish)
+        self.assertIn("Existing legacy RC image is not locked", publish)
+        self.assertIn(
+            "if: needs.prepare.outputs.rc_build_identity != ''", publish
+        )
+        self.assertIn("Report legacy RC compatibility artifacts", publish)
+        self.assertIn(
+            "does not provide a verified deployment-set manifest", publish
+        )
 
     def test_rc_deployment_checks_source_and_image_digests_before_mutation(
         self,
