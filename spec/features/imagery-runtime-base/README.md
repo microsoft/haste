@@ -16,7 +16,6 @@ local experiment is compatibility evidence, not production approval.
 
 - [Acceptance criteria](#acceptance-criteria)
 - [Local results](#local-results)
-- [Agent assignment map](#agent-assignment-map)
 - [Documents](#documents)
 
 ## Acceptance criteria
@@ -51,14 +50,9 @@ The original AML-backend checkout also passed its 23 dependency guards; that wor
 was not copied into the prediction-editing branch. Remote-builder compatibility
 has dedicated regressions alongside the Python-version guards.
 
-## Agent assignment map
-
-| Story | Implementing agent | Validating agent |
-|---|---|---|
-| Recover the supported-OS imagery build and CI guard | `backend-dev` | `backend-validation` |
-| Verify native imagery compatibility | `gis` | `backend-validation` |
-
 ## Documents
 
+- [User stories and agent assignments](user-stories.md)
+- [Execution plan](plan.md)
 - [Design and validation](design.md)
 - [Existing GDAL controls](../gdal-compensating-controls/design.md)
