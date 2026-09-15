@@ -471,7 +471,9 @@ The `hastefuncqueues` LocalRunner spawns them on-demand via the Docker socket.
 #### haste-imageryprep
 
 - **Dockerfile:** `docker/imageryprep/Dockerfile`
-- **Base:** `mcr.microsoft.com/azure-functions/python:4-nightly-python3.11-slim`
+- **Base:** `mcr.microsoft.com/azureml/curated/minimal-py311-inference:59@sha256:89a46a46b71b4692731654d0523f53c8d14929e41ea8129293dc4e39fcabb14c`
+- Uses Ubuntu 22.04/Python 3.11 with worker dependencies isolated in `/opt/haste-venv`.
+- The curated base is designated Preview; see the [runtime design and rollout boundary](../spec/features/imagery-runtime-base/design.md).
 - Provides CLI entrypoints: `prepare-imagery`, `zip-artifacts`.
 - Used for downloading imagery, creating tiles, and packaging outputs.
 
