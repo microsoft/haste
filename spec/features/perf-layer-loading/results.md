@@ -243,8 +243,10 @@ restoring missing label count/URL fields, the current replay produced 9.2, 82.9,
 and 206.8 KiB for small, medium, and large fixtures (2026-09-11). The historical
 82.8 KB figure is an HTTP fixture observation, not the current large replay size.
 
-The browser benchmark uses the API configured by the UI's `VITE_API_URL`; it does
-not accept an API override. Configure that UI before measuring another API.
+The historical browser harness used the UI's configured `VITE_API_URL` and had
+no working API override. The current harness routes project-detail requests to
+`--api` and verifies the observed API origin; other app requests still use the
+UI configuration.
 
 ## Targets to beat (from [README.md](README.md#success-criteria))
 
