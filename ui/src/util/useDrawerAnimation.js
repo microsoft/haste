@@ -22,17 +22,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export function useDrawerAnimation(onClose, duration = 250) {
   const [open, setOpen] = useState(false);
   const closingRef = useRef(false);
+  const closeTimerRef = useRef(null);
 
   useEffect(() => {
     const id = setTimeout(() => setOpen(true), 0);
-    return () => clearTimeout(id);
+    return () => {
+      clearTimeout(id);
+      clearTimeout(closeTimerRef.current);
+    };
   }, []);
 
   const requestClose = useCallback(() => {
     if (closingRef.current) return;
     closingRef.current = true;
     setOpen(false);
-    setTimeout(onClose, duration);
+    closeTimerRef.current = setTimeout(onClose, duration);
   }, [onClose, duration]);
 
   return { open, requestClose };

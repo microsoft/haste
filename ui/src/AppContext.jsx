@@ -1,13 +1,14 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-import { createContext, useCallback, useState } from "react";
+import { createContext, useCallback, useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const AppContext = createContext();
 
 export const AppProvider = ({ children }) => {
+  const tourTimerRef = useRef(null);
   const guidedTourList = [
     {
       name: "dashboardGuide",
@@ -387,11 +388,19 @@ export const AppProvider = ({ children }) => {
   }
 
   function initCurrentTour(currentTourName, step = 1) {
-    setTimeout (() => {
+    clearTimeout(tourTimerRef.current);
+    tourTimerRef.current = setTimeout(() => {
       setCurrentTour(currentTourName);
-      setCurrentTourStep(step);  
+      setCurrentTourStep(step);
     }, 100);
   }
+
+  useEffect(
+    () => () => {
+      clearTimeout(tourTimerRef.current);
+    },
+    []
+  );
 
   return (
     <AppContext.Provider

@@ -18,6 +18,7 @@ import {
 import { FluentIcon } from "../../util/icons";
 import PropTypes from "prop-types";
 import { buildUrl } from "../../util/api";
+import { apiFetch } from "../../util/apiRequest";
 
 /* ── Theme-aware design tokens (follow light/dark via Fluent) ─── */
 const tokens = {
@@ -194,19 +195,11 @@ ConfusionMatrix.propTypes = {
 
 /* ── Main component ──────────────────────────────────────────── */
 const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, onDismiss }) => {
-  ValidationReportModal.propTypes = {
-    projectId: PropTypes.string.isRequired,
-    imageLayerId: PropTypes.string.isRequired,
-    modelId: PropTypes.string.isRequired,
-    modelName: PropTypes.string,
-    onDismiss: PropTypes.func.isRequired,
-  };
-
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const fetchReport = () => {
+  const fetchReport = (signal) => {
     setLoading(true);
     setError(null);
     setReport(null);
@@ -216,10 +209,11 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
     // building footprints — and with a 200 when nothing matched. Surface that
     // specific message as a soft notice; only an opaque/unparseable response
     // is a hard error.
-    fetch(
+    apiFetch(
       buildUrl(
         `GetValidationReport?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}`
-      )
+      ),
+      { signal }
     )
       .then(async (response) => {
         let data = null;
@@ -236,14 +230,23 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
           setReport(data);
         }
       })
-      .catch(() =>
-        setError({ message: "Failed to load validation report.", soft: false })
-      )
-      .finally(() => setLoading(false));
+      .catch((fetchError) => {
+        if (fetchError.name !== "AbortError") {
+          setError({ message: "Failed to load validation report.", soft: false });
+        }
+      })
+      .finally(() => {
+        if (!signal.aborted) setLoading(false);
+      });
   };
 
   useEffect(() => {
-    fetchReport();
+    const controller = new AbortController();
+    // State updates occur before the asynchronous report request starts.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchReport(controller.signal);
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, imageLayerId, modelId]);
 
   const subText = loading
@@ -374,6 +377,14 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
       </DialogSurface>
     </Dialog>
   );
+};
+
+ValidationReportModal.propTypes = {
+  projectId: PropTypes.string.isRequired,
+  imageLayerId: PropTypes.string.isRequired,
+  modelId: PropTypes.string.isRequired,
+  modelName: PropTypes.string,
+  onDismiss: PropTypes.func.isRequired,
 };
 
 export default ValidationReportModal;

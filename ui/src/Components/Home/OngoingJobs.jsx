@@ -36,6 +36,7 @@ const OngoingJobs = ({ projects }) => {
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     const projectIds = projectKey ? projectKey.split("|") : [];
 
     const load = async (initialLoad = false) => {
@@ -44,7 +45,8 @@ const OngoingJobs = ({ projects }) => {
       const results = await Promise.allSettled(
         projectIds.map((projectId) =>
           apiGet(
-            `GetProjectDetails?projectId=${projectId}&includeModels=True`
+            `GetProjectDetails?projectId=${projectId}&includeModels=True`,
+            { signal: controller.signal }
           )
             .then((res) => ({ projectId, res }))
         )
@@ -80,6 +82,7 @@ const OngoingJobs = ({ projects }) => {
 
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearInterval(intervalId);
     };
   }, [projectKey, refreshToken]);

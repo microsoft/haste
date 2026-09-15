@@ -168,12 +168,13 @@ const AssessmentReportModal = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const fetchReport = () => {
+  const fetchReport = (signal) => {
     setLoading(true);
     setError(null);
     setReport(null);
     apiGet(
-      `GetAssessmentReport?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}`
+      `GetAssessmentReport?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}`,
+      { signal }
     )
       .then((data) => {
         if (data && data.error && !data.predictions) {
@@ -182,14 +183,22 @@ const AssessmentReportModal = ({
           setReport(data);
         }
       })
-      .catch(() => setError("Failed to load assessment report."))
-      .finally(() => setLoading(false));
+      .catch((fetchError) => {
+        if (fetchError.name !== "AbortError") {
+          setError("Failed to load assessment report.");
+        }
+      })
+      .finally(() => {
+        if (!signal.aborted) setLoading(false);
+      });
   };
 
   useEffect(() => {
+    const controller = new AbortController();
     // State updates occur after the report request resolves.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchReport();
+    fetchReport(controller.signal);
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, imageLayerId, modelId]);
 

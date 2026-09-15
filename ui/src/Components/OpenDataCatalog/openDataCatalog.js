@@ -152,8 +152,22 @@ function absUrl(href, base) {
   return new URL(href, base).href;
 }
 
-function delay(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+function throwIfAborted(error) {
+  if (error?.name === "AbortError") throw error;
+}
+
+function delay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timeoutId);
+        reject(signal.reason);
+      },
+      { once: true }
+    );
+  });
 }
 
 function resolvePhase(explicit, datetime, eventDate) {
@@ -181,25 +195,26 @@ function sceneSortKey(a, b) {
   );
 }
 
-async function fetchJson(url) {
-  const res = await fetch(url, { mode: "cors" });
+async function fetchJson(url, signal) {
+  const res = await fetch(url, { mode: "cors", signal });
   if (!res.ok) throw new Error(`Fetch failed (${res.status}): ${url}`);
   return res.json();
 }
 
 // Fetch JSON with small retry/backoff — STAC hosts occasionally 5xx.
-async function fetchJsonRetry(url, attempts = 3) {
+async function fetchJsonRetry(url, attempts = 3, signal) {
   for (let i = 1; i <= attempts; i++) {
     try {
-      const res = await fetch(url, { mode: "cors" });
+      const res = await fetch(url, { mode: "cors", signal });
       if (res.ok) return { doc: await res.json(), url: res.url || url };
       if (res.status < 500 || i === attempts) {
         throw new Error(`Fetch failed (${res.status}): ${url}`);
       }
     } catch (err) {
+      throwIfAborted(err);
       if (i === attempts) throw err;
     }
-    await delay(250 * i);
+    await delay(250 * i, signal);
   }
   throw new Error(`Fetch failed: ${url}`);
 }
@@ -303,8 +318,8 @@ function eventsMatch(idA, idB) {
   return hazardOverlap || a.hazard.size === 0 || b.hazard.size === 0;
 }
 
-async function discoverVantorEvents() {
-  const root = await fetchJson(VANTOR_ROOT_CATALOG);
+async function discoverVantorEvents(signal) {
+  const root = await fetchJson(VANTOR_ROOT_CATALOG, signal);
   return stacLinks(root, "child").map((l) => {
     const href = absUrl(l.href, VANTOR_ROOT_CATALOG);
     const m = href.match(/events\/([^/]+)\/collection\.json/);
@@ -313,8 +328,12 @@ async function discoverVantorEvents() {
   });
 }
 
-async function discoverPlanetEvents() {
-  const { doc: root, url } = await fetchJsonRetry(PLANET_ROOT_CATALOG);
+async function discoverPlanetEvents(signal) {
+  const { doc: root, url } = await fetchJsonRetry(
+    PLANET_ROOT_CATALOG,
+    3,
+    signal
+  );
   return stacLinks(root, "child").map((l) => {
     const catalogUrl = absUrl(l.href, url);
     const m = catalogUrl.match(/disasterdata\/([^/]+)\/catalog\.json/);
@@ -331,15 +350,17 @@ async function discoverPlanetEvents() {
  * @returns {Promise<{ events: Array, errors: Array<{source, message}> }>}
  *   each event: { key, name, date, sources: { vantor?, planet? } }
  */
-export async function discoverEvents() {
+export async function discoverEvents(signal) {
   const errors = [];
   const [vantor, planet] = await Promise.all([
-    discoverVantorEvents().catch((err) => {
+    discoverVantorEvents(signal).catch((err) => {
+      throwIfAborted(err);
       console.error("Vantor event discovery failed:", err);
       errors.push({ source: "Vantor", message: err.message });
       return [];
     }),
-    discoverPlanetEvents().catch((err) => {
+    discoverPlanetEvents(signal).catch((err) => {
+      throwIfAborted(err);
       console.error("Planet event discovery failed:", err);
       errors.push({ source: "Planet", message: err.message });
       return [];
@@ -411,15 +432,16 @@ function normalizeVantorItem(item, eventDate, itemHref = null) {
 
 // Fetch + normalize the STAC items linked directly from a Vantor collection
 // document located at `baseUrl`.
-async function fetchVantorItems(doc, baseUrl, eventDate) {
+async function fetchVantorItems(doc, baseUrl, eventDate, signal) {
   const itemLinks = stacLinks(doc, "item");
   const scenes = await Promise.all(
     itemLinks.map(async (l) => {
       try {
         const itemUrl = absUrl(l.href, baseUrl);
-        const item = await fetchJson(itemUrl);
+        const item = await fetchJson(itemUrl, signal);
         return normalizeVantorItem(item, eventDate, itemUrl);
-      } catch {
+      } catch (error) {
+        throwIfAborted(error);
         return null;
       }
     })
@@ -436,17 +458,30 @@ async function fetchVantorItems(doc, baseUrl, eventDate) {
 // existing behavior with no extra fetches and no duplicate scenes.
 const VANTOR_MAX_DEPTH = 5;
 
-async function collectVantorScenes(doc, baseUrl, eventDate, depth = 0) {
-  const direct = await fetchVantorItems(doc, baseUrl, eventDate);
+async function collectVantorScenes(
+  doc,
+  baseUrl,
+  eventDate,
+  signal,
+  depth = 0
+) {
+  const direct = await fetchVantorItems(doc, baseUrl, eventDate, signal);
   if (direct.length > 0 || depth >= VANTOR_MAX_DEPTH) return direct;
   const childLinks = stacLinks(doc, "child");
   const nested = await Promise.all(
     childLinks.map(async (link) => {
       const childUrl = absUrl(link.href, baseUrl);
       try {
-        const childDoc = await fetchJson(childUrl);
-        return collectVantorScenes(childDoc, childUrl, eventDate, depth + 1);
+        const childDoc = await fetchJson(childUrl, signal);
+        return collectVantorScenes(
+          childDoc,
+          childUrl,
+          eventDate,
+          signal,
+          depth + 1
+        );
       } catch (err) {
+        throwIfAborted(err);
         console.warn(`Skipping Vantor STAC catalog ${childUrl}: ${err.message}`);
         return [];
       }
@@ -455,10 +490,10 @@ async function collectVantorScenes(doc, baseUrl, eventDate, depth = 0) {
   return nested.flat();
 }
 
-async function fetchVantorScenes(src) {
-  const collection = await fetchJson(src.collectionUrl);
+async function fetchVantorScenes(src, signal) {
+  const collection = await fetchJson(src.collectionUrl, signal);
   const eventDate = (collection["odp:event_date"] || "").slice(0, 10) || null;
-  return collectVantorScenes(collection, src.collectionUrl, eventDate);
+  return collectVantorScenes(collection, src.collectionUrl, eventDate, signal);
 }
 
 // ── Planet Open Data (Source Cooperative STAC) ──────────────────────────────
@@ -562,6 +597,7 @@ async function fetchPlanetCollectionScenes({
   aboutUrl,
   eventDate,
   inheritedPhase,
+  signal,
 }) {
   const phase = planetPhaseFromCollectionId(collectionDoc.id) || inheritedPhase;
   const mosaic = phase === "pre" ? collectionDoc.assets?.mosaic : null;
@@ -579,7 +615,7 @@ async function fetchPlanetCollectionScenes({
     itemLinks.map(async (link) => {
       const itemUrl = absUrl(link.href, collectionUrl);
       try {
-        const { doc, url } = await fetchJsonRetry(itemUrl);
+        const { doc, url } = await fetchJsonRetry(itemUrl, 3, signal);
         return normalizePlanetItem({
           item: doc,
           itemUrl: url,
@@ -590,6 +626,7 @@ async function fetchPlanetCollectionScenes({
           inheritedPhase: phase,
         });
       } catch (err) {
+        throwIfAborted(err);
         console.warn(`Skipping Planet STAC item ${itemUrl}: ${err.message}`);
         return null;
       }
@@ -608,7 +645,14 @@ async function fetchPlanetCollectionScenes({
 // ("post-event-2026-07-29") don't match on their own.
 const PLANET_MAX_DEPTH = 5;
 
-async function collectPlanetCollections(doc, url, aboutUrl, inheritedPhase, depth = 0) {
+async function collectPlanetCollections(
+  doc,
+  url,
+  aboutUrl,
+  inheritedPhase,
+  signal,
+  depth = 0
+) {
   const phase = planetPhaseFromCollectionId(doc.id) || inheritedPhase;
   const about = stacLink(doc, "about", url) || aboutUrl;
   const hasItems = stacLinks(doc, "item").length > 0;
@@ -622,9 +666,21 @@ async function collectPlanetCollections(doc, url, aboutUrl, inheritedPhase, dept
     childLinks.map(async (link) => {
       const childUrl = absUrl(link.href, url);
       try {
-        const { doc: childDoc, url: resolvedUrl } = await fetchJsonRetry(childUrl);
-        return collectPlanetCollections(childDoc, resolvedUrl, about, phase, depth + 1);
+        const { doc: childDoc, url: resolvedUrl } = await fetchJsonRetry(
+          childUrl,
+          3,
+          signal
+        );
+        return collectPlanetCollections(
+          childDoc,
+          resolvedUrl,
+          about,
+          phase,
+          signal,
+          depth + 1
+        );
       } catch (err) {
+        throwIfAborted(err);
         console.warn(`Skipping Planet STAC catalog ${childUrl}: ${err.message}`);
         return [];
       }
@@ -633,10 +689,20 @@ async function collectPlanetCollections(doc, url, aboutUrl, inheritedPhase, dept
   return nested.flat();
 }
 
-async function fetchPlanetScenes(src) {
-  const { doc: root, url: rootUrl } = await fetchJsonRetry(src.catalogUrl);
+async function fetchPlanetScenes(src, signal) {
+  const { doc: root, url: rootUrl } = await fetchJsonRetry(
+    src.catalogUrl,
+    3,
+    signal
+  );
   const rootAbout = stacLink(root, "about", rootUrl);
-  const collections = await collectPlanetCollections(root, rootUrl, rootAbout, null);
+  const collections = await collectPlanetCollections(
+    root,
+    rootUrl,
+    rootAbout,
+    null,
+    signal
+  );
   const nested = await Promise.all(
     collections.map(({ doc, url, aboutUrl, phase }) =>
       fetchPlanetCollectionScenes({
@@ -645,6 +711,7 @@ async function fetchPlanetScenes(src) {
         aboutUrl,
         eventDate: src.date,
         inheritedPhase: phase,
+        signal,
       })
     )
   );
@@ -662,17 +729,19 @@ async function fetchPlanetScenes(src) {
  * @param {object} event a value from discoverEvents().events
  * @returns {Promise<{ scenes: Array, errors: Array<{source, message}> }>}
  */
-export async function fetchEventCatalog(event) {
+export async function fetchEventCatalog(event, signal) {
   const errors = [];
   const vantorTask = event.sources?.vantor
-    ? fetchVantorScenes(event.sources.vantor).catch((err) => {
+    ? fetchVantorScenes(event.sources.vantor, signal).catch((err) => {
+      throwIfAborted(err);
         console.error("Vantor load failed:", err);
         errors.push({ source: "Vantor", message: err.message });
         return [];
       })
     : Promise.resolve([]);
   const planetTask = event.sources?.planet
-    ? fetchPlanetScenes(event.sources.planet).catch((err) => {
+    ? fetchPlanetScenes(event.sources.planet, signal).catch((err) => {
+      throwIfAborted(err);
         console.error("Planet load failed:", err);
         errors.push({ source: "Planet", message: err.message });
         return [];

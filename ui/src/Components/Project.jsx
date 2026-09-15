@@ -133,12 +133,9 @@ const Project = ({ setModalComponent }) => {
 
   const defaultProjectDetailsRef = useRef(null);
   const projectJobStatesRef = useRef(null);
+  const projectFetchCountRef = useRef(0);
   const { dispatchToast } = useToastController("job-completion-toaster");
 
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [appParams.userSettings.itemsPerPageLayers]);
 
   const DEFAULT_COMPONENT_STATE = {
     project: null,
@@ -148,21 +145,14 @@ const Project = ({ setModalComponent }) => {
 
   const projectCurrentTouruseRef = useRef(DEFAULT_COMPONENT_STATE.visibleModelId === "-1" ? "singleProjectGuide" : "singleProjectModelGuide");
 
-  const [moreInfoVisibleId, setMoreInfoVisibleId] = useState(null);
   const [componentState, setComponentState] = useState(DEFAULT_COMPONENT_STATE);
   const navigate = useNavigate();
 
   useEffect(() => {
+    const controller = new AbortController();
     const fetchData = async () => {
-      await fetchProjectDetails();
-    };
-    fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageLayerId]);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      await fetchProjectDetails();
+      await fetchProjectDetails(true, controller.signal);
+      if (controller.signal.aborted) return;
 
       initGuidedTourState(projectCurrentTouruseRef.current, appParams.guidedTourProperties);
       initCurrentTour(projectCurrentTouruseRef.current);
@@ -181,6 +171,8 @@ const Project = ({ setModalComponent }) => {
 
     //On component dismount
     return () => {
+      controller.abort();
+      setIsLoading(false);
       initCurrentTour(null);
       initGuidedTourState(projectCurrentTouruseRef.current, appParams.guidedTourProperties);
       setAppHeaderRightButtons([]);
@@ -188,7 +180,7 @@ const Project = ({ setModalComponent }) => {
     };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [projectId, imageLayerId]);
 
   useEffect(() => {
     if (componentState.visibleModelId === "-1") {
@@ -198,11 +190,15 @@ const Project = ({ setModalComponent }) => {
     }
   }, [componentState.visibleModelId]);
 
-  async function fetchProjectDetails(showLoading = true) {
+  async function fetchProjectDetails(showLoading = true, signal) {
     if (showLoading) {
       setIsLoading(true);
     }
-    await apiGet("GetProjectDetails?projectId=" + projectId + "&includeModels=True")
+    projectFetchCountRef.current += 1;
+    await apiGet(
+      "GetProjectDetails?projectId=" + projectId + "&includeModels=True",
+      { signal }
+    )
       .then((response) => {
         defaultProjectDetailsRef.current = response;
         const currentJobStates = collectProjectJobStates(response);
@@ -252,40 +248,43 @@ const Project = ({ setModalComponent }) => {
         }));
       })
       .catch((error) => {
-        console.error("Error fetching projects:", error);
+        if (error.name !== "AbortError") {
+          console.error("Error fetching projects:", error);
+        }
+      })
+      .finally(() => {
+        projectFetchCountRef.current = Math.max(
+          0,
+          projectFetchCountRef.current - 1
+        );
+        if (showLoading && !signal?.aborted) {
+          setIsLoading(false);
+        }
       });
-    if (showLoading) {
-      setIsLoading(false);
-    }
   }
 
   useEffect(() => {
-    const intervalId = setInterval(async () => {
-      fetchProjectDetails(false);
+    let pollController = null;
+    const intervalId = setInterval(() => {
+      if (
+        document.visibilityState !== "visible" ||
+        projectFetchCountRef.current > 0
+      ) {
+        return;
+      }
+      pollController = new AbortController();
+      fetchProjectDetails(false, pollController.signal).finally(() => {
+        pollController = null;
+      });
     }, 20000);
 
-    return () => clearInterval(intervalId);
+    return () => {
+      clearInterval(intervalId);
+      pollController?.abort();
+    };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
-
-  useEffect(() => {
-    function handleResize() {
-      if (appParams.bootstrapBreakpoint >= 4) {
-        setMoreInfoVisibleId(null);
-      }
-    }
-
-    window.addEventListener("resize", handleResize);
-
-    // Initial check in case the component mounts with width > 992
-    handleResize();
-
-    return () => {
-      window.removeEventListener("resize", handleResize);
-    };
-  }, [appParams.bootstrapBreakpoint]);
-
 
   function onComponentChange(value, key) {
     setComponentState((prevState) => {
@@ -307,8 +306,8 @@ const Project = ({ setModalComponent }) => {
   }
 
   // Filter + sort + group the image layers (memoised so pagination is cheap).
-  const imageLayers = componentState.project?.imageLayer || [];
   const processed = useMemo(() => {
+    const imageLayers = componentState.project?.imageLayer || [];
     const search = searchText.toLowerCase();
     const filtered = imageLayers.filter(
       (layer) =>
@@ -332,8 +331,12 @@ const Project = ({ setModalComponent }) => {
       return String(av ?? "").localeCompare(String(bv ?? "")) * dir;
     });
     return sorted;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageLayers, searchText, sort, effectiveGroupBy]);
+  }, [
+    componentState.project?.imageLayer,
+    effectiveGroupBy,
+    searchText,
+    sort,
+  ]);
 
   if (!componentState.project) {
     return null;

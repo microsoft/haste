@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { sourceImageryRef, OPEN_DATA_PROGRAMS } from "./openDataCatalog.js";
+import {
+  discoverEvents,
+  sourceImageryRef,
+  OPEN_DATA_PROGRAMS,
+} from "./openDataCatalog.js";
 
 const vantorScene = {
   id: "scene-a",
@@ -48,4 +52,26 @@ test("returns null for a scene not from a registered open-data program", () => {
 test("falls back to the scene's own phase when none is passed", () => {
   const ref = sourceImageryRef(vantorScene);
   assert.equal(ref.phase, "post");
+});
+
+test("event discovery stops when its AbortSignal is aborted", async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  globalThis.fetch = (_url, options) =>
+    new Promise((_resolve, reject) => {
+      options.signal.addEventListener(
+        "abort",
+        () => reject(options.signal.reason),
+        { once: true }
+      );
+    });
+
+  try {
+    const discovery = discoverEvents(controller.signal);
+    controller.abort();
+
+    await assert.rejects(discovery, { name: "AbortError" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

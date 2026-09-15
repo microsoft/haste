@@ -4,16 +4,16 @@
 const APIUrl = import.meta.env.VITE_API_URL;
 const APIMSubscriptionKey = import.meta.env.VITE_APIM_SUBSCRIPTION_KEY;
 import { upsertUser } from "../AppHelper.js";
+import {
+  apiFetch,
+  isAbortError,
+  shouldAppendSubscriptionKey,
+} from "./apiRequest.js";
 import { sanitizeRedirectPath } from "./validation.js";
-
-function resolveVarConcatChar(text) {
-  if (text === "") return "";
-  return text.includes("?") ? "&" : "?";
-}
 
 export function buildUrl(endpoint) {
   const base = APIUrl + endpoint;
-  if (APIMSubscriptionKey) {
+  if (shouldAppendSubscriptionKey(APIUrl, APIMSubscriptionKey)) {
     const sep = base.includes("?") ? "&" : "?";
     return base + sep + "subscription-key=" + APIMSubscriptionKey;
   }
@@ -22,7 +22,7 @@ export function buildUrl(endpoint) {
 
 export async function apiValidateUser(setAppParams) {
   try {
-    const staticAppStatus = await fetch("/.auth/me");
+    const staticAppStatus = await apiFetch("/.auth/me");
     const staticAppUserStatus = await staticAppStatus.json();
     if (staticAppUserStatus.clientPrincipal) {
       var response = await apiGet("GetUserById?userId=" + staticAppUserStatus.clientPrincipal.userDetails);
@@ -67,25 +67,34 @@ export async function apiLogout(redirectPath = "/") {
   }
 }
 
-export async function apiGet(endpoint) {
+function rethrowAbort(error) {
+  if (isAbortError(error)) {
+    throw error;
+  }
+}
+
+export async function apiGet(endpoint, requestOptions = {}) {
   try {
-    const response = await fetch(buildUrl(endpoint));
+    const response = await apiFetch(buildUrl(endpoint), requestOptions);
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     return await response.json();
   } catch (error) {
+    rethrowAbort(error);
     console.error("Error fetching.:", error);
     throw new Error("Error fetching.");
   }
 }
 
-export async function apiPut(endpoint, data) {
+export async function apiPut(endpoint, data, requestOptions = {}) {
   try {
-    const response = await fetch(buildUrl(endpoint), {
+    const response = await apiFetch(buildUrl(endpoint), {
+      ...requestOptions,
       method: 'PUT',
       headers: {
+        ...requestOptions.headers,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(data)
@@ -119,32 +128,46 @@ export async function apiPut(endpoint, data) {
     return message;
 
   } catch (error) {
+    rethrowAbort(error);
     throw new Error(error.message || "Error updating element.");
   }
 }
 
-export async function apiPost(endpoint, data, isFormData = false) {
+export async function apiPost(
+  endpoint,
+  data,
+  isFormData = false,
+  requestOptions = {}
+) {
   try {
     const options = {
+      ...requestOptions,
       method: 'POST',
-      headers: isFormData ? {} : { 'Content-Type': 'application/json' },
+      headers: isFormData
+        ? requestOptions.headers
+        : {
+            ...requestOptions.headers,
+            'Content-Type': 'application/json'
+          },
       body: isFormData ? data : JSON.stringify(data)
     };
 
-    const response = await fetch(buildUrl(endpoint), options);
+    const response = await apiFetch(buildUrl(endpoint), options);
     if (!response.ok) {
       const message = await response.json();
       throw new Error(message.error || `HTTP error! status: ${response.status}`);
     }
     return await response.json();
   } catch (error) {
+    rethrowAbort(error);
     throw new Error("Error uploading chunk.");
   }
 }
 
-export async function apiDelete(endpoint) {
+export async function apiDelete(endpoint, requestOptions = {}) {
   try {
-    const response = await fetch(buildUrl(endpoint), {
+    const response = await apiFetch(buildUrl(endpoint), {
+      ...requestOptions,
       method: 'DELETE'
     });
     if (!response.ok) {
@@ -152,6 +175,7 @@ export async function apiDelete(endpoint) {
     }
     return response;
   } catch (error) {
+    rethrowAbort(error);
     throw new Error("Error deleting element.");
   }
 }

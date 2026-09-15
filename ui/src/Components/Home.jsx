@@ -87,11 +87,12 @@ EmptyWidgetPlaceholder.propTypes = {
 
 const Home = () => {
   const navigate = useNavigate();
-  const { setIsLoading, initCurrentTour, setAppHeaderRightButtons, appParams, setAppParams } =
+  const { setIsLoading, initCurrentTour, setAppHeaderRightButtons, appParams } =
     useContext(AppContext);
   const [dashboardData, setDashboardData] = useState(null);
   const [catalog, setCatalog] = useState([]);
   const [modalComponent, setModalComponent] = useState(null);
+  const [nowMs] = useState(Date.now);
 
   const openCreateProjectModal = () => {
     setModalComponent(
@@ -100,23 +101,32 @@ const Home = () => {
   };
 
   useEffect(() => {
+    const controller = new AbortController();
     const fetchProjects = async () => {
       setIsLoading(true);
       try {
-        const response = await apiGet("GetDashboardData");
+        const response = await apiGet("GetDashboardData", {
+          signal: controller.signal,
+        });
         setDashboardData(response);
-        
       } catch (error) {
-        console.error("Error fetching projects:", error);
+        if (error.name !== "AbortError") {
+          console.error("Error fetching projects:", error);
+        }
       }
+      if (controller.signal.aborted) return;
       try {
-        const catalogResponse = await apiGet("GetModelCatalog");
+        const catalogResponse = await apiGet("GetModelCatalog", {
+          signal: controller.signal,
+        });
         setCatalog(catalogResponse?.modelCatalog || []);
       } catch (error) {
-        // Catalog is supplementary; ignore if unavailable.
-        console.warn("Model catalog unavailable for dashboard:", error);
+        if (error.name !== "AbortError") {
+          // Catalog is supplementary; ignore if unavailable.
+          console.warn("Model catalog unavailable for dashboard:", error);
+        }
       }
-      setIsLoading(false);
+      if (!controller.signal.aborted) setIsLoading(false);
     };
 
     initCurrentTour("dashboardGuide");
@@ -140,6 +150,8 @@ const Home = () => {
 
     //On component dismount
     return () => {
+      controller.abort();
+      setIsLoading(false);
       setModalComponent(null);
       initGuidedTourState("dashboardGuide", appParams.guidedTourProperties);
     };
@@ -172,7 +184,6 @@ const Home = () => {
     .filter(Boolean)
     .sort();
 
-  const nowMs = Date.now();
   const newLast30 = projects.filter((project) => {
     const created = Date.parse(project.creationDate);
     return !Number.isNaN(created) && nowMs - created <= 30 * 86400000;
