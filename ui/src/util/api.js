@@ -5,11 +5,7 @@ const APIUrl = import.meta.env.VITE_API_URL;
 const APIMSubscriptionKey = import.meta.env.VITE_APIM_SUBSCRIPTION_KEY;
 import { upsertUser } from "../AppHelper.js";
 import { sanitizeRedirectPath } from "./validation.js";
-
-function resolveVarConcatChar(text) {
-  if (text === "") return "";
-  return text.includes("?") ? "&" : "?";
-}
+import { fetchJsonResponse } from "./http.js";
 
 export function buildUrl(endpoint) {
   const base = APIUrl + endpoint;
@@ -68,14 +64,15 @@ export async function apiLogout(redirectPath = "/") {
 }
 
 export async function apiGet(endpoint) {
-  try {
-    const response = await fetch(buildUrl(endpoint));
+  const response = await apiGetResponse(endpoint);
+  return response.data;
+}
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    return await response.json();
+export async function apiGetResponse(endpoint, options = {}) {
+  try {
+    return await fetchJsonResponse(buildUrl(endpoint), options);
   } catch (error) {
+    if (error.name === "AbortError") throw error;
     console.error("Error fetching.:", error);
     throw new Error("Error fetching.");
   }
@@ -137,7 +134,7 @@ export async function apiPost(endpoint, data, isFormData = false) {
       throw new Error(message.error || `HTTP error! status: ${response.status}`);
     }
     return await response.json();
-  } catch (error) {
+  } catch {
     throw new Error("Error uploading chunk.");
   }
 }
@@ -151,7 +148,7 @@ export async function apiDelete(endpoint) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     return response;
-  } catch (error) {
+  } catch {
     throw new Error("Error deleting element.");
   }
 }
