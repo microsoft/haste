@@ -28,6 +28,10 @@ const Visualizer = ({ setModalComponent }) => {
   const swipeMapRef = useRef(null);
   const zoomControlRef = useRef(null);
   const [swipeStateMobile, setSwipeStateMobile] = useState("post");
+  const [mapReadiness, setMapReadiness] = useState({
+    primary: false,
+    secondary: false,
+  });
 
   // Visualizer data fetching function
   async function getVisualizerResults() {
@@ -170,6 +174,11 @@ const Visualizer = ({ setModalComponent }) => {
 
           await loadStudyArea(primaryMap, visualizerResults.studyArea);
 
+          setMapReadiness((previous) => ({
+            ...previous,
+            primary: true,
+          }));
+
         });
 
         // Secondary map event listeners
@@ -194,6 +203,10 @@ const Visualizer = ({ setModalComponent }) => {
           );
 
           loadStudyArea(secondaryMap, visualizerResults.studyArea);
+          setMapReadiness((previous) => ({
+            ...previous,
+            secondary: true,
+          }));
         });
 
         // Assign maps to refs
@@ -392,7 +405,12 @@ const Visualizer = ({ setModalComponent }) => {
 
 
   return (
-    <div className="visualizer-container">
+    <div
+      className="visualizer-container"
+      data-map-ready={
+        mapReadiness.primary && mapReadiness.secondary ? "true" : "false"
+      }
+    >
       <div id="primaryMap" ref={primaryMapRef} className="map"></div>
       <div id="secondaryMap" ref={secondaryMapRef} className="map"></div>
 
