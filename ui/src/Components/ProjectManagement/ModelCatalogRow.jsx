@@ -19,17 +19,11 @@ import { apiDelete } from "../../util/api";
 import { AppContext } from "../../AppContext";
 import { limitTextLength } from "../../util/conversion";
 import ModelCatalogAdditionalInfoModal from "./ModelCatalogAdditionalInfoModal";
+import { buildCatalogDeletionEndpoint, catalogMetadataEntries, catalogText, formatCatalogDate } from "../ModelCatalogHelper";
 
 import React from "react";
 
 const ModelCatalogRow = ({ item, index, setModalComponent, fetchModels }) => {
-  ModelCatalogRow.propTypes = {
-    item: PropTypes.object.isRequired,
-    index: PropTypes.number.isRequired,
-    setModalComponent: PropTypes.func,
-    fetchModels: PropTypes.func.isRequired,
-  };
-
   const { setDialog, setIsLoading } = React.useContext(AppContext);
 
   const moreMenuOptions = {
@@ -47,7 +41,7 @@ const ModelCatalogRow = ({ item, index, setModalComponent, fetchModels }) => {
                 type: "primary",
                 key: "yes",
                 text: "Yes",
-                onClick: () => handleDeletion(item.modelId),
+                onClick: handleDeletion,
               },
               {
                 type: "default",
@@ -66,7 +60,7 @@ const ModelCatalogRow = ({ item, index, setModalComponent, fetchModels }) => {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async function handleDeletion(modelId) {
+  async function handleDeletion() {
 
     const buttons = [
       {
@@ -80,11 +74,11 @@ const ModelCatalogRow = ({ item, index, setModalComponent, fetchModels }) => {
     try {
       setDialog();
       setIsLoading(true, "Removing Model from Catalog...");
-      await apiDelete(`DeleteModelCatalog?modelId=${modelId}`);
+      await apiDelete(buildCatalogDeletionEndpoint(item));
       await sleep(2000);
       await fetchModels();
       setDialog("Success", "Model removed successfully.", buttons);
-    } catch (error) {
+    } catch {
       setDialog("Error", "Error removing model from Catalog, Please try again later.", buttons);
     }
     setIsLoading(false);
@@ -120,8 +114,8 @@ const ModelCatalogRow = ({ item, index, setModalComponent, fetchModels }) => {
             className="pe-4 ellipsis"
             id={"modelCatalogDescription" + index}
           >
-            <Tooltip content={item.description} relationship="label">
-              <span>{limitTextLength(item.description, 80, 70)}</span>
+            <Tooltip content={catalogText(item.description)} relationship="label">
+              <span>{limitTextLength(catalogText(item.description), 80, 70)}</span>
             </Tooltip>
           </Text>
         </td>
@@ -131,7 +125,7 @@ const ModelCatalogRow = ({ item, index, setModalComponent, fetchModels }) => {
             className="pe-4"
             id={"modelCatalogSource" + index}
           >
-            {item.imagerySource}
+            {catalogText(item.imagerySource)}
           </Text>
         </td>
         <td className="custom-text-no-wrap" data-label="Event Type">
@@ -148,9 +142,7 @@ const ModelCatalogRow = ({ item, index, setModalComponent, fetchModels }) => {
             className="pe-4"
             id={"modelCatalogCataloguedDate" + index}
           >
-            {item.cataloguedDate.substring(0, 10) +
-              " " +
-              item.cataloguedDate.substring(11, 19)}
+            {formatCatalogDate(item.cataloguedDate)}
           </Text>
         </td>
 
@@ -159,7 +151,7 @@ const ModelCatalogRow = ({ item, index, setModalComponent, fetchModels }) => {
             className="pe-4"
             id={"modelCatalogCataloguedByUser" + index}
           >
-            {item.cataloguedByUser}
+            {catalogText(item.cataloguedByUser)}
           </Text>
         </td>
 
@@ -168,9 +160,7 @@ const ModelCatalogRow = ({ item, index, setModalComponent, fetchModels }) => {
             className="pe-4"
             id={"modelCatalogAdditionalInfo" + index}
           >
-            {item.additionalInfo !== null &&
-              item.additionalInfo !== undefined &&
-              !(typeof item.additionalInfo === "object" && Object.keys(item.additionalInfo).length === 0) ?
+            {catalogMetadataEntries(item.additionalInfo).length > 0 ?
               <Link onClick={() => handleAdditionalInfoDisplay(item.additionalInfo)}>
                 View Metadata
               </Link>
@@ -212,6 +202,13 @@ const ModelCatalogRow = ({ item, index, setModalComponent, fetchModels }) => {
       </tr>
     </React.Fragment>
   );
+};
+
+ModelCatalogRow.propTypes = {
+  item: PropTypes.object.isRequired,
+  index: PropTypes.number.isRequired,
+  setModalComponent: PropTypes.func,
+  fetchModels: PropTypes.func.isRequired,
 };
 
 export default ModelCatalogRow;

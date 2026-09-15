@@ -194,6 +194,7 @@ const AssessmentReportModal = ({
   }, [projectId, imageLayerId, modelId]);
 
   const preds = report?.predictions;
+  const hasUnscored = (preds?.unscored ?? 0) > 0;
   const pop = report?.populationEstimate;
   const metrics = report?.metrics;
   const sample = report?.evaluationSample;
@@ -255,7 +256,10 @@ const AssessmentReportModal = ({
                   <div style={{ display: "flex", flexDirection: "column", gap: tokens.spacingS }}>
                     <div style={rowStyle}>
                       <div style={{ flexGrow: 1, ...halfItemStyle }}>
-                        <MetricCard label="Buildings with a prediction" value={int(preds?.total)} />
+                        <MetricCard
+                          label={hasUnscored ? "Buildings in results" : "Buildings with a prediction"}
+                          value={int(preds?.total)}
+                        />
                       </div>
                       <div style={{ flexGrow: 1, ...halfItemStyle }}>
                         <MetricCard label="Non-cloudy" value={int(preds?.knownNonCloudy)} />
@@ -263,12 +267,15 @@ const AssessmentReportModal = ({
                     </div>
                     <div style={rowStyle}>
                       <div style={{ flexGrow: 1, ...halfItemStyle }}>
-                        <MetricCard label="Cloud-covered (excluded)" value={int(preds?.cloudy)} />
+                        <MetricCard label="Cloud/unknown coverage (excluded)" value={int(preds?.cloudy)} />
                       </div>
                       <div style={{ flexGrow: 1, ...halfItemStyle }}>
                         <MetricCard label={`Predicted damaged (> ${report.threshold})`} value={`${int(preds?.predictedDamaged)} (${preds?.predictedDamagedPctOfKnown ?? 0}% of non-cloudy)`} accent={tokens.colorDangerForeground1} />
                       </div>
                     </div>
+                    {hasUnscored && (
+                      <MetricCard label="No observation (excluded)" value={int(preds.unscored)} />
+                    )}
                   </div>
                 </div>
 

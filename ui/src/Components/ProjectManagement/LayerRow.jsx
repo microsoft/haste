@@ -14,13 +14,14 @@ import {
 import { FluentIcon } from "../../util/icons";
 import PropTypes from "prop-types";
 import ModelRow from "./ModelRow";
-import React, { useContext, useState, useEffect } from "react";
+import React, { useContext, useState } from "react";
 import { apiDelete } from "../../util/api";
 import { limitTextLength } from "../../util/conversion";
 import { imageLayerThumbnail } from "../../util/satellitePlaceholders";
 import { AppContext } from "../../AppContext";
 import CreateEditModelTrainingModal from "../CreateEditModelTrainingModal";
 import CreateEditEmbeddingModal from "../CreateEditEmbeddingModal";
+import CatalogInferenceButton from "./CatalogInferenceButton";
 import ValidationConfigModal from "../BuildingValidation/ValidationConfigModal";
 import { useNavigate } from "react-router-dom";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
@@ -33,24 +34,11 @@ const LayerRow = ({
   visibleModelId,
   projectId,
   columns,
-  onComponentChange,
   setModalComponent,
   fetchProjectDetails,
   setComponentState,
   eventTypes
 }) => {
-  LayerRow.propTypes = {
-    item: PropTypes.object.isRequired,
-    index: PropTypes.number.isRequired,
-    visibleModelId: PropTypes.string.isRequired,
-    projectId: PropTypes.string.isRequired,
-    columns: PropTypes.array,
-    onComponentChange: PropTypes.func.isRequired,
-    setModalComponent: PropTypes.func.isRequired,
-    fetchProjectDetails: PropTypes.func.isRequired,
-    setComponentState: PropTypes.func,
-    eventTypes: PropTypes.array.isRequired
-  };
   const navigate = useNavigate();
   const { setIsLoading, appParams } = useContext(AppContext);
   const isCompactLayout = appParams.bootstrapBreakpoint < 4;
@@ -86,12 +74,15 @@ const LayerRow = ({
     hasModels && visibleModelId === item.imageLayerId
   );
 
-  useEffect(() => {
+  const selectionKey = `${visibleModelId}:${item.imageLayerId}`;
+  const [previousSelectionKey, setPreviousSelectionKey] = useState(selectionKey);
+  // Adjust on an external URL/layer selection change, not on every model poll.
+  if (previousSelectionKey !== selectionKey) {
+    setPreviousSelectionKey(selectionKey);
     if (hasModels && visibleModelId === item.imageLayerId) {
       setIsExpanded(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleModelId, item.imageLayerId]);
+  }
 
   function toggleExpanded() {
     if (hasModels) {
@@ -136,13 +127,14 @@ const LayerRow = ({
         disabled: item.labelsUrl === null,
         onClick: () => {
           if (item.labelsUrl) {
+            let url = item.labelsUrl;
             if (import.meta.env.VITE_STORAGE_APIM_URL) {
-              item.labelsUrl = item.labelsUrl.replace(
+              url = url.replace(
                 /^https?:\/\/[^/]+/,
                 import.meta.env.VITE_STORAGE_APIM_URL
               );
             }
-            fileDownload(item.labelsUrl, setDialog);
+            fileDownload(url, setDialog);
           } else {
             setDialog("Error", "No labels available for export.");
           }
@@ -387,6 +379,17 @@ const LayerRow = ({
                 >
                   Train
                 </Button>{" "}
+                <CatalogInferenceButton
+                  imageLayer={item}
+                  projectId={projectId}
+                  index={index}
+                  setModalComponent={setModalComponent}
+                  fetchProjectDetails={async () => {
+                    const refreshed = await fetchProjectDetails(false);
+                    if (refreshed !== false) setIsExpanded(true);
+                    return refreshed;
+                  }}
+                />{" "}
                 <Text className="pgrid-action-count" size={200}>
                   (
                   {item.models && item.models.length > 0
@@ -529,6 +532,19 @@ const LayerRow = ({
       )}
     </React.Fragment>
   );
+};
+
+LayerRow.propTypes = {
+  item: PropTypes.object.isRequired,
+  index: PropTypes.number.isRequired,
+  visibleModelId: PropTypes.string.isRequired,
+  projectId: PropTypes.string.isRequired,
+  columns: PropTypes.array,
+  onComponentChange: PropTypes.func,
+  setModalComponent: PropTypes.func.isRequired,
+  fetchProjectDetails: PropTypes.func.isRequired,
+  setComponentState: PropTypes.func,
+  eventTypes: PropTypes.array.isRequired,
 };
 
 export default LayerRow;

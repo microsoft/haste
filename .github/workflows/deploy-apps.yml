@@ -28,6 +28,11 @@ on:
         required: false
         default: ""
         type: string
+      transformer_inference_image_tag:
+        description: "Transformer inference image tag (blank = resolved hastegeo version)"
+        required: false
+        default: ""
+        type: string
       app_tag:
         description: "Application version tag"
         required: true
@@ -84,18 +89,22 @@ jobs:
           VERSION: ${{ steps.hastegeo.outputs.version }}
           TRAINING_INPUT: ${{ inputs.training_image_tag }}
           IMAGEPREP_INPUT: ${{ inputs.imageprep_image_tag }}
+          TRANSFORMER_INFERENCE_INPUT: ${{ inputs.transformer_inference_image_tag }}
         run: |
           TRAINING_TAG="${TRAINING_INPUT:-$VERSION}"
           IMAGEPREP_TAG="${IMAGEPREP_INPUT:-$VERSION}"
+          TRANSFORMER_INFERENCE_TAG="${TRANSFORMER_INFERENCE_INPUT:-$VERSION}"
           if [[ "$VERSION" == *rc* ]]; then
             if [[ "$TRAINING_TAG" != "$VERSION" || \
-                  "$IMAGEPREP_TAG" != "$VERSION" ]]; then
+                  "$IMAGEPREP_TAG" != "$VERSION" || \
+                  "$TRANSFORMER_INFERENCE_TAG" != "$VERSION" ]]; then
               echo "::error::RC deployments require matching wheel and image tags"
               exit 1
             fi
           fi
           echo "training_tag=$TRAINING_TAG" >> "$GITHUB_OUTPUT"
           echo "imageprep_tag=$IMAGEPREP_TAG" >> "$GITHUB_OUTPUT"
+          echo "transformer_inference_tag=$TRANSFORMER_INFERENCE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Azure Login
         uses: azure/login@1384c340ab2dda50fed2bee3041d1d87018aa5e8 # v2
@@ -132,6 +141,7 @@ jobs:
           # `func publish` (deploy_apps.sh); the editable default can't resolve
           # on Azure's remote build.
           HASTEGEO_WHEEL_URL: ${{ steps.hastegeo.outputs.url }}
+          TRANSFORMER_INFERENCE_IMAGE_TAG: ${{ steps.artifacts.outputs.transformer_inference_tag }}
           # Batch pool wiring. All optional: unset reproduces the legacy
           # single-pool behavior. Stored as environment *secrets* (not
           # variables) so the values are masked in this repo's public

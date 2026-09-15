@@ -58,8 +58,8 @@ usage() {
     echo "  -a acr_name     : Azure Container Registry name"
     echo "  -r repo_dir     : Repository root directory (default: current directory)"
     echo ""
-    echo "Valid image directory names: training, imageryprep, all"
-    echo "'all' will build both training and imageryprep images"
+    echo "Valid image directory names: training, transformerinference, imageryprep, all"
+    echo "'all' will build training, transformer inference, and imageryprep images"
     echo ""
     echo "Environment variables can also be used:"
     echo "  ACR_NAME, IMAGE_DIR, IMAGE_TAG, REPO_DIR"
@@ -109,11 +109,11 @@ validate_inputs() {
 
     # Validate IMAGE_DIR against enumerated values
     case $IMAGE_DIR in
-        training|imageryprep|all)
+        training|transformerinference|imageryprep|all)
             ;;
         *)
             log_error "Invalid image directory '$IMAGE_DIR'"
-            log_error "Valid options: training, imageryprep, all"
+            log_error "Valid options: training, transformerinference, imageryprep, all"
             usage
             ;;
     esac
@@ -129,8 +129,7 @@ get_images_to_build() {
     local images_to_build=()
     
     if [[ "$IMAGE_DIR" == "all" ]]; then
-        # Only build training and imageryprep for "all"
-        images_to_build=("training" "imageryprep")
+        images_to_build=("training" "transformerinference" "imageryprep")
     else
         if [[ -d "$REPO_DIR/docker/$IMAGE_DIR" ]]; then
             images_to_build=("$IMAGE_DIR")
@@ -162,6 +161,11 @@ build_and_push_image() {
     local acr_fqdn="${ACR_NAME}.azurecr.io"
     local full_image_name="${acr_fqdn}/${image_tag_for_acr}"
     local dockerfile_relative_path="docker/$image_dir/Dockerfile"
+    local target_args=()
+    if [[ "$image_dir" == "transformerinference" ]]; then
+        dockerfile_relative_path="docker/training/Dockerfile"
+        target_args=(--target transformerinference-runtime)
+    fi
     local dockerfile_absolute_path="$REPO_DIR/$dockerfile_relative_path"
 
     log_info "Building image: $image_name with tag: $IMAGE_TAG"
@@ -183,6 +187,7 @@ build_and_push_image() {
         --registry "$ACR_NAME"
         --image "$image_tag_for_acr"
         --file "$dockerfile_relative_path"
+        "${target_args[@]}"
         "$REPO_DIR"
     )
 
@@ -194,6 +199,7 @@ build_and_push_image() {
             --registry "$ACR_NAME"
             --image "$image_tag_for_acr"
             --file "$dockerfile_relative_path"
+            "${target_args[@]}"
             "$REPO_DIR"
         )
     fi

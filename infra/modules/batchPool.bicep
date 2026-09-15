@@ -48,6 +48,9 @@ param acrName string
 @description('Training container image (tag included).')
 param trainingImage string
 
+@description('Optional transformer inference image including tag.')
+param transformerInferenceImage string = ''
+
 @description('Imageryprep container image (tag included).')
 param imageryprepImage string
 
@@ -112,10 +115,10 @@ resource pool 'Microsoft.Batch/batchAccounts/pools@2024-07-01' = {
         }
         containerConfiguration: {
           type: 'DockerCompatible'
-          containerImageNames: [
+          containerImageNames: concat([
             '${registryServer}/${trainingImage}'
             '${registryServer}/${imageryprepImage}'
-          ]
+          ], empty(transformerInferenceImage) ? [] : ['${registryServer}/${transformerInferenceImage}'])
           containerRegistries: [
             {
               registryServer: 'https://${registryServer}'

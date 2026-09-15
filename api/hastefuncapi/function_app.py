@@ -14,8 +14,10 @@ import azure.functions as func  # type: ignore
 import requests  # type: ignore
 from hastegeo.core.config import Config
 from hastegeo.core.models.admin import AdminConfig
+from hastegeo.core.models.pretrained_inference import CatalogInferenceRequest
 from hastegeo.core.models.projects import (
     BuildingValidation,
+    Feature,
     ImageLayer,
     LabelProject,
     Model,
@@ -39,10 +41,17 @@ from hastegeo.core.models.users import User
 from hastegeo.core.models.visualizer import Imagery, Visualizer
 from hastegeo.core.processors.artifacts import ArtifactProcessor
 from hastegeo.core.processors.assessment import AssessmentReportProcessor
+from hastegeo.core.processors.catalog_inference import (
+    CatalogInferenceProcessor,
+)
 from hastegeo.core.processors.embedding import EmbeddingPreprocessor
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
 from hastegeo.core.processors.metadata import MetadataProcessor
+from hastegeo.core.processors.model_catalog import (
+    CatalogConflictError,
+    ModelCatalogProcessor,
+)
 from hastegeo.core.processors.publishing import (
     PublishingDependencyError,
     PublishingDisabledError,
@@ -80,7 +89,6 @@ from hastegeo.core.utils.blob import (
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
-from hastegeo.core.utils.source_types import normalize_source_type
 from hastegeo.core.utils.url_allowlist import (
     validate_clip_bbox,
     validate_image_layer_imagery_urls,
@@ -2255,6 +2263,27 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
         label_project = LabelProject(
             **match_label_projects[0] if match_label_projects else {}
         )
+        study_area = label_project.features
+        if model_data.modelType == "pretrained":
+            if (
+                model_data.inferenceStatus != "Processed"
+                or not model_data.predictedDamageLayerUrl
+            ):
+                return func.HttpResponse(
+                    "Inference results are not ready.", status_code=409
+                )
+            from hastegeo.core.utils.aoi import raster_extent_feature
+
+            # A display extent is not a training label project or label mask.
+            study_area = [
+                Feature.model_validate(
+                    await asyncio.to_thread(
+                        raster_extent_feature,
+                        model_data.predictedDamageLayerUrl,
+                    )
+                )
+            ]
+        display_bounds = study_area[0].bbox if study_area else None
 
         titiler_ep = config.titiler_endpoint
         # URL needs to include SAS token for the image to be accessible
@@ -2266,8 +2295,12 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
             if image_layer.preEventImageryUrls
             else ""
         )
-        post_disaster_image_URL = requests.utils.quote(
-            image_layer.postEventProcessedImageryUrl, safe=""
+        post_disaster_image_URL = (
+            requests.utils.quote(
+                image_layer.postEventProcessedImageryUrl, safe=""
+            )
+            if image_layer.postEventProcessedImageryUrl
+            else ""
         )
         predicted_damage_layer_URL = (
             requests.utils.quote(model_data.predictedDamageLayerUrl, safe="")
@@ -2304,12 +2337,15 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
             safe="",
         )
 
+        # Auto-format tiles can become JPEG when the source mask is fully
+        # valid, dropping the colormap's transparent background at high zoom.
+        # Both prediction overlays require an alpha-capable format.
         visualizer = Visualizer(
             projectId=project_id,
             imageLayerId=image_layer_id,
             modelId=model_id,
             projectName=project.name,
-            studyArea=label_project.features,
+            studyArea=study_area,
             eventDate=project.eventDate,
             # NOTE: predictedDamageImageryDownloadUrl will be a screenshot for pre-release, could be something else in the future
             preDisasterImagery=Imagery(
@@ -2319,39 +2355,27 @@ async def GetVisualizerResults(req: func.HttpRequest) -> func.HttpResponse:
                     if pre_event_image_URL
                     else ""
                 ),
-                bounds=(
-                    label_project.features[0].bbox
-                    if label_project.features
-                    else None
-                ),
+                bounds=display_bounds,
             ),
             postDisasterImagery=Imagery(
-                url=f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={post_disaster_image_URL}",
-                bounds=(
-                    label_project.features[0].bbox
-                    if label_project.features
-                    else None
+                url=(
+                    f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={post_disaster_image_URL}"
+                    if post_disaster_image_URL
+                    else ""
                 ),
+                bounds=display_bounds,
             ),
             predictedDamageLayer=Imagery(
-                url=f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={predicted_damage_layer_URL}",
-                bounds=(
-                    label_project.features[0].bbox
-                    if label_project.features
-                    else None
-                ),
+                url=f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}.png?scale=1&url={predicted_damage_layer_URL}",
+                bounds=display_bounds,
             ),
             predictionsLayer=Imagery(
                 url=(
-                    f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={predictions_layer_URL}&colormap={predictions_colormap}"
+                    f"{titiler_ep}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}.png?scale=1&url={predictions_layer_URL}&colormap={predictions_colormap}"
                     if predictions_layer_URL
                     else ""
                 ),
-                bounds=(
-                    label_project.features[0].bbox
-                    if label_project.features
-                    else None
-                ),
+                bounds=display_bounds,
             ),
             sourceTypePreEvent=image_layer.sourceTypePreEvent,
             sourceTypePostEvent=image_layer.sourceTypePostEvent,
@@ -2442,6 +2466,61 @@ async def PutRunModelQueueMessage(req: func.HttpRequest) -> func.HttpResponse:
         logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
         return func.HttpResponse(
             "Invalid JSON in request body.", status_code=400
+        )
+
+
+@app.route(
+    route="PutRunCatalogInferenceQueueMessage",
+    auth_level=AUTH_LEVEL,
+    methods=["PUT"],
+)
+async def PutRunCatalogInferenceQueueMessage(
+    req: func.HttpRequest,
+) -> func.HttpResponse:
+    """Create or resume an idempotent, label-free catalog inference request.
+
+    Return 202 with the run's Model, not completed inference results.
+    Recipes and artifact paths are resolved exclusively from the catalog.
+    """
+    denied = _require_roles(req, {"administrators", "contributors"})
+    if denied is not None:
+        return denied
+    try:
+        request = CatalogInferenceRequest.model_validate(req.get_json())
+        principal = _decode_client_principal(req) or {}
+        actor = (
+            principal.get("userDetails")
+            or principal.get("userId")
+            or "development@local"
+        )
+        model = await asyncio.to_thread(
+            CatalogInferenceProcessor(config).start, request, actor
+        )
+        return func.HttpResponse(
+            model.model_dump_json(),
+            status_code=202,
+            mimetype="application/json",
+        )
+    except (CatalogConflictError, LeaseUnavailableError):
+        return func.HttpResponse(
+            "Inference request conflicts with existing work.", status_code=409
+        )
+    except (ValidationError, ValueError):
+        return _bad_request(
+            "Invalid or incompatible catalog inference request."
+        )
+    except FileNotFoundError:
+        return func.HttpResponse(
+            "Catalog model, source asset, or image layer not found.",
+            status_code=404,
+        )
+    except Exception as error:
+        logger.error(
+            "Catalog inference submission failed (%s)", type(error).__name__
+        )
+        return func.HttpResponse(
+            "Unable to queue catalog inference. Retry the same request.",
+            status_code=500,
         )
 
 
@@ -2988,9 +3067,24 @@ async def PutCancelModelQueueMessage(
             existing_model_data = Model(**existing_model_data)
         else:
             logger.info(
-                f"Model {model_cancel_req.modelId} not found, likely deleted, skipping canceling"
+                f"Model {model_cancel_req.get('modelId')} not found, likely deleted, skipping canceling"
             )
             return func.HttpResponse(json.dumps({}), status_code=200)
+
+        if existing_model_data.modelType == "pretrained":
+            denied = _require_roles(req, {"administrators", "contributors"})
+            if denied is not None:
+                return denied
+            output = await asyncio.to_thread(
+                CatalogInferenceProcessor(config).cancel,
+                existing_model_data.projectId,
+                existing_model_data.modelId,
+            )
+            return func.HttpResponse(
+                output.model_dump_json(),
+                status_code=200,
+                mimetype="application/json",
+            )
 
         if (
             existing_model_data.status
@@ -3086,19 +3180,23 @@ async def PutCancelModelQueueMessage(
 
 @app.route(
     route="GetModelCatalog",
-    auth_level=func.AuthLevel.FUNCTION,
+    auth_level=AUTH_LEVEL,
     methods=["GET"],
 )
 async def GetModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
     """
-    Retrieve the model catalog containing all available base models for training.
+    Retrieve catalog models with explicit training/inference capabilities.
 
-    This endpoint returns a comprehensive list of all catalogued models that can be used
-    as base models for training new models. The catalog includes metadata about each model
-    such as disaster type, imagery source, and usage history.
+    Each entry includes inferenceReady and inferenceReadiness. A missing catalog
+    is an empty list; authentication, malformed records and storage failures are
+    errors. Development uses AUTH_LEVEL without a function key.
 
     Args:
         req (func.HttpRequest): HTTP request with optional query parameters:
+            - capability: training or inference. Provider/event filtering applies
+              only to the training picker.
+            - projectId, imageLayerId: GUIDs supplied together to evaluate a
+              target layer's inference compatibility.
             - eventTypes (str, optional): Filter by event type(s). Can be a single value or
               comma-separated list (e.g., "Hurricane,Tornado,Fires"). Models with any matching
               event type in their eventTypes array will be returned.
@@ -3147,13 +3245,12 @@ async def GetModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
 
     HTTP Status Codes:
         200: Model catalog retrieved successfully
-        404: Model catalog not found
+        400: Invalid filters or target identifiers
+        404: Target image layer not found
         500: Internal server error during retrieval
     """
     logger.info("GetModelCatalog HTTP trigger function processed a request.")
     try:
-        # Get optional filter parameters
-        # eventTypes can be comma-separated for multiple values: ?eventTypes=Hurricane,Tornado
         event_type_param = req.params.get("eventTypes")
         event_types = (
             [et.strip() for et in event_type_param.split(",") if et.strip()]
@@ -3162,72 +3259,33 @@ async def GetModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
         )
         imagery_source = req.params.get("imagerySource")
 
-        logger.info(
-            f"GetModelCatalog filters - eventTypes: {event_types}, imagerySource: {imagery_source}"
-        )
-
-        # Load the model catalog from metadata storage
-        try:
-            catalog_data = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().MODEL_CATALOG.value
-                ).load,
-                "index",
+        processor = ModelCatalogProcessor(config)
+        layer = None
+        if req.params.get("projectId") or req.params.get("imageLayerId"):
+            layer = await asyncio.to_thread(
+                processor.layer,
+                _require_guid_param(req, "projectId"),
+                _require_guid_param(req, "imageLayerId"),
             )
-        except FileNotFoundError:
-            # Initialize empty catalog if none exists
-            catalog_data = {"modelCatalog": []}
-            logger.info("Model catalog not found, returning empty catalog")
-
-        # Apply filters if provided
-        model_catalog = catalog_data.get("modelCatalog", [])
-
-        if event_types:
-            # Filter models where any of the requested event types match any of the model's event types
-            event_types_lower = [et.lower() for et in event_types]
-            model_catalog = [
-                model
-                for model in model_catalog
-                if model.get("eventTypes")
-                and any(
-                    model_et.lower() in event_types_lower
-                    for model_et in model.get("eventTypes", [])
-                )
-            ]
-            logger.info(
-                f"Filtered by event types {event_types}: {len(model_catalog)} models"
-            )
-
-        if imagery_source and imagery_source.strip():
-            # Normalize both sides so a legacy "maxar" layer and a
-            # "vantor" layer resolve to the same model pool.
-            wanted_source = normalize_source_type(imagery_source)
-            model_catalog = [
-                model
-                for model in model_catalog
-                if model.get("imagerySource", "")
-                and normalize_source_type(model.get("imagerySource", ""))
-                == wanted_source
-            ]
-            logger.info(
-                f"Filtered by imagery source '{imagery_source}': {len(model_catalog)} models"
-            )
-
-        # Sort by catalogued date (newest first)
-        model_catalog.sort(
-            key=lambda x: x.get("cataloguedDate", ""), reverse=True
+        entries = await asyncio.to_thread(
+            processor.list,
+            capability=req.params.get("capability"),
+            layer=layer,
+            event_types=event_types,
+            imagery_source=imagery_source,
         )
-
-        response_data = {"modelCatalog": model_catalog}
-
-        logger.info(f"Returning {len(model_catalog)} models from catalog")
-        return func.HttpResponse(json.dumps(response_data), status_code=200)
-
-    except Exception as e:
-        logger.error(
-            f"Error loading model catalog: {e}\n{traceback.format_exc()}",
-            stack_info=True,
+        return func.HttpResponse(
+            json.dumps({"modelCatalog": entries}),
+            status_code=200,
+            mimetype="application/json",
+            headers={"Cache-Control": "private, no-store"},
         )
+    except ValueError:
+        return _bad_request("Invalid catalog request")
+    except FileNotFoundError:
+        return func.HttpResponse("Image layer not found.", status_code=404)
+    except Exception as error:
+        logger.error("Catalog read failed (%s)", type(error).__name__)
         return func.HttpResponse(
             "Error loading model catalog.", status_code=500
         )
@@ -3235,17 +3293,18 @@ async def GetModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(
     route="PutModelCatalog",
-    auth_level=func.AuthLevel.FUNCTION,
+    auth_level=AUTH_LEVEL,
     methods=["PUT"],
 )
 async def PutModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
     """
-    Add a model to the model catalog for reuse as a base model.
+    Add a model to the catalog (administrator-only outside development).
 
-    This endpoint allows users to checkpoint successful training results and add them
-    to the model catalog with custom metadata. The catalogued models can then be used
-    as base models for future training runs. External models can also be added without
-    requiring validation of their existence in the HASTE system.
+    HASTE checkpoints retain their source experiment recipe when reproducible.
+    External entries can remain training-only, but inference requires a typed
+    allowlisted recipe referencing assets in configured storage. DINOv3 assets
+    are imported with the offline registration command, not submitted by users.
+    Catalog mutations are serialized and names must remain unique.
 
     Args:
         req (func.HttpRequest): HTTP request with JSON body containing:
@@ -3255,11 +3314,13 @@ async def PutModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
             - imageLayerId (str, optional): Image layer ID (required only for HASTE models)
             - imagerySource (str, optional): Source of imagery (Planet, Vantor, etc.)
             - eventTypes (list[str], optional): Types of disaster events (Hurricane, Tornado, etc.)
-            - cataloguedByUser (str, required): User ID who is adding the model to catalog
+            - cataloguedByUser (str): Used in development only; the production
+              creator is taken from the trusted caller principal.
             - description (str, optional): Description of the model
             - checkpointFilePath (str, optional): Path to model checkpoint file. Auto-populated for HASTE models.
             - source (str, optional): Model source ("haste", "external", etc.). Defaults to "haste".
             - additionalInfo (dict, optional): User-defined metadata key-value pairs
+            - capabilities, inferenceSpec: Optional typed inference contract.
 
     Returns:
         func.HttpResponse: JSON response containing:
@@ -3299,193 +3360,50 @@ async def PutModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
         }
     """
     logger.info("PutModelCatalog HTTP trigger function processed a request.")
+    denied = _require_roles(req, {"administrators"})
+    if denied is not None:
+        return denied
     try:
         req_body = req.get_json()
-
-        # Create and validate the catalog model
-        catalog_model = CatalogModel(**req_body)
-
-        # Auto-generate fields if not provided
-        if catalog_model.cataloguedDate is None:
-            catalog_model.cataloguedDate = MetadataUtils.get_timestamp()
-
-        # Determine if this is a HASTE model or external model
-        is_haste_model = getattr(catalog_model, "source", "haste") == "haste"
-
-        # Load existing catalog or create new one
-        try:
-            catalog_data = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().MODEL_CATALOG.value
-                ).load,
-                "index",
+        if not isinstance(req_body, dict):
+            return _bad_request("Catalog model must be a JSON object.")
+        principal = _decode_client_principal(req) or {}
+        if not DEVELOPMENT_MODE:
+            req_body["cataloguedByUser"] = (
+                principal.get("userDetails") or principal["userId"]
             )
-            existing_catalog = catalog_data.get("modelCatalog", [])
-        except FileNotFoundError:
-            existing_catalog = []
-            logger.info("Model catalog not found, creating new catalog")
-
-        # Check for duplicate base model names
-        existing_names = [
-            model.get("baseModelName", "").lower()
-            for model in existing_catalog
-        ]
-        if catalog_model.baseModelName.lower() in existing_names:
-            logger.warning(
-                f"Model catalog entry with name '{catalog_model.baseModelName}' already exists"
-            )
-            return func.HttpResponse(
-                f"Model with name '{catalog_model.baseModelName}' already exists in catalog. Please use a different name.",
-                status_code=409,
-            )
-
-        # Check for duplicate model IDs (if modelId is provided)
-        if catalog_model.modelId:
-            existing_model_ids = [
-                model.get("modelId")
-                for model in existing_catalog
-                if model.get("modelId")
-            ]
-            if catalog_model.modelId in existing_model_ids:
-                existing_name_in_catalog = existing_catalog[
-                    existing_model_ids.index(catalog_model.modelId)
-                ].get("baseModelName")
-                logger.warning(
-                    f"Model catalog entry with modelId '{catalog_model.modelId}' already exists"
-                )
-                return func.HttpResponse(
-                    f"Model with modelId '{catalog_model.modelId}' already exists in catalog with name '{existing_name_in_catalog}'. "
-                    f"To replace the existing catalog entry, please delete it first.",
-                    status_code=409,
-                )
-
-        # Only validate source model exists if this is a HASTE model
-        if is_haste_model:
-            # Validate required fields for HASTE models
-            if not catalog_model.modelId or not catalog_model.projectId:
-                return func.HttpResponse(
-                    "modelId and projectId are required for HASTE models (source='haste').",
-                    status_code=400,
-                )
-
-            # Validate that the source model exists and get its data
-            try:
-                source_model = await asyncio.to_thread(
-                    MetadataProcessor(
-                        data_type=config.get_metadata_types().MODEL.value,
-                        partition_key=catalog_model.projectId,
-                    ).load,
-                    catalog_model.modelId,
-                )
-                logger.info(
-                    f"Validated HASTE source model {catalog_model.modelId} exists in project {catalog_model.projectId}"
-                )
-            except FileNotFoundError:
-                logger.error(
-                    f"HASTE source model {catalog_model.modelId} not found in project {catalog_model.projectId}"
-                )
-                return func.HttpResponse(
-                    f"HASTE source model {catalog_model.modelId} not found in project {catalog_model.projectId}.",
-                    status_code=400,
-                )
-
-            # Verify the source model is completed and ready for cataloging
-            if (
-                source_model.get("status")
-                != config.get_status_types().COMPLETED.value
-            ):
-                logger.warning(
-                    f"HASTE source model {catalog_model.modelId} is not completed (status: {source_model.get('status')})"
-                )
-                return func.HttpResponse(
-                    f"HASTE source model {catalog_model.modelId} must be completed before it can be catalogued.",
-                    status_code=400,
-                )
-
-            # Auto-populate checkpointFilePath if not provided for HASTE models
-            if catalog_model.checkpointFilePath is None:
-                # Try to get checkpoint path from the source model
-                checkpoint_path = source_model.get("checkpointPath")
-                if checkpoint_path:
-                    # Construct the full path to the checkpoint file
-                    catalog_model.checkpointFilePath = (
-                        f"{checkpoint_path}/last.ckpt"
-                    )
-                    logger.info(
-                        f"Auto-populated checkpointFilePath for HASTE model: {catalog_model.checkpointFilePath}"
-                    )
-                else:
-                    logger.warning(
-                        f"No checkpoint path found for HASTE model {catalog_model.modelId}"
-                    )
-                    return func.HttpResponse(
-                        f"No checkpoint path available for HASTE model {catalog_model.modelId}. Please provide checkpointFilePath.",
-                        status_code=400,
-                    )
-        else:
-            # For external models, checkpointFilePath is required
-            if not catalog_model.checkpointFilePath:
-                return func.HttpResponse(
-                    "checkpointFilePath is required for external models.",
-                    status_code=400,
-                )
-            logger.info(
-                f"Adding external model '{catalog_model.baseModelName}' with checkpoint: {catalog_model.checkpointFilePath}"
-            )
-
-        # Add the new model to the catalog
-        catalog_model_dict = catalog_model.dict()
-        existing_catalog.append(catalog_model_dict)
-
-        # Sort catalog by catalogued date (newest first)
-        existing_catalog.sort(
-            key=lambda x: x.get("cataloguedDate", ""), reverse=True
+        catalog_model = CatalogModel.model_validate(req_body)
+        stored = await asyncio.to_thread(
+            ModelCatalogProcessor(config).add, catalog_model
         )
-
-        # Save updated catalog
-        updated_catalog_data = {"modelCatalog": existing_catalog}
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL_CATALOG.value
-            ).save,
-            "index",
-            updated_catalog_data,
-        )
-
-        model_type = "HASTE" if is_haste_model else "external"
-        logger.info(
-            f"Successfully added {model_type} model '{catalog_model.baseModelName}' to catalog"
-        )
-
         response_data = {
             "success": True,
-            "catalogModel": catalog_model_dict,
-            "message": f"Model '{catalog_model.baseModelName}' successfully added to catalog",
+            "catalogModel": stored.model_dump(mode="json"),
+            "message": "Model added to catalog.",
         }
-
-        return func.HttpResponse(json.dumps(response_data), status_code=200)
-
-    except ValidationError as e:
-        logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
-        return func.HttpResponse("Validation error.", status_code=400)
-    except ValueError as e:
-        logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
         return func.HttpResponse(
-            "Invalid JSON in request body.", status_code=400
+            json.dumps(response_data),
+            status_code=200,
+            mimetype="application/json",
         )
-    except Exception as e:
-        logger.error(
-            f"Error adding model to catalog: {e}\n{traceback.format_exc()}",
-            stack_info=True,
-        )
+    except (CatalogConflictError, LeaseUnavailableError):
         return func.HttpResponse(
-            "Error adding model to catalog.", status_code=500
+            "Catalog update conflicts with existing work.", status_code=409
         )
+    except (ValidationError, ValueError):
+        return _bad_request("Invalid catalog model.")
+    except FileNotFoundError:
+        return func.HttpResponse(
+            "Source model or artifact not found.", status_code=404
+        )
+    except Exception as error:
+        logger.error("Catalog update failed (%s)", type(error).__name__)
+        return func.HttpResponse("Error updating catalog.", status_code=500)
 
 
 @app.route(
     route="DeleteModelCatalog",
-    auth_level=func.AuthLevel.FUNCTION,
+    auth_level=AUTH_LEVEL,
     methods=["DELETE"],
 )
 async def DeleteModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
@@ -3525,6 +3443,9 @@ async def DeleteModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
     logger.info(
         "DeleteModelCatalog HTTP trigger function processed a request."
     )
+    denied = _require_roles(req, {"administrators"})
+    if denied is not None:
+        return denied
     try:
         base_model_name = req.params.get("baseModelName")
         model_id = req.params.get("modelId")
@@ -3535,79 +3456,31 @@ async def DeleteModelCatalog(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400,
             )
 
-        # Load existing catalog
-        try:
-            catalog_data = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().MODEL_CATALOG.value
-                ).load,
-                "index",
-            )
-            existing_catalog = catalog_data.get("modelCatalog", [])
-        except FileNotFoundError:
-            logger.info("Model catalog not found")
-            return func.HttpResponse(
-                "Model catalog is empty or does not exist.", status_code=404
-            )
-
-        # Find the model to delete
-        model_to_delete = None
-        model_index = None
-
-        for i, model in enumerate(existing_catalog):
-            if (
-                base_model_name
-                and model.get("baseModelName", "").lower()
-                == base_model_name.lower()
-            ):
-                model_to_delete = model
-                model_index = i
-                break
-            if model_id and model.get("modelId") == model_id:
-                model_to_delete = model
-                model_index = i
-                break
-
-        if model_to_delete is None:
-            identifier = base_model_name or model_id
-            logger.warning(f"Model '{identifier}' not found in catalog")
-            return func.HttpResponse(
-                f"Model '{identifier}' not found in catalog.", status_code=404
-            )
-
-        # Remove the model from the catalog
-        deleted_model = existing_catalog.pop(model_index)
-
-        # Save updated catalog
-        updated_catalog_data = {"modelCatalog": existing_catalog}
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL_CATALOG.value
-            ).save,
-            "index",
-            updated_catalog_data,
-        )
-
-        logger.info(
-            f"Successfully deleted model '{deleted_model.get('baseModelName')}' from catalog"
-        )
-
-        response_data = {
-            "success": True,
-            "message": f"Model '{deleted_model.get('baseModelName')}' successfully deleted from catalog",
-            "deletedModel": deleted_model,
-        }
-
-        return func.HttpResponse(json.dumps(response_data), status_code=200)
-
-    except Exception as e:
-        logger.error(
-            f"Error deleting model from catalog: {e}\n{traceback.format_exc()}",
-            stack_info=True,
+        removed = await asyncio.to_thread(
+            ModelCatalogProcessor(config).delete, base_model_name, model_id
         )
         return func.HttpResponse(
-            "Error deleting model from catalog.", status_code=500
+            json.dumps(
+                {
+                    "success": True,
+                    "deletedModel": removed,
+                    "message": "Model removed from catalog.",
+                }
+            ),
+            status_code=200,
+            mimetype="application/json",
         )
+    except (CatalogConflictError, LeaseUnavailableError):
+        return func.HttpResponse(
+            "Catalog update conflicts with existing work.", status_code=409
+        )
+    except FileNotFoundError:
+        return func.HttpResponse("Catalog model not found.", status_code=404)
+    except ValueError:
+        return _bad_request("Invalid catalog selection.")
+    except Exception as error:
+        logger.error("Catalog delete failed (%s)", type(error).__name__)
+        return func.HttpResponse("Error updating catalog.", status_code=500)
 
 
 @app.route(
@@ -4270,8 +4143,10 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json",
             )
 
-        # ── 4. Download both GeoPackages and join row-order → overture id ─────
-        import fiona
+        # Join catalog source identities or legacy positional building IDs.
+        from hastegeo.core.utils.prediction_results import (
+            load_binary_building_predictions,
+        )
 
         footprints_path = await download_blob_to_tempfile(
             footprints_url, suffix=".gpkg"
@@ -4279,33 +4154,12 @@ async def GetValidationReport(req: func.HttpRequest) -> func.HttpResponse:
         gpkg_path = await download_blob_to_tempfile(gpkg_url, suffix=".gpkg")
 
         try:
-            # Build index → overture_id from the building footprints file.
-            # Cast to str so the eventual lookup against labels_dict (which
-            # always has string keys, since JSON object keys are strings)
-            # matches even if the footprints file's id column is integer
-            # typed (common for user-supplied GPKGs).
-            with fiona.open(footprints_path) as src_fp:
-                idx_to_overture = {
-                    i: str(feat["properties"]["id"])
-                    for i, feat in enumerate(src_fp)
-                }
-
-            # Build int_id → damaged from the inference results
-            with fiona.open(gpkg_path) as src_inf:
-                int_id_to_damaged = {
-                    feat["properties"]["id"]: feat["properties"]["damaged"]
-                    for feat in src_inf
-                }
+            overture_to_pred = await asyncio.to_thread(
+                load_binary_building_predictions, footprints_path, gpkg_path
+            )
         finally:
             os.unlink(footprints_path)
             os.unlink(gpkg_path)
-
-        # Build overture_id → predicted_damaged
-        overture_to_pred = {
-            overture_id: int_id_to_damaged[int_id]
-            for int_id, overture_id in idx_to_overture.items()
-            if int_id in int_id_to_damaged
-        }
 
         # ── 6. Compute metrics ─────────────────────────────────────────────────
         label_counts = {"Damaged": 0, "NotDamaged": 0, "Unknown": 0}

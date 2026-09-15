@@ -37,7 +37,7 @@ RUN micromamba create -f /tmp/env.yml -y \
 
 
 # ---------- Stage 2: Final Runtime Image ----------
-FROM mcr.microsoft.com/azureml/curated/minimal-py312-cuda12.4-inference
+FROM mcr.microsoft.com/azureml/curated/minimal-py312-cuda12.4-inference AS training-runtime
 
 USER root
 
@@ -107,3 +107,13 @@ RUN python -c "import torch; torch.hub.set_dir('/opt/torch-hub-cache/hub'); \
 
 # Use training-specific entrypoint wrapper to mirror imagery prep behavior
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
+
+# Opt-in inference-only image; the default target below keeps legacy ML pins.
+FROM training-runtime AS transformerinference-runtime
+COPY --chown=dockeruser:dockeruser docker/transformerinference/requirements.txt /tmp/transformerinference-requirements.txt
+RUN python -m pip install --no-cache-dir -r /tmp/transformerinference-requirements.txt \
+    && python -m pip check
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+
+FROM training-runtime AS runtime

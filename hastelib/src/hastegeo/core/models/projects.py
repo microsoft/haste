@@ -5,6 +5,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from .pretrained_inference import CatalogInferenceSpec
 from .publishing import SourceImageryRef
 
 
@@ -447,6 +448,13 @@ class Model(BaseModel):
     # segmentation model. It reuses gpkgUrl for the saved per-building
     # predictions so the existing Validation/Assessment reports work.
     modelType: Optional[str] = Field(default="trained")
+    catalogModelName: Optional[str] = Field(default=None)
+    inferenceRequestId: Optional[str] = Field(default=None)
+    inferenceImage: Optional[str] = Field(default=None)
+    inferenceRequestFingerprint: Optional[str] = Field(default=None)
+    pretrainedInference: Optional[CatalogInferenceSpec] = Field(default=None)
+    inferenceInputs: Optional[dict[str, str]] = Field(default=None)
+    inferenceFailures: int = Field(default=0)
     # Embedding backbone name: "mosaiks" (default) or a DINOv2 variant
     # ("dinov2_vits14", "dinov2_vitb14", "dinov2_vitl14"). DINOv2 variants
     # ignore numFeatures (output dim is fixed by the variant).
@@ -574,6 +582,7 @@ class ModelArtifacts(BaseModel):
     inferenceZipUrl: Optional[str] = Field(default=None)
     inferenceZipSize: Optional[int] = Field(default=None)
     zipStatus: Optional[str] = Field(default=None)
+    zipFailures: int = Field(default=0)
     zipStatusMessage: Optional[str] = Field(default="")
     zipJobs: Optional[List[ZipJob]] = Field(default_factory=list)
     dependsOn: Optional[tuple[str, str]] = Field(default=("Model", "modelId"))

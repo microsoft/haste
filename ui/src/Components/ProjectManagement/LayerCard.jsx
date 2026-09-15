@@ -15,7 +15,7 @@ import {
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 import PropTypes from "prop-types";
-import React, { useContext, useState } from "react";
+import { useContext, useState } from "react";
 import { apiDelete } from "../../util/api";
 import { limitTextLength } from "../../util/conversion";
 import { imageLayerThumbnail } from "../../util/satellitePlaceholders";
@@ -24,6 +24,7 @@ import ModelRow from "./ModelRow";
 import StatusIndicatorModal from "../OtherComponents/StatusIndicatorModal";
 import CreateEditModelTrainingModal from "../CreateEditModelTrainingModal";
 import CreateEditEmbeddingModal from "../CreateEditEmbeddingModal";
+import CatalogInferenceButton from "./CatalogInferenceButton";
 import { useNavigate } from "react-router-dom";
 import { fileDownload } from "../../util/file";
 import { validateTimestamp } from "../../util/validation";
@@ -81,16 +82,6 @@ const LayerCard = ({
   setComponentState,
   eventTypes,
 }) => {
-  LayerCard.propTypes = {
-    item: PropTypes.object.isRequired,
-    index: PropTypes.number.isRequired,
-    projectId: PropTypes.string.isRequired,
-    setModalComponent: PropTypes.func.isRequired,
-    fetchProjectDetails: PropTypes.func.isRequired,
-    setComponentState: PropTypes.func,
-    eventTypes: PropTypes.array.isRequired,
-  };
-
   const navigate = useNavigate();
   const { setIsLoading, setDialog } = useContext(AppContext);
   const [modelsOpen, setModelsOpen] = useState(false);
@@ -406,6 +397,14 @@ const LayerCard = ({
                 }
               />
             </Tooltip>
+            <CatalogInferenceButton
+              imageLayer={item}
+              projectId={projectId}
+              index={index}
+              compact
+              setModalComponent={setModalComponent}
+              fetchProjectDetails={fetchProjectDetails}
+            />
           </>
         )}
         <Tooltip content="Launch building validation" relationship="label">
@@ -495,6 +494,16 @@ const LayerCard = ({
       </div>
     </div>
   );
+};
+
+LayerCard.propTypes = {
+  item: PropTypes.object.isRequired,
+  index: PropTypes.number.isRequired,
+  projectId: PropTypes.string.isRequired,
+  setModalComponent: PropTypes.func.isRequired,
+  fetchProjectDetails: PropTypes.func.isRequired,
+  setComponentState: PropTypes.func,
+  eventTypes: PropTypes.array.isRequired,
 };
 
 export default LayerCard;

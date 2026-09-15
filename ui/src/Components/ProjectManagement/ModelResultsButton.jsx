@@ -19,6 +19,7 @@ import ModelResultsStatusIndicator from "../OtherComponents/ModelResultsStatusIn
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
 import PublishDatasetModal from "../PublishDatasetModal";
+import { isInferenceOnlyModel } from "../CatalogInferenceHelper";
 
 
 function formatFileSize(bytes) {
@@ -41,12 +42,12 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
   function evaluateViewResultsButtonState(model) {
     // Results button must be enabled if inference jobs exist and status is processed
     if (
-      model.inferenceJobs.length > 0 &&
+      model.inferenceJobs?.length > 0 &&
       model.inferenceStatus === "Processed"
     ) {
       return false;
     // If inference fails, then the button should be enabled because will allow the user to download the artifacts when they are ready.
-    } else if (model.status === "Failed" && model.artifacts != null) {
+    } else if ((isInferenceOnlyModel(model) ? model.inferenceStatus : model.status) === "Failed" && model.artifacts != null) {
       return false;
     }
     return true;
@@ -152,7 +153,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
             },
           ]
         : []),
-    ],
+    ].filter((action) => !isInferenceOnlyModel(model) || action.key !== "downloadTrainingArtifacts"),
   });
 
 

@@ -9,20 +9,19 @@ import { AppContext } from "../../AppContext";
 import PropType from "prop-types";
 import { convertDateToString } from "../../util/conversion";
 import "../../assets/css/visualizer.css";
-import { getAzureMapsAuthOptions } from "../../util/azureMapsAuth";
+import { getAzureMapsAuthOptions, isAzureMapsPlaceholder } from "../../util/azureMapsAuth";
 import { shouldIgnoreShortcut } from "../keyboardShortcuts";
+import { getStudyAreaCameraOptions, whenVisualizerMapsReady } from "./VisualizerHelper";
 
 
 const Visualizer = ({ setModalComponent }) => {
-  Visualizer.propTypes = {
-    setModalComponent: PropType.func.isRequired,
-  };
-
 
   // Constants
   const { projectId, imageLayerId, modelId } = useParams();
   const [globalVisualizerResults, setGlobalVisualizerResults] = useState({});
   const { setIsLoading, updateAppParams, appParams } = useContext(AppContext);
+  const primaryMapContainerRef = useRef(null);
+  const secondaryMapContainerRef = useRef(null);
   const primaryMapRef = useRef(null);
   const secondaryMapRef = useRef(null);
   const swipeMapRef = useRef(null);
@@ -42,7 +41,6 @@ const Visualizer = ({ setModalComponent }) => {
     )
       .then((response) => {
         setIsLoading(false);
-                console.log(response);
         return response;
 
       })
@@ -115,6 +113,11 @@ const Visualizer = ({ setModalComponent }) => {
   }, [appParams.bootstrapBreakpoint]);
 
   useEffect(() => {
+    let disposed = false;
+    let primaryMap;
+    let secondaryMap;
+    let swipeMap;
+    let stopWaitingForMaps = () => {};
     const initializeMaps = async () => {
       if (window.atlas) {
 
@@ -122,6 +125,7 @@ const Visualizer = ({ setModalComponent }) => {
         zoomControlRef.current = new window.atlas.control.ZoomControl();
 
         var visualizerResults = await getVisualizerResults();
+        if (disposed) return;
 
         updateAppParams({
           visualizerTitle: convertToVisualizerTitle(visualizerResults),
@@ -130,75 +134,48 @@ const Visualizer = ({ setModalComponent }) => {
         var authOptions = getAzureMapsAuthOptions();
 
         // PRE EVENT MAP SETUP
-        const primaryMap = new window.atlas.Map(primaryMapRef.current, {
-          style: "satellite",
+        primaryMap = new window.atlas.Map(primaryMapContainerRef.current, {
+          style: isAzureMapsPlaceholder ? "blank" : "satellite",
           authOptions: authOptions,
         });
 
         // POST EVENT MAP SETUP
-        const secondaryMap = new window.atlas.Map(secondaryMapRef.current, {
-          style: "satellite",
+        secondaryMap = new window.atlas.Map(secondaryMapContainerRef.current, {
+          style: isAzureMapsPlaceholder ? "blank" : "satellite",
           authOptions: authOptions,
         });
 
         // SwipeMap object to enable swipe functionality
-        swipeMapRef.current = new window.atlas.SwipeMap(
+        swipeMap = new window.atlas.SwipeMap(
           primaryMap,
           secondaryMap
         );
-
-        // Primary map event listeners
-        primaryMap.events.add("ready", async function () {
-          // Avoid map rotation
-          avoidRotation(primaryMap);
-
-          await loadPreOrPostDisasterLayer(
-            primaryMap,
-            visualizerResults.preDisasterImagery,
-            "preDisasterImagery"
-          );
-
-          loadPredictedDamageLayer(
-            primaryMap,
-            visualizerResults.predictedDamageLayer,
-          );
-
-          loadPredictionsLayer(
-            primaryMap,
-            visualizerResults.predictionsLayer,
-          );
-
-          await loadStudyArea(primaryMap, visualizerResults.studyArea);
-
-        });
-
-        // Secondary map event listeners
-        secondaryMap.events.add("ready", function () {
-          // Avoid map rotation
-          avoidRotation(secondaryMap);
-
-          loadPreOrPostDisasterLayer(
-            secondaryMap,
-            visualizerResults.postDisasterImagery,
-            "postDisasterImagery"
-          );
-
-          loadPredictedDamageLayer(
-            secondaryMap,
-            visualizerResults.predictedDamageLayer
-          );
-
-          loadPredictionsLayer(
-            secondaryMap,
-            visualizerResults.predictionsLayer
-          );
-
-          loadStudyArea(secondaryMap, visualizerResults.studyArea);
-        });
+        swipeMapRef.current = swipeMap;
 
         // Assign maps to refs
         primaryMapRef.current = primaryMap;
         secondaryMapRef.current = secondaryMap;
+
+        stopWaitingForMaps = whenVisualizerMapsReady([primaryMap, secondaryMap], () => {
+          [primaryMap, secondaryMap].forEach((map) => {
+            map.resize();
+            avoidRotation(map);
+          });
+          // Start at the display extent, before requesting raster tiles.
+          // Two concurrent world-to-extent flights used to cancel intermediate
+          // tile requests and leave fresh narrow views without rendered imagery.
+          resetMapPosition(visualizerResults.studyArea, 0);
+          [
+            [primaryMap, visualizerResults.preDisasterImagery, "preDisasterImagery"],
+            [secondaryMap, visualizerResults.postDisasterImagery, "postDisasterImagery"],
+          ].forEach(([map, imagery, id]) => {
+            loadPreOrPostDisasterLayer(map, imagery, id);
+            loadPredictedDamageLayer(map, visualizerResults.predictedDamageLayer);
+            loadPredictionsLayer(map, visualizerResults.predictionsLayer);
+            loadStudyArea(map, visualizerResults.studyArea);
+          });
+          checkResponsiveness();
+        });
 
         // Set global visualizer results to be used in child components
         setGlobalVisualizerResults(visualizerResults);
@@ -207,11 +184,24 @@ const Visualizer = ({ setModalComponent }) => {
     };
 
     // Call the async function inside the effect
-    initializeMaps();
+    initializeMaps().catch((error) => {
+      if (!disposed) {
+        console.error("Error initializing visualizer:", error);
+        setIsLoading(false);
+      }
+    });
 
     window.addEventListener("keydown", handleKeyboardShortcuts);
     //On component dismount
     return () => {
+      disposed = true;
+      stopWaitingForMaps();
+      swipeMap?.dispose();
+      primaryMap?.dispose();
+      secondaryMap?.dispose();
+      primaryMapRef.current = null;
+      secondaryMapRef.current = null;
+      swipeMapRef.current = null;
       setModalComponent(null);
       updateAppParams({ visualizerTitle: "" });
       window.removeEventListener("keydown", handleKeyboardShortcuts);
@@ -264,7 +254,7 @@ const Visualizer = ({ setModalComponent }) => {
   }
 
   // Load study area on map
-  async function loadStudyArea(map, studyArea) {
+  function loadStudyArea(map, studyArea) {
     // Create Data Source
     var dataSource = new window.atlas.source.DataSource();
     map.sources.add(dataSource);
@@ -283,23 +273,18 @@ const Visualizer = ({ setModalComponent }) => {
     });
     map.layers.add(lineLayer);
 
-    resetMapPosition(studyArea, 3000);
   }
 
   // Reset map position to study area
   function resetMapPosition(studyArea, duration = 700) {
-    primaryMapRef.current.setCamera({
-      bounds: studyArea[0].bbox,
-      type: "fly",
-      duration: duration,
-      padding: 100,
-    });
+    const options = getStudyAreaCameraOptions(studyArea, duration);
+    if (options) primaryMapRef.current?.setCamera(options);
   }
 
   // Adds a layer with pre or post disaster imagery
-  async function loadPreOrPostDisasterLayer(map, disasterLayer, customId) {
+  function loadPreOrPostDisasterLayer(map, disasterLayer, customId) {
 
-    if (!disasterLayer || disasterLayer.url != "") {
+    if (disasterLayer?.url) {
       const layer = new window.atlas.layer.TileLayer({
         tileUrl: disasterLayer.url,
         minZoom: 1,
@@ -311,6 +296,7 @@ const Visualizer = ({ setModalComponent }) => {
 
       map.layers.add(layer);
     } else {
+      if (isAzureMapsPlaceholder) return;
 
       const tempTileUrlPath = `https://atlas.microsoft.com/map/tile?api-version=2.1&tilesetId=microsoft.imagery&zoom={z}&x={x}&y={y}`;
 
@@ -393,8 +379,8 @@ const Visualizer = ({ setModalComponent }) => {
 
   return (
     <div className="visualizer-container">
-      <div id="primaryMap" ref={primaryMapRef} className="map"></div>
-      <div id="secondaryMap" ref={secondaryMapRef} className="map"></div>
+      <div id="primaryMap" ref={primaryMapContainerRef} className="map"></div>
+      <div id="secondaryMap" ref={secondaryMapContainerRef} className="map"></div>
 
       <Labels
         togglePredictedDamageLayerVisibility={
@@ -407,6 +393,10 @@ const Visualizer = ({ setModalComponent }) => {
       />
     </div>
   );
+};
+
+Visualizer.propTypes = {
+  setModalComponent: PropType.func.isRequired,
 };
 
 export default Visualizer;

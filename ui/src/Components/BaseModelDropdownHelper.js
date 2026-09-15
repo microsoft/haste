@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 export function buildModelCatalogEndpoint(imageLayer = {}, eventTypes) {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ capability: "training" });
   const definedEventTypes = Array.isArray(eventTypes)
     ? eventTypes.filter(Boolean)
     : [];
@@ -39,8 +39,8 @@ export function normalizeBaseModelOptions(cataloguedModels = []) {
       baseModelName,
       description: description ? `${description.substring(0, 30)}...` : "",
       checkpointFilePath: value.checkpointFilePath || "",
-      eventTypes: value.eventTypes || [],
-      imagerySource: value.imagerySource || "",
+      eventTypes: Array.isArray(value.eventTypes) ? value.eventTypes : [],
+      imagerySource: typeof value.imagerySource === "string" ? value.imagerySource : "",
     };
   });
 }

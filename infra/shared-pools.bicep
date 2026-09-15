@@ -30,6 +30,9 @@ param acrName string
 @description('Training image (H100 tier + spillover).')
 param trainingImage string = 'hastetraining:2.0.0'
 
+@description('Optional transformer inference image including tag.')
+param transformerInferenceImage string = ''
+
 @description('Imageryprep image (T4 tier + spillover).')
 param imageryprepImage string = 'hasteimageryprep:2.0.0'
 
@@ -79,6 +82,7 @@ module h100Pool 'modules/batchPool.bicep' = {
     umiResourceId: umiResourceId
     acrName: acrName
     trainingImage: trainingImage
+    transformerInferenceImage: transformerInferenceImage
     imageryprepImage: imageryprepImage
     subnetId: sharedBatchSubnetId
   }
@@ -97,6 +101,7 @@ module t4Pool 'modules/batchPool.bicep' = {
     umiResourceId: umiResourceId
     acrName: acrName
     trainingImage: trainingImage
+    transformerInferenceImage: transformerInferenceImage
     imageryprepImage: imageryprepImage
     subnetId: sharedBatchSubnetId
   }

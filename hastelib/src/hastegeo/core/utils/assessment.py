@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 from .gdal_security import harden_gdal
+from .prediction_results import iter_building_predictions, source_building_ids
 
 # Harden GDAL/OGR drivers before any geopandas/fiona read of the
 # predictions/footprints GeoPackages (GDAL CVE compensating control —
@@ -52,12 +53,15 @@ class AssessmentInputs:
             the population estimate (filtered by ``min_area_m2``).
         labels: mapping from building id to one of {Damaged, NotDamaged,
             Unknown}. Ids absent from the map are unlabeled.
+        unscored_ids: result rows with no observed pixels; excluded from
+            damage classification and accuracy, but retained in result totals.
     """
 
     damage_fractions: dict[str, float]
     unknown_fractions: dict[str, float] = field(default_factory=dict)
     areas_m2: dict[str, Optional[float]] = field(default_factory=dict)
     labels: dict[str, str] = field(default_factory=dict)
+    unscored_ids: set[str] = field(default_factory=set)
 
 
 # Critical z value for a two-sided 95% CI (norm.ppf(1 - 0.05/2)). Hard-coded
@@ -177,13 +181,13 @@ def compute_assessment_report(
     areas_m2 = inputs.areas_m2 or {}
     labels = inputs.labels or {}
 
-    total = len(damage_fractions)
+    total = len(damage_fractions) + len(inputs.unscored_ids)
 
     # Buildings the model considers "known" (i.e., not entirely cloud-covered).
     total_known = sum(
         1 for bid in damage_fractions if unknown_fractions.get(bid, 0.0) <= 0
     )
-    total_unknown = total - total_known
+    total_unknown = len(damage_fractions) - total_known
     damaged_pred = sum(
         1
         for bid, dmg in damage_fractions.items()
@@ -309,6 +313,7 @@ def compute_assessment_report(
             "total": total,
             "knownNonCloudy": total_known,
             "cloudy": total_unknown,
+            "unscored": len(inputs.unscored_ids),
             "predictedDamaged": damaged_pred,
             "predictedDamagedPctOfKnown": _round(
                 _safe_div(damaged_pred, total_known) * 100, 2
@@ -351,7 +356,7 @@ def _building_areas_m2(footprints_path: str) -> dict[str, float]:
     else:
         proj = gdf.to_crs(gdf.estimate_utm_crs())
     areas = proj.geometry.area.tolist()
-    ids = gdf["id"].astype(str).tolist()
+    ids = source_building_ids(footprints_path)
     return dict(zip(ids, areas))
 
 
@@ -365,34 +370,26 @@ def build_assessment_inputs_from_gpkgs(
 ) -> AssessmentInputs:
     """Build :class:`AssessmentInputs` from on-disk GeoPackages.
 
-    The merged predictions file uses sequential integer ``id``s in the
-    same row order as the footprints file (this is what
-    ``merge_with_building_footprints.py`` writes). We use that ordering
-    to map back to Overture string ids.
+    Catalog outputs join on ``source_building_id``. Historical predictions
+    retain their sequential row-ID join. Rows without a finite damage
+    fraction remain unscored, not confidently undamaged.
 
     ``labels`` is the validation app's ``{overture_id: {label, ...}}``
     map flattened to ``(id, label)`` pairs (or ``None`` if computing
     aggregate-only stats without any labels).
     """
-    import fiona
-
-    with fiona.open(footprints_path) as src:
-        overture_ids = [str(feat["properties"]["id"]) for feat in src]
-
     damage_fractions: dict[str, float] = {}
     unknown_fractions: dict[str, float] = {}
-    with fiona.open(merged_predictions_path) as src:
-        for feat in src:
-            props = feat["properties"]
-            int_id = props["id"]
-            if int_id < 0 or int_id >= len(overture_ids):
-                continue
-            oid = overture_ids[int_id]
-            dmg = props.get(damage_field)
-            if dmg is None:
-                continue
-            damage_fractions[oid] = float(dmg)
-            unknown_fractions[oid] = float(props.get(unknown_field) or 0.0)
+    unscored_ids: set[str] = set()
+    for oid, props in iter_building_predictions(
+        footprints_path, merged_predictions_path
+    ):
+        dmg = props.get(damage_field)
+        if dmg is None or not math.isfinite(float(dmg)):
+            unscored_ids.add(oid)
+            continue
+        damage_fractions[oid] = float(dmg)
+        unknown_fractions[oid] = float(props.get(unknown_field) or 0.0)
 
     areas_m2 = _building_areas_m2(footprints_path)
 
@@ -406,4 +403,5 @@ def build_assessment_inputs_from_gpkgs(
         unknown_fractions=unknown_fractions,
         areas_m2=areas_m2,
         labels=labels_dict,
+        unscored_ids=unscored_ids,
     )

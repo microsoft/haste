@@ -96,3 +96,23 @@ test("reports terminal failures but ignores intermediate updates", () => {
     },
   ]);
 });
+
+test("pretrained cancellation with unset training status reports inference only", () => {
+  const project = (inferenceStatus) => ({
+    imageLayer: [{
+      imageLayerId: "fixture-layer", status: "Processed",
+      models: [{
+        modelId: "catalog-run", modelType: "pretrained",
+        name: "Catalog inference fixture", status: null, trainingJob: null,
+        inferenceStatus,
+      }],
+    }],
+  });
+  const previous = collectProjectJobStates(project("Queued"));
+  const current = collectProjectJobStates(project("Cancelled"));
+
+  assert.deepEqual(findJobStatusTransitions(previous, current), [{
+    key: "inference:catalog-run", status: "Cancelled",
+    title: "Model inference", subject: "Catalog inference fixture",
+  }]);
+});
