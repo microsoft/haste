@@ -24,7 +24,8 @@ from typing import Optional
 
 # Functions use python3.11; Azure ML uses compact py311 references.
 _FROM_PYTHON = re.compile(
-    r"^FROM\s+(?:--platform=\S+\s+)?\S*?(?:python:?(?P<dotted>\d+\.\d+)"
+    r"^FROM\s+(?:--platform=\S+\s+)?\S*?(?<![a-z0-9])"
+    r"(?:python:?(?P<dotted>\d+\.\d+)"
     r"|py(?P<major>\d)(?P<minor>\d{1,2})(?=[-:@]|$))",
     re.IGNORECASE,
 )

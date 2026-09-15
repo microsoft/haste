@@ -276,6 +276,22 @@ class ImageryBuildCompatibilityTests(unittest.TestCase):
 
 
 class ImagePythonScriptTests(unittest.TestCase):
+    def test_unrelated_image_names_fail_the_python_guard(self) -> None:
+        for image in (
+            "copy311-runtime",
+            "cpython3.11-base",
+            "notpython3.11-runtime",
+            "numpy311-base",
+        ):
+            with self.subTest(image=image):
+                text = f"FROM example.com/{image}:latest\n"
+                self.assertIsNone(check_image_python.base_python_version(text))
+                with tempfile.TemporaryDirectory() as directory:
+                    path = _write(directory, "Dockerfile", text)
+                    self.assertEqual(
+                        1, check_image_python.main([str(path), "3.11"])
+                    )
+
     def test_mcr_python_reference_formats(self) -> None:
         cases = (
             ("azureml/curated/minimal-py311-inference:59", "3.11"),
