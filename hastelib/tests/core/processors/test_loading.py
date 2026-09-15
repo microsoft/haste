@@ -8,6 +8,7 @@ from azure.core.exceptions import ResourceNotFoundError
 from hastegeo.core.config import Config
 from hastegeo.core.processors.loading import (
     ActiveJobsProcessor,
+    LabelingWorkspaceProcessor,
     assemble_active_jobs,
 )
 
@@ -25,6 +26,138 @@ class ProcessorTestCase(unittest.IsolatedAsyncioTestCase):
     def factory(self, *, data_type, partition_key=None, config):
         self.assertIs(config, self.config)
         return self.processor(data_type, partition_key)
+
+
+class TestLabelingWorkspaceProcessor(ProcessorTestCase):
+    async def test_fallback_rejects_missing_or_empty_label_identifier(
+        self,
+    ) -> None:
+        self.labels.load.side_effect = FileNotFoundError
+        for identifier in [None, "", "   "]:
+            with self.subTest(identifier=identifier):
+                self.labels.load_all_from_partition.return_value = [
+                    {
+                        "projectId": "project-1",
+                        "imageLayerId": "layer-1",
+                        "labelprojectId": identifier,
+                    }
+                ]
+                with self.assertRaises(FileNotFoundError):
+                    await LabelingWorkspaceProcessor(
+                        "project-1", "layer-1", self.config, self.factory
+                    ).load()
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.processor(
+            self.types.PROJECT.value, "project-1"
+        ).load.return_value = {
+            "projectId": "project-1",
+            "eventTypes": ["Wildfire"],
+            "primaryClasses": [{"name": "Damaged", "color": "#f00"}],
+        }
+        self.processor(
+            self.types.IMAGELAYER.value, "project-1"
+        ).load.return_value = {
+            "projectId": "project-1",
+            "imageLayerId": "layer-1",
+            "labelProjectId": "labels-1",
+            "name": "Post event",
+            "sourceTypePostEvent": "sentinel_2",
+        }
+        self.labels = self.processor(self.types.LABELS.value, "project-1")
+        self.labels.load.return_value = {
+            "projectId": "project-1",
+            "imageLayerId": "layer-1",
+            "labelprojectId": "labels-1",
+            "labels": [],
+        }
+
+    async def test_load_uses_direct_label_pointer(self) -> None:
+        result = await LabelingWorkspaceProcessor(
+            "project-1", "layer-1", self.config, self.factory
+        ).load()
+
+        self.assertEqual(result.imageLayer.imageLayerId, "layer-1")
+        self.assertEqual(result.imageLayer.name, "Post event")
+        self.assertEqual(result.imageLayer.sourceTypePostEvent, "sentinel_2")
+        self.assertEqual(result.labelProject.labelprojectId, "labels-1")
+        self.assertEqual(result.eventTypes, ["Wildfire"])
+        self.labels.load.assert_called_once_with("labels-1")
+        self.labels.load_all_from_partition.assert_not_called()
+
+    async def test_load_falls_back_when_pointer_is_missing(self) -> None:
+        self.processor(
+            self.types.IMAGELAYER.value, "project-1"
+        ).load.return_value["labelProjectId"] = None
+        self.labels.load_all_from_partition.return_value = [
+            {
+                "projectId": "project-1",
+                "imageLayerId": "layer-1",
+                "labelprojectId": "legacy-labels",
+            }
+        ]
+
+        result = await LabelingWorkspaceProcessor(
+            "project-1", "layer-1", self.config, self.factory
+        ).load()
+
+        self.assertEqual(result.labelProject.labelprojectId, "legacy-labels")
+        self.labels.load.assert_not_called()
+        self.labels.load_all_from_partition.assert_called_once_with()
+
+    async def test_load_rejects_mismatched_layer_record(self) -> None:
+        self.processor(
+            self.types.IMAGELAYER.value, "project-1"
+        ).load.return_value["projectId"] = "different-project"
+
+        with self.assertRaises(FileNotFoundError):
+            await LabelingWorkspaceProcessor(
+                "project-1", "layer-1", self.config, self.factory
+            ).load()
+
+        self.labels.load.assert_not_called()
+
+    async def test_load_rejects_mismatched_pointed_label_record(self) -> None:
+        self.labels.load.return_value["projectId"] = "different-project"
+        self.labels.load_all_from_partition.return_value = []
+
+        with self.assertRaises(FileNotFoundError):
+            await LabelingWorkspaceProcessor(
+                "project-1", "layer-1", self.config, self.factory
+            ).load()
+
+        self.labels.load_all_from_partition.assert_called_once_with()
+
+    async def test_load_falls_back_for_storage_not_found_error(self) -> None:
+        self.labels.load.side_effect = ResourceNotFoundError("missing")
+        self.labels.load_all_from_partition.return_value = [
+            {
+                "projectId": "project-1",
+                "imageLayerId": "layer-1",
+                "labelprojectId": "legacy-labels",
+            }
+        ]
+
+        result = await LabelingWorkspaceProcessor(
+            "project-1", "layer-1", self.config, self.factory
+        ).load()
+
+        self.assertEqual(result.labelProject.labelprojectId, "legacy-labels")
+        self.labels.load_all_from_partition.assert_called_once_with()
+
+    async def test_load_rejects_dangling_pointer_without_fallback(
+        self,
+    ) -> None:
+        self.labels.load.side_effect = FileNotFoundError
+        self.labels.load_all_from_partition.return_value = []
+
+        with self.assertRaises(FileNotFoundError):
+            await LabelingWorkspaceProcessor(
+                "project-1", "layer-1", self.config, self.factory
+            ).load()
+
+        self.labels.load_all_from_partition.assert_called_once_with()
 
 
 class TestAssembleActiveJobs(unittest.TestCase):
