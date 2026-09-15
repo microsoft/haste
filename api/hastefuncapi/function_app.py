@@ -54,6 +54,10 @@ from hastegeo.core.processors.publishing import (
     PublishingSizeLimitError,
     PublishingStateConflictError,
 )
+from hastegeo.core.processors.publishing_catalog import (
+    CatalogQuery,
+    PublishingCatalogProcessor,
+)
 from hastegeo.core.processors.session import (
     SessionAccessError,
     SessionBootstrapProcessor,
@@ -129,6 +133,16 @@ _PROJECT_DETAILS_CACHE_ENTRIES = configured_cache_value(
 _project_details_cache = AsyncTTLCache(
     ttl_seconds=_PROJECT_DETAILS_CACHE_SECONDS,
     max_entries=_PROJECT_DETAILS_CACHE_ENTRIES,
+)
+_PUBLISHED_DATASETS_CACHE_SECONDS = configured_cache_value(
+    "HASTE_PUBLISHED_DATASETS_CACHE_SECONDS", 5, 0, 5
+)
+_PUBLISHED_DATASETS_CACHE_ENTRIES = configured_cache_value(
+    "HASTE_PUBLISHED_DATASETS_CACHE_ENTRIES", 128, 1, 512
+)
+_published_datasets_cache = AsyncTTLCache(
+    ttl_seconds=_PUBLISHED_DATASETS_CACHE_SECONDS,
+    max_entries=_PUBLISHED_DATASETS_CACHE_ENTRIES,
 )
 
 # Development mode check - when running locally with Docker/Azurite
@@ -4733,28 +4747,42 @@ async def GetPublishedDatasets(req: func.HttpRequest) -> func.HttpResponse:
             if req.params.get("status")
             else None
         )
-        records, total_count = await asyncio.to_thread(
-            PublishingRepository(config=config).list_page,
-            page=page,
-            page_size=page_size,
-            project_id=project_id,
-            target=target,
-            status=status,
-            search=search,
-            sort_key=req.params.get("sortKey", "publishedDate"),
-            sort_direction=req.params.get("sortDirection", "desc"),
+        sort_key = req.params.get("sortKey", "publishedDate")
+        sort_direction = req.params.get("sortDirection", "desc")
+
+        cached_response, cache_hit = await PublishingCatalogProcessor(
+            lambda: PublishingRepository(config=config),
+            _published_datasets_cache,
+        ).load(
+            str(caller["id"]),
+            CatalogQuery(
+                page=page,
+                page_size=page_size,
+                project_id=project_id,
+                target=target,
+                status=status,
+                search=search,
+                sort_key=sort_key,
+                sort_direction=sort_direction,
+            ),
+            refresh=_cache_refresh_requested(req.headers.get("Cache-Control")),
         )
-        return _publishing_json_response(
-            {
-                "publishedDatasets": [
-                    record.model_dump(mode="json") for record in records
-                ],
-                "pagination": {
-                    "page": page,
-                    "pageSize": page_size,
-                    "totalCount": total_count,
-                },
-            }
+        headers = {
+            "Cache-Control": (
+                f"private, max-age={_PUBLISHED_DATASETS_CACHE_SECONDS}"
+            ),
+            "ETag": cached_response["etag"],
+            "X-Haste-Cache": "HIT" if cache_hit else "MISS",
+        }
+        if _etag_matches(
+            req.headers.get("If-None-Match"), cached_response["etag"]
+        ):
+            return func.HttpResponse(status_code=304, headers=headers)
+        return func.HttpResponse(
+            cached_response["payload"],
+            status_code=200,
+            mimetype="application/json",
+            headers=headers,
         )
     except Exception as error:
         return _publishing_exception_response(error)
@@ -4836,6 +4864,7 @@ async def PutPublishDatasetQueueMessage(
                 prepared,
                 assessment_summary,
             )
+        await _published_datasets_cache.invalidate()
         return _publishing_json_response(
             {"publishedDataset": record.model_dump(mode="json")}, 202
         )
@@ -4867,6 +4896,7 @@ async def PutRetryPublishedDatasetQueueMessage(
             caller["id"],
             "administrators" in caller["roles"],
         )
+        await _published_datasets_cache.invalidate()
         return _publishing_json_response(
             {"publishedDataset": record.model_dump(mode="json")}, 202
         )
@@ -4907,6 +4937,7 @@ async def PutUpdatePublishedDataset(
             "administrators" in caller["roles"],
             fields,
         )
+        await _published_datasets_cache.invalidate()
         return _publishing_json_response(
             {"publishedDataset": record.model_dump(mode="json")}, 200
         )
@@ -4933,6 +4964,7 @@ async def DeletePublishedDataset(req: func.HttpRequest) -> func.HttpResponse:
             caller["id"],
             "administrators" in caller["roles"],
         )
+        await _published_datasets_cache.invalidate()
         return _publishing_json_response(
             {"publishedDataset": record.model_dump(mode="json")}, 202
         )
@@ -4965,6 +4997,7 @@ async def ForceRemovePublishedDataset(
             caller["id"],
             "administrators" in caller["roles"],
         )
+        await _published_datasets_cache.invalidate()
         return _publishing_json_response(
             {"publishedDataset": record.model_dump(mode="json")}, 200
         )
