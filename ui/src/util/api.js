@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-const APIUrl = import.meta.env.VITE_API_URL;
-const APIMSubscriptionKey = import.meta.env.VITE_APIM_SUBSCRIPTION_KEY;
+const APIUrl = import.meta.env?.VITE_API_URL || "";
+const APIMSubscriptionKey = import.meta.env?.VITE_APIM_SUBSCRIPTION_KEY;
 import { upsertUser } from "../AppHelper.js";
 import { sanitizeRedirectPath } from "./validation.js";
 import { fetchJsonResponse } from "./http.js";
@@ -63,8 +63,8 @@ export async function apiLogout(redirectPath = "/") {
   }
 }
 
-export async function apiGet(endpoint) {
-  const response = await apiGetResponse(endpoint);
+export async function apiGet(endpoint, options = {}) {
+  const response = await apiGetResponse(endpoint, options);
   return response.data;
 }
 
