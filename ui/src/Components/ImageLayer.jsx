@@ -23,11 +23,13 @@ const ImageLayer = () => {
   const { setIsLoading } = useContext(AppContext);
 
   useEffect(() => {
+    const controller = new AbortController();
     const fetchProject = async () => {
       setIsLoading(true);
       try {
         const project = await apiGet(
-          "GetProjectDetails?projectId=" + projectId + "&includeModels=True"
+          "GetProjectDetails?projectId=" + projectId + "&includeModels=True",
+          { signal: controller.signal }
         );
         setSelectedProject(project);
         const imageLayer = project.imageLayer.find(
@@ -48,14 +50,20 @@ const ImageLayer = () => {
           filterPlaceholder: "",
         });
       } catch (error) {
-        console.error("Error fetching project:", error);
+        if (error.name !== "AbortError") {
+          console.error("Error fetching project:", error);
+        }
       }
-      setIsLoading(false);
+      if (!controller.signal.aborted) setIsLoading(false);
     };
 
     fetchProject();
+    return () => {
+      controller.abort();
+      setIsLoading(false);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [projectId, imageLayerId]);
 
   if (!selectedProject || !selectedImageLayer) {
     return;

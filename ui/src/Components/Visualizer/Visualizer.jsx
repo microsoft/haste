@@ -30,7 +30,7 @@ const Visualizer = ({ setModalComponent }) => {
   const [swipeStateMobile, setSwipeStateMobile] = useState("post");
 
   // Visualizer data fetching function
-  async function getVisualizerResults() {
+  async function getVisualizerResults(signal) {
     setIsLoading(true);
     return await apiGet(
       "GetVisualizerResults?projectId=" +
@@ -38,16 +38,19 @@ const Visualizer = ({ setModalComponent }) => {
       "&imageLayerId=" +
       imageLayerId +
       "&modelId=" +
-      modelId
+      modelId,
+      { signal }
     )
       .then((response) => {
-        setIsLoading(false);
-                console.log(response);
+        if (!signal.aborted) setIsLoading(false);
         return response;
 
       })
       .catch((error) => {
-        console.error("Error fetching visualizer results:", error);
+        if (error.name !== "AbortError") {
+          console.error("Error fetching visualizer results:", error);
+        }
+        if (!signal.aborted) setIsLoading(false);
         throw error;
       });
   }
@@ -115,13 +118,22 @@ const Visualizer = ({ setModalComponent }) => {
   }, [appParams.bootstrapBreakpoint]);
 
   useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
     const initializeMaps = async () => {
       if (window.atlas) {
 
         // Create zoom control reference, so it can be referenced when deleting and resetting regarding responsiveness
         zoomControlRef.current = new window.atlas.control.ZoomControl();
 
-        var visualizerResults = await getVisualizerResults();
+        let visualizerResults;
+        try {
+          visualizerResults = await getVisualizerResults(controller.signal);
+        } catch (error) {
+          if (error.name === "AbortError") return;
+          return;
+        }
+        if (cancelled) return;
 
         updateAppParams({
           visualizerTitle: convertToVisualizerTitle(visualizerResults),
@@ -149,6 +161,7 @@ const Visualizer = ({ setModalComponent }) => {
 
         // Primary map event listeners
         primaryMap.events.add("ready", async function () {
+          if (cancelled) return;
           // Avoid map rotation
           avoidRotation(primaryMap);
 
@@ -174,6 +187,7 @@ const Visualizer = ({ setModalComponent }) => {
 
         // Secondary map event listeners
         secondaryMap.events.add("ready", function () {
+          if (cancelled) return;
           // Avoid map rotation
           avoidRotation(secondaryMap);
 
@@ -212,9 +226,19 @@ const Visualizer = ({ setModalComponent }) => {
     window.addEventListener("keydown", handleKeyboardShortcuts);
     //On component dismount
     return () => {
+      cancelled = true;
+      controller.abort();
+      setIsLoading(false);
       setModalComponent(null);
       updateAppParams({ visualizerTitle: "" });
       window.removeEventListener("keydown", handleKeyboardShortcuts);
+      swipeMapRef.current?.dispose();
+      swipeMapRef.current = null;
+      primaryMapRef.current?.dispose();
+      primaryMapRef.current = null;
+      secondaryMapRef.current?.dispose();
+      secondaryMapRef.current = null;
+      zoomControlRef.current = null;
     };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps

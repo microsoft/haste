@@ -211,6 +211,7 @@ const OpenDataCatalogPanel = ({
 
   // Leaving draw mode when the previewed scene changes (the AOI itself stays).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setClipMode(false);
   }, [selectedScene]);
 
@@ -234,9 +235,12 @@ const OpenDataCatalogPanel = ({
   useEffect(() => {
     if (!isOpen || events.length > 0) return undefined;
     let cancelled = false;
+    const controller = new AbortController();
+    // Reset the async discovery view before starting the request.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDiscovering(true);
     setDiscoverErrors([]);
-    discoverEvents()
+    discoverEvents(controller.signal)
       .then((result) => {
         if (cancelled) return;
         setEvents(result.events);
@@ -251,6 +255,7 @@ const OpenDataCatalogPanel = ({
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
@@ -259,6 +264,9 @@ const OpenDataCatalogPanel = ({
   useEffect(() => {
     if (!isOpen || !event) return undefined;
     let cancelled = false;
+    const controller = new AbortController();
+    // Reset the async catalog view before starting the request.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setScenes([]);
     setErrors([]);
@@ -267,7 +275,7 @@ const OpenDataCatalogPanel = ({
     setSelectedScene(null);
     setHoveredId(null);
 
-    fetchEventCatalog(event)
+    fetchEventCatalog(event, controller.signal)
       .then((result) => {
         if (cancelled) return;
         setScenes(result.scenes);
@@ -288,6 +296,7 @@ const OpenDataCatalogPanel = ({
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [isOpen, event]);
 

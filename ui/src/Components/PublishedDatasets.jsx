@@ -1,4 +1,11 @@
-import { useContext, useDeferredValue, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useDeferredValue,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   Dropdown,
   MessageBar,
@@ -41,8 +48,9 @@ const PublishedDatasets = () => {
   const [sort, setSort] = useState({ key: "publishedDate", dir: "desc" });
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const isFirstLoadRef = useRef(true);
 
-  async function fetchDatasets(showLoading = false) {
+  const fetchDatasets = useCallback(async (showLoading = false, signal) => {
     if (showLoading) setIsLoading(true, "Loading published datasets...");
     try {
       const query = new URLSearchParams({
@@ -54,7 +62,9 @@ const PublishedDatasets = () => {
       if (targetFilter !== "all") query.set("target", targetFilter);
       if (statusFilter !== "all") query.set("status", statusFilter);
       if (normalizedSearchText) query.set("search", normalizedSearchText);
-      const response = await apiGet(`GetPublishedDatasets?${query}`);
+      const response = await apiGet(`GetPublishedDatasets?${query}`, {
+        signal,
+      });
       const nextItems = response.publishedDatasets || [];
       const nextTotal = response.pagination?.totalCount ?? nextItems.length;
       setItems(nextItems);
@@ -63,42 +73,54 @@ const PublishedDatasets = () => {
       if (currentPage > nextTotalPages) setCurrentPage(nextTotalPages);
       setError("");
     } catch (fetchError) {
-      setError(fetchError.message || "Unable to load published datasets.");
+      if (fetchError.name !== "AbortError") {
+        setError(fetchError.message || "Unable to load published datasets.");
+      }
     } finally {
-      if (showLoading) setIsLoading(false);
+      if (showLoading && !signal?.aborted) setIsLoading(false);
     }
-  }
+  }, [
+    currentPage,
+    normalizedSearchText,
+    pageSize,
+    setIsLoading,
+    sort.dir,
+    sort.key,
+    statusFilter,
+    targetFilter,
+  ]);
 
   useEffect(() => {
     if (!searchReady) return;
+    const controller = new AbortController();
     // State updates occur after the awaited API response, not synchronously.
     // Show the full-page loading overlay only on the first load (items === null,
     // catalog pattern); later filter/search/sort/page changes refetch silently
     // so the overlay doesn't flash on every keystroke.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchDatasets(items === null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, pageSize, targetFilter, statusFilter, normalizedSearchText, searchReady, sort]);
+    fetchDatasets(isFirstLoadRef.current, controller.signal);
+    isFirstLoadRef.current = false;
+    return () => controller.abort();
+  }, [fetchDatasets, searchReady]);
 
   const hasActiveItems = (items || []).some((item) =>
     isPublishingStatusActive(item.status),
   );
 
-  // Keep a ref to the latest fetchDatasets so the polling interval always uses
-  // the current page/filters/search/sort instead of the values captured when
-  // polling first started (which would overwrite fresh results with a stale
-  // query).
-  const fetchDatasetsRef = useRef(fetchDatasets);
-  fetchDatasetsRef.current = fetchDatasets;
-
   useEffect(() => {
     if (!hasActiveItems || !searchReady) return undefined;
-    const interval = window.setInterval(
-      () => fetchDatasetsRef.current(false),
-      5000,
-    );
-    return () => window.clearInterval(interval);
-  }, [hasActiveItems, searchReady]);
+    let pollController = null;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible" || pollController) return;
+      pollController = new AbortController();
+      fetchDatasets(false, pollController.signal).finally(() => {
+        pollController = null;
+      });
+    }, 5000);
+    return () => {
+      window.clearInterval(interval);
+      pollController?.abort();
+    };
+  }, [fetchDatasets, hasActiveItems, searchReady]);
 
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const page = Math.min(currentPage, totalPages);

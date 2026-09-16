@@ -132,10 +132,14 @@ function App() {
       }
 
 
-      setAppParams(prev => ({
-        ...prev,
-        bootstrapBreakpoint: bootstrapBreakpoint,
-      }));
+      setAppParams((prev) =>
+        prev.bootstrapBreakpoint === bootstrapBreakpoint
+          ? prev
+          : {
+              ...prev,
+              bootstrapBreakpoint: bootstrapBreakpoint,
+            }
+      );
     };
 
     window.addEventListener('resize', handleResize);
