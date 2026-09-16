@@ -19,6 +19,10 @@ from hastegeo.core.runners.local_lifecycle import (
     blob_descriptor,
     execution_key,
 )
+from hastegeo.core.runners.submission import (
+    TaskSubmissionPendingError,
+    submit_task,
+)
 
 import docker
 
@@ -236,7 +240,8 @@ def setup(tmp_path: Path, mocker) -> SimpleNamespace:
 def submit(
     runner: local.LocalRunner, task_id: str = "task", **kwargs
 ) -> tuple[str, str]:
-    return runner.add_task(
+    return submit_task(
+        runner,
         job_id="job",
         task_id=task_id,
         image_name="training",
@@ -396,10 +401,70 @@ def test_concurrent_duplicate_submission_creates_one_receipt_and_execution(
 
 def test_identity_reuse_with_changed_command_fails(setup) -> None:
     submit(setup.runner)
+    receipt = setup.runner.get_task_receipt("job", "task")
     with pytest.raises(ValueError, match="another request"):
-        setup.runner.add_task(
-            "job", "task", image_name="training", command="another command"
+        submit_task(
+            setup.runner,
+            "job",
+            "task",
+            image_name="training",
+            command="another command",
         )
+    assert setup.runner.get_task_receipt("job", "task") == receipt
+    assert setup.engine.executions() == []
+
+
+def test_local_rejection_before_receipt_persistence_is_not_pending(
+    setup, mocker
+) -> None:
+    error = PermissionError("receipt directory is not writable")
+    mocker.patch.object(setup.runner.receipts, "save", side_effect=error)
+
+    with pytest.raises(PermissionError) as caught:
+        submit(setup.runner)
+
+    assert caught.value is error
+    assert setup.runner.receipts.list_receipts() == []
+    assert setup.engine.executions() == []
+
+
+@pytest.mark.parametrize("failure_point", ["receipt", "acceptance_log"])
+def test_local_failure_after_receipt_persistence_replays_without_new_compute(
+    setup, mocker, failure_point: str
+) -> None:
+    original_save = setup.runner.receipts.save
+
+    def save_then_interrupt(receipt: local.LocalReceipt) -> None:
+        original_save(receipt)
+        raise OSError("receipt replacement completed; acknowledgement lost")
+
+    failure = (
+        mocker.patch.object(
+            setup.runner.receipts, "save", side_effect=save_then_interrupt
+        )
+        if failure_point == "receipt"
+        else mocker.patch.object(
+            setup.runner,
+            "_phase_log",
+            side_effect=PermissionError("acceptance log is not writable"),
+        )
+    )
+    with pytest.raises(TaskSubmissionPendingError):
+        submit(setup.runner)
+
+    receipt = setup.runner.get_task_receipt("job", "task")
+    assert receipt["phase"] == "queued"
+    assert len(setup.runner.receipts.list_receipts()) == 1
+    assert setup.engine.executions() == []
+
+    mocker.stop(failure)
+    restarted = setup.new_runner()
+    assert submit(restarted) == ("job", "task")
+    assert restarted.get_task_receipt("job", "task") == receipt
+    restarted.reconcile_tasks()
+    restarted.reconcile_tasks()
+    assert len(setup.engine.executions()) == 1
+    assert setup.engine.executions()[0].starts == 1
 
 
 @pytest.mark.parametrize("limit", [1, 2])
