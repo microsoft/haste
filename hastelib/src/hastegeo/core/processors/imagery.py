@@ -4,7 +4,10 @@ import json
 import os
 from typing import NamedTuple, Optional
 
-from hastegeo.core.runners.submission import submit_task
+from hastegeo.core.runners.submission import (
+    TaskSubmissionPendingError,
+    submit_task,
+)
 from hastegeo.core.runners.unified_runner import UnifiedRunner
 
 from ..config import ArtifactTypes, Config
@@ -346,24 +349,41 @@ class ImageryPostProcessor:
         imagery_output_prefix = (
             f"{MetadataUtils.hash_string(self.image_data.projectId)}/{task_id}"
         )
-        job_id, task_id = submit_task(
-            self.runner,
-            job_id=job_id,
-            task_id=task_id,
-            output_prefix=imagery_output_prefix,
-            resource_files_for_upload=imagery_input_files,
-            file_pattern=[
-                f"${BATCH_JOB_WORKDIR}/outputs/*.*",
-                # Progress log, so it survives the node being deallocated or
-                # preempted once the task completes.
-                f"${BATCH_JOB_WORKDIR}/logs/*.*",
-            ],
-            command=command,
-            # TODO: maybe this needs to be encapsulated in the batch runner and not be part of the processor
-            image_name=self.config.get_azure_batch_config()[
-                "imageprep_docker_image"
-            ],
-        )
+        try:
+            job_id, task_id = submit_task(
+                self.runner,
+                job_id=job_id,
+                task_id=task_id,
+                output_prefix=imagery_output_prefix,
+                resource_files_for_upload=imagery_input_files,
+                file_pattern=[
+                    f"${BATCH_JOB_WORKDIR}/outputs/*.*",
+                    # Progress log, so it survives the node being deallocated or
+                    # preempted once the task completes.
+                    f"${BATCH_JOB_WORKDIR}/logs/*.*",
+                ],
+                command=command,
+                # TODO: maybe this needs to be encapsulated in the batch runner and not be part of the processor
+                image_name=self.config.get_azure_batch_config()[
+                    "imageprep_docker_image"
+                ],
+            )
+        except TaskSubmissionPendingError:
+            raise
+        except Exception as error:
+            self.logger.error(
+                "Image preprocessing submission failed for %s (%s)",
+                self.image_data.imageLayerId,
+                type(error).__name__,
+            )
+            self.image_data.status = (
+                self.config.get_status_types().FAILED.value
+            )
+            self._update_imagery_progress(
+                f"Image preprocessing failed to start ({type(error).__name__})",
+                step=self.image_data.currentStep,
+            )
+            return self.image_data
         self.logger.info(
             f"Completed add task {task_id} to job id {job_id} for preprocessing image layer {self.image_data.imageLayerId}"
         )

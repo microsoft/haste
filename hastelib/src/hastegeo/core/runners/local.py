@@ -41,6 +41,7 @@ from .local_lifecycle import (
     safe_relative_path,
     task_path,
 )
+from .submission import TaskSubmissionPendingError
 
 TASK_WORK_DIR = LOCAL_TASK_ROOT
 ACTIVE_CONTAINER_STATES = {"running", "restarting", "paused"}
@@ -207,35 +208,59 @@ class LocalRunner(BaseRunner):
             env_vars,
             self._output_patterns(file_pattern, job_id, task_id),
         )
-        with self.receipts.lock(key):
-            try:
-                existing = self.receipts.load(key)
-            except FileNotFoundError:
-                existing = None
-            if existing is not None:
-                if (
-                    existing.request is not None
-                    and existing.request.fingerprint() != request.fingerprint()
-                ):
-                    raise ValueError(
-                        "Local execution identity already has another request"
+        try:
+            with self.receipts.lock(key):
+                try:
+                    existing = self.receipts.load(key)
+                except FileNotFoundError:
+                    existing = None
+                if existing is not None:
+                    if (
+                        existing.request is not None
+                        and existing.request.fingerprint()
+                        != request.fingerprint()
+                    ):
+                        raise ValueError(
+                            "Local execution identity already has another request"
+                        )
+                    return job_id, task_id
+                if (self.work_dir / job_id / task_id).exists():
+                    raise RuntimeError(
+                        "Legacy local task files exist without a durable receipt; "
+                        "refusing to repeat unknown compute"
                     )
-                return job_id, task_id
-            if (self.work_dir / job_id / task_id).exists():
-                raise RuntimeError(
-                    "Legacy local task files exist without a durable receipt; "
-                    "refusing to repeat unknown compute"
+                receipt = LocalReceipt(
+                    job_id=job_id,
+                    task_id=task_id,
+                    accepted_at=time.time(),
+                    request=request,
                 )
-            receipt = LocalReceipt(
-                job_id=job_id,
-                task_id=task_id,
-                accepted_at=time.time(),
-                request=request,
+                self.receipts.save(receipt)
+                self._phase_log(
+                    receipt, "Local task accepted; waiting for capacity"
+                )
+        except OSError as error:
+            # Atomic replacement or acknowledgement can fail after acceptance.
+            try:
+                self.receipts.load(key)
+            except FileNotFoundError:
+                raise error from None
+            except OSError as verification_error:
+                self.logger.error(
+                    "Cannot verify local receipt %s (%s)",
+                    key,
+                    type(verification_error).__name__,
+                )
+            self.logger.error(
+                "Local submission of %s/%s interrupted (%s); "
+                "receipt may be accepted, retaining pending identity",
+                job_id,
+                task_id,
+                type(error).__name__,
             )
-            self.receipts.save(receipt)
-            self._phase_log(
-                receipt, "Local task accepted; waiting for capacity"
-            )
+            raise TaskSubmissionPendingError(
+                "Local acceptance interrupted; reconcile the pending receipt"
+            ) from error
         return job_id, task_id
 
     def _request(
