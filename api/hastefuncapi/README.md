@@ -104,6 +104,14 @@ loads current HASTE ACL state, and returns user and publishing configuration in
 one response. Stable active sessions are read-only; inactive, pending, and
 deleted accounts receive no application roles.
 
+### Published Datasets
+
+`GetPublishedDatasets` returns `ETag`, `Cache-Control`, and `X-Haste-Cache`
+headers. Send `If-None-Match` to receive an empty `304` for an unchanged fresh
+representation. The bounded process-local cache expires within five seconds,
+deduplicates concurrent identical reads, and is invalidated after publishing
+mutations.
+
 ### Utilities
 
 | Method | Route | Description |
