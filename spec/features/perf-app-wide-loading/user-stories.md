@@ -1,5 +1,11 @@
 # User Stories: App-Wide Loading Performance
 
+## Contents
+
+- [Stories](#stories)
+- [Agent Assignment Map](#agent-assignment-map)
+- [Out of Scope](#out-of-scope)
+
 ## Stories
 
 ### US-001: Fast Stable Session Startup
@@ -12,7 +18,6 @@ quickly.
 zero management-plane calls, and zero ACL writes. Inactive, pending, or deleted
 users receive no application roles and cannot reach protected routes.
 
-
 ### US-002: Responsive Published Dataset Tracking
 
 **As a** contributor, **I want** published datasets to load and refresh without
@@ -20,7 +25,6 @@ repeated full reads, **so that** I can track work without page stalls.
 
 **Acceptance criteria:** Same-query requests coalesce, unchanged conditional
 requests return `304`, and polling stops while hidden or in flight.
-
 
 ### US-003: Progressive Route Readiness
 
@@ -30,6 +34,13 @@ its data or maps load, **so that** navigation never appears frozen.
 **Acceptance criteria:** Route and map assets overlap, the application shell
 remains visible, independent requests overlap, and help media loads on demand.
 
+### US-004: Enforced Route Performance Budget
+
+**As a** maintainer, **I want** deterministic route timings, **so that** future
+changes cannot silently regress the one-to-three-second target.
+
+**Acceptance criteria:** Every route has cold/warm direct and in-app timing,
+request counts, asset bytes, and content-ready evidence.
 
 ### US-005: One Owned Loading Experience
 
@@ -41,7 +52,6 @@ already left.
 aborts owned GET requests and map work, and a stale route cannot clear or retain
 the destination route's loading surface.
 
-
 ### US-006: Fast Standard Labeling Workspace
 
 **As a** disaster analyst, **I want** the standard Labeling Tool to prepare data
@@ -51,7 +61,6 @@ and maps together, **so that** I can begin labeling without a blank map wait.
 Maps and data load concurrently, progress is staged, the map begins at the AOI,
 and initialization is not complete until the map and drawing controls are
 ready.
-
 
 ### US-007: Non-Blocking Dashboard Jobs
 
@@ -63,7 +72,6 @@ delay navigation.
 active jobs use one compact conditional request, and hidden, overlapping, or
 unmounted polls perform no continuing work.
 
-
 ## Agent Assignment Map
 
 | Story | Implementing Agent(s) | Validating Agent(s) |
@@ -71,6 +79,14 @@ unmounted polls perform no continuing work.
 | US-001 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` |
 | US-002 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` |
 | US-003 | `ui` | `ui-validation` |
+| US-004 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` |
 | US-005 | `ui` | `ui-validation` |
 | US-006 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` |
 | US-007 | `backend-dev`, `ui` | `backend-validation`, `ui-validation` |
+
+## Out of Scope
+
+- New Azure services or Function capacity changes.
+- Distributed cache or push-notification transport.
+- Persistent publishing index until bounded cached reads are remeasured.
+- Blob policy provisioning changes without separate SAS regression coverage.
