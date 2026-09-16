@@ -145,6 +145,184 @@ class TestTrainingProgress(unittest.TestCase):
         self.assertNotIn("completed successfully", result.statusMessage)
         self.assertNotEqual(result.progressPct, 100)
 
+    def _workflow_outputs(self) -> dict[str, str]:
+        outputs = {
+            "workflow_progress.log": (
+                "2026-01-01T00:00:00+00:00|Starting create_masks.py\n"
+                "2026-01-01T00:01:00+00:00|Completed create_masks.py\n"
+                "2026-01-01T00:02:00+00:00|Starting fine_tune.py\n"
+                "2026-01-01T00:03:00+00:00|Error running fine_tune.py\n"
+            ),
+            "stderr.txt": "private traceback: training failed",
+        }
+
+        def output(
+            job_id: str,
+            task_id: str,
+            filename: str,
+            as_chunk: bool = False,
+        ) -> str | None:
+            self.processor.runner.cleanup_task.assert_not_called()
+            return outputs.get(filename)
+
+        self.processor.runner.get_filecontent_from_task.side_effect = output
+        return outputs
+
+    def _assert_terminal_history(self, status: str, summary: str) -> None:
+        self._workflow_outputs()
+        self.processor.runner.get_task_status.return_value = status
+
+        result = self.processor.process()
+
+        self.assertEqual(result.status, status)
+        self.assertEqual(result.trainingJob.status, status)
+        self.assertIsNotNone(result.trainingJob.completedDate)
+        self.assertEqual(result.currentStep, 0)
+        self.assertEqual(result.progressPct, 0)
+        self.assertIsNone(result.checkpointPath)
+        history = result.statusMessage
+        summary_position = history.index(summary)
+        previous_position = -1
+        for message in (
+            "Starting create_masks.py",
+            "Completed create_masks.py",
+            "Starting fine_tune.py",
+        ):
+            position = history.index(message)
+            self.assertGreater(position, previous_position)
+            self.assertLess(position, summary_position)
+            self.assertEqual(history.count(message), 1)
+            previous_position = position
+        self.assertIn(
+            "2026-01-01T00:01:00+00:00: Completed create_masks.py", history
+        )
+        self.assertIn("Error running fine_tune.py", history[summary_position:])
+        self.assertNotIn("private traceback", history)
+        self.assertNotIn("completed successfully", history)
+        self.processor.logger.error.assert_called_once()
+        self.processor.runner.cleanup_task.assert_called_once_with(
+            job_id="job-1", task_id="task-1"
+        )
+        self.processor.queue_client.put_message.assert_not_called()
+
+    def test_failure_before_first_poll_keeps_all_stages_before_error(
+        self,
+    ) -> None:
+        self._assert_terminal_history(
+            self.statuses.FAILED.value, "Training job failed"
+        )
+
+    def test_cancellation_before_first_poll_keeps_all_stages_before_summary(
+        self,
+    ) -> None:
+        self._assert_terminal_history(
+            self.statuses.CANCELLED.value, "Training job cancelled"
+        )
+        self.assertNotIn(
+            "Training job failed", self.processor.model_data.statusMessage
+        )
+
+    def test_terminal_history_does_not_duplicate_previously_polled_stages(
+        self,
+    ) -> None:
+        self.processor.model_data.statusMessage = (
+            "2026-01-01T00:00:00+00:00: Starting create_masks.py"
+        )
+        self._assert_terminal_history(
+            self.statuses.FAILED.value, "Training job failed"
+        )
+
+    def test_repeated_stage_messages_keep_distinct_timestamps(self) -> None:
+        outputs = self._workflow_outputs()
+        outputs[
+            "workflow_progress.log"
+        ] += "2026-01-01T00:04:00+00:00|Starting fine_tune.py\n"
+
+        self.assertTrue(self.processor._append_workflow_progress())
+        history = self.processor.model_data.statusMessage
+        self.assertEqual(history.count("Starting fine_tune.py"), 2)
+        self.assertTrue(self.processor._append_workflow_progress())
+        self.assertEqual(self.processor.model_data.statusMessage, history)
+
+    def test_unavailable_terminal_history_does_not_prevent_cleanup(
+        self,
+    ) -> None:
+        self.processor.runner.get_task_status.return_value = (
+            self.statuses.FAILED.value
+        )
+        self.processor.runner.get_filecontent_from_task.side_effect = (
+            RuntimeError("private provider detail")
+        )
+
+        result = self.processor.process()
+
+        self.assertEqual(result.status, self.statuses.FAILED.value)
+        self.assertIn("Training job failed", result.statusMessage)
+        self.assertNotIn("private provider detail", result.statusMessage)
+        self.assertEqual(result.progressPct, 0)
+        self.assertTrue(self.processor.logger.warning.called)
+        self.processor.runner.cleanup_task.assert_called_once()
+
+    def test_malformed_stages_do_not_hide_terminal_failure(self) -> None:
+        outputs = self._workflow_outputs()
+        outputs["workflow_progress.log"] += (
+            "unfinished\n"
+            "invalid timestamp|Starting ignored.py\n"
+            "2026-01-01T00:04:00+00:00| \n"
+        )
+        self.processor.runner.get_task_status.return_value = (
+            self.statuses.FAILED.value
+        )
+
+        result = self.processor.process()
+
+        self.assertEqual(result.status, self.statuses.FAILED.value)
+        self.assertIn("Completed create_masks.py", result.statusMessage)
+        self.assertIn("Training job failed", result.statusMessage)
+        self.assertNotIn("Starting ignored.py", result.statusMessage)
+        self.assertEqual(self.processor.logger.warning.call_count, 3)
+        self.processor.runner.cleanup_task.assert_called_once()
+
+    def test_direct_cancellation_reads_final_history_before_cleanup(
+        self,
+    ) -> None:
+        outputs = self._workflow_outputs()
+        outputs[
+            "workflow_progress.log"
+        ] = "2026-01-01T00:00:00+00:00|Starting create_masks.py\n"
+
+        def cancel_task(job_id: str, task_id: str) -> str:
+            outputs[
+                "workflow_progress.log"
+            ] += "2026-01-01T00:01:00+00:00|Completed create_masks.py\n"
+            return "Provider stopped the task"
+
+        self.processor.runner.cancel_task.side_effect = cancel_task
+
+        result = self.processor.cancel()
+
+        self.assertEqual(result.status, self.statuses.CANCELLED.value)
+        self.assertEqual(
+            result.trainingJob.status, self.statuses.CANCELLED.value
+        )
+        self.assertEqual(result.progressPct, 0)
+        history = result.statusMessage
+        self.assertLess(
+            history.index("Starting create_masks.py"),
+            history.index("Completed create_masks.py"),
+        )
+        self.assertLess(
+            history.index("Completed create_masks.py"),
+            history.index("Provider stopped the task"),
+        )
+        self.assertLess(
+            history.index("Provider stopped the task"),
+            history.index("Training cancelled"),
+        )
+        self.processor.runner.cleanup_task.assert_called_once_with(
+            job_id="job-1", task_id="task-1"
+        )
+
     def test_completed_epochs_are_observed_not_fabricated_from_target(
         self,
     ) -> None:

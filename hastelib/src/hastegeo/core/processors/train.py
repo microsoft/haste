@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 import os
 import tempfile
-from datetime import datetime
 from typing import Iterable, Optional, Union
 
 from hastegeo.core.runners.submission import (
@@ -27,6 +26,10 @@ from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
 from ..utils.tbparser import calculate_metrics, parse_tb_event_logs
+from ..utils.workflow_progress import (
+    read_training_output,
+    workflow_progress_updates,
+)
 from .job_state import Workload, persist_and_enqueue
 
 # Do not prefix with '$' here. This string will be replaced
@@ -221,12 +224,18 @@ class TrainPostprocessor(BaseTrainProcessor):
                 self.model_data.status = task_status
                 self.model_data.trainingOutputPath = f"{MetadataUtils.hash_string(self.model_data.projectId)}/{self.model_data.trainingJob.taskId}"
 
+                self._append_workflow_progress()
                 # Retrieve error details from the batch task before cleanup
                 error_details = self._get_task_error_details(
                     self.model_data.trainingJob.jobId,
                     self.model_data.trainingJob.taskId,
                 )
-                failure_message = "Training job failed"
+                failure_message = (
+                    "Training job cancelled"
+                    if task_status
+                    == self.config.get_status_types().CANCELLED.value
+                    else "Training job failed"
+                )
                 if error_details:
                     failure_message += f"\n{error_details}"
                 self._update_training_progress(
@@ -476,22 +485,17 @@ class TrainPostprocessor(BaseTrainProcessor):
     def _read_training_output(
         self, filename: str, as_chunks: bool = False
     ) -> Optional[Union[str, Iterable[bytes]]]:
-        try:
-            return self.runner.get_filecontent_from_task(
-                job_id=self.model_data.trainingJob.jobId,
-                task_id=self.model_data.trainingJob.taskId,
-                filename=filename,
-                as_chunk=as_chunks,
-            )
-        except Exception as error:
+        content, unavailable = read_training_output(
+            self.runner,
+            job_id=self.model_data.trainingJob.jobId,
+            task_id=self.model_data.trainingJob.taskId,
+            filename=filename,
+            as_chunks=as_chunks,
+            logger=self.logger,
+        )
+        if unavailable:
             self._telemetry_unavailable = True
-            self.logger.warning(
-                "Training telemetry %s is unavailable for task %s (%s)",
-                filename,
-                self.model_data.trainingJob.taskId,
-                type(error).__name__,
-            )
-            return None
+        return content
 
     def _get_training_logs(self) -> tuple[Optional[str], Optional[str]]:
         content = self._read_training_output(
@@ -534,27 +538,15 @@ class TrainPostprocessor(BaseTrainProcessor):
         if not isinstance(content, str):
             self.logger.warning("Workflow progress is not text")
             return False
-        have_progress = False
-        for line in content.splitlines():
-            if not line:
-                continue
-            timestamp, separator, message = line.partition("|")
-            try:
-                if not separator or not message.strip():
-                    raise ValueError("missing progress message")
-                datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-            except ValueError:
-                self.logger.warning(
-                    "Ignoring malformed workflow progress line"
-                )
-                continue
-            have_progress = True
-            if message not in (self.model_data.statusMessage or ""):
-                self._update_training_progress(
-                    message,
-                    step=self.model_data.currentStep or 0,
-                    timestamp=timestamp,
-                )
+        have_progress, updates = workflow_progress_updates(
+            content, self.model_data.statusMessage, logger=self.logger
+        )
+        for timestamp, message in updates:
+            self._update_training_progress(
+                message,
+                step=self.model_data.currentStep or 0,
+                timestamp=timestamp,
+            )
         return have_progress
 
     def _get_task_error_details(self, job_id: str, task_id: str) -> str:
@@ -707,6 +699,7 @@ class TrainPostprocessor(BaseTrainProcessor):
             self.logger.info(
                 f"Training task {self.model_data.trainingJob.taskId} cancellation message: {message}"
             )
+            self._append_workflow_progress()
             # Cleanup the task on the runner
             self.runner.cleanup_task(
                 job_id=self.model_data.trainingJob.jobId,
