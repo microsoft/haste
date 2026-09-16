@@ -254,6 +254,17 @@ body {
   --footer-height: 25px;
 }
 
+.app-startup-loading {
+  position: relative;
+  display: flex;
+  min-height: 100dvh;
+  width: 100%;
+}
+
+.app-startup-loading .route-loading {
+  min-height: 100dvh;
+}
+
 .box-highlight {
   background-color: var(--box-background-color);
 }
