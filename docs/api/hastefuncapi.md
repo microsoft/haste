@@ -2,6 +2,13 @@
 
 Azure Functions backend for the HASTE application. Provides REST endpoints for managing projects, image layers, ML model training/inference, labeling, user management, and geospatial data access.
 
+## Contents
+
+- [Overview](#overview)
+- [Endpoints](#endpoints)
+- [Development Setup](#development-setup)
+- [Auto-generated API Docs](#auto-generated-api-docs)
+
 ---
 
 ## Overview
@@ -21,7 +28,7 @@ All functions are defined in `function_app.py` as a single Azure Functions app. 
 |--------|-------|-------------|
 | GET | `GetDashboardData` | Aggregated dashboard stats: project summaries, layer info, model status, and system-wide metrics. |
 | GET | `GetProjects` | All projects with aggregated layer and model counts. |
-| GET | `GetProjectDetails` | Full project details including image layers, models, and processing status. Requires `projectId`. |
+| GET | `GetProjectDetails` | Project, layer, validation, and optional model details. Supports `ETag`/`If-None-Match`; requires `projectId`. |
 | PUT | `PutProject` | Create or update a project. Auto-generates `projectId` and `creationDate` if not provided. |
 | DELETE | `DeleteProject` | Delete a project by `projectId`. |
 | GET | `GenerateProjectStats` | Regenerates project stats from raw data — useful if stats fall out of sync. |
