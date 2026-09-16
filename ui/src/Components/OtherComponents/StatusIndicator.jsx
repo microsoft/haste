@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import React, { useEffect, useState } from "react";
+import React, { useMemo, useState } from "react";
 import MessageProgressBar from "../OtherComponents/MessageProgressBar";
 import StatusIndicatorModal from "./StatusIndicatorModal";
 import { validateTimestamp } from "../../util/validation";
@@ -9,78 +9,31 @@ import { validateTimestamp } from "../../util/validation";
 import PropTypes from "prop-types";
 import { Button } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
+import { statusPresentation } from "./StatusIndicatorHelper";
 
-const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusMessage, id, prefix = "Status", infoMetadata, contextLabel }) => {
-  StatusIndicator.propTypes = {
-    currentStep: PropTypes.number.isRequired,
-    totalSteps: PropTypes.number.isRequired,
-    progressPct: PropTypes.number.isRequired,
-    status: PropTypes.string.isRequired,
-    statusMessage: PropTypes.string.isRequired,
-    id: PropTypes.string,
-    // Optional list of {label, value} run parameters surfaced above the
-    // status-message table in the info modal (e.g. embedding-model row
-    // run params). When omitted the modal only shows the message log.
-    infoMetadata: PropTypes.arrayOf(
-      PropTypes.shape({
-        label: PropTypes.string.isRequired,
-        value: PropTypes.node.isRequired,
-      })
-    ),
-    // Optional label identifying the element these messages belong to
-    // (e.g. "Image Layer: Pre-event"). Passed through to the info panel.
-    contextLabel: PropTypes.string,
-  };
-  
-
-  const [statusMessageList, setStatusMessageList] = React.useState([]);
-
-  const labelsToReplace = [
+const labelsToReplace = [
     { original: "trainStartTime:", replacement: "Training start time:" },
     { original: "epoch:", replacement: "Epoch: " },
     { original: "elapsedDurationInMinutes:", replacement: "Minutes Elapsed:" },
     { original: "approxMinutesToComplete:", replacement: "Aprox. minutes to complete: " },
     { original: "completedDate:", replacement: "Completed date:" }
-  ];
+];
 
+const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusMessage, id, prefix = "Status", infoMetadata, contextLabel }) => {
   const [isModalVisible, setIsModalVisible] = useState(false);
-
-  useEffect(() => {
-    if (statusMessage) {
-
-      var tempStatusMessages = statusMessage;
-
-      labelsToReplace.forEach(label => {
-        tempStatusMessages = tempStatusMessages.replace(new RegExp(label.original, 'g'), label.replacement);
-      });
-      
-      tempStatusMessages = tempStatusMessages.split("\n");
-      var newStatusMessages = [];
-      if (tempStatusMessages.length > 0) {
-        for (let i = 0; i < tempStatusMessages.length; i++) {
-          if (validateTimestamp(tempStatusMessages[i])) {
-            newStatusMessages.push({
-              message: tempStatusMessages[i].substring(33),
-              timestamp:
-                tempStatusMessages[i].substring(0, 10) +
-                ", " +
-                tempStatusMessages[i].substring(11, 19) +
-                " UTC",
-            });
-          } else {
-            newStatusMessages.push({
-              message: tempStatusMessages[i],
-              timestamp: "",
-            });
-          }
+  const statusMessageList = useMemo(() => {
+    if (!statusMessage) return [];
+    let formatted = statusMessage;
+    labelsToReplace.forEach(label => {
+      formatted = formatted.replace(new RegExp(label.original, "g"), label.replacement);
+    });
+    return formatted.split("\n").map(line => validateTimestamp(line)
+      ? {
+          message: line.substring(33),
+          timestamp: `${line.substring(0, 10)}, ${line.substring(11, 19)} UTC`,
         }
-        setStatusMessageList(newStatusMessages);
-      } else {
-        setStatusMessageList([]);
-      }
-    }
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+      : { message: line, timestamp: "" }
+    );
   }, [statusMessage]);
 
 
@@ -94,35 +47,28 @@ const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusM
   }
 
 
-  // If is an old project, will only show the status message
-  if(currentStep===undefined || totalSteps===undefined || progressPct===undefined) {
-    return (
-      <div className={`modelStatus modelStatus-${status}`}>
-      <span className="fw-semibold"></span>
-      {prefix}: {status}
-    </div>
-    );
-  }
+  const presentation = statusPresentation({ status, currentStep, totalSteps, progressPct });
+  const hasDetails = statusMessageList.length > 0 || Boolean(infoMetadata?.length);
   
 
   return (
     <React.Fragment>
-      {statusMessageList.length > 0 && (
         <div className="d-flex flex-row align-items-center">
-          {status === "Processed" || status === "Failed"  || status === "Cancelled" ? (
-            <div className={`modelStatus modelStatus-${status}`}>
+          {!presentation.active ? (
+            <div className={`modelStatus modelStatus-${presentation.label}`}>
               <span className="fw-semibold"></span>
-              {status === "Cancelled" ? getLastMessageWithTimestamp(statusMessageList[0]) : `${prefix}: ${status}`}
+              {`${prefix}: ${presentation.label}`}
             </div>
           ) : (
             <MessageProgressBar
-              progress={progressPct.toString()}
-              message={getLastMessageWithTimestamp(statusMessageList[0])}
-              stepText={currentStep + "/" + totalSteps}
+              progress={presentation.progress?.toString()}
+              indeterminate={presentation.indeterminate}
+              message={getLastMessageWithTimestamp() || presentation.label}
+              stepText={presentation.stepText}
             />
           )}
 
-          <Button
+          {hasDetails && <Button
             id={id}
             appearance="subtle"
             icon={<FluentIcon name="Info" />}
@@ -132,9 +78,8 @@ const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusM
             onClick={() => {
               setIsModalVisible(true);
             }}
-          />
+          />}
         </div>
-      )}
 
 
       {isModalVisible && (
@@ -150,6 +95,23 @@ const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusM
 
     </React.Fragment>
   );
+};
+
+StatusIndicator.propTypes = {
+  currentStep: PropTypes.number,
+  totalSteps: PropTypes.number,
+  progressPct: PropTypes.number,
+  status: PropTypes.string,
+  statusMessage: PropTypes.string,
+  id: PropTypes.string,
+  prefix: PropTypes.string,
+  infoMetadata: PropTypes.arrayOf(
+    PropTypes.shape({
+      label: PropTypes.string.isRequired,
+      value: PropTypes.node.isRequired,
+    })
+  ),
+  contextLabel: PropTypes.string,
 };
 
 export default StatusIndicator;

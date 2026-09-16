@@ -1,14 +1,39 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import json
+import math
 from datetime import datetime, timezone
+from typing import Optional, Union
 
+from hastegeo.core.utils.logs import Logger
 from tensorboard.backend.event_processing.event_accumulator import (  # type: ignore
     EventAccumulator,
 )
 
+logger = Logger.get_logger(__name__)
 
-def parse_tb_event_logs(log_file_path):
+
+def _finite_number(value: object) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _metric_value(event, tag: str) -> Optional[float]:
+    if event is None:
+        return None
+    value = _finite_number(event.value)
+    if value is None:
+        logger.warning("TensorBoard metric %s is non-finite; unavailable", tag)
+        return None
+    return round(value, 6)
+
+
+def parse_tb_event_logs(log_file_path: str) -> tuple[Optional[str], str]:
     """
     Parses TensorBoard event logs to extract epoch, accuracy, and loss information.
 
@@ -32,7 +57,20 @@ def parse_tb_event_logs(log_file_path):
     events_by_tag = {}
     all_events = []
     for tag in ea.Tags().get("scalars", []):
-        scalar_events = ea.Scalars(tag)
+        scalar_events = []
+        for event in ea.Scalars(tag):
+            wall_time = _finite_number(event.wall_time)
+            try:
+                if wall_time is None:
+                    raise ValueError("non-finite timestamp")
+                datetime.fromtimestamp(wall_time, timezone.utc)
+            except (ValueError, OverflowError, OSError):
+                logger.warning(
+                    "TensorBoard metric %s has an invalid timestamp; ignored",
+                    tag,
+                )
+                continue
+            scalar_events.append(event)
         events_by_tag[tag] = {event.step: event for event in scalar_events}
         all_events.extend(scalar_events)
     start_timestamp = (
@@ -43,7 +81,14 @@ def parse_tb_event_logs(log_file_path):
     epoch_events = events_by_tag.get("epoch", {})
     latest_epoch_events = {}
     for step, event in epoch_events.items():
-        epoch_value = event.value
+        epoch_value = _finite_number(event.value)
+        if (
+            epoch_value is None
+            or epoch_value < 0
+            or not epoch_value.is_integer()
+        ):
+            logger.warning("TensorBoard epoch value is invalid; ignored")
+            continue
         if (
             epoch_value not in latest_epoch_events
             or step > latest_epoch_events[epoch_value].step
@@ -91,9 +136,9 @@ def parse_tb_event_logs(log_file_path):
                 else None
             ),
             "multiclassAccuracy": (
-                round(acc_event.value, 6) if acc_event else None
+                _metric_value(acc_event, "train_MulticlassAccuracy")
             ),
-            "loss": round(loss_event.value, 6) if loss_event else None,
+            "loss": _metric_value(loss_event, "train_loss"),
             "wallTime": datetime.fromtimestamp(
                 epoch_event.wall_time, timezone.utc
             ).strftime("%Y-%m-%d %H:%M:%S"),
@@ -106,12 +151,17 @@ def parse_tb_event_logs(log_file_path):
             start_timestamp, timezone.utc
         ).strftime("%Y-%m-%d %H:%M:%S")
 
-    return start_timestamp, json.dumps(result, default=str)
+    return start_timestamp, json.dumps(result, allow_nan=False)
 
 
 def calculate_metrics(
-    logs, maxEpochs, time_field="elapsedDurationInMinutes", epoch_field="epoch"
-):
+    logs: Optional[str],
+    maxEpochs: Union[str, int, None],
+    time_field: str = "elapsedDurationInMinutes",
+    epoch_field: str = "epoch",
+    *,
+    job_completed: bool = False,
+) -> Optional[dict]:
     """
     Calculate completion metrics from TensorBoard logs.
 
@@ -128,41 +178,84 @@ def calculate_metrics(
             - 'total_elapsed_time' (float): The total elapsed time.
             - 'time_per_epoch' (float): The average time per epoch.
     """
-    if logs is not None:
-        try:
-            logs = json.loads(logs)
-        except (TypeError, json.JSONDecodeError):
-            return None
-        epoch_0_time = None
-        for log in logs:
-            if time_field in log and log[epoch_field] == 0:
-                epoch_0_time = log[time_field]
-                break
-        if epoch_0_time:
-            total_epochs = int(maxEpochs) if maxEpochs else 0
-            total_elapsed_time = sum(
-                log[time_field] for log in logs if time_field in log
-            )
-            total_elapsed_time = round(total_elapsed_time, 2)
-            completed_epochs_logs = list(
-                log for log in logs if log[epoch_field] < total_epochs
-            )
-            completed_epochs = max(0, len(completed_epochs_logs) - 1)
+    if logs is None:
+        return None
+    try:
+        records = json.loads(logs)
+        target = int(maxEpochs) if maxEpochs not in (None, "") else None
+    except (TypeError, ValueError):
+        logger.warning("Training progress has invalid JSON or epoch target")
+        return None
+    if not isinstance(records, list) or (target is not None and target < 1):
+        logger.warning("Training progress has invalid records or epoch target")
+        return None
+    if not records:
+        return None
 
-            if completed_epochs > 0:
-                avg_time_per_epoch = round(epoch_0_time, 2)
-                total_time = total_epochs * avg_time_per_epoch
-                time_to_completion = round(
-                    max(0, total_time - total_elapsed_time), 2
-                )
-                time_per_epoch = round(avg_time_per_epoch, 2)
-            else:
-                time_to_completion = None
-                time_per_epoch = None
-            return {
-                "completed_epochs": completed_epochs,
-                "approx_time_to_complete": time_to_completion,
-                "total_elapsed_time": total_elapsed_time,
-                "time_per_epoch": time_per_epoch,
-            }
-    return None
+    durations = {}
+    for record in records:
+        if not isinstance(record, dict):
+            logger.warning("Training progress record is not an object")
+            return None
+        epoch = _finite_number(record.get(epoch_field))
+        duration = _finite_number(record.get(time_field))
+        if (
+            epoch is None
+            or epoch < 0
+            or not epoch.is_integer()
+            or duration is None
+            or duration < 0
+        ):
+            logger.warning(
+                "Training progress has an invalid epoch or duration"
+            )
+            return None
+        durations[int(epoch)] = duration
+
+    current_epoch = max(durations)
+    completed_epochs = current_epoch + (1 if job_completed else 0)
+    if target is not None:
+        completed_epochs = min(completed_epochs, target)
+    completed_durations = [
+        duration
+        for epoch, duration in durations.items()
+        if (job_completed or epoch < current_epoch) and duration > 0
+    ]
+    time_per_epoch = (
+        sum(completed_durations) / len(completed_durations)
+        if completed_durations
+        else None
+    )
+    elapsed = sum(durations.values())
+    if not math.isfinite(elapsed) or (
+        time_per_epoch is not None and not math.isfinite(time_per_epoch)
+    ):
+        logger.warning("Training progress duration exceeds numeric limits")
+        return None
+    remaining = None
+    if job_completed:
+        remaining = 0.0
+    elif time_per_epoch is not None and target is not None:
+        current_duration = durations[current_epoch]
+        try:
+            remaining = max(
+                0.0,
+                (target - completed_epochs) * time_per_epoch
+                - current_duration,
+            )
+        except OverflowError:
+            logger.warning("Training ETA exceeds numeric limits; unavailable")
+            remaining = None
+        if remaining is not None and not math.isfinite(remaining):
+            logger.warning("Training ETA exceeds numeric limits; unavailable")
+            remaining = None
+    return {
+        "completed_epochs": completed_epochs,
+        "approx_time_to_complete": (
+            round(remaining, 2) if remaining is not None else None
+        ),
+        "total_elapsed_time": round(elapsed, 2),
+        "time_per_epoch": (
+            round(time_per_epoch, 2) if time_per_epoch is not None else None
+        ),
+    }
