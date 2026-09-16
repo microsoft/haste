@@ -48,11 +48,15 @@ def record_image(
     configuration: dict,
 ) -> dict:
     verify_image_configuration(build, configuration)
+    attributes = metadata.get("changeableAttributes")
     if (
-        metadata.get("changeableAttributes", {}).get("writeEnabled")
-        is not False
+        not isinstance(attributes, dict)
+        or attributes.get("writeEnabled") is not False
+        or attributes.get("deleteEnabled") is not False
     ):
-        raise ValueError("RC image must be locked before recording provenance")
+        raise ValueError(
+            "RC image must be write- and delete-locked before recording provenance"
+        )
     return image_record(
         build, family, metadata["digest"], registry_fingerprint(registry)
     )

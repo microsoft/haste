@@ -280,6 +280,34 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             workflow.index("      - name: Deploy\n"),
         )
 
+    def test_image_reuse_and_deployment_require_both_boolean_locks(
+        self,
+    ) -> None:
+        for name, start, end in (
+            (
+                "hastegeo-publish.yml",
+                'if [[ -z "$RC_BUILD_IDENTITY" ]]; then',
+                "Legacy RC image locked",
+            ),
+            (
+                "deploy-apps.yml",
+                "- name: Verify RC image digests",
+                "- name: Deploy\n",
+            ),
+        ):
+            with self.subTest(workflow=name):
+                workflow = (
+                    REPO_ROOT / ".github" / "workflows" / name
+                ).read_text(encoding="utf-8")
+                guard = workflow.split(start, 1)[1].split(end, 1)[0]
+                self.assertIn("jq -e", guard)
+                self.assertRegex(
+                    guard,
+                    r"\.writeEnabled\s*==\s*false\s+and\s+"
+                    r"\.deleteEnabled\s*==\s*false",
+                )
+                self.assertIn("exit 1", guard)
+
     def test_scheduled_cleanup_is_report_only(self):
         workflow = (REPO_ROOT / ".github/workflows/rc-cleanup.yml").read_text(
             encoding="utf-8"

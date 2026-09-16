@@ -625,22 +625,57 @@ class ImageProvenanceTests(unittest.TestCase):
         }
         metadata = {
             "digest": "sha256:" + "c" * 64,
-            "changeableAttributes": {"writeEnabled": False},
+            "changeableAttributes": {
+                "writeEnabled": False,
+                "deleteEnabled": False,
+            },
         }
         record = publish_hastegeo_artifacts.record_image(
             build, "training", "example.azurecr.io", metadata, configuration
         )
         self.assertEqual(record["source_sha"], build.source_sha)
         self.assertNotIn("example.azurecr.io", json.dumps(record))
-        metadata["changeableAttributes"]["writeEnabled"] = True
-        with self.assertRaisesRegex(ValueError, "locked"):
-            publish_hastegeo_artifacts.record_image(
-                build,
-                "training",
-                "example.azurecr.io",
-                metadata,
-                configuration,
-            )
+        for field in ("writeEnabled", "deleteEnabled"):
+            for value in (True, None, "false", 0):
+                with self.subTest(field=field, value=value):
+                    metadata["changeableAttributes"] = {
+                        "writeEnabled": False,
+                        "deleteEnabled": False,
+                        field: value,
+                    }
+                    with self.assertRaisesRegex(ValueError, "locked"):
+                        publish_hastegeo_artifacts.record_image(
+                            build,
+                            "training",
+                            "example.azurecr.io",
+                            metadata,
+                            configuration,
+                        )
+            with self.subTest(missing=field):
+                metadata["changeableAttributes"] = {
+                    name: False
+                    for name in ("writeEnabled", "deleteEnabled")
+                    if name != field
+                }
+                with self.assertRaisesRegex(ValueError, "locked"):
+                    publish_hastegeo_artifacts.record_image(
+                        build,
+                        "training",
+                        "example.azurecr.io",
+                        metadata,
+                        configuration,
+                    )
+        for attributes in (None, [], "locked"):
+            with self.subTest(attributes=attributes):
+                metadata["changeableAttributes"] = attributes
+                with self.assertRaisesRegex(ValueError, "locked"):
+                    publish_hastegeo_artifacts.record_image(
+                        build,
+                        "training",
+                        "example.azurecr.io",
+                        metadata,
+                        configuration,
+                    )
         configuration["config"]["Labels"][
             "org.opencontainers.image.revision"
         ] = ("b" * 40)

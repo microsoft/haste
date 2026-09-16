@@ -130,8 +130,10 @@ jobs:
             EXPECTED="${PAIR#*=}"
             METADATA=$(az acr repository show --subscription "$SUBSCRIPTION_ID" \
               --name "$ACR_NAME" --image "${IMAGE}:${VERSION}" -o json)
-            if [[ "$(jq -r '.digest' <<<"$METADATA")" != "$EXPECTED" ||
-                  "$(jq -r '.changeableAttributes.writeEnabled' <<<"$METADATA")" != false ]]; then
+            if [[ "$(jq -r '.digest' <<<"$METADATA")" != "$EXPECTED" ]] ||
+               ! jq -e '.changeableAttributes |
+                 .writeEnabled == false and .deleteEnabled == false' \
+                 <<<"$METADATA" >/dev/null; then
               echo "::error::RC image digest or immutability check failed: $IMAGE"
               exit 1
             fi

@@ -351,7 +351,9 @@ jobs:
             --name "$ACR_NAME" --image "$IMAGE_REF" -o json > ../image-before.json
           if [[ -z "$RC_BUILD_IDENTITY" ]]; then
             if [[ "$IMAGE_EXISTS" == true ]]; then
-              test "$(jq -r '.changeableAttributes.writeEnabled' ../image-before.json)" = false || {
+              jq -e '.changeableAttributes |
+                .writeEnabled == false and .deleteEnabled == false' \
+                ../image-before.json >/dev/null || {
                 echo "::error::Existing legacy RC image is not locked"
                 exit 1
               }
