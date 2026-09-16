@@ -17,11 +17,13 @@ import os
 from ..config import ArtifactTypes, Config
 from ..data_layer.unified import UnifiedDataLayer
 from ..models.projects import ImageLayer, Model, TrainingJob
+from ..runners.submission import TaskSubmissionPendingError, submit_task
 from ..runners.unified_runner import UnifiedRunner
 from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
+from .job_state import Workload, persist_and_enqueue
 
 # Do not prefix with '$'. Replaced at runtime with the task working directory.
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
@@ -46,9 +48,11 @@ class EmbeddingPreprocessor:
         self.model_data.progressPct = 0.0
         # 3 friendly steps: submit -> embedding -> tiling/finalize.
         self.model_data.totalSteps = 3
-        self.queue_client.put_message(json.dumps(self.model_data.dict()))
         self.model_data.statusMessage = MetadataUtils.append_status_message(
             self.model_data.statusMessage, "Queued for embedding"
+        )
+        self.model_data = persist_and_enqueue(
+            self.model_data, Workload.EMBEDDING, self.config, self.queue_client
         )
         return self.model_data
 
@@ -78,11 +82,6 @@ class EmbeddingPostprocessor:
             candidate_pool_ids=self.config.get_azure_batch_config()[
                 "training_pool_ids"
             ],
-        )
-        self.queue_client = AzureQueueHandler(
-            config.queue_config["queue_connection_string"],
-            config.queue_config["embedding_queue_name"],
-            config.queue_config["queue_account_url"],
         )
 
     def process(self):
@@ -126,7 +125,10 @@ class EmbeddingPostprocessor:
                     task_id=self.model_data.embeddingJob.taskId,
                 )
 
-            elif task_status == self.config.get_status_types().FAILED.value:
+            elif task_status in {
+                self.config.get_status_types().FAILED.value,
+                self.config.get_status_types().CANCELLED.value,
+            }:
                 self.model_data.status = task_status
                 self.model_data.embeddingJob.status = task_status
                 self.model_data.embeddingJob.completedDate = (
@@ -145,9 +147,6 @@ class EmbeddingPostprocessor:
             else:
                 self.model_data.status = task_status
                 self.model_data.embeddingJob.status = task_status
-                self.queue_client.put_message(
-                    json.dumps(self.model_data.dict())
-                )
 
         return self.model_data
 
@@ -161,15 +160,22 @@ class EmbeddingPostprocessor:
                 f'${BATCH_JOB_WORKDIR}/{input_files["config"]["file_path"]}'
                 '"'
             )
-            job_id = self.config.get_azure_batch_config()[
-                "training_batch_job_id"
-            ][:64]
-            task_id = f"{EMBEDDING_PREFIX}-{MetadataUtils.generate_id()}"
+            pending_job = self.model_data.embeddingJob
+            job_id = (
+                (pending_job.jobId if pending_job else None)
+                or self.config.get_azure_batch_config()[
+                    "training_batch_job_id"
+                ]
+            )[:64]
+            task_id = (
+                pending_job.taskId if pending_job else None
+            ) or f"{EMBEDDING_PREFIX}-{MetadataUtils.generate_id()}"
             output_prefix = (
                 f"{MetadataUtils.hash_string(self.model_data.projectId)}"
                 f"/{task_id}"
             )
-            job_id, task_id = self.runner.add_task(
+            job_id, task_id = submit_task(
+                self.runner,
                 job_id=job_id,
                 task_id=task_id,
                 output_prefix=output_prefix,
@@ -194,7 +200,8 @@ class EmbeddingPostprocessor:
             self._update_progress(
                 f"Embedding submitted with task id {task_id}", step=1
             )
-            self.queue_client.put_message(json.dumps(self.model_data.dict()))
+        except TaskSubmissionPendingError:
+            raise
         except Exception as e:
             self.logger.error(
                 f"Error executing embedding for model "

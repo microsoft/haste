@@ -3,6 +3,7 @@
 import importlib
 
 from ..utils.metadata import MetadataUtils
+from .conditional import JsonDocument
 
 
 class UnifiedDataLayer:
@@ -35,9 +36,7 @@ class UnifiedDataLayer:
 
         if storage_type in storage_class_map:
             module_name, class_name = storage_class_map[storage_type]
-            module = importlib.import_module(
-                f"{__package__}.{module_name}"
-            )
+            module = importlib.import_module(f"{__package__}.{module_name}")
             data_layer_class = getattr(module, class_name)
             self.data_layer = data_layer_class(
                 partition_key=self.partition_key, **kwargs
@@ -59,6 +58,22 @@ class UnifiedDataLayer:
             data=data,
             data_file_path=data_file_path,
             data_format=data_format,
+        )
+
+    def load_json_versioned(
+        self, identifier: str, data_type: str
+    ) -> tuple[JsonDocument, str]:
+        return self.data_layer.load_json_versioned(identifier, data_type)
+
+    def save_json_if_version(
+        self,
+        identifier: str,
+        data_type: str,
+        data: JsonDocument,
+        expected_version: str | None,
+    ) -> None:
+        self.data_layer.save_json_if_version(
+            identifier, data_type, data, expected_version
         )
 
     def save_chunk(
