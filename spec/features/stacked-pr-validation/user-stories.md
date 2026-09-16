@@ -1,5 +1,13 @@
 # User story: checks follow the pull request
 
+## Contents
+
+- [US-001](#us-001)
+- [Agent Assignment Map](#agent-assignment-map)
+- [US-002: independent builds do not collide](#us-002-independent-builds-do-not-collide)
+- [US-003: an RC deployment has a complete artifact set](#us-003-an-rc-deployment-has-a-complete-artifact-set)
+- [US-004: producer updates do not break the running publisher](#us-004-producer-updates-do-not-break-the-running-publisher)
+
 ## US-001
 
 As a contributor, I want a prerequisite-based pull request to receive the

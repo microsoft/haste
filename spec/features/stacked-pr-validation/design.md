@@ -55,6 +55,10 @@ and digest. Only a complete matching pair can produce the deployment-set
 manifest; an RC deployment verifies that manifest against its app source.
 Rerunning a build keeps its identity and resumes missing images.
 
+An image is locked only when both `writeEnabled` and `deleteEnabled` are
+explicitly false. Missing or non-boolean lock attributes are rejected when
+recording provenance, reusing a legacy image, and checking a deployment.
+
 Wheel upload/download artifacts are scoped to the upstream run attempt.
 Image builds for the same family/version serialize; already-uploaded image
 evidence must compare identically before reuse. Publishing manifests stores
