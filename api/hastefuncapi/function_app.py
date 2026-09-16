@@ -1246,19 +1246,18 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
             for field in FOOTPRINT_TILE_FIELDS:
                 setattr(image_data, field, getattr(stored_layer, field))
             output = image_data
+            await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().IMAGELAYER.value,
+                    partition_key=output.projectId,
+                ).save,
+                output.imageLayerId,
+                output.model_dump(exclude=FOOTPRINT_TILE_FIELDS),
+            )
         else:
             output = await asyncio.to_thread(
                 ImageryPreProcessor(image_data=image_data).queue_for_processing
             )
-
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().IMAGELAYER.value,
-                partition_key=output.projectId,
-            ).save,
-            output.imageLayerId,
-            output.model_dump(exclude=FOOTPRINT_TILE_FIELDS),
-        )
 
         # Repeating the check because we want to save stats after the image layer, if new, is saved
 
@@ -2509,15 +2508,6 @@ async def PutRunModelQueueMessage(req: func.HttpRequest) -> func.HttpResponse:
             TrainPreprocessor(output).send_to_queue
         )
 
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=output.projectId,
-            ).save,
-            output.modelId,
-            output.dict(),
-        )
-
         request = StatsPreProcessor(
             request=StatsRequest(
                 action="add",
@@ -2558,6 +2548,7 @@ async def PutRunInferenceQueueMessage(
         output = await asyncio.to_thread(
             InferencePreprocessor(output).send_to_queue
         )
+
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
     except FileNotFoundError:
@@ -2623,15 +2614,6 @@ async def PutRunEmbeddingQueueMessage(
 
         output = await asyncio.to_thread(
             EmbeddingPreprocessor(output).send_to_queue
-        )
-
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=output.projectId,
-            ).save,
-            output.modelId,
-            output.dict(),
         )
 
         request = StatsPreProcessor(
@@ -3040,15 +3022,6 @@ async def PutArtifactsZipQueueMessage(
             ).send_to_zip_queue
         )
 
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL_ARTIFACTS.value,
-                partition_key=output.projectId,
-            ).save,
-            output.modelId,
-            output.dict(),
-        )
-
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
     except ValidationError as e:
@@ -3164,16 +3137,6 @@ async def PutCancelModelQueueMessage(
                 ).send_to_queue,
                 status=config.get_status_types().CANCELLED.value,
             )
-
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=output.projectId,
-                config=config,
-            ).save,
-            output.modelId,
-            output.dict(),
-        )
 
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
