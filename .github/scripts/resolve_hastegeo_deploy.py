@@ -6,20 +6,28 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "hastelib"))
 
+from haste_artifacts import (  # noqa: E402
+    artifact_set_name,
+    read_json,
+    validate_artifact_set,
+)
 from haste_release import (  # noqa: E402
     RELEASE_TAG,
     REPOSITORY,
     latest_stable,
     list_release_assets,
+    run_command,
 )
 
 DEPLOY_VERSION_RE = re.compile(
@@ -62,12 +70,52 @@ def resolve_deploy_wheel(
     return version, wheel_name, url
 
 
-def emit_outputs(version: str, wheel_name: str, url: str) -> None:
+def resolve_rc_artifact_set(
+    version: str, source_sha: str, assets: Sequence[str]
+) -> dict:
+    name = artifact_set_name(version)
+    if not source_sha:
+        raise ValueError(
+            "RC deployments require the exact application source SHA"
+        )
+    if name not in assets:
+        raise ValueError("RC artifact set is incomplete or lacks provenance")
+    with tempfile.TemporaryDirectory() as directory:
+        run_command(
+            [
+                "gh",
+                "release",
+                "download",
+                RELEASE_TAG,
+                "--repo",
+                REPOSITORY,
+                "--pattern",
+                name,
+                "--dir",
+                directory,
+            ]
+        )
+        manifest = read_json(Path(directory) / name)
+    validate_artifact_set(manifest, version, source_sha)
+    return manifest
+
+
+def emit_outputs(
+    version: str, wheel_name: str, url: str, artifact_set: dict | None = None
+) -> None:
     values = {
         "version": version,
         "wheel_name": wheel_name,
         "url": url,
     }
+    if artifact_set is not None:
+        images = artifact_set["images"]
+        values.update(
+            artifact_set=json.dumps(artifact_set, sort_keys=True),
+            registry_sha256=images["training"]["registry_sha256"],
+            training_digest=images["training"]["digest"],
+            imageprep_digest=images["imageryprep"]["digest"],
+        )
     for key, value in values.items():
         print(f"{key}={value}")
 
@@ -81,12 +129,16 @@ def emit_outputs(version: str, wheel_name: str, url: str) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", default="")
+    parser.add_argument("--source-sha", default="")
     args = parser.parse_args(argv)
 
-    version, wheel_name, url = resolve_deploy_wheel(
-        args.version, list_release_assets()
-    )
-    emit_outputs(version, wheel_name, url)
+    assets = list_release_assets()
+    version, wheel_name, url = resolve_deploy_wheel(args.version, assets)
+    manifest = None
+    if "rc" in version:
+        manifest = resolve_rc_artifact_set(version, args.source_sha, assets)
+        url += "#sha256=" + manifest["wheel"]["wheel_sha256"]
+    emit_outputs(version, wheel_name, url, manifest)
     return 0
 
 

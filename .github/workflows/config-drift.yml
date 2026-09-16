@@ -6,8 +6,6 @@ name: Config drift
 # environment.
 on:
   pull_request:
-    branches:
-      - main
     paths:
       - "hastelib/src/**"
       - "api/**"

@@ -9,6 +9,45 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class ReleaseWorkflowPolicyTests(unittest.TestCase):
+    def test_secret_scan_diagnostics_keep_full_redaction(self):
+        text = (REPO_ROOT / ".github/workflows/secret-scan.yml").read_text(
+            encoding="utf-8"
+        )
+        commands = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip().startswith(("git --", "detect --"))
+        ]
+        self.assertEqual(len(commands), 3)
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertIn("--verbose", command)
+                self.assertIn("--redact=100", command)
+                self.assertIn("--exit-code 1", command)
+
+    def test_validation_runs_for_pull_requests_against_stack_branches(self):
+        for name in (
+            "hastegeo-build.yml",
+            "docker-build-and-push.yml",
+            "config-drift.yml",
+            "dependency-validation.yml",
+            "secret-scan.yml",
+            "codeql.yml",
+        ):
+            with self.subTest(workflow=name):
+                text = (REPO_ROOT / ".github" / "workflows" / name).read_text(
+                    encoding="utf-8"
+                )
+                match = re.search(
+                    r"^  pull_request:(.*?)(?=^  (?:push|schedule|workflow_dispatch):"
+                    r"|^jobs:|^permissions:)",
+                    text,
+                    re.MULTILINE | re.DOTALL,
+                )
+                self.assertIsNotNone(match)
+                self.assertNotIn("branches:", match.group(1))
+                self.assertNotIn("branches-ignore:", match.group(1))
+
     def test_external_actions_are_pinned_to_full_sha(self):
         workflows = [
             ".github/workflows/hastegeo-build.yml",
@@ -139,7 +178,107 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         )
         self.assertIn('IMAGE_REF="${IMAGE_NAME}:${VERSION}"', image_block)
         self.assertNotIn("TAG_PREFIX", image_block)
-        self.assertIn("Reusing already locked RC image", image_block)
+        self.assertIn("Verifying existing RC image before reuse", image_block)
+        self.assertIn("check-image --identity", image_block)
+        self.assertIn("HASTE_BUILD_SOURCE_SHA=$SOURCE_SHA", image_block)
+        self.assertIn("fail-fast: false", image_block)
+        self.assertIn("path: release-policy", image_block)
+        self.assertIn('POLICY="../release-policy/', image_block)
+        self.assertNotIn("2>/dev/null", image_block)
+
+    def test_existing_rc_image_lookup_requests_tag_details(self) -> None:
+        workflow = (
+            REPO_ROOT / ".github/workflows/hastegeo-publish.yml"
+        ).read_text(encoding="utf-8")
+        image_block = workflow.split("  build-rc-images:", 1)[1].split(
+            "  rc-artifact-summary:", 1
+        )[0]
+        lookup = re.search(
+            r"MATCHES=\$\(az acr repository show-tags\s+(.*?)\)",
+            image_block,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(lookup)
+        self.assertIn("--detail", lookup.group(1).split())
+        self.assertIn("--query \"[?name=='${VERSION}']\"", lookup.group(1))
+
+    def test_candidate_identity_is_frozen_across_build_and_publication(self):
+        build = (
+            REPO_ROOT / ".github/workflows/hastegeo-build.yml"
+        ).read_text()
+        publish = (
+            REPO_ROOT / ".github/workflows/hastegeo-publish.yml"
+        ).read_text()
+        self.assertIn("BUILD_RUN_ID: ${{ github.run_id }}", build)
+        self.assertIn("SOURCE_DATE_EPOCH:", build)
+        resolve_job = build.split("  resolve-version:", 1)[1].split(
+            "  build-wheel:", 1
+        )[0]
+        self.assertIn("actions: read", resolve_job)
+        self.assertIn("build-manifest.json", build)
+        self.assertIn(
+            "BUILD_RUN_ID: ${{ github.event.workflow_run.id }}", publish
+        )
+        self.assertIn(
+            "group: hastegeo-rc-publish-${{ needs.prepare.outputs.version }}",
+            publish,
+        )
+        self.assertIn("queue: max", publish)
+        self.assertIn(
+            "group: hastegeo-rc-image-${{ matrix.image_name }}-${{ needs.prepare.outputs.version }}",
+            publish,
+        )
+        self.assertIn(
+            "name: ${{ needs.resolve-version.outputs.artifact_name }}",
+            build,
+        )
+        self.assertIn("PROTOCOL=auto", build)
+        self.assertIn('--artifact-protocol "$PROTOCOL"', build)
+        self.assertIn("--artifact-protocol produced", publish)
+        self.assertEqual(publish.count('--name "$WHEEL_ARTIFACT"'), 4)
+        self.assertNotIn('--name "hastegeo-wheel-${RUN_ID}"', publish)
+        self.assertIn(
+            "BUILD_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}",
+            publish,
+        )
+        self.assertIn(
+            "Check existing image evidence before retry upload", publish
+        )
+        self.assertNotIn("overwrite: true", publish)
+        self.assertIn(
+            "--manifest release-artifact/build-manifest.json", publish
+        )
+        self.assertNotIn("gh pr comment", publish)
+
+    def test_legacy_compatibility_does_not_claim_verified_manifests(
+        self,
+    ) -> None:
+        publish = (
+            REPO_ROOT / ".github/workflows/hastegeo-publish.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("EXTRA=(--legacy-rc)", publish)
+        self.assertIn("Existing legacy RC image is not locked", publish)
+        self.assertIn(
+            "if: needs.prepare.outputs.rc_build_identity != ''", publish
+        )
+        self.assertIn("Report legacy RC compatibility artifacts", publish)
+        self.assertIn(
+            "does not provide a verified deployment-set manifest", publish
+        )
+
+    def test_rc_deployment_checks_source_and_image_digests_before_mutation(
+        self,
+    ):
+        workflow = (
+            REPO_ROOT / ".github/workflows/deploy-apps.yml"
+        ).read_text()
+        self.assertIn('--source-sha "${{ github.sha }}"', workflow)
+        self.assertIn("Verify RC image digests", workflow)
+        self.assertIn("EXPECTED_REGISTRY_SHA", workflow)
+        self.assertLess(
+            workflow.index("Verify RC image digests"),
+            workflow.index("      - name: Deploy\n"),
+        )
 
     def test_scheduled_cleanup_is_report_only(self):
         workflow = (REPO_ROOT / ".github/workflows/rc-cleanup.yml").read_text(
