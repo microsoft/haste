@@ -6,7 +6,9 @@ on:
       - "hastelib/**"
       - ".github/scripts/resolve_hastegeo_version.py"
       - ".github/scripts/publish_hastegeo_wheel.py"
+      - ".github/scripts/publish_hastegeo_artifacts.py"
       - ".github/workflows/hastegeo-build.yml"
+      - ".github/hastegeo-artifacts.json"
   push:
     branches:
       - main
@@ -46,6 +48,7 @@ jobs:
   resolve-version:
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
     outputs:
       version: ${{ steps.resolve.outputs.version }}
@@ -53,6 +56,10 @@ jobs:
       channel: ${{ steps.resolve.outputs.channel }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       already_published: ${{ steps.resolve.outputs.already_published }}
+      rc_build_identity: ${{ steps.resolve.outputs.rc_build_identity }}
+      source_date_epoch: ${{ steps.resolve.outputs.source_date_epoch }}
+      artifact_name: ${{ steps.resolve.outputs.artifact_name }}
+      artifact_protocol: ${{ steps.resolve.outputs.artifact_protocol }}
     steps:
       - name: Checkout source without persisted credentials
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -74,12 +81,21 @@ jobs:
           CHANNEL: ${{ github.event.inputs.channel || (github.event_name == 'pull_request' && 'rc' || 'release') }}
           BUMP: ${{ github.event.inputs.bump || 'patch' }}
           SET_VERSION: ${{ github.event.inputs.set_version || '' }}
+          BUILD_RUN_ID: ${{ github.run_id }}
+          BUILD_ATTEMPT: ${{ github.run_attempt }}
         run: |
+          PROTOCOL=auto
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            PROTOCOL=legacy
+          fi
           python .github/scripts/resolve_hastegeo_version.py \
             --channel "$CHANNEL" \
             --source-sha "$SOURCE_SHA" \
             --bump "$BUMP" \
-            --set-version "$SET_VERSION"
+            --set-version "$SET_VERSION" \
+            --build-run-id "$BUILD_RUN_ID" \
+            --build-attempt "$BUILD_ATTEMPT" \
+            --artifact-protocol "$PROTOCOL"
 
   build-wheel:
     needs: resolve-version
@@ -109,21 +125,45 @@ jobs:
         working-directory: hastelib
         env:
           HASTE_SET_VERSION: ${{ needs.resolve-version.outputs.version }}
+          SOURCE_DATE_EPOCH: ${{ needs.resolve-version.outputs.source_date_epoch }}
         run: python -m build --wheel
 
-      - name: Validate wheel without GitHub credentials
+      - name: Write frozen RC build identity
+        if: needs.resolve-version.outputs.rc_build_identity != ''
+        env:
+          RC_BUILD_IDENTITY: ${{ needs.resolve-version.outputs.rc_build_identity }}
         run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          Path("rc-build.json").write_text(
+              json.dumps(json.loads(os.environ["RC_BUILD_IDENTITY"])),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Validate wheel without GitHub credentials
+        env:
+          HAS_RC_IDENTITY: ${{ needs.resolve-version.outputs.rc_build_identity != '' }}
+        run: |
+          EXTRA=()
+          if [[ "$HAS_RC_IDENTITY" == "true" ]]; then
+            EXTRA=(--build-identity rc-build.json --json-output hastelib/dist/build-manifest.json)
+          fi
           python .github/scripts/publish_hastegeo_wheel.py \
             --wheel "hastelib/dist/${{ needs.resolve-version.outputs.wheel_name }}" \
             --expected-version "${{ needs.resolve-version.outputs.version }}" \
             --channel "${{ needs.resolve-version.outputs.channel }}" \
             --source-sha "${{ needs.resolve-version.outputs.source_sha }}" \
-            --validate-only
+            --validate-only "${EXTRA[@]}"
 
       - name: Upload validated wheel artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: hastegeo-wheel-${{ github.run_id }}
+          name: ${{ needs.resolve-version.outputs.artifact_name }}
           if-no-files-found: error
           retention-days: 7
-          path: hastelib/dist/${{ needs.resolve-version.outputs.wheel_name }}
+          path: |
+            hastelib/dist/${{ needs.resolve-version.outputs.wheel_name }}
+            hastelib/dist/build-manifest.json

@@ -1,7 +1,8 @@
 # Releasing HASTE
 
-HASTE versions three things independently. They are related but **never
-equal**, and conflating them has broken deployments before.
+HASTE versions the product and library independently. RC validation uses a
+matching wheel/image artifact set; that does not turn a library version
+into a product-release version.
 
 | What | Git tag | Artifact tag | Published as |
 |---|---|---|---|
@@ -15,6 +16,7 @@ equal**, and conflating them has broken deployments before.
 - [Cutting a product release](#cutting-a-product-release)
 - [What `haste-binaries` is](#what-haste-binaries-is)
 - [Historical exceptions](#historical-exceptions)
+- [Verified branch artifacts](#verified-branch-artifacts)
 
 ## Tag conventions
 
@@ -40,8 +42,9 @@ makes a re-run idempotent.
 
 The wheel version itself is PEP 440 and therefore cannot carry the product
 convention: `1.0.40rc1` has no dash and no zero padding, because PEP 440
-normalizes `1.0.40-rc01` to `1.0.40rc1` regardless. This is the main reason
-a wheel version can never be reused as a product or image tag.
+normalizes `1.0.40-rc01` to `1.0.40rc1` regardless. Do not confuse that
+library version with the product-release tag. Branch-validation image tags
+explicitly follow their matching wheel version, as described below.
 
 The wheel line (`1.0.x`) is versioned on its own cadence and has no
 relationship to the product version (`2.x`). Do not try to sync them.
@@ -54,12 +57,52 @@ an image tag as a PEP 440 version, so the dash and the zero padding are
 both free here — and they act as a deliberate marker that a given tag is
 **not** a wheel version.
 
-> **Known gap:** `hastegeo-publish.yml` still tags RC images with the
-> resolved *wheel* version (e.g. `1.0.40rc4`), and there is no stable image
-> build on merge at all — stable images have been built by hand via
-> `workflow_dispatch`. Until that is fixed, **always pass
-> `training_image_tag` / `imageprep_image_tag` explicitly when deploying**;
-> a blank input defaults to the wheel version and will pull the wrong image.
+For branch validation, `hastegeo-publish.yml` deliberately tags both worker
+images with their matching RC wheel version. Use the complete artifact-set
+manifest described below. Stable/product image publishing remains separate;
+pass explicit product image tags for stable deployments.
+
+## Verified branch artifacts
+
+Producers first read `.github/hastegeo-artifacts.json` from the actual
+default branch to determine which format the running publisher supports.
+Until it advertises `run-bound-v1`, builds retain the existing RC counter
+and `hastegeo-wheel-<run-id>` artifact name. A PR must not switch formats
+just because its own checkout contains an updated publisher.
+
+After that capability is active, automatic PR candidates use
+`X.Y.Zrc<build-run-id>`, not a shared next-available RC counter. Their stable
+release baseline is frozen at the build run's creation time. A rerun retains
+that version; later releases cannot make the publisher look for a differently
+named wheel.
+
+The credential-free build emits `build-manifest.json` with source/run
+identity and the wheel checksum. The default-branch publisher independently
+validates this identity. Existing matching RC bytes/provenance can be reused
+so a failed image stage can resume; conflicting assets are never overwritten.
+GitHub workflow artifacts include the upstream run attempt in their name.
+
+Each worker image carries source/version labels, is verified by digest, and
+is locked before it is included in `hastegeo-<version>-artifacts.json`.
+That manifest contains the wheel provenance and both image digests.
+Registry names remain protected configuration; public manifests contain
+registry-independent references and a fingerprint instead.
+
+An RC deployment must select the exact application source and a complete
+matching manifest. It verifies registry identity and locked digests before
+updating the environment, and pins the wheel URL with its checksum.
+Legacy wheels and images remain publishable during the migration, but they
+do not provide this verified deployment manifest. Legacy counter allocation
+also retains its existing concurrency limitations. Use a fresh run-bound
+build when the stronger deployment contract is required.
+
+Changes to the trusted publisher must be reviewed and merged into the
+default branch before activation. The updated publisher accepts both old
+and new producer formats, and producers only switch after that capability
+is present. Existing artifacts keep a rerun on its original protocol; a
+missing or unsupported protocol fails explicitly rather than guessing.
+Updating a PR alone does not authorize a deployment or overwrite an
+existing release. Asset-retention and stable-release rules remain in place.
 
 ## Cutting a product release
 
@@ -105,9 +148,11 @@ Its download URLs are pinned in
 [`deploy/pin-hastegeo-wheel.ps1`](deploy/pin-hastegeo-wheel.ps1), and
 deployed Function Apps install from those pins at build time.
 
-Its asset list is also the **version database**:
+Its stable asset history is also the **version database**:
 [`haste_release.py`](hastelib/haste_release.py) derives the next stable
-version and the next RC number by parsing asset filenames.
+version by parsing asset filenames. With the run-bound protocol active,
+CI RC suffixes come from immutable build identity rather than the legacy
+shared counter.
 
 Both facts mean assets must **never be renamed, moved to another release,
 or deleted** without first migrating every pin and moving version
