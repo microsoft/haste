@@ -25,7 +25,7 @@ dependency changes are planned.
 
 ## CXL-01 Follow-Up
 
-Approved on 2026-09-16 as a separate change based on the cumulative #210 tip
+Prepared on 2026-09-16 as a separate change based on the cumulative #210 tip
 `3834fb45e06910a03fb9a5680a26ee42605ace2f`. Implementation is isolated from the
 reviewed performance branches and unrelated working-tree edits.
 
