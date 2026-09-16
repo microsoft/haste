@@ -112,10 +112,20 @@ Five-minute claims renew every minute during a processing turn. This small
 coordination heartbeat neither runs nor schedules compute; losing it fences
 the writer, and the persisted claim expires for independent timer recovery.
 
-Ambiguous submission errors retain the pending IDs instead of marking
-possibly accepted compute failed. Batch replay checks existing tasks across
-the configured candidate jobs before capacity routing and accepts a same-job
-`TaskExists` race without changing the legacy return shape.
+Transport interruptions and ambiguous submission responses retain the pending
+IDs instead of marking possibly accepted compute failed. SDK request/retry
+wrappers are classified by their underlying error, not assumed transient.
+Identity mismatches, invalid configuration, authentication/authorization
+rejections, and other deterministic provider failures fail the workload
+through its fenced metadata commit; recovery does not resubmit terminal
+workloads. This applies to all five workloads, including imagery.
+Local filesystem errors with confirmed receipt absence remain explicit failures.
+An interrupted receipt write or acknowledgement with a persisted or
+unverifiable receipt retains the same identity for reconciliation.
+
+Batch replay checks existing tasks across the configured candidate jobs
+before capacity routing and accepts a same-job `TaskExists` race without
+changing the legacy return shape.
 
 Only workload-owned runtime fields are merged back. New attempts,
 cancellation intent, terminal outcomes, other workloads, and user edits
@@ -134,6 +144,10 @@ Blob API with conditional writes; this is not a fallback storage account.
 All metadata merge/save operations use that boundary for JSON. Unsupported
 operations and storage errors fail explicitly; nothing depends on
 `publishing_enabled` or on an additional lock service.
+PostgreSQL table creation, CRUD, spatial reads/writes, and conditional
+metadata operations share the same connection helper, including the
+configured `POSTGRES_PORT`, credentials, and required SSL. Each operation
+keeps its existing connection/cursor transaction boundary.
 
 Two independent Function timers drive recovery. `ReconcileLocalTasks`
 runs every 15 seconds, acts only for `local`, and reconciles receipts,

@@ -10,6 +10,8 @@
 | Wire pending identities, queue consumers, recovery timers, and follow-ons | `backend-dev` | Lifecycle and fences | US-007 | complete |
 | Add deterministic lifecycle, backend-CAS, processor, and queue tests | `backend-dev` | Implementation | All | complete |
 | Run targeted and broader relevant tests and formatting/lint | `backend-dev` | Tests | All | complete |
+| Distinguish ambiguous acceptance from deterministic submission rejection across all workloads | `backend-dev` | Balanced review of #217 | US-002, US-005 through US-007 | complete |
+| Reuse PostgreSQL connection settings for construction, CRUD, and conditional metadata writes | `backend-dev` | Balanced review of #217 | US-006 | complete |
 
 ## Integration gates
 
@@ -24,6 +26,19 @@ The backend-neutral/AML integration remains in the feature PR. No Azure
 resources or compute configuration are changed by this prerequisite.
 
 ## Validation evidence
+
+The #217 review follow-up passed **302 tests** with one Windows
+symlink-privilege skip. The selector covered all runner/data-layer tests,
+submission identity, job state/queue processing, imagery configuration/output
+fallback, and queue handlers. It used the existing Python 3.11 interpreter
+directly, with HTTP blocked and an explicit worktree `PYTHONPATH`; no Hatch,
+installation, or environment synchronization ran.
+
+Repository-pinned Black/isort/flake8 and compilation passed for the eight
+changed Python files. AST comparisons confirmed unchanged progress/log
+readers, imagery launch/output-pattern arguments, and PostgreSQL queries.
+One preliminary run hit a Windows file-sharing `PermissionError` in the
+unchanged claim-renewal test; its isolated rerun and the final selector passed.
 
 After extracting the verified permission/output-pattern fixes, the
 standalone main-based library and queue suite passed **625 tests** with
