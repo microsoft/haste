@@ -21,6 +21,10 @@ the `(job_id, task_id)` return value, Batch callers, and existing artifact
 paths. Add execution-fenced queue updates and restart recovery without new
 Azure services.
 
+This is an independent runtime change based on `main`. CI and publishing
+maintenance are not implementation dependencies; they can be reviewed and
+merged separately from the job-state fixes.
+
 The integrated implementation also preserves `ComputeRunner` and persisted
 `ComputeJobHandle` dispatch. Pending records reserve an execution ID, not a
 fictional provider job ID. Accepted handles are recorded before a queue
