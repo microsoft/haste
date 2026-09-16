@@ -313,6 +313,7 @@ class TestPostgreSQLReadContract(unittest.TestCase):
         self.layer.server_name = "server"
         self.layer.database_name = "database"
         self.layer.postgres_user = "user"
+        self.layer.port = 6432
         self.layer.token = "token"
         self.layer._qualified_table_identifier = sql.Identifier("metadata")
 

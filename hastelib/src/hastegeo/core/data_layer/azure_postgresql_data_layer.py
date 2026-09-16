@@ -79,8 +79,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
         return value if isinstance(value, (dict, list)) else json.loads(value)
 
     def _create_table_if_not_exists(self):
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
@@ -122,8 +121,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
         partition_key = (
             self.partition_key if self.partition_key else identifier
         )
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
@@ -138,7 +136,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
                 )
                 connection.commit()
 
-    def _metadata_connection(self):
+    def _metadata_connection(self) -> psycopg2.extensions.connection:
         return psycopg2.connect(
             host=self.server_name,
             dbname=self.database_name,
@@ -214,13 +212,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
     def merge_json(
         self, identifier: str, data_type: str, fields: dict
     ) -> dict:
-        with psycopg2.connect(
-            host=self.server_name,
-            dbname=self.database_name,
-            user=self.postgres_user,
-            password=self.token,
-            sslmode="require",
-        ) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
@@ -277,8 +269,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
         partition_key = (
             self.partition_key if self.partition_key else identifier
         )
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
@@ -313,8 +304,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
         partition_key = (
             self.partition_key if self.partition_key else identifier
         )
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
@@ -331,8 +321,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
 
     def load_all(self, data_type, data_format="json"):
         self._require_json(data_format)
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL("SELECT data FROM {} WHERE data_type = %s").format(
@@ -348,8 +337,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
     def load_all_from_partition(self, data_type, data_format="json"):
         self._require_json(data_format)
         partition_key = self.partition_key
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
@@ -365,8 +353,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
     def list_identifiers(self, data_type, data_format="json"):
         if data_format != "json":
             return []
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
@@ -387,8 +374,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
         identifiers = list(dict.fromkeys(identifiers))
         if not identifiers:
             return {}
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
@@ -407,8 +393,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
     def load_bounded(self, data_type, max_records, data_format="json"):
         if data_format != "json" or max_records < 1:
             raise ValueError("Invalid bounded PostgreSQL read")
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
@@ -429,8 +414,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
         partition_key = (
             self.partition_key if self.partition_key else identifier
         )
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
@@ -442,8 +426,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
 
     def delete_all_from_partition(self):
         partition_key = self.partition_key
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL("DELETE FROM {} WHERE partition_key = %s").format(
@@ -457,8 +440,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
         partition_key = (
             self.partition_key if self.partition_key else identifier
         )
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
@@ -477,8 +459,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
         partition_key = (
             self.partition_key if self.partition_key else identifier
         )
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
@@ -497,8 +478,7 @@ class AzurePostgreSQLDataLayer(AbstractDataLayer):
         partition_key = (
             self.partition_key if self.partition_key else identifier
         )
-        connection_string = f"host={self.server_name} dbname={self.database_name} user={self.postgres_user} password={self.token} sslmode=require"
-        with psycopg2.connect(connection_string) as connection:
+        with self._metadata_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(

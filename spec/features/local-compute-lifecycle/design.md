@@ -106,6 +106,8 @@ instead of claiming the execution was stopped.
 Optimized metadata reads remain independent of revision-fenced writes.
 Batch reads, cached Blob clients and longest-type-name filtering are retained;
 global local/Data Lake scans cover only the root and one partition level.
+PostgreSQL uses the same port-aware connection helper for single, batch,
+identifier and conditional operations.
 
 Queue payloads are wake-ups, not authoritative document snapshots. Pending
 identities are allocated in the existing job models and persisted before
