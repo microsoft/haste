@@ -182,9 +182,11 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
   }
 
   function handleEventDateValidation({ error }) {
+    const isInvalid = error === "invalid-input";
     setComponentState((currentState) => ({
       ...currentState,
-      eventDateError: error === "invalid-input"
+      eventDate: isInvalid ? "" : currentState.eventDate,
+      eventDateError: isInvalid
         ? "Enter a valid date in MM/DD/YYYY format."
         : "",
     }));
