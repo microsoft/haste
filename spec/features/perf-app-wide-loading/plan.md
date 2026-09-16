@@ -3,6 +3,7 @@
 ## Contents
 
 - [Slices](#slices)
+- [CXL-01 Follow-Up](#cxl-01-follow-up)
 - [Exit Gates](#exit-gates)
 - [Agent Summary](#agent-summary)
 
@@ -21,6 +22,24 @@
 
 Each slice is reviewable and testable independently. No infrastructure or
 dependency changes are planned.
+
+## CXL-01 Follow-Up
+
+Approved on 2026-09-16 as a separate change based on the cumulative #210 tip
+`3834fb45e06910a03fb9a5680a26ee42605ace2f`. Implementation is isolated from the
+reviewed performance branches and unrelated working-tree edits.
+
+| Task | Agent | Validating Agent | Story | Status |
+|---|---|---|---|---|
+| Abort ImageLayer reads, guard stale results, use local loading and Retry | `ui` | `ui-validation` | US-005 | implemented locally |
+| Abort thumbnail fetches, retain compatible native fallback, release Blob URLs | `ui` | `ui-validation` | US-005 | implemented locally |
+| Unit, real-browser lifecycle, consumer integration, CSP and responsive checks | `ui` | `ui-validation` | US-005 | passed locally |
+| Smoke-test representative authenticated Dev1 imagery | `ui` | `ui-validation` | US-005 | pending before rollout |
+
+No backend, infrastructure, dependency, save, export, or job-submission changes
+are included. The remaining cancellation work packages are not implemented.
+See [test commands](test-plan.md#cxl-01-browser-regressions) and
+[verification results](results.md#cxl-01-local-verification).
 
 ## Exit Gates
 

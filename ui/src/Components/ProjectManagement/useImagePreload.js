@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 import { useEffect, useState } from "react";
+import { preloadImage } from "./imagePreload.js";
 
 export function useImagePreload(url) {
   const [state, setState] = useState({ url: null, status: "empty" });
@@ -10,26 +11,12 @@ export function useImagePreload(url) {
       return undefined;
     }
 
-    let isActive = true;
-    const image = new Image();
-
-    image.onload = () => {
-      if (isActive) setState({ url, status: "loaded" });
-    };
-    image.onerror = () => {
-      if (isActive) setState({ url, status: "error" });
-    };
-    image.src = url;
-
-    return () => {
-      isActive = false;
-      image.onload = null;
-      image.onerror = null;
-    };
+    return preloadImage(url, (result) => setState({ url, ...result }));
   }, [url]);
 
+  const isCurrent = state.url === url && !state.signal?.aborted;
   return {
-    isLoading: Boolean(url) && (state.url !== url || state.status === "loading"),
-    loadedUrl: state.url === url && state.status === "loaded" ? url : null,
+    isLoading: Boolean(url) && !isCurrent,
+    loadedUrl: isCurrent && state.status === "loaded" ? state.loadedUrl : null,
   };
 }
