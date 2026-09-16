@@ -14,6 +14,10 @@ the `(job_id, task_id)` return value, Batch callers, and existing artifact
 paths. Add execution-fenced queue updates and restart recovery without new
 Azure services.
 
+This is an independent runtime change based on `main`. CI and publishing
+maintenance are not implementation dependencies; they can be reviewed and
+merged separately from the job-state fixes.
+
 Local output permission preparation is included: different queue/worker UIDs
 must not prevent persistence-gated cleanup. Existing Batch method shapes
 are retained; no AML SDK or backend-neutral compute types are required.
