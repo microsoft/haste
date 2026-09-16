@@ -14,10 +14,14 @@ from datetime import datetime, timezone
 import yaml
 
 
-def run_subprocess(command, step_name):
+def run_subprocess(
+    command: list[str], step_name: str
+) -> subprocess.CompletedProcess:
     log_progress(f"Starting {step_name}")
     # Inherit the backend's streams instead of buffering an entire training run.
-    result = subprocess.run(command, text=True)
+    result = subprocess.run(
+        command, text=True, env=dict(os.environ, PYTHONUNBUFFERED="1")
+    )
     if result.returncode != 0:
         log_progress(f"Error running {step_name}")
         print(f"Error running {step_name} (exit code: {result.returncode})")

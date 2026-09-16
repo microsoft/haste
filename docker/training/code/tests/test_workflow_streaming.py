@@ -25,8 +25,8 @@ class TestWorkflowStreaming(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             child = (
                 "import sys; "
-                "print('stdout-ready', flush=True); "
-                "print('stderr-ready', file=sys.stderr, flush=True); "
+                "print('stdout-ready'); "
+                "print('stderr-ready', file=sys.stderr); "
                 "sys.stdin.readline()"
             )
             wrapper = (
@@ -35,7 +35,11 @@ class TestWorkflowStreaming(unittest.TestCase):
                 "w=importlib.util.module_from_spec(s); s.loader.exec_module(w); "
                 f"w.run_subprocess([sys.executable,'-c',{child!r}], 'test-step')"
             )
-            env = dict(os.environ, AZ_BATCH_TASK_WORKING_DIR=tmp)
+            env = dict(
+                os.environ,
+                AZ_BATCH_TASK_WORKING_DIR=tmp,
+                PYTHONUNBUFFERED="",
+            )
             process = subprocess.Popen(
                 [sys.executable, "-c", wrapper],
                 stdin=subprocess.PIPE,
@@ -63,6 +67,11 @@ class TestWorkflowStreaming(unittest.TestCase):
                 self.assertEqual(messages["stdout"], "stdout-ready")
                 self.assertEqual(messages["stderr"], "stderr-ready")
                 self.assertIsNone(process.poll())
+                progress = (
+                    Path(tmp) / "logs" / "workflow_progress.log"
+                ).read_text()
+                self.assertIn("Starting test-step", progress)
+                self.assertNotIn("Completed test-step", progress)
             finally:
                 process.stdin.write("finish\n")
                 process.stdin.flush()
@@ -75,6 +84,35 @@ class TestWorkflowStreaming(unittest.TestCase):
             ).read_text()
             self.assertIn("Starting test-step", progress)
             self.assertIn("Completed test-step", progress)
+
+    def test_child_environment_is_unbuffered_without_changing_arguments(
+        self,
+    ) -> None:
+        command = ["python", "fine_tune.py", "--config", "config.yaml"]
+        result = subprocess.CompletedProcess(command, 0)
+        with (
+            patch.dict(
+                os.environ,
+                {"PYTHONUNBUFFERED": "", "WORKFLOW_TEST_VALUE": "retained"},
+            ),
+            patch.object(workflow, "log_progress"),
+            patch.object(
+                workflow.subprocess, "run", return_value=result
+            ) as run,
+        ):
+            self.assertIs(
+                workflow.run_subprocess(command, "fine_tune.py"), result
+            )
+            self.assertEqual(os.environ["PYTHONUNBUFFERED"], "")
+            run.assert_called_once_with(
+                command,
+                text=True,
+                env=dict(os.environ, PYTHONUNBUFFERED="1"),
+            )
+            self.assertEqual(
+                run.call_args.kwargs["env"]["WORKFLOW_TEST_VALUE"],
+                "retained",
+            )
 
     def test_nonzero_exit_remains_a_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
