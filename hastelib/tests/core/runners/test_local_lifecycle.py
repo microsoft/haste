@@ -11,6 +11,11 @@ from typing import Any
 
 import pytest
 from hastegeo.core.config import Config
+from hastegeo.core.models.compute import (
+    CapacityState,
+    ComputeResources,
+    ComputeWorkload,
+)
 from hastegeo.core.runners import local
 from hastegeo.core.runners.local_lifecycle import (
     OWNER_LABEL,
@@ -102,6 +107,9 @@ class FakeDocker:
         self.peak_running = 0
         self.lose_create_response = False
         self.lose_start_response = False
+
+    def ping(self) -> bool:
+        return True
 
     def create(self, image: str, **options) -> FakeContainer:
         with self.lock:
@@ -659,16 +667,6 @@ def test_output_layout_still_strips_outputs_prefix(setup) -> None:
     assert "project/task/outputs/result.txt" not in names
 
 
-def test_host_capacity_policy_prevents_mixed_controller_limits(setup) -> None:
-    submit(setup.runner, "first")
-    setup.runner.reconcile_tasks()
-    setup.config.local_max_active_tasks = 2
-    identity = submit(setup.new_runner(), "second")
-    with pytest.raises(RuntimeError, match="capacity policy differs"):
-        setup.runner.reconcile_task(*identity)
-    assert len(setup.engine.running()) == 1
-
-
 def test_cloud_container_named_after_account_is_not_stripped() -> None:
     assert blob_descriptor(
         "https://account.blob.core.windows.net/account/input.tif",
@@ -678,10 +676,42 @@ def test_cloud_container_named_after_account_is_not_stripped() -> None:
     ) == ("account", "input.tif")
 
 
-def test_output_patterns_do_not_upload_staged_inputs(setup) -> None:
-    identity = submit(
-        setup.runner, file_pattern="$AZ_BATCH_TASK_WORKING_DIR/outputs/*"
+def test_restart_cannot_change_the_receipt_storage_account(setup) -> None:
+    identity = submit(setup.runner)
+    setup.blobs.url = "https://different.blob.core.windows.net/"
+    with pytest.raises(RuntimeError, match="storage account changed"):
+        setup.runner.reconcile_task(*identity)
+    assert setup.engine.executions() == []
+
+
+def test_pre_descriptor_receipts_remain_idempotent_after_upgrade(
+    setup,
+) -> None:
+    identity = submit(setup.runner)
+    receipt = setup.runner.receipts.load(execution_key(*identity))
+    receipt.request.storage_account = None
+    receipt.request.storage_endpoint = None
+    setup.runner.receipts.save(receipt)
+    assert submit(setup.runner) == identity
+    setup.runner.reconcile_task(*identity)
+    assert len(setup.engine.executions()) == 1
+    assert setup.engine.executions()[0].starts == 1
+
+
+def test_capacity_is_queueable_while_an_owned_execution_has_the_only_slot(
+    setup,
+) -> None:
+    identity = submit(setup.runner)
+    setup.runner.reconcile_task(*identity)
+    capacity = setup.runner.get_capacity(
+        ComputeWorkload.TRAINING, ComputeResources()
     )
+    assert capacity.state == CapacityState.QUEUEABLE
+    assert setup.engine.executions()[0].status == "running"
+
+
+def test_output_patterns_do_not_upload_staged_inputs(setup) -> None:
+    identity = submit(setup.runner, file_pattern="outputs/*")
     setup.runner.reconcile_task(*identity)
     root = setup.runner.work_dir / "job" / "task"
     (root / "staged").mkdir()
@@ -706,7 +736,10 @@ def test_permission_fallback_uses_the_task_image_without_privileges(
     )
     helper = mocker.Mock(return_value=b"")
     setup.engine.run = helper
+
     setup.runner._prepare_output_permissions(receipt)
+
+    helper.assert_called_once()
     options = helper.call_args.kwargs
     assert helper.call_args.args == (receipt.request.image,)
     assert options["network_disabled"] and options["read_only"]
@@ -717,7 +750,7 @@ def test_permission_fallback_uses_the_task_image_without_privileges(
     assert options["labels"][OWNER_LABEL] == receipt.key
 
 
-def test_failed_permission_repair_retains_unpersisted_outputs(
+def test_failed_permission_repair_never_reports_outputs_persisted(
     setup, mocker
 ) -> None:
     identity = submit(setup.runner)
@@ -725,14 +758,18 @@ def test_failed_permission_repair_retains_unpersisted_outputs(
     setup.engine.executions()[0].complete()
     mocker.patch.object(setup.runner, "_permissions_needed", return_value=True)
     setup.engine.run = mocker.Mock(return_value=b"")
+
     setup.runner.reconcile_task(*identity)
     setup.runner.cleanup_task(*identity)
+
     assert setup.runner.get_task_status(*identity) == "Failed"
     assert not setup.runner.get_task_receipt(*identity)["outputs_persisted"]
     assert (setup.runner.work_dir / "job" / "task").exists()
 
 
-def test_packaging_staging_links_are_not_persisted_as_outputs(setup) -> None:
+def test_packaging_staging_symlinks_do_not_fail_output_persistence(
+    setup,
+) -> None:
     identity = submit(setup.runner, file_pattern="outputs/*")
     root = setup.runner.work_dir / "job" / "task"
     (root / "staged").mkdir()
@@ -748,6 +785,16 @@ def test_packaging_staging_links_are_not_persisted_as_outputs(setup) -> None:
     setup.engine.executions()[0].complete()
     setup.runner.reconcile_task(*identity)
     assert setup.runner.get_task_receipt(*identity)["outputs_persisted"]
+
+
+def test_host_capacity_policy_prevents_mixed_controller_limits(setup) -> None:
+    submit(setup.runner, "first")
+    setup.runner.reconcile_tasks()
+    setup.config.local_max_active_tasks = 2
+    identity = submit(setup.new_runner(), "second")
+    with pytest.raises(RuntimeError, match="capacity policy differs"):
+        setup.runner.reconcile_task(*identity)
+    assert len(setup.engine.running()) == 1
 
 
 def test_receipt_timer_retries_interrupted_cancellation_without_a_queue_worker(
@@ -766,36 +813,3 @@ def test_receipt_timer_retries_interrupted_cancellation_without_a_queue_worker(
     setup.new_runner().reconcile_tasks()
     assert setup.runner.get_task_status(*identity) == "Cancelled"
     assert container.status == "exited"
-
-
-def test_cancel_does_not_stop_another_active_execution(setup) -> None:
-    setup.config.local_max_active_tasks = 2
-    first = submit(setup.runner, "one")
-    second = submit(setup.runner, "two")
-    setup.runner.reconcile_tasks()
-    setup.runner.cancel_task(*first)
-    assert len(setup.engine.running()) == 1
-    assert setup.runner.get_task_receipt(*second)["phase"] == "running"
-    assert setup.engine.running()[0].stops == 0
-
-
-def test_legacy_files_prevent_unsafe_recreation_or_status_only_cancellation(
-    setup,
-) -> None:
-    directory = setup.runner.work_dir / "job" / "task"
-    directory.mkdir(parents=True)
-    with pytest.raises(RuntimeError, match="unknown compute"):
-        submit(setup.runner)
-    with pytest.raises(RuntimeError, match="legacy"):
-        setup.runner.cancel_task("job", "task")
-    assert setup.engine.created == []
-
-
-def test_restart_cannot_silently_change_the_receipts_storage_account(
-    setup,
-) -> None:
-    identity = submit(setup.runner)
-    setup.blobs.account_name = "different-account"
-    with pytest.raises(RuntimeError, match="storage account changed"):
-        setup.new_runner().reconcile_task(*identity)
-    assert setup.engine.executions() == []

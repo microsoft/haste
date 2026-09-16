@@ -114,6 +114,7 @@ services:
       METADATA_STORAGE_TYPE: "blob"
       IMAGERY_STORAGE_TYPE: "blob"
       ARTIFACT_STORAGE_TYPE: "blob"
+      COMPUTE_OUTPUT_CONTAINER_URL: "http://azurite:10000/devstoreaccount1/data"
       TITILER_ENDPOINT: "http://titiler:8000/"
       TITILER_PUBLIC_ENDPOINT: "http://${HOST_IP:-localhost}:7071/api/titiler/"
     volumes:
@@ -163,6 +164,7 @@ services:
       IMAGERY_STORAGE_TYPE: "blob"
       ARTIFACT_STORAGE_TYPE: "blob"
       RUNNER_TYPE: "local"
+      COMPUTE_OUTPUT_CONTAINER_URL: "http://azurite:10000/devstoreaccount1/data"
       AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret # gitleaks:allow
       AZURE_STORAGE_USE_EMULATOR: "true"
       AZURE_STORAGE_EMULATOR_HOST: "azurite:10000"

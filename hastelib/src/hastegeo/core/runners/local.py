@@ -17,12 +17,33 @@ from docker.types import DeviceRequest
 import docker
 
 from ..config import Config
+from ..models.compute import (
+    BackendConfigurationError,
+    BackendUnavailableError,
+    CapacitySnapshot,
+    CapacityState,
+    ComputeBackend,
+    ComputeJobHandle,
+    ComputeJobSpec,
+    ComputeJobState,
+    ComputeProviderDetail,
+    ComputeResources,
+    ComputeWorkload,
+    LocalProviderDetail,
+    validate_relative_path,
+)
 from ..utils.atomic_files import LockUnavailableError, atomic_write
 from ..utils.local_permissions import LOCAL_TASK_ROOT
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.output_files import AmbiguousTaskOutputError, resolve_task_output
-from .base import BaseRunner
+from .base import (
+    BaseRunner,
+    ComputeRunner,
+    require_single_output_destination,
+    require_supported_uri_schemes,
+)
+from .base import resource_files_from_inputs as _resource_files_from_inputs
 from .local_lifecycle import (
     LIMIT_LABEL,
     OWNER_LABEL,
@@ -43,6 +64,7 @@ from .local_lifecycle import (
 
 TASK_WORK_DIR = LOCAL_TASK_ROOT
 ACTIVE_CONTAINER_STATES = {"running", "restarting", "paused"}
+_LOCAL_SUPPORTED_URI_SCHEMES = frozenset({"http", "https"})
 
 
 def _normalize_azurite_url(url: Optional[str]) -> Optional[str]:
@@ -54,7 +76,7 @@ def _normalize_azurite_url(url: Optional[str]) -> Optional[str]:
     return url
 
 
-class LocalRunner(BaseRunner):
+class LocalRunner(BaseRunner, ComputeRunner):
     """Accept local work durably; Docker and periodic reconciliation own it."""
 
     def __init__(
@@ -201,9 +223,23 @@ class LocalRunner(BaseRunner):
             except FileNotFoundError:
                 existing = None
             if existing is not None:
+                comparable = request
+                if existing.request is not None:
+                    # Existing version-one receipts predate storage descriptors.
+                    comparable = request.model_copy(
+                        update={
+                            field: None
+                            for field in (
+                                "storage_account",
+                                "storage_endpoint",
+                            )
+                            if getattr(existing.request, field) is None
+                        }
+                    )
                 if (
                     existing.request is not None
-                    and existing.request.fingerprint() != request.fingerprint()
+                    and existing.request.fingerprint()
+                    != comparable.fingerprint()
                 ):
                     raise ValueError(
                         "Local execution identity already has another request"
@@ -352,20 +388,27 @@ class LocalRunner(BaseRunner):
         key = execution_key(job_id, task_id)
         with self.receipts.lock(key, operation=True, timeout=0):
             pending = self.receipts.load(key)
-            if (
-                pending.cancel_requested
-                and pending.phase not in TERMINAL_PHASES | {"uploading"}
-            ):
-                self.cancel_task(job_id, task_id)
             if pending.request is not None and (
-                pending.request.storage_account
-                != self.blob_client.account_name
-                or pending.request.storage_endpoint != self._storage_endpoint()
+                (
+                    pending.request.storage_account is not None
+                    and pending.request.storage_account
+                    != self.blob_client.account_name
+                )
+                or (
+                    pending.request.storage_endpoint is not None
+                    and pending.request.storage_endpoint
+                    != self._storage_endpoint()
+                )
             ):
                 raise RuntimeError(
                     "Local task storage account changed; restore its configured "
                     "account before staging or persisting outputs"
                 )
+            if (
+                pending.cancel_requested
+                and pending.phase not in TERMINAL_PHASES | {"uploading"}
+            ):
+                self.cancel_task(job_id, task_id)
             with self.receipts.lock(key):
                 receipt = self.receipts.load(key)
                 if receipt.phase == "queued":
@@ -642,6 +685,7 @@ class LocalRunner(BaseRunner):
                     else request.arguments
                 )
         replacements = {
+            "HASTE_JOB_WORKDIR": working_dir,
             "AZ_BATCH_TASK_WORKING_DIR": working_dir,
             "BATCH_JOB_WORKDIR": working_dir,
             "AZ_BATCH_JOB_ID": receipt.job_id,
@@ -712,6 +756,8 @@ class LocalRunner(BaseRunner):
     ) -> dict[str, str]:
         environment = {
             "HASTE_LOCAL_SHARED_WORKSPACE": "1",
+            "HASTE_JOB_WORKDIR": working_dir,
+            "BATCH_JOB_WORKDIR": working_dir,
             "AZ_BATCH_TASK_WORKING_DIR": working_dir,
             "AZ_BATCH_JOB_ID": receipt.job_id,
             "AZ_BATCH_TASK_ID": receipt.task_id,
@@ -893,12 +939,6 @@ class LocalRunner(BaseRunner):
             return True
         return False
 
-    def _resolved_container_working_dir(
-        self, job_id: str, task_id: str
-    ) -> str:
-        execution_key(job_id, task_id)
-        return f"/shared/azurite/task_work/{job_id}/{task_id}"
-
     def _prepare_output_permissions(self, receipt: LocalReceipt) -> None:
         task_dir = self.work_dir / receipt.job_id / receipt.task_id
         if not self._permissions_needed(task_dir):
@@ -1038,7 +1078,7 @@ class LocalRunner(BaseRunner):
                 self.receipts.save(receipt)
                 return True
             if receipt.phase in TERMINAL_PHASES:
-                return receipt.phase == "cancelled"
+                return True
             receipt.cancel_requested = True
             self.receipts.save(receipt)
             container = self._owned_container(receipt)
@@ -1119,3 +1159,195 @@ class LocalRunner(BaseRunner):
                 "Required local Docker images are missing: %s", missing
             )
         return not missing
+
+    def validate(self, spec: ComputeJobSpec) -> None:
+        if self.docker_client is None:
+            raise BackendConfigurationError(
+                "local Docker client is not available"
+            )
+        try:
+            self.docker_client.ping()
+        except docker.errors.DockerException as exc:
+            raise BackendUnavailableError(
+                f"local Docker daemon is unreachable: {exc}"
+            ) from exc
+        if not spec.outputs:
+            raise BackendConfigurationError(
+                "local runner requires at least one output so the task's "
+                "artifacts land at a known path"
+            )
+        try:
+            require_supported_uri_schemes(
+                inputs=spec.inputs,
+                outputs=spec.outputs,
+                allowed_schemes=_LOCAL_SUPPORTED_URI_SCHEMES,
+                backend_name="the local runner",
+            )
+            if any(
+                "<" in output.destinationUri or ">" in output.destinationUri
+                for output in spec.outputs
+            ):
+                raise ValueError(
+                    "COMPUTE_OUTPUT_CONTAINER_URL must point to the "
+                    "configured storage container, not a placeholder"
+                )
+            require_single_output_destination(
+                spec.outputs, account_url=self._storage_account_url()
+            )
+            _resource_files_from_inputs(
+                spec.inputs, account_url=self._storage_account_url()
+            )
+        except ValueError as exc:
+            raise BackendConfigurationError(str(exc)) from exc
+
+    def _storage_account_url(self) -> Optional[str]:
+        return self.blob_client.url if self.blob_client is not None else None
+
+    def _resolved_container_working_dir(
+        self, job_id: str, task_id: str
+    ) -> str:
+        execution_key(job_id, task_id)
+        return f"/shared/azurite/task_work/{job_id}/{task_id}"
+
+    def submit(self, spec: ComputeJobSpec) -> ComputeJobHandle:
+        self.validate(spec)
+        job_id = f"job-{spec.executionId}"
+        task_id = spec.executionId
+        task_dir = self.work_dir / job_id / task_id
+
+        account_url = self._storage_account_url()
+        resource_files = _resource_files_from_inputs(
+            spec.inputs, account_url=account_url
+        )
+        (
+            _,
+            container_name,
+            output_prefix,
+            patterns,
+        ) = require_single_output_destination(
+            spec.outputs, account_url=account_url
+        )
+        self.add_task(
+            job_id=job_id,
+            task_id=task_id,
+            image_name=spec.container.imageReference,
+            command=spec.command,
+            work_dir=spec.container.workingDirectory,
+            output_container_url=container_name,
+            output_prefix=output_prefix,
+            resource_files_for_upload=resource_files or None,
+            file_pattern=patterns,
+            env_vars=dict(spec.environment),
+        )
+
+        return ComputeJobHandle(
+            executionId=spec.executionId,
+            requestedBackend=ComputeBackend.LOCAL,
+            selectedBackend=ComputeBackend.LOCAL,
+            backendProfile="default",
+            providerJobId=job_id,
+            providerTaskId=task_id,
+            targetId=self.pool_id,
+            outputUri=spec.outputs[0].destinationUri,
+            submittedAt=MetadataUtils.get_timestamp(),
+            routingReason="adapter-default",
+            attempt=1,
+            providerDetail=ComputeProviderDetail(
+                discriminator="local",
+                local=LocalProviderDetail(executionDirectory=str(task_dir)),
+            ),
+        )
+
+    def get_status(self, handle: ComputeJobHandle) -> ComputeJobState:
+        try:
+            receipt = self.receipts.load(
+                execution_key(handle.providerJobId, handle.providerTaskId)
+            )
+        except FileNotFoundError:
+            receipt = None
+        if receipt is not None and receipt.phase not in TERMINAL_PHASES:
+            return {
+                "queued": ComputeJobState.QUEUED,
+                "preparing": ComputeJobState.PREPARING,
+                "running": ComputeJobState.RUNNING,
+                "uploading": ComputeJobState.RUNNING,
+            }[receipt.phase]
+        status = self.get_task_status(
+            handle.providerJobId, handle.providerTaskId
+        )
+        status_types = self.config.get_status_types()
+        if status == status_types.COMPLETED.value:
+            return ComputeJobState.SUCCEEDED
+        if status == status_types.FAILED.value:
+            return ComputeJobState.FAILED
+        if status == status_types.CANCELLED.value:
+            return ComputeJobState.CANCELLED
+        if status == status_types.IN_PROGRESS.value:
+            return ComputeJobState.RUNNING
+        # Log the raw provider status server-side before failing
+        # explicitly, matching the AML adapter's unmapped-status
+        # diagnostics (design.md's "Unknown provider status" edge case) —
+        # never silently report an unrecognized status as "running".
+        self.logger.error(
+            "Unmapped local task status %r for task %s (job %s)",
+            status,
+            handle.providerTaskId,
+            handle.providerJobId,
+        )
+        raise BackendUnavailableError(
+            f"unmapped local task status: {status!r}"
+        )
+
+    def read_output(
+        self,
+        handle: ComputeJobHandle,
+        relative_path: str,
+        *,
+        as_chunks: bool = False,
+    ):
+        validate_relative_path(relative_path, field_name="relative_path")
+        return self.get_filecontent_from_task(
+            handle.providerJobId,
+            handle.providerTaskId,
+            relative_path,
+            as_chunk=as_chunks,
+        )
+
+    def cancel(self, handle: ComputeJobHandle) -> None:
+        self.cancel_task(handle.providerJobId, handle.providerTaskId)
+
+    def finalize(self, handle: ComputeJobHandle) -> None:
+        self.cleanup_task(handle.providerJobId, handle.providerTaskId)
+
+    def get_capacity(
+        self, workload: ComputeWorkload, resources: ComputeResources
+    ) -> CapacitySnapshot:
+        try:
+            self.docker_client.ping()
+        except docker.errors.DockerException as exc:
+            return CapacitySnapshot(
+                backend=ComputeBackend.LOCAL,
+                workload=workload,
+                state=CapacityState.UNAVAILABLE,
+                detail=f"local Docker daemon unreachable: {exc}",
+            )
+        occupied = 0
+        for slot in range(self.config.local_max_active_tasks):
+            try:
+                self.docker_client.containers.get(f"haste-local-slot-{slot}")
+            except docker.errors.NotFound:
+                continue
+            occupied += 1
+        return CapacitySnapshot(
+            backend=ComputeBackend.LOCAL,
+            workload=workload,
+            state=(
+                CapacityState.QUEUEABLE
+                if occupied >= self.config.local_max_active_tasks
+                else CapacityState.AVAILABLE
+            ),
+            detail=(
+                f"{occupied}/{self.config.local_max_active_tasks} "
+                "local execution slots reserved"
+            ),
+        )

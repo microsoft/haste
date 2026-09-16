@@ -34,7 +34,8 @@ This software includes third-party packages and libraries. The complete list of 
 ### Azure SDKs
 - **License**: MIT License
 - **Source**: https://github.com/Azure/azure-sdk-for-python
-- **Usage**: Azure cloud services integration
+- **Usage**: Azure cloud services integration, including Azure Machine Learning
+  job submission through `azure-ai-ml`
 
 ### FastAPI
 - **License**: MIT License

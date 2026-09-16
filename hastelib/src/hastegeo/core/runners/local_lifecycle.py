@@ -147,8 +147,8 @@ class LocalTaskRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     image: str
-    storage_account: str
-    storage_endpoint: str
+    storage_account: str | None = None
+    storage_endpoint: str | None = None
     command: str | list[str] | None = None
     arguments: str | list[str] | None = None
     environment: dict[str, str] = Field(default_factory=dict)

@@ -28,6 +28,53 @@ param existingBatchPoolId = readEnvironmentVariable('HASTE_EXISTING_BATCH_POOL_I
 param trainingImage = readEnvironmentVariable('HASTE_TRAINING_IMAGE', 'hastetraining:1.4.1')
 param imageryprepImage = readEnvironmentVariable('HASTE_IMAGERYPREP_IMAGE', 'hasteimageryprep:1.4.1')
 
+// Global fallback compute backend (hastegeo.core.config.get_compute_config).
+// Default azure_batch reproduces today's Batch-only behavior exactly;
+// RUNNER_TYPE (still emitted below in functions.bicep) remains the
+// deprecated legacy alias the code reads when this is unset.
+param computeBackendDefault = readEnvironmentVariable('HASTE_COMPUTE_BACKEND_DEFAULT', 'azure_batch')
+
+// Azure Machine Learning (Disabled/Existing/Create). Default Disabled — no
+// AML app settings emitted, zero behavior change. Existing (the default
+// enablement path once turned on) wires pre-existing, platform-owned
+// identifiers straight into Function App settings; HASTE creates/mutates
+// nothing. Create (explicit, later opt-in) instead has HASTE provision its
+// own workspace/compute/environment/datastore stack.
+param amlMode = readEnvironmentVariable('HASTE_AML_MODE', 'Disabled')
+param existingAmlWorkspaceName = readEnvironmentVariable('HASTE_EXISTING_AML_WORKSPACE_NAME', '')
+param amlWorkspaceResourceGroup = readEnvironmentVariable('HASTE_AML_WORKSPACE_RESOURCE_GROUP', '')
+// Names of the existing (already-provisioned) GPU/CPU compute clusters.
+// Ignored when amlMode == Create.
+param existingAmlGpuComputeName = readEnvironmentVariable('HASTE_EXISTING_AML_GPU_COMPUTE_NAME', '')
+param existingAmlCpuComputeName = readEnvironmentVariable('HASTE_EXISTING_AML_CPU_COMPUTE_NAME', '')
+// Name of the existing (already-registered) AML datastore. Ignored when
+// amlMode == Create.
+param existingAmlDatastoreName = readEnvironmentVariable('HASTE_EXISTING_AML_DATASTORE_NAME', '')
+// Fully-qualified azureml:<name>:<version> references to existing,
+// already-registered immutable environment versions. Ignored when amlMode
+// == Create.
+param existingAmlTrainingEnvironmentReference = readEnvironmentVariable('HASTE_EXISTING_AML_TRAINING_ENVIRONMENT_REFERENCE', '')
+param existingAmlImageryprepEnvironmentReference = readEnvironmentVariable('HASTE_EXISTING_AML_IMAGERYPREP_ENVIRONMENT_REFERENCE', '')
+// Create-mode-only provisioning knobs (ignored when amlMode != Create).
+param amlGpuComputeVmSize = readEnvironmentVariable('HASTE_AML_GPU_COMPUTE_VM_SIZE', 'Standard_NC40ads_H100_v5')
+param amlGpuComputeMaxNodes = int(readEnvironmentVariable('HASTE_AML_GPU_COMPUTE_MAX_NODES', '3'))
+param amlCpuComputeVmSize = readEnvironmentVariable('HASTE_AML_CPU_COMPUTE_VM_SIZE', 'Standard_D4s_v5')
+param amlCpuComputeMaxNodes = int(readEnvironmentVariable('HASTE_AML_CPU_COMPUTE_MAX_NODES', '3'))
+param amlComputeIdleTime = readEnvironmentVariable('HASTE_AML_COMPUTE_IDLE_TIME', 'PT30M')
+// Empty => Create mode reuses the environment Batch compute subnet, which is
+// already Storage-service-endpoint-enabled and allowlisted on HASTE storage.
+param amlComputeSubnetId = readEnvironmentVariable('HASTE_AML_COMPUTE_SUBNET_ID', '')
+// Default job-execution identity mode: 'user' (submit as the calling
+// hastefuncqueues principal) or 'managed' (submit as a specific
+// user-assigned managed identity). In Existing mode, granting either
+// identity access on the existing AML platform is a prerequisite owned by
+// that platform; in Create mode HASTE grants the queue app identity itself
+// (amlRole.bicep) only when amlIdentityMode == user.
+param amlIdentityMode = readEnvironmentVariable('HASTE_AML_IDENTITY_MODE', 'user')
+// Only consulted when amlIdentityMode == 'managed'; empty then defaults to
+// the shared env UMI.
+param amlManagedIdentityResourceId = readEnvironmentVariable('HASTE_AML_MANAGED_IDENTITY_RESOURCE_ID', '')
+
 // Email sender domain.
 param emailSenderDomainType = readEnvironmentVariable('HASTE_EMAIL_SENDER_DOMAIN_TYPE', 'AzureManaged')
 param emailCustomDomain = readEnvironmentVariable('HASTE_EMAIL_CUSTOM_DOMAIN', '')

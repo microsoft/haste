@@ -37,14 +37,14 @@ class TestExecuteImagePreprocessConfigDict(unittest.TestCase):
             "hastegeo.core.processors.imagery.UnifiedDataLayer",
             autospec=True,
         ), patch(
-            "hastegeo.core.processors.imagery.UnifiedRunner", autospec=True
-        ), patch(
             "hastegeo.core.processors.imagery.AzureQueueHandler",
             autospec=True,
         ):
             from hastegeo.core.processors.imagery import ImageryPostProcessor
 
-            processor = ImageryPostProcessor(image_data=image_data)
+            processor = ImageryPostProcessor(
+                image_data=image_data, execution_service=MagicMock()
+            )
 
         return processor
 

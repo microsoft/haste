@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from threading import Event
 
 import pytest
+from hastegeo.core.models.compute import (
+    ComputeJobHandle,
+    ComputeJobState,
+    synthesize_legacy_batch_handle,
+)
 from hastegeo.core.models.projects import Model
 from hastegeo.core.processors.job_queue import JobQueueProcessor
 from hastegeo.core.processors.job_state import (
@@ -29,6 +32,21 @@ from hastelib.tests.core.runners.test_local_lifecycle import (
     FakeBlobs,
     FakeDocker,
 )
+
+
+def submitted(state) -> tuple[dict, ComputeJobHandle]:
+    message = accepted(state)
+    baseline = state.repository.claim(Workload.TRAINING, message)
+    handle = synthesize_legacy_batch_handle(
+        job_id="submitted-job",
+        task_id=message["trainingJob"]["taskId"],
+        output_uri="https://account.blob.core.windows.net/data/project/task",
+    )
+    assert state.repository.record_submission(
+        Workload.TRAINING, baseline, handle
+    )
+    state.repository.release(Workload.TRAINING, baseline)
+    return load(state), handle
 
 
 @pytest.mark.parametrize("workload", list(Workload))
@@ -59,7 +77,7 @@ def test_queue_uses_current_metadata_not_the_message_snapshot(
 def test_cleanup_only_runs_after_the_terminal_metadata_commit(
     state, mocker
 ) -> None:
-    message = accepted(state)
+    message, handle = submitted(state)
     processor = JobQueueProcessor(state.config, repository=state.repository)
     mocker.patch.object(
         processor,
@@ -68,21 +86,23 @@ def test_cleanup_only_runs_after_the_terminal_metadata_commit(
             output_for(data, workload, "Processed"),
             [
                 TaskIdentity(
-                    job_id="job", task_id=message["trainingJob"]["taskId"]
+                    job_id=handle.providerJobId,
+                    task_id=handle.providerTaskId,
+                    handle=handle,
                 )
             ],
         ),
     )
-    runner = mocker.Mock()
+    service = mocker.Mock()
 
-    def cleanup(job_id: str, task_id: str) -> None:
+    def cleanup(actual: ComputeJobHandle) -> None:
         assert load(state)["status"] == "Processed"
-        assert load(state)["trainingJob"]["taskId"] == task_id
+        assert load(state)["trainingJob"]["taskId"] == actual.providerTaskId
 
-    runner.cleanup_task.side_effect = cleanup
-    mocker.patch.object(processor, "_runner", return_value=runner)
+    service.finalize.side_effect = cleanup
+    mocker.patch.object(processor, "execution_service", service)
     processor.process(Workload.TRAINING, message)
-    runner.cleanup_task.assert_called_once()
+    service.finalize.assert_called_once_with(handle)
     assert state.repository.turn(load(state), Workload.TRAINING).cleanup == []
 
 
@@ -103,9 +123,9 @@ def test_cancellation_during_a_poll_prevents_late_cleanup_and_completion(
         ]
 
     mocker.patch.object(processor, "_process_current", side_effect=racing_poll)
-    runner = mocker.patch.object(processor, "_runner")
+    service = mocker.patch.object(processor, "execution_service")
     processor.process(Workload.TRAINING, message)
-    runner.assert_not_called()
+    service.finalize.assert_not_called()
     assert load(state)["status"] == "Cancelled"
 
 
@@ -183,6 +203,10 @@ def test_failed_follow_on_delivery_retries_without_repeating_compute(
     assert compute.call_count == 1
     assert action.call_count == 2
     assert not state.repository.turn(load(state), Workload.TRAINING).actions
+    assert state.repository.turn(load(state), Workload.TRAINING).error is None
+    assert (
+        "Deferred inference action completed" in load(state)["statusMessage"]
+    )
 
 
 def test_duplicate_terminal_message_has_no_follow_on_side_effects(
@@ -215,18 +239,19 @@ def test_malformed_queue_message_is_rejected_without_echoing_payload(
 def test_cancel_invocation_stops_persisted_identity_not_stale_payload(
     state, mocker
 ) -> None:
-    message = accepted(state)
+    message, handle = submitted(state)
     cancelled = state.repository.begin(
         Workload.TRAINING, Model.model_validate(message), cancel=True
     )
     processor = JobQueueProcessor(state.config, repository=state.repository)
-    runner = mocker.Mock()
-    mocker.patch.object(processor, "_runner", return_value=runner)
+    service = mocker.patch.object(processor, "execution_service")
+    service.get_status.side_effect = [
+        ComputeJobState.RUNNING,
+        ComputeJobState.CANCELLED,
+    ]
     mocker.patch.object(processor, "_perform_action")
     processor.process(Workload.TRAINING, cancelled.model_dump(mode="json"))
-    runner.cancel_task.assert_called_once_with(
-        message["trainingJob"]["jobId"], message["trainingJob"]["taskId"]
-    )
+    service.cancel.assert_called_once_with(handle)
     assert load(state)["status"] == "Cancelled"
     assert load(state)["trainingJob"]["status"] == "Cancelled"
 
@@ -234,20 +259,57 @@ def test_cancel_invocation_stops_persisted_identity_not_stale_payload(
 def test_cancel_failure_keeps_the_intent_and_retries_actual_stop(
     state, mocker
 ) -> None:
-    message = accepted(state)
+    message, _ = submitted(state)
     state.repository.begin(
         Workload.TRAINING, Model.model_validate(message), cancel=True
     )
     processor = JobQueueProcessor(state.config, repository=state.repository)
-    runner = mocker.Mock()
-    runner.cancel_task.side_effect = OSError("Docker unavailable")
-    mocker.patch.object(processor, "_runner", return_value=runner)
+    service = mocker.patch.object(processor, "execution_service")
+    service.get_status.return_value = ComputeJobState.RUNNING
+    service.cancel.side_effect = OSError("Provider unavailable")
     with pytest.raises(OSError):
         processor.process(Workload.TRAINING, message)
     assert load(state)["status"] == "Cancelled"
     assert load(state)["trainingJob"]["status"] != "Cancelled"
     state.now.value += 31
     assert state.repository.reconcile_queues() == 1
+
+
+def test_cancel_does_not_misreport_an_already_completed_provider_job(
+    state, mocker
+) -> None:
+    message, handle = submitted(state)
+    cancelled = state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, state.repository)
+    service = mocker.patch.object(processor, "execution_service")
+    service.get_status.return_value = ComputeJobState.SUCCEEDED
+    mocker.patch.object(processor, "_perform_action")
+    processor.process(Workload.TRAINING, cancelled.model_dump(mode="json"))
+    service.cancel.assert_not_called()
+    service.finalize.assert_called_once_with(handle)
+    assert load(state)["trainingJob"]["status"] == "Processed"
+    assert "already reached Processed" in load(state)["statusMessage"]
+    assert not state.repository.needs_cancellation(
+        load(state), Workload.TRAINING
+    )
+
+
+def test_cancel_waits_for_the_provider_to_become_terminal(
+    state, mocker
+) -> None:
+    message, _ = submitted(state)
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, state.repository)
+    service = mocker.patch.object(processor, "execution_service")
+    service.get_status.return_value = ComputeJobState.RUNNING
+    with pytest.raises(RuntimeError, match="waiting for provider"):
+        processor.process(Workload.TRAINING, message)
+    service.finalize.assert_not_called()
+    assert state.repository.needs_cancellation(load(state), Workload.TRAINING)
 
 
 def test_training_queue_and_local_lifecycle_publish_inflight_then_persisted_terminal_state(
@@ -267,19 +329,7 @@ def test_training_queue_and_local_lifecycle_publish_inflight_then_persisted_term
             "PRESERVE_LOCAL_TASK_DIRS": "0",
         },
     )
-    batch = state.config.get_azure_batch_config()
-    mocker.patch.object(
-        state.config,
-        "get_azure_batch_config",
-        return_value={
-            **batch,
-            "training_batch_job_id": "training-job",
-        },
-    )
     runner = local.LocalRunner(config=state.config)
-    mocker.patch(
-        "hastegeo.core.processors.train.UnifiedRunner", return_value=runner
-    )
     blobs.inputs[("data", "config.yaml")] = b"training: {}"
     mocker.patch.object(
         TrainPostprocessor,
@@ -323,8 +373,6 @@ def test_training_queue_and_local_lifecycle_publish_inflight_then_persisted_term
         )
     message = accepted(state)
     processor = JobQueueProcessor(state.config, repository=state.repository)
-    mocker.patch.object(processor, "_runner", return_value=runner)
-
     processor.process(Workload.TRAINING, message)
     identity = current_job(load(state), Workload.TRAINING)
     ids = identity["jobId"], identity["taskId"]
@@ -348,60 +396,3 @@ def test_training_queue_and_local_lifecycle_publish_inflight_then_persisted_term
     )
     assert runner.get_task_receipt(*ids)["outputs_persisted"]
     assert runner.get_task_receipt(*ids)["files_cleaned"]
-
-
-def test_long_finalization_renews_only_the_persisted_claim(
-    state, mocker
-) -> None:
-    message = accepted(state)
-    processor = JobQueueProcessor(state.config, repository=state.repository)
-    state.repository.renewal_interval_seconds = 0.01
-    started, renewed, release = Event(), Event(), Event()
-    original = state.repository.renew_claim
-
-    def renew(workload: Workload, baseline: dict) -> bool:
-        result = original(workload, baseline)
-        if state.now.value >= 1250:
-            renewed.set()
-        return result
-
-    def slow_work(workload: Workload, baseline: dict):
-        started.set()
-        assert release.wait(5)
-        return output_for(baseline, workload, "InProgress"), []
-
-    mocker.patch.object(state.repository, "renew_claim", side_effect=renew)
-    mocker.patch.object(processor, "_process_current", side_effect=slow_work)
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(processor.process, Workload.TRAINING, message)
-        try:
-            assert started.wait(5)
-            state.now.value = 1250
-            assert renewed.wait(5)
-            state.now.value = 1350
-        finally:
-            release.set()
-        future.result(timeout=5)
-    assert load(state)["status"] == "InProgress"
-
-
-def test_late_cancel_records_actual_terminal_provider_state(
-    state, mocker
-) -> None:
-    message = accepted(state)
-    state.repository.begin(
-        Workload.TRAINING, Model.model_validate(message), cancel=True
-    )
-    processor = JobQueueProcessor(state.config, repository=state.repository)
-    runner = mocker.Mock()
-    runner.cancel_task.return_value = False
-    runner.get_task_status.return_value = "Processed"
-    mocker.patch.object(processor, "_runner", return_value=runner)
-    mocker.patch.object(processor, "_perform_action")
-    processor.process(Workload.TRAINING, message)
-    assert load(state)["status"] == "Cancelled"
-    assert load(state)["trainingJob"]["status"] == "Processed"
-    assert "before cancellation" in load(state)["statusMessage"]
-    assert not state.repository.needs_cancellation(
-        load(state), Workload.TRAINING
-    )

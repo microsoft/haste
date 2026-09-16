@@ -56,6 +56,34 @@ BATCH_INFERENCE_POOL_IDS="${BATCH_INFERENCE_POOL_IDS:-}"
 BATCH_IMAGERYPREP_POOL_IDS="${BATCH_IMAGERYPREP_POOL_IDS:-}"
 BATCH_USE_SAS="${BATCH_USE_SAS:-false}"
 BATCH_MANAGE_POOLS="${BATCH_MANAGE_POOLS:-true}"
+# Global fallback compute backend (hastegeo.core.config.get_compute_config).
+# Mirrors the `computeBackendDefault` param in infra/modules/functions.bicep;
+# default azure_batch reproduces the current Batch-only behavior exactly.
+COMPUTE_BACKEND_DEFAULT="${COMPUTE_BACKEND_DEFAULT:-azure_batch}"
+# AML backend (aml-compute-backend, ADR-0005). Mirrors the AML_* app settings
+# in infra/modules/functions.bicep. Defaults emit an inert configuration for
+# Batch/local-only deployments: AML_MODE=Disabled, identity mode at its safe
+# "user" default, and every resource identifier empty. Set the corresponding
+# GitHub Environment values to wire an existing, operator-managed AML
+# workspace (amlMode == Existing is the supported enablement path; see
+# docs/configuration.md).
+AML_MODE="${AML_MODE:-Disabled}"
+AML_SUBSCRIPTION_ID="${AML_SUBSCRIPTION_ID:-}"
+if [[ "$AML_MODE" != "Disabled" && -z "$AML_SUBSCRIPTION_ID" ]]; then
+    AML_SUBSCRIPTION_ID="$SUBSCRIPTION_ID"
+fi
+AML_RESOURCE_GROUP="${AML_RESOURCE_GROUP:-}"
+AML_WORKSPACE_NAME="${AML_WORKSPACE_NAME:-}"
+AML_DATASTORE_NAME="${AML_DATASTORE_NAME:-}"
+AML_COMPUTE_TRAINING="${AML_COMPUTE_TRAINING:-}"
+AML_COMPUTE_INFERENCE="${AML_COMPUTE_INFERENCE:-}"
+AML_COMPUTE_EMBEDDING="${AML_COMPUTE_EMBEDDING:-}"
+AML_COMPUTE_IMAGERYPREP="${AML_COMPUTE_IMAGERYPREP:-}"
+AML_COMPUTE_ARTIFACTS="${AML_COMPUTE_ARTIFACTS:-}"
+AML_ENVIRONMENT_TRAINING="${AML_ENVIRONMENT_TRAINING:-}"
+AML_ENVIRONMENT_IMAGERYPREP="${AML_ENVIRONMENT_IMAGERYPREP:-}"
+AML_IDENTITY_MODE="${AML_IDENTITY_MODE:-user}"
+AML_MANAGED_IDENTITY_ID="${AML_MANAGED_IDENTITY_ID:-}"
 # Data publishing feature flag. Mirrors the `publishingEnabled` param in
 # infra/modules/functions.bicep so both deploy paths agree; defaults off.
 PUBLISHING_ENABLED="${PUBLISHING_ENABLED:-false}"
@@ -128,6 +156,7 @@ deploy_function() {
             "METADATA_STORAGE_TYPE=blob" \
             "ARTIFACT_STORAGE_TYPE=blob" \
             "RUNNER_TYPE=azure_batch" \
+            "COMPUTE_BACKEND_DEFAULT=${COMPUTE_BACKEND_DEFAULT}" \
             "TEMP_DATA_PATH=/data" \
             "DATA_PATH=/data" \
             "TITILER_ENDPOINT=/api/titiler/" \
@@ -148,6 +177,20 @@ deploy_function() {
             "AZURE_BATCH_IMAGERYPREP_POOL_IDS=${BATCH_IMAGERYPREP_POOL_IDS}" \
             "AZURE_BATCH_USE_SAS=${BATCH_USE_SAS}" \
             "AZURE_BATCH_MANAGE_POOLS=${BATCH_MANAGE_POOLS}" \
+            "AML_MODE=${AML_MODE}" \
+            "AML_SUBSCRIPTION_ID=${AML_SUBSCRIPTION_ID}" \
+            "AML_RESOURCE_GROUP=${AML_RESOURCE_GROUP}" \
+            "AML_WORKSPACE_NAME=${AML_WORKSPACE_NAME}" \
+            "AML_DATASTORE_NAME=${AML_DATASTORE_NAME}" \
+            "AML_COMPUTE_TRAINING=${AML_COMPUTE_TRAINING}" \
+            "AML_COMPUTE_INFERENCE=${AML_COMPUTE_INFERENCE}" \
+            "AML_COMPUTE_EMBEDDING=${AML_COMPUTE_EMBEDDING}" \
+            "AML_COMPUTE_IMAGERYPREP=${AML_COMPUTE_IMAGERYPREP}" \
+            "AML_COMPUTE_ARTIFACTS=${AML_COMPUTE_ARTIFACTS}" \
+            "AML_ENVIRONMENT_TRAINING=${AML_ENVIRONMENT_TRAINING}" \
+            "AML_ENVIRONMENT_IMAGERYPREP=${AML_ENVIRONMENT_IMAGERYPREP}" \
+            "AML_IDENTITY_MODE=${AML_IDENTITY_MODE}" \
+            "AML_MANAGED_IDENTITY_ID=${AML_MANAGED_IDENTITY_ID}" \
             "AZURE_BATCH_REGISTRY_SERVER=${ACR_NAME}.azurecr.io" \
             "AZURE_BATCH_REGISTRY_IMAGE=${ACR_NAME}.azurecr.io/${TRAINING_DOCKER_IMAGE}" \
             "AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID=/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$USER_MANAGED_IDENTITY" \

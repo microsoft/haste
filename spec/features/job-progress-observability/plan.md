@@ -9,7 +9,7 @@
 | Shared running/terminal progress updates | backend-dev | done |
 | Live subprocess streams and stage messages | backend-dev | done |
 | Empty-message and indeterminate UI states | ui | done |
-| Regression and integration validation | backend-validation; ui-validation | complete on the lifecycle prerequisite; final AML integration remains a separate gate |
+| Regression and integration validation | backend-validation; ui-validation | done; focused/browser checks and combined live integration pass |
 
 ## Validation
 
@@ -30,6 +30,12 @@ Focused backend tests and the UI status helper cases pass. Browser checks
 exercise queued, unknown-progress, determinate, terminal, empty-message,
 legacy-record, and reduced-motion behavior. The production UI build passes
 with the exact locked dependencies.
+
+The combined local runtime was observed through the live application API:
+diagnostic jobs reported `InProgress` and nonzero progress before container
+exit, retained their identities across a queue-host restart, and reached
+complete progress only after output persistence. Fresh imagery processing
+and labeling also completed successfully.
 
 The full library run has one unchanged baseline failure:
 `test_artifacts.py::test_zip` calls the nonexistent `ArtifactProcessor.zip`
