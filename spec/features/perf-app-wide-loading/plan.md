@@ -3,6 +3,7 @@
 ## Contents
 
 - [Slices](#slices)
+- [Projects Cancellation Follow-Up](#projects-cancellation-follow-up)
 - [Exit Gates](#exit-gates)
 - [Agent Summary](#agent-summary)
 
@@ -21,6 +22,27 @@
 
 Each slice is reviewable and testable independently. No infrastructure or
 dependency changes are planned.
+
+## Projects Cancellation Follow-Up
+
+CXL-05P extracts only the Projects list from the broader CXL-05 cancellation
+work. Implementation was approved on 2026-09-16 and PR preparation on
+2026-09-17. The independent branch now starts at `main` (`2dad150`), whose
+source tree matches the original #210 base (`3834fb4`). CXL-01 / #223 and
+unrelated working-tree edits are unchanged.
+
+| Task | Agent | Validating Agent | Story | Status |
+|---|---|---|---|---|
+| Abort departed/replaced Projects reads and suppress stale data/header/tour updates | `ui` | `ui-validation` | US-005 | implemented locally |
+| Use local read loading/error/Retry and guard shared-country callbacks | `ui` | `ui-validation` | US-005 | implemented locally |
+| Preserve preference-save and awaitable row/card delete-refresh contracts | `ui` | `ui-validation` | US-005 | verified locally |
+| StrictMode, interrupted-navigation, error, shared-data, and action regression tests | `ui` | `ui-validation` | US-005 | passed locally |
+| Human review, CI and authenticated Dev1 smoke test | `ui` | `ui-validation` | US-005 | pending |
+
+Other CXL-05 list/admin pages remain pending. This change is prepared as a
+separate draft PR against `main`; it does not depend on #223. No application
+deployment or live configuration change is included.
+See [browser test commands](test-plan.md#projects-cancellation-regressions).
 
 ## Exit Gates
 

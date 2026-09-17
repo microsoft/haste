@@ -1,14 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { useState, useEffect, useContext, useMemo, Fragment } from "react";
+import { useState, useEffect, useContext, useMemo, useRef, Fragment } from "react";
 import ProjectRow from "./ProjectManagement/ProjectRow";
 import ProjectCard from "./ProjectManagement/ProjectCard";
 import { getProjectStatus } from "./ProjectManagement/projectStatus";
 import { setGuidedTourState, initGuidedTourState } from "./GuidedTourHelper";
 import {
   Button,
-  SplitButton,
   SearchBox,
   Dropdown,
   Option,
@@ -16,10 +15,10 @@ import {
   MenuTrigger,
   MenuPopover,
   MenuList,
-  MenuItem,
   MenuItemCheckbox,
   MenuItemRadio,
-  Tooltip,
+  MessageBar,
+  MessageBarBody,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../util/icons";
 import CreateEditProjectModal from "./CreateEditProjectModal";
@@ -28,6 +27,7 @@ import { apiGet } from "../util/api";
 import { loadCountryNames } from "../util/countries";
 import { AppContext } from "../AppContext";
 import { updateUserSettings } from "../AppHelper";
+import { RouteLoading } from "./MapRoute";
 
 const ALL_COLUMNS = [
   { key: "name", label: "Name", sortable: true, always: true },
@@ -72,6 +72,10 @@ const Projects = () => {
     useContext(AppContext);
   const [modalComponent, setModalComponent] = useState();
   const [items, setItems] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const mountedRef = useRef(false);
+  const requestRef = useRef(null);
 
   const [searchText, setSearchText] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
@@ -98,12 +102,21 @@ const Projects = () => {
   };
 
   useEffect(() => {
-    loadCountryNames().then(setCountryNames);
+    let active = true;
+    loadCountryNames().then((names) => {
+      if (active) setCountryNames(names);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     initComponent();
     return () => {
+      mountedRef.current = false;
+      requestRef.current?.abort();
       initCurrentTour(null);
       initGuidedTourState("projectsGuide", appParams.guidedTourProperties);
       setAppHeaderRightButtons([]);
@@ -113,32 +126,49 @@ const Projects = () => {
   }, []);
 
   async function initComponent() {
-    setIsLoading(true);
-    await apiGet("GetDashboardData")
-      .then((response) => {
-        setItems(response);
-        setCurrentPage(1);
-        initGuidedTourState("projectsGuide", appParams.guidedTourProperties);
-        initCurrentTour("projectsGuide");
-        setAppHeaderRightButtons([
-          {
-            iconName: "help",
-            title: "Help",
-            id: "helpButton",
-            onClick: () =>
-              setGuidedTourState(
-                false,
-                initCurrentTour,
-                "projectsGuide",
-                appParams.guidedTourProperties
-              ),
-          },
-        ]);
-      })
-      .catch((error) => {
-        console.error("Error fetching projects:", error);
+    if (!mountedRef.current) return;
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    setLoading(true);
+    setLoadError(false);
+    try {
+      const response = await apiGet("GetDashboardData", {
+        signal: controller.signal,
       });
-    setIsLoading(false);
+      controller.signal.throwIfAborted();
+      if (!Array.isArray(response?.projects)) {
+        throw new Error("Invalid projects response.");
+      }
+      setItems(response);
+      setCurrentPage(1);
+      initGuidedTourState("projectsGuide", appParams.guidedTourProperties);
+      initCurrentTour("projectsGuide");
+      setAppHeaderRightButtons([
+        {
+          iconName: "help",
+          title: "Help",
+          id: "helpButton",
+          onClick: () =>
+            setGuidedTourState(
+              false,
+              initCurrentTour,
+              "projectsGuide",
+              appParams.guidedTourProperties
+            ),
+        },
+      ]);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        console.error("Error fetching projects:", error);
+        setLoadError(true);
+      }
+    } finally {
+      if (mountedRef.current && requestRef.current === controller) {
+        setLoading(false);
+        requestRef.current = null;
+      }
+    }
   }
 
   const openCreateModal = () => {
@@ -231,8 +261,21 @@ const Projects = () => {
     setIsLoading(false);
   }
 
-  if (!items) {
-    return null;
+  if (loading) {
+    return <RouteLoading label="Loading projects" />;
+  }
+
+  if (loadError) {
+    return (
+      <div className="p-4 w-100">
+        <MessageBar intent="error">
+          <MessageBarBody>Projects could not be loaded.</MessageBarBody>
+        </MessageBar>
+        <Button className="mt-3" appearance="primary" onClick={initComponent}>
+          Retry
+        </Button>
+      </div>
+    );
   }
 
   const isEmpty = !items || items.projects.length === 0;

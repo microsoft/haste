@@ -6,6 +6,7 @@
 - [Implemented Changes](#implemented-changes)
 - [Expected Impact](#expected-impact)
 - [Local Verification](#local-verification)
+- [Projects Cancellation Verification](#projects-cancellation-verification)
 - [Open Validation](#open-validation)
 
 ## Baseline
@@ -99,6 +100,33 @@ Active Jobs independently. The session and Dashboard phases both displayed the
 same single overall `Loading dashboard` spinner. After Dashboard content
 rendered, that overall spinner cleared and the still-pending Active Jobs request
 displayed its intended spinner inside the Ongoing Jobs box.
+
+## Projects Cancellation Verification
+
+The Projects-only CXL-05P follow-up, based on #210 (`3834fb4`), passed 169
+existing UI/unit/request-failure tests on 2026-09-16. Eight new browser scenarios
+passed (nine Node entries including their parent suite), covering repeated
+interruptions, stale completions, retry, shared reference data, empty lists,
+preference writes, and awaitable row/card deletion refreshes.
+
+The production UI build completed in 411 ms. Scoped ESLint passes for Projects;
+full UI lint reports 170 existing diagnostics (162 errors, eight warnings),
+down from 173 after removing three unused imports in the touched component.
+Desktop and mobile loading/error screenshots were inspected and fit without
+overlap. Tests use synthetic local data and do not contact Dev1.
+
+The original diagnostic probe reproduced five continuing requests and late
+global header/tour/loading writes from abandoned Projects visits. The new
+tests verify cancellation and zero global loading writes for automatic reads.
+This evidence is independent of the earlier HAR network delays and Function
+startup stalls; those are not claimed as resolved. Human review, CI, and an
+authenticated Dev1 smoke test remain pending.
+
+On 2026-09-17, the change was moved onto `main` (`2dad150`) after verifying
+that its source tree matches the original #210 base. All 169 existing tests
+and eight browser scenarios passed again on the new branch. The browser
+runner uses an external Playwright installation; no application dependencies
+were added or changed.
 
 ## Open Validation
 

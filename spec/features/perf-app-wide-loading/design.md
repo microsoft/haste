@@ -134,6 +134,31 @@ GET helpers accept an `AbortSignal`. Dashboard, active-job, and Labeling Tool
 requests abort when their owning route unmounts. Late completions cannot clear
 another route's loading state or mutate an unmounted component.
 
+### CXL-05P: Projects Read Ownership
+
+The Projects list owns one active `GetDashboardData` read per mounted page.
+Starting a replacement read aborts its predecessor; unmount aborts the active
+read and prevents later callbacks from initiating another load. Each completion
+checks its controller before committing data, header buttons, or tour state.
+Only the current request may finish the local loader, including under React
+StrictMode setup/cleanup/setup.
+
+Initial reads and retries use the existing route-local loading surface and a
+retryable error state. A malformed summary response is an error; an empty
+`projects` array is successful. Reads no longer write the global blocking
+overlay. The shared country-data promise is not aborted; departed consumers
+ignore its completion so other consumers still receive the cached reference data.
+
+The row/card refresh callback remains awaitable after deletion. Explicit
+preference saves and delete operations retain their existing action lifetimes
+and blocking overlays. The shell continues to suppress local loading beneath
+an explicit-action overlay. No changes are made to these mutations, other list
+routes, CXL-01, backend APIs, or telemetry settings.
+
+This corrects the reproduced request accumulation and stale-loader behavior.
+It is not a fix for the separately measured multi-second gateway/network waits
+or Function host startup delays.
+
 ## Security
 
 - Identity comes only from the decoded SWA principal; no user ID is accepted
