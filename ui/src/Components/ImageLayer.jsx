@@ -1,66 +1,89 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 // Components
-import { Button } from "@fluentui/react-components";
+import { Button, MessageBar, MessageBarBody, Spinner } from "@fluentui/react-components";
 import { FluentIcon } from "../util/icons";
-import { useEffect, useState, useContext } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import SectionHeader from "./Section/SectionHeader";
 import ModelRow from "./ProjectManagement/ModelRow";
 import { apiGet } from "../util/api";
 
-import { AppContext } from "../AppContext";
-
 const ImageLayer = () => {
-  const projectId = useParams().projectId;
-  const imageLayerId = useParams().imageLayerId;
-
-  const [selectedProject, setSelectedProject] = useState("");
-  const [selectedImageLayer, setSelectedImageLayer] = useState("");
-  const [sectionHeaderProperties, setSectionHeaderProperties] = useState();
-
-  const { setIsLoading } = useContext(AppContext);
+  const { projectId, imageLayerId } = useParams();
+  const [attempt, setAttempt] = useState(0);
+  const [result, setResult] = useState(null);
 
   useEffect(() => {
+    const controller = new AbortController();
     const fetchProject = async () => {
-      setIsLoading(true);
       try {
+        const query = new URLSearchParams({ projectId, includeModels: "True" });
         const project = await apiGet(
-          "GetProjectDetails?projectId=" + projectId + "&includeModels=True"
+          `GetProjectDetails?${query}`,
+          { signal: controller.signal }
         );
-        setSelectedProject(project);
-        const imageLayer = project.imageLayer.find(
-          (x) => x.imageLayerId === imageLayerId
+        controller.signal.throwIfAborted();
+        const imageLayer = project.imageLayer?.find(
+          (layer) => layer.imageLayerId === imageLayerId
         );
-        setSelectedImageLayer(imageLayer);
-        setSectionHeaderProperties({
-          iconName: "OpenFolderHorizontal",
-          path: [
-            { name: "Projects", link: "/projects" },
-            { name: project.name, link: "/project/" + project.projectId },
-            { name: imageLayer.name, link: "" },
-          ],
-          links: [],
-          filter: false,
-          filterText: ":",
-          filterButtonText: "",
-          filterPlaceholder: "",
-        });
+        if (!imageLayer) throw new Error("Image layer was not found.");
+        setResult({ projectId, imageLayerId, attempt, project, imageLayer });
       } catch (error) {
-        console.error("Error fetching project:", error);
+        if (controller.signal.aborted || error.name === "AbortError") return;
+        setResult({
+          projectId,
+          imageLayerId,
+          attempt,
+          error: "Image layer details could not be loaded.",
+        });
       }
-      setIsLoading(false);
     };
 
     fetchProject();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+    return () => controller.abort();
+  }, [projectId, imageLayerId, attempt]);
 
-  if (!selectedProject || !selectedImageLayer) {
-    return;
+  if (
+    result?.projectId !== projectId ||
+    result?.imageLayerId !== imageLayerId ||
+    result?.attempt !== attempt
+  ) {
+    return (
+      <div className="p-4 w-100" data-route-loading="true" aria-busy="true">
+        <Spinner label="Loading image layer" />
+      </div>
+    );
   }
 
+  if (result.error) {
+    return (
+      <div className="p-4 w-100">
+        <MessageBar intent="error">
+          <MessageBarBody>{result.error}</MessageBarBody>
+        </MessageBar>
+        <Button className="mt-3" onClick={() => setAttempt((value) => value + 1)}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  const { project: selectedProject, imageLayer: selectedImageLayer } = result;
+  const sectionHeaderProperties = {
+    iconName: "OpenFolderHorizontal",
+    path: [
+      { name: "Projects", link: "/projects" },
+      { name: selectedProject.name, link: "/project/" + selectedProject.projectId },
+      { name: selectedImageLayer.name, link: "" },
+    ],
+    links: [],
+    filter: false,
+    filterText: ":",
+    filterButtonText: "",
+    filterPlaceholder: "",
+  };
 
   return (
     <>
