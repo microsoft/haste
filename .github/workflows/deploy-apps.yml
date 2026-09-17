@@ -76,7 +76,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python .github/scripts/resolve_hastegeo_deploy.py \
-            --version "${{ inputs.hastegeo_version }}"
+            --version "${{ inputs.hastegeo_version }}" \
+            --source-sha "${{ github.sha }}"
 
       - name: Resolve matching image tags
         id: artifacts
@@ -106,6 +107,37 @@ jobs:
 
       - name: Git LFS Pull
         run: git lfs pull
+      - name: Verify RC image digests before changing the environment
+        if: contains(steps.hastegeo.outputs.version, 'rc')
+        env:
+          ACR_NAME: ${{ secrets.ACR_NAME }}
+          SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          VERSION: ${{ steps.hastegeo.outputs.version }}
+          EXPECTED_REGISTRY_SHA: ${{ steps.hastegeo.outputs.registry_sha256 }}
+          TRAINING_DIGEST: ${{ steps.hastegeo.outputs.training_digest }}
+          IMAGEPREP_DIGEST: ${{ steps.hastegeo.outputs.imageprep_digest }}
+        run: |
+          set -euo pipefail
+          REGISTRY=$(az acr show --subscription "$SUBSCRIPTION_ID" \
+            --name "$ACR_NAME" --query loginServer -o tsv)
+          ACTUAL_REGISTRY_SHA=$(printf '%s' "$REGISTRY" | sha256sum | cut -d' ' -f1)
+          if [[ "$ACTUAL_REGISTRY_SHA" != "$EXPECTED_REGISTRY_SHA" ]]; then
+            echo "::error::RC images belong to a different registry"
+            exit 1
+          fi
+          for PAIR in "hastetraining=$TRAINING_DIGEST" "hasteimageryprep=$IMAGEPREP_DIGEST"; do
+            IMAGE="${PAIR%%=*}"
+            EXPECTED="${PAIR#*=}"
+            METADATA=$(az acr repository show --subscription "$SUBSCRIPTION_ID" \
+              --name "$ACR_NAME" --image "${IMAGE}:${VERSION}" -o json)
+            if [[ "$(jq -r '.digest' <<<"$METADATA")" != "$EXPECTED" ]] ||
+               ! jq -e '.changeableAttributes |
+                 .writeEnabled == false and .deleteEnabled == false' \
+                 <<<"$METADATA" >/dev/null; then
+              echo "::error::RC image digest or immutability check failed: $IMAGE"
+              exit 1
+            fi
+          done
       - name: Deploy
         env:
           # Non-sensitive UI feature flag, baked into the Vite bundle at build time.

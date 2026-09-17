@@ -39,6 +39,11 @@ RUN micromamba create -f /tmp/env.yml -y \
 # ---------- Stage 2: Final Runtime Image ----------
 FROM mcr.microsoft.com/azureml/curated/minimal-py312-cuda12.4-inference
 
+ARG HASTE_BUILD_SOURCE_SHA
+ARG HASTE_BUILD_VERSION
+LABEL org.opencontainers.image.revision="${HASTE_BUILD_SOURCE_SHA}" \
+      org.opencontainers.image.version="${HASTE_BUILD_VERSION}"
+
 USER root
 
 # Install runtime system dependencies and CA certificates (with retry for flaky network)

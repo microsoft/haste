@@ -1,5 +1,10 @@
 FROM mcr.microsoft.com/azureml/curated/minimal-py311-inference:59@sha256:89a46a46b71b4692731654d0523f53c8d14929e41ea8129293dc4e39fcabb14c
 
+ARG HASTE_BUILD_SOURCE_SHA
+ARG HASTE_BUILD_VERSION
+LABEL org.opencontainers.image.revision="${HASTE_BUILD_SOURCE_SHA}" \
+      org.opencontainers.image.version="${HASTE_BUILD_VERSION}"
+
 USER root
 
 RUN apt-get update && apt-get install -y \
