@@ -40,7 +40,9 @@ protected URLs, flavor, count, revision and readiness, with zero-default
 classification thresholds. Downloads never fall back to direct blob URLs or
 add unsupported cache-busting parameters.
 Raw GeoPackage downloads preserve the model's authoritative inference basename
-when safe for a response header, with a model-specific fallback. Rendered
+when safe for a response header, with a model-specific fallback. Resolve the
+artifact URL, revision check, and filename from one model read, without a second
+metadata fetch that could observe a different output. Rendered
 footprints require an exact, non-empty Overture ID match before any feature
 state is written. Both labeling and results canonicalize the protected
 footprint URL by project/layer, independent of model ID and query ordering.

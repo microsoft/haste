@@ -23,4 +23,4 @@
 ## Exclusions
 
 Versioned editing is the next stacked feature. The results-preparation queue
-and first-open backfill from #136 are explicitly excluded.
+and first-open backfill are explicitly excluded.

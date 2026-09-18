@@ -280,18 +280,10 @@ class PredictionResultsProcessor:
                 )
         return [row for row in rows if row.get("imageLayerId") == layer_id]
 
-    def download_filename(self, request: ModelArtifactRequest) -> str:
-        model = self.model(request.projectId, request.modelId)
-        if (
-            request.predictionRevision
-            and request.predictionRevision != model.predictionRevision
-        ):
-            raise FileNotFoundError("Prediction output is no longer current")
-        return prediction_download_filename(model)
-
     def resolve_artifact(
         self, request: ModelArtifactRequest
-    ) -> tuple[str, bool]:
+    ) -> tuple[str, bool, str | None]:
+        """Resolve URL, cache scope, and filename from the same model read."""
         model = (
             self.model(request.projectId, request.modelId)
             if request.modelId
@@ -333,4 +325,9 @@ class PredictionResultsProcessor:
             url = getattr(model, field)
         if not url:
             raise FileNotFoundError("Artifact is unavailable")
-        return url, request.kind in ("gpkg", "prediction_attrs")
+        filename = (
+            prediction_download_filename(model)
+            if request.kind == "gpkg"
+            else None
+        )
+        return url, request.kind in ("gpkg", "prediction_attrs"), filename

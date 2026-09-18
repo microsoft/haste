@@ -82,6 +82,7 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 206)
         self.assertIn("no-store", response.headers["Cache-Control"])
         self.assertEqual(response.headers["Content-Range"], "bytes 0-3/20")
+        self.assertNotIn("Content-Disposition", response.headers)
         read.assert_awaited_once()
         self.assertEqual(
             (
@@ -146,3 +147,42 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
                 response.headers["Content-Disposition"],
                 f'attachment; filename="{expected}"',
             )
+
+    async def test_download_resolves_url_and_filename_from_one_model_read(
+        self,
+    ) -> None:
+        baseline = {
+            **self.record,
+            "predictionGpkgFilename": "original.gpkg",
+        }
+        replacement = {
+            **baseline,
+            "gpkgUrl": "https://storage/replacement.gpkg",
+            "predictionRevision": "replacement",
+            "predictionGpkgFilename": "replacement.gpkg",
+        }
+        for params in ({}, {"predictionRevision": "old"}):
+            with self.subTest(params=params):
+                self.metadata.load.reset_mock()
+                self.metadata.load.side_effect = [baseline, replacement]
+                with patch.object(
+                    function_app,
+                    "read_result_artifact",
+                    new=AsyncMock(
+                        return_value=BlobRange(
+                            b"gpkg", 4, "application/geopackage+sqlite3", None
+                        )
+                    ),
+                ) as read:
+                    response = await function_app.GetModelArtifact(
+                        self.http(kind="gpkg", **params)
+                    )
+                self.assertEqual(response.status_code, 206)
+                self.assertEqual(
+                    response.headers["Content-Disposition"],
+                    'attachment; filename="original.gpkg"',
+                )
+                read.assert_awaited_once_with(
+                    baseline["gpkgUrl"], 0, 4, self.config
+                )
+                self.metadata.load.assert_called_once_with(MODEL_ID)

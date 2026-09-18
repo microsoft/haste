@@ -1526,11 +1526,6 @@ async def GetLayerModelsDetails(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse("Error loading models.", status_code=500)
 
 
-# Model artifacts the browser fetches by HTTP byte range, mapped to the
-# Model field that holds each blob URL.
-# Artifacts owned by the ImageLayer rather than a model. Footprint
-# geometry is shared by every model trained on the layer, so it lives
-# here and is looked up by imageLayerId.
 _MODEL_ARTIFACT_CONTENT_TYPES = {
     "footprint_pmtiles": "application/vnd.pmtiles",
     "sidecar": "application/octet-stream",
@@ -1546,7 +1541,7 @@ _MODEL_ARTIFACT_CONTENT_TYPES = {
     methods=["GET"],
 )
 async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
-    """Stream an embedding model's browser artifact via managed identity.
+    """Stream model results or layer footprints through the protected API.
 
     The Interactive Labeler reads the PMTiles archive (and its features
     sidecar) by HTTP byte-range straight from the browser. Handing the
@@ -1574,13 +1569,8 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
         return _bad_request("Invalid artifact request")
     try:
         processor = PredictionResultsProcessor(config)
-        blob_url, generation_scoped = await asyncio.to_thread(
+        blob_url, generation_scoped, filename = await asyncio.to_thread(
             processor.resolve_artifact, request
-        )
-        filename = (
-            await asyncio.to_thread(processor.download_filename, request)
-            if request.kind == "gpkg"
-            else None
         )
     except PredictionRequestError:
         return _bad_request("Invalid artifact request")
