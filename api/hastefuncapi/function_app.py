@@ -1409,7 +1409,11 @@ async def GetLayerDetailView(req: func.HttpRequest) -> func.HttpResponse:
             for model in models
             if model["imageLayerId"] == image_layer_id
         ]
-        image_layer["models"] = match_models
+        layer = ImageLayer.model_validate(image_layer)
+        image_layer["models"] = [
+            PredictionResultsProcessor.model_view(model, layer)
+            for model in match_models
+        ]
         image_layer["modelCount"] = len(match_models)
         return func.HttpResponse(json.dumps(image_layer), status_code=200)
     except FileNotFoundError as e:
@@ -1588,8 +1592,11 @@ async def GetModelArtifact(req: func.HttpRequest) -> func.HttpResponse:
     try:
         offset, length, is_range = parse_byte_range(req.headers.get("Range"))
     except ValueError:
-        # Unsupported/suffix/multi-range -> serve the whole object.
         offset, length, is_range = 0, None, False
+    if kind == "footprint_pmtiles" and (not is_range or length is None):
+        return _bad_request(
+            "PMTiles require a bounded bytes=start-end Range header"
+        )
 
     try:
         result = await read_result_artifact(blob_url, offset, length, config)

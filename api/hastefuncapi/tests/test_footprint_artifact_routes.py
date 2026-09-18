@@ -124,3 +124,62 @@ class TestFootprintArtifactRoutes(unittest.IsolatedAsyncioTestCase):
             response = await function_app.GetModelArtifact(req)
             self.assertEqual(response.status_code, 206)
             read.assert_awaited_once_with(self.url, 0, 4, self.config)
+
+    async def test_pmtiles_requires_bounded_range_without_full_download(
+        self,
+    ) -> None:
+        for header in (
+            None,
+            "",
+            "bytes=0-",
+            "bytes=-4",
+            "bytes=0-3,8-10",
+            "bytes=10-3",
+            "invalid",
+        ):
+            with self.subTest(header=header):
+                req = func.HttpRequest(
+                    method="GET",
+                    url="http://localhost/api/GetModelArtifact",
+                    headers={} if header is None else {"Range": header},
+                    params={
+                        "projectId": PROJECT_ID,
+                        "imageLayerId": LAYER_ID,
+                        "kind": "footprint_pmtiles",
+                    },
+                    body=b"",
+                )
+                with patch.object(
+                    function_app,
+                    "read_result_artifact",
+                    new_callable=AsyncMock,
+                ) as read:
+                    response = await function_app.GetModelArtifact(req)
+                self.assertEqual(response.status_code, 400)
+                read.assert_not_awaited()
+
+    async def test_pmtiles_range_beyond_archive_returns_416(self) -> None:
+        req = func.HttpRequest(
+            method="GET",
+            url="http://localhost/api/GetModelArtifact",
+            headers={"Range": "bytes=20-23"},
+            params={
+                "projectId": PROJECT_ID,
+                "imageLayerId": LAYER_ID,
+                "kind": "footprint_pmtiles",
+            },
+            body=b"",
+        )
+        with patch.object(
+            function_app,
+            "read_result_artifact",
+            new=AsyncMock(
+                return_value=BlobRange(
+                    b"", 20, "application/vnd.pmtiles", "etag"
+                )
+            ),
+        ) as read:
+            response = await function_app.GetModelArtifact(req)
+        self.assertEqual(response.status_code, 416)
+        self.assertEqual(response.headers["Content-Range"], "bytes */20")
+        read.assert_awaited_once_with(self.url, 20, 4, self.config)

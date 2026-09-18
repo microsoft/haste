@@ -182,6 +182,9 @@ returns the existing imagery metadata and these common fields:
 Embedding results do not fabricate prediction-raster URLs. Opening results is
 read-only: it does not generate artifacts, enqueue preparation, or start backfill.
 Legacy GeoPackages remain downloadable when the new sidecar is absent.
+Model rows returned by `GetProjectDetails`, `GetLayerDetailView`, and
+`GetLayerModelsDetails` use the same readiness projection, including protected
+result URLs, without discarding their existing artifact and label details.
 
 `GET /api/GetModelArtifact` accepts `projectId`, `kind`, and the artifact owner.
 Model-scoped kinds require `modelId`; `footprint_pmtiles` accepts `imageLayerId`
@@ -190,13 +193,19 @@ without a model. The existing `sidecar` kind means embedding feature vectors;
 `predictionRevision` query parameter for a generation-pinned result request.
 An obsolete revision is rejected rather than returning different bytes under
 an old cache identity. `version=0` explicitly selects raw GeoPackage output.
+PMTiles requests must include a bounded `Range: bytes=start-end` header.
+The viewer and labeler fetch only archive headers/directories and viewport
+tiles, never the complete archive. Missing, open-ended, or unsupported PMTiles
+ranges return 400 without reading the archive; an offset beyond its end returns
+416. Other artifact kinds continue to support whole-file downloads.
 
 | Status | Meaning |
 |---|---|
 | 200 / 206 | Result JSON or artifact content, including supported range responses |
-| 400 | Malformed identifiers, owner mismatch, or invalid prediction rows |
+| 400 | Malformed identifiers, owner mismatch, invalid prediction rows, or missing/unsupported PMTiles range |
 | 404 | Missing model, layer, or artifact |
 | 409 | Superseded prediction generation or conflicting publication |
+| 416 | Requested range starts beyond the artifact |
 | 500 | Unexpected storage, generation, or publication failure |
 
 See [the shared-results specification](../../spec/features/common-prediction-results/README.md)
