@@ -9,7 +9,7 @@
 | Preserve the shared viewer and protected downloads | `ui` | CR-1, CR-4, CR-5 | complete |
 | Validate paired writes, clear/failure/freshness, ownership, and existing inference wiring | `backend-validation` | CR-2 to CR-5 | complete |
 | Confirm unchanged viewer contracts, cancellation and download behavior | `ui-validation` | CR-1, CR-4, CR-5 | complete |
-| Clarify standalone revision IDs and make the specification self-contained | `backend-dev` | CR-2, CR-3 | complete |
+| Document caller-supplied revision IDs in the worker and make the specification self-contained | `backend-dev` | CR-2, CR-3 | complete |
 | Resolve protected download URLs and filenames with one model read | `backend-dev` | CR-5 | complete |
 | Verify single-read downloads, ownership, stale revisions, and safe filenames | `backend-validation` | CR-5 | complete |
 
@@ -29,9 +29,11 @@ prediction-results behavior is unchanged.
 
 ## Review follow-up: 2026-09-18
 
-Define the standalone revision as an output-pair ID, show UUIDv4 generation,
-and explain the managed task-ID equivalent. State the design and exclusions
-directly rather than referring to an unrelated prototype PR.
+Document the programmatic worker's result settings in `run_workflow.py`,
+including the caller-supplied task ID and output-location responsibility.
+Remove the standalone configuration README and manual-run instructions.
+State the design and exclusions directly rather than referring to an
+unrelated prototype PR.
 
 Resolve a GeoPackage's URL and safe filename from the same model snapshot.
 This removes one metadata read and a duplicate revision check per download,
