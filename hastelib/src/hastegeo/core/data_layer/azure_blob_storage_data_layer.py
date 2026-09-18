@@ -20,6 +20,7 @@ from ..utils.blob import (
 from ..utils.metadata import matches_metadata_type
 from ..utils.parallel import parallel_map
 from .abstract_data_layer import AbstractDataLayer
+from .conditional import JsonDocument, read_blob_document, write_blob_document
 
 _INITIALIZED_CONTAINERS = set()
 _INITIALIZED_CONTAINERS_LOCK = Lock()
@@ -206,6 +207,31 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
             raise ValueError(
                 f"{self.__class__.__name__}.save: Unsupported data format. Only json, yaml and bytes are supported."
             )
+
+    def load_json_versioned(
+        self, identifier: str, data_type: str
+    ) -> tuple[JsonDocument, str]:
+        client = self.container_client.get_blob_client(
+            self.get_file_path(identifier, data_type)
+        )
+        return read_blob_document(client)
+
+    def save_json_if_version(
+        self,
+        identifier: str,
+        data_type: str,
+        data: JsonDocument,
+        expected_version: str | None,
+    ) -> None:
+        client = self.container_client.get_blob_client(
+            self.get_file_path(identifier, data_type)
+        )
+        write_blob_document(
+            client,
+            data,
+            expected_version,
+            metadata=self._index_metadata(data_type, data),
+        )
 
     def save_chunk(
         self,

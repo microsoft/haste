@@ -1,8 +1,11 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
-import json
 import os
 
+from hastegeo.core.runners.submission import (
+    TaskSubmissionPendingError,
+    submit_task,
+)
 from hastegeo.core.runners.unified_runner import UnifiedRunner
 
 from ..config import Config
@@ -21,6 +24,7 @@ from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
 from ..utils.tbparser import calculate_metrics, parse_tb_event_logs
+from .job_state import Workload, persist_and_enqueue
 
 # Do not prefix with '$' here. This string will be replaced
 # at runtime with the generated working directory for the task
@@ -64,19 +68,21 @@ class TrainPreprocessor:
             config = Config()
         self.queue_client = AzureQueueHandler(
             config.queue_config["queue_connection_string"],
-            config.queue_config["train_queue_name"],
+            config.queue_config[
+                (
+                    "embedding_queue_name"
+                    if model.modelType == "embedding"
+                    else "train_queue_name"
+                )
+            ],
             config.queue_config["queue_account_url"],
         )
         self.model_data = model
         self.config = config
 
-    def send_to_queue(self, status=None):
+    def send_to_queue(self, status=None, *, request_id: str = None):
         if status == self.config.get_status_types().CANCELLED.value:
             self.model_data.status = status
-            # Cancel the training job ASAP
-            self.queue_client.put_message(
-                json.dumps(self.model_data.dict()), visibility_timeout=1
-            )
             self.model_data.statusMessage = (
                 MetadataUtils.append_status_message(
                     self.model_data.statusMessage, "Cancelling training"
@@ -89,12 +95,23 @@ class TrainPreprocessor:
             self.model_data.currentStep = 0
             self.model_data.progressPct = 0.0
             self.model_data.totalSteps = int(self.model_data.maxEpochs) + 1
-            self.queue_client.put_message(json.dumps(self.model_data.dict()))
             self.model_data.statusMessage = (
                 MetadataUtils.append_status_message(
                     self.model_data.statusMessage, "Queued for training"
                 )
             )
+        self.model_data = persist_and_enqueue(
+            self.model_data,
+            (
+                Workload.EMBEDDING
+                if self.model_data.modelType == "embedding"
+                else Workload.TRAINING
+            ),
+            self.config,
+            self.queue_client,
+            cancel=status == self.config.get_status_types().CANCELLED.value,
+            request_id=request_id,
+        )
         return self.model_data
 
 
@@ -113,11 +130,6 @@ class TrainPostprocessor(BaseTrainProcessor):
         self.label_project = label_project
         self.project = project
         self.config = config or Config()
-        self.queue_client = AzureQueueHandler(
-            self.config.queue_config["queue_connection_string"],
-            self.config.queue_config["train_queue_name"],
-            self.config.queue_config["queue_account_url"],
-        )
 
     def process(self):
         self.logger.info(
@@ -182,7 +194,10 @@ class TrainPostprocessor(BaseTrainProcessor):
                     task_id=self.model_data.trainingJob.taskId,
                 )
 
-            elif task_status == self.config.get_status_types().FAILED.value:
+            elif task_status in {
+                self.config.get_status_types().FAILED.value,
+                self.config.get_status_types().CANCELLED.value,
+            }:
                 self.model_data.trainingJob.status = task_status
                 self.model_data.trainingJob.completedDate = (
                     MetadataUtils.get_timestamp()
@@ -240,9 +255,6 @@ class TrainPostprocessor(BaseTrainProcessor):
                     self._update_training_progress(
                         message, step=self.model_data.currentStep
                     )
-                self.queue_client.put_message(
-                    json.dumps(self.model_data.dict())
-                )
 
         return self.model_data
 
@@ -259,14 +271,18 @@ class TrainPostprocessor(BaseTrainProcessor):
                 f'&& python run_workflow.py --config ${BATCH_JOB_WORKDIR}/{experiment_input_files["config"]["file_path"]} --step training'
                 '"'
             )
-            job_id = self.config.get_azure_batch_config()[
-                "training_batch_job_id"
-            ]
+            pending_job = self.model_data.trainingJob
+            job_id = (
+                pending_job.jobId if pending_job else None
+            ) or self.config.get_azure_batch_config()["training_batch_job_id"]
             # Trim job_id to 64 characters to comply with Azure Batch limits
             job_id = job_id[:64]
-            task_id = f"{TRAINING_PREFIX}-{MetadataUtils.generate_id()}"
+            task_id = (
+                pending_job.taskId if pending_job else None
+            ) or f"{TRAINING_PREFIX}-{MetadataUtils.generate_id()}"
             training_output_prefix = f"{MetadataUtils.hash_string(self.model_data.projectId)}/{task_id}"
-            job_id, task_id = self.runner.add_task(
+            job_id, task_id = submit_task(
+                self.runner,
                 job_id=job_id,
                 task_id=task_id,
                 output_prefix=training_output_prefix,
@@ -296,10 +312,8 @@ class TrainPostprocessor(BaseTrainProcessor):
             self._update_training_progress(
                 f"Training submitted with task id {task_id}", step=0
             )
-            self.queue_client.put_message(json.dumps(self.model_data.dict()))
-            self.logger.info(
-                f"InProgress message to queue sent for model {self.model_data.modelId}"
-            )
+        except TaskSubmissionPendingError:
+            raise
         except Exception as e:
             self.logger.error(
                 f"Error processing model {self.model_data.modelId}: {e}",

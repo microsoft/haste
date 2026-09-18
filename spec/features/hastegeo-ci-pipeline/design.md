@@ -66,6 +66,11 @@ Stable push:
 - Default target is latest stable plus one patch.
 - `HASTE_BUMP=minor|major` and `HASTE_SET_VERSION` remain explicit overrides.
 - PR versions are canonical PEP 440 `X.Y.ZrcN`.
+- Hatchling's code version source resolves `HASTE_SET_VERSION` before metadata
+  validation/caching. The build hook only stamps that resolved version into
+  the packaged source; it never mutates Hatchling's private version cache.
+- Real-wheel regressions compare filename, `METADATA` and `__about__.py`,
+  including metadata reads before hook initialization.
 - Stable versions are `X.Y.Z`.
 - A stable `hastegeo-vX.Y.Z` Git tag points to the source commit.
 - If the current main SHA already has a valid hastegeo tag and asset, the

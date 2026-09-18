@@ -4,10 +4,12 @@ import json
 
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import DefaultAzureCredential  # type: ignore
+from azure.storage.blob import BlobServiceClient
 from azure.storage.filedatalake import DataLakeServiceClient  # type: ignore
 
 from ..utils.metadata import matches_metadata_type
 from .abstract_data_layer import AbstractDataLayer
+from .conditional import JsonDocument, read_blob_document, write_blob_document
 
 
 class AzureDataLakeDataLayer(AbstractDataLayer):
@@ -20,6 +22,10 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
         self.file_system_client = self.service_client.get_file_system_client(
             file_system
         )
+        self.metadata_blob_container = BlobServiceClient(
+            account_url=account_url.replace(".dfs.", ".blob."),
+            credential=credential,
+        ).get_container_client(file_system)
 
     def get_file_path(
         self,
@@ -88,6 +94,26 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
                 "Unsupported data format. Only dict and bytes are supported."
             )
 
+    def load_json_versioned(
+        self, identifier: str, data_type: str
+    ) -> tuple[JsonDocument, str]:
+        client = self.metadata_blob_container.get_blob_client(
+            self.get_file_path(identifier, data_type)
+        )
+        return read_blob_document(client)
+
+    def save_json_if_version(
+        self,
+        identifier: str,
+        data_type: str,
+        data: JsonDocument,
+        expected_version: str | None,
+    ) -> None:
+        client = self.metadata_blob_container.get_blob_client(
+            self.get_file_path(identifier, data_type)
+        )
+        write_blob_document(client, data, expected_version)
+
     def save_chunk(
         self,
         identifier,
@@ -134,10 +160,16 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
         data = []
         paths = self.file_system_client.get_paths()
         for path in paths:
+            parts = path.name.split("/")
             in_partition = not self.partition_key or path.name.startswith(
                 f"{self.partition_key}/"
             )
-            if in_partition and matches_metadata_type(path.name, data_type):
+            if (
+                len(parts) <= 2
+                and parts[-1].endswith(".json")
+                and in_partition
+                and matches_metadata_type(path.name, data_type)
+            ):
                 file_client = self.file_system_client.get_file_client(
                     path.name
                 )

@@ -1,9 +1,12 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
-import json
 import os
 from typing import NamedTuple
 
+from hastegeo.core.runners.submission import (
+    TaskSubmissionPendingError,
+    submit_task,
+)
 from hastegeo.core.runners.unified_runner import UnifiedRunner
 
 from ..config import Config
@@ -14,6 +17,7 @@ from ..utils.data import extract_from_url
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
+from .job_state import Workload, persist_and_enqueue
 
 # Do not prefix with '$' here. This string will be replaced
 # at runtime with the generated working directory for the task
@@ -63,7 +67,16 @@ class InferencePreprocessor:
         self.model_data = model
         self.config = config
 
-    def send_to_queue(self):
+    def send_to_queue(self, status=None, *, request_id: str = None):
+        if status == self.config.get_status_types().CANCELLED.value:
+            self.model_data = persist_and_enqueue(
+                self.model_data,
+                Workload.INFERENCE,
+                self.config,
+                self.queue_client,
+                cancel=True,
+            )
+            return self.model_data
         self.model_data.inferenceStatus = (
             self.config.get_status_types().PENDING.value
         )
@@ -77,7 +90,13 @@ class InferencePreprocessor:
                 self.model_data.inferenceStatusMessage, "Queued for inference"
             )
         )
-        self.queue_client.put_message(json.dumps(self.model_data.dict()))
+        self.model_data = persist_and_enqueue(
+            self.model_data,
+            Workload.INFERENCE,
+            self.config,
+            self.queue_client,
+            request_id=request_id,
+        )
         return self.model_data
 
 
@@ -105,11 +124,6 @@ class InferencePostprocessor(BaseInferenceProcessor):
         self.image_layer = image_layer
         self.experiment_config = experiment_config
         self.config = config or Config()
-        self.queue_client = AzureQueueHandler(
-            self.config.queue_config["queue_connection_string"],
-            self.config.queue_config["inference_queue_name"],
-            self.config.queue_config["queue_account_url"],
-        )
 
     def process(self):
         self.logger.info(
@@ -223,7 +237,10 @@ class InferencePostprocessor(BaseInferenceProcessor):
                     task_id=self.model_data.inferenceJobs[idx].taskId,
                 )
 
-            elif task_status == self.config.get_status_types().FAILED.value:
+            elif task_status in {
+                self.config.get_status_types().FAILED.value,
+                self.config.get_status_types().CANCELLED.value,
+            }:
                 self.model_data.inferenceStatus = task_status
                 self.model_data.inferenceJobs[idx].status = task_status
                 self.model_data.inferenceJobs[
@@ -253,9 +270,6 @@ class InferencePostprocessor(BaseInferenceProcessor):
             else:
                 self.model_data.inferenceStatus = task_status
                 self.model_data.inferenceJobs[idx].status = task_status
-                self.queue_client.put_message(
-                    json.dumps(self.model_data.dict())
-                )
         else:
             self.model_data.inferenceStatus = (
                 self.config.get_status_types().FAILED.value
@@ -281,15 +295,26 @@ class InferencePostprocessor(BaseInferenceProcessor):
                 f'&& python run_workflow.py --config ${BATCH_JOB_WORKDIR}/{inference_input_files["config"]["file_path"]} --step inference'
                 '"'
             )
-            job_id = self.config.get_azure_batch_config()[
-                "inference_batch_job_id"
-            ]
+            pending_job = next(
+                (
+                    job
+                    for job in self.model_data.inferenceJobs
+                    if job.taskId == self.model_data.currentInferenceTaskId
+                ),
+                None,
+            )
+            job_id = (
+                pending_job.jobId if pending_job else None
+            ) or self.config.get_azure_batch_config()["inference_batch_job_id"]
             # Trim job_id to 64 characters to comply with Azure Batch limits
             job_id = job_id[:64]
-            task_id = f"{INFERENCE_PREFIX}-{MetadataUtils.generate_id()}"
+            task_id = (
+                pending_job.taskId if pending_job else None
+            ) or f"{INFERENCE_PREFIX}-{MetadataUtils.generate_id()}"
             inference_output_prefix = f"{MetadataUtils.hash_string(self.model_data.projectId)}/{task_id}"
 
-            job_id, task_id = self.runner.add_task(
+            job_id, task_id = submit_task(
+                self.runner,
                 job_id=job_id,
                 task_id=task_id,
                 output_prefix=inference_output_prefix,
@@ -306,7 +331,11 @@ class InferencePostprocessor(BaseInferenceProcessor):
             self.logger.info(
                 f"Completed add task {task_id} to job id {job_id} for model inference {self.model_data.modelId}"
             )
-            self.model_data.inferenceJobs.append(
+            self.model_data.inferenceJobs = [
+                job
+                for job in self.model_data.inferenceJobs
+                if job.taskId != task_id
+            ] + [
                 InferenceJob(
                     jobId=job_id,
                     taskId=task_id,
@@ -315,7 +344,7 @@ class InferencePostprocessor(BaseInferenceProcessor):
                     status=self.config.get_status_types().IN_PROGRESS.value,
                     creationDate=MetadataUtils.get_timestamp(),
                 )
-            )
+            ]
             self.model_data.currentInferenceTaskId = task_id
             self.model_data.inferenceStatus = (
                 self.config.get_status_types().IN_PROGRESS.value
@@ -323,10 +352,8 @@ class InferencePostprocessor(BaseInferenceProcessor):
             self._update_inference_progress(
                 f"Inference submitted with task id {task_id}", step=0
             )
-            self.queue_client.put_message(json.dumps(self.model_data.dict()))
-            self.logger.info(
-                f"InProgress message to queue sent for model {self.model_data.modelId}"
-            )
+        except TaskSubmissionPendingError:
+            raise
         except Exception as e:
             self.logger.error(
                 f"Error processing model {self.model_data.modelId}: {e}",
@@ -551,3 +578,4 @@ class InferencePostprocessor(BaseInferenceProcessor):
                 f"Error cancelling inference job {self.model_data.inferenceJobs[idx].jobId} for model {self.model_data.modelId}: {e}",
                 stack_info=True,
             )
+            raise

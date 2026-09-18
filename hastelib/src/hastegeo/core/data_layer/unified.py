@@ -4,6 +4,7 @@ import importlib
 
 from ..utils.metadata import MetadataUtils
 from .abstract_data_layer import AbstractDataLayer
+from .conditional import JsonDocument
 
 
 class UnifiedDataLayer:
@@ -58,6 +59,22 @@ class UnifiedDataLayer:
             data=data,
             data_file_path=data_file_path,
             data_format=data_format,
+        )
+
+    def load_json_versioned(
+        self, identifier: str, data_type: str
+    ) -> tuple[JsonDocument, str]:
+        return self.data_layer.load_json_versioned(identifier, data_type)
+
+    def save_json_if_version(
+        self,
+        identifier: str,
+        data_type: str,
+        data: JsonDocument,
+        expected_version: str | None,
+    ) -> None:
+        self.data_layer.save_json_if_version(
+            identifier, data_type, data, expected_version
         )
 
     def save_chunk(

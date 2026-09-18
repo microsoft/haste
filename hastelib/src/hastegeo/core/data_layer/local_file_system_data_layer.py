@@ -1,13 +1,17 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
+import hashlib
 import json
 import os
 import shutil
+from pathlib import Path
 
 import yaml
 
+from ..utils.atomic_files import atomic_write, file_lock
 from ..utils.metadata import matches_metadata_type
 from .abstract_data_layer import AbstractDataLayer
+from .conditional import JsonDocument, RevisionConflictError, decode_document
 
 
 class LocalFileSystemDataLayer(AbstractDataLayer):
@@ -84,6 +88,30 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
         else:
             filename = f"{data_type}_{identifier}.{data_format}"
         return os.path.join(self.directory, *partition_keys, filename)
+
+    def load_json_versioned(
+        self, identifier: str, data_type: str
+    ) -> tuple[JsonDocument, str]:
+        path = Path(self.get_file_path(identifier, data_type))
+        contents = path.read_bytes()
+        return decode_document(contents), hashlib.sha256(contents).hexdigest()
+
+    def save_json_if_version(
+        self,
+        identifier: str,
+        data_type: str,
+        data: JsonDocument,
+        expected_version: str | None,
+    ) -> None:
+        path = Path(self.get_file_path(identifier, data_type))
+        with file_lock(path.with_suffix(".json.lock")):
+            try:
+                _, version = self.load_json_versioned(identifier, data_type)
+            except FileNotFoundError:
+                version = None
+            if version != expected_version:
+                raise RevisionConflictError("Metadata revision changed")
+            atomic_write(path, json.dumps(data).encode())
 
     def get_file_remote_path(
         self,
@@ -271,22 +299,27 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
                 raise ValueError(f"Unsupported data_format: {data_format}")
 
     def load_all(self, data_type, data_format="json"):
+        if data_format not in {"json", "yaml"}:
+            raise ValueError(f"Unsupported data_format: {data_format}")
         data = []
-        for file_name in os.listdir(self.directory):
-            if matches_metadata_type(
-                file_name, data_type
-            ) and file_name.endswith(f".{data_format}"):
-                with open(
-                    os.path.join(self.directory, file_name), "r"
-                ) as file:
+        directories = [Path(self.directory)]
+        if self.partition_key is None:
+            directories.extend(
+                entry
+                for entry in Path(self.directory).iterdir()
+                if entry.is_dir() and not entry.is_symlink()
+            )
+        for directory in directories:
+            for path in directory.glob(f"{data_type}_*.{data_format}"):
+                if not matches_metadata_type(path.name, data_type):
+                    continue
+                if path.is_symlink():
+                    raise ValueError("Metadata records must not be symlinks")
+                with path.open("r") as file:
                     if data_format == "json":
                         data.append(json.load(file))
-                    elif data_format == "yaml":
-                        data.append(yaml.safe_load(file))
                     else:
-                        raise ValueError(
-                            f"Unsupported data_format: {data_format}"
-                        )
+                        data.append(yaml.safe_load(file))
         return data
 
     def load_all_from_partition(self, data_type, data_format="json"):
@@ -351,12 +384,9 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
         return identifiers
 
     def delete(self, identifier, data_type, data_format="json"):
-        file_path = self.get_file_path(identifier, data_type, data_format)
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(
-                f"{self.__class__.__name__}.delete: No data found for identifier: {identifier} and data_type: {data_type}"
-            )
-        os.remove(file_path)
+        path = Path(self.get_file_path(identifier, data_type, data_format))
+        with file_lock(path.with_suffix(".json.lock")):
+            path.unlink()
 
     def delete_all_from_partition(self):
         if os.path.exists(self.directory):
