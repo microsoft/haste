@@ -116,6 +116,30 @@ Then each control links to its enforcing code and the weekly-review cadence, own
 
 ---
 
+### US-005: Tune size caps without rebuilding applications
+
+**As an** environment operator,
+**I want** deployment and lightweight updates to use the same GitHub Environment
+configuration variables,
+**So that** I can adjust limits quickly without losing them on the next deployment.
+
+**Priority:** P1
+**Component(s):** `.github/scripts/`, `.github/workflows/`, `infra/`, operator docs
+
+**Acceptance Criteria:**
+
+- Both workflows resolve identical variables, defaults, and byte values.
+- Missing or blank values restore defaults; oversized, negative, malformed,
+  and overflow-sized inputs fail before Azure writes. Leading zeros are decimal.
+- Dry runs need no Azure calls. Each setting is written only to its consuming app.
+- Bicep declares bounded caps; local `azd` values must be synchronized explicitly.
+- Updates record previous values and fail when HTTP verification cannot run.
+- Output distinguishes HTTP sampling from queue-worker and Batch enforcement.
+- Existing Batch tasks are unchanged; rollback restores variables and reapplies.
+- Environment-scoped concurrency serializes Actions settings updates.
+
+---
+
 ## Agent Assignment Map
 
 ### Available Agents
@@ -137,6 +161,7 @@ Then each control links to its enforcing code and the weekly-review cadence, own
 | US-002 | `backend-dev` | `backend-validation` | Upload boundary in `processors`/`api` |
 | US-003 | `backend-dev` (+ `gis`) | `backend-validation` | Download/SSRF; imagery domain overlap |
 | US-004 | `backend-dev` | `security-validation` | Docs + process |
+| US-005 | `backend-dev` | `backend-validation` | Operator configuration, scripts, workflows and Bicep |
 
 ### Agent Workflow Per Phase
 

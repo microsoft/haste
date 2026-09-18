@@ -13,6 +13,8 @@ _logger = logging.getLogger(__name__)
 
 REGISTRY_SERVER_PLACEHOLDER = "<registry-name>.azurecr.io"
 
+_DEFAULT_ASSESSMENT_MAX_TOTAL_BYTES = 512 * 1024**2
+
 _SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
 
 
@@ -342,14 +344,17 @@ class Config:
     def get_publishing_config():
         """Get publishing feature and provider configuration."""
         return {
-            "publishing_enabled": _get_bool_env(
-                "PUBLISHING_ENABLED", True
-            ),
-            "pc_provider_enabled": _get_bool_env(
-                "PC_PROVIDER_ENABLED", False
-            ),
+            "publishing_enabled": _get_bool_env("PUBLISHING_ENABLED", True),
+            "pc_provider_enabled": _get_bool_env("PC_PROVIDER_ENABLED", False),
             "max_total_bytes": _get_bounded_int_env(
                 "PUBLISH_MAX_TOTAL_BYTES", 5 * 1024**3, 1
+            ),
+            # Combined downloaded footprints and inference GPKG input bytes
+            # for the assessment report, not the serialized report's size.
+            "assessment_max_total_bytes": _get_bounded_int_env(
+                "PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES",
+                _DEFAULT_ASSESSMENT_MAX_TOTAL_BYTES,
+                1,
             ),
             "download_sas_minutes": _get_bounded_int_env(
                 "PUBLISHED_DOWNLOAD_SAS_MINUTES", 15, 5, 60
@@ -404,6 +409,17 @@ class Config:
                 "PUBLISHING_LOCK_CONTAINER", "publishing-locks"
             ),
         }
+
+    def get_assessment_max_total_bytes(self) -> int:
+        """Return a positive assessment input cap, defaulting only if absent."""
+        value = self.publishing_config.get(
+            "assessment_max_total_bytes", _DEFAULT_ASSESSMENT_MAX_TOTAL_BYTES
+        )
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(
+                "assessment_max_total_bytes must be a positive integer"
+            )
+        return value
 
     @staticmethod
     def get_metadata_types():

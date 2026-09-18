@@ -11,6 +11,7 @@ from ..data_layer.unified import UnifiedDataLayer
 from ..models.projects import ImageLayer, ImageryPreprocessJob
 from ..utils.blob import fetch_url_text
 from ..utils.data import extract_from_url
+from ..utils.gdal_security import max_download_bytes
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
@@ -354,6 +355,13 @@ class ImageryPostProcessor:
                 f"${BATCH_JOB_WORKDIR}/logs/*.*",
             ],
             command=command,
+            # The remote imagery fetch happens inside this Batch container, not
+            # in the Function App, so the cap has to travel with the task.
+            # Without this the container always falls back to the code default
+            # and tuning the app setting would silently do nothing.
+            env_vars={
+                "HASTE_MAX_IMAGERY_DOWNLOAD_BYTES": str(max_download_bytes()),
+            },
             # TODO: maybe this needs to be encapsulated in the batch runner and not be part of the processor
             image_name=self.config.get_azure_batch_config()[
                 "imageprep_docker_image"

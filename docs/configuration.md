@@ -21,6 +21,7 @@ This guide documents each configuration mode. For the end-to-end workflow, see
 - [Front Door](#front-door)
 - [Development mode](#development-mode)
 - [Data publishing](#data-publishing)
+- [Ingestion size limits](#ingestion-size-limits)
 - [First-admin bootstrap](#first-admin-bootstrap)
 - [Cleaning up an environment](#cleaning-up-an-environment)
 
@@ -374,6 +375,138 @@ URLs are read from environment **secrets** (masked in logs), while the non-sensi
 flags and collection prefix are environment **variables**. The Bicep/azd path reads them all
 as `HASTE_*` settings.
 ```
+
+## Ingestion size limits
+
+These caps bound assembled uploads, remote imagery downloads, and the input
+files used to generate an assessment report during publishing. GitHub
+**Environment configuration variables** are the source of truth for Actions.
+They are not secrets. Editing a variable does not update Azure automatically.
+
+| Setting | Default | Read by | What it bounds |
+|---|---|---|---|
+| `HASTE_MAX_UPLOAD_BYTES` | 5 GiB | api | Assembled chunked upload (`FileUploader`) |
+| `HASTE_MAX_IMAGERY_DOWNLOAD_BYTES` | 8 GiB | **queues** | Each remote imagery download in a new Batch task |
+| `PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES` | 512 MiB | api | Combined downloaded footprints and inference GPKG inputs for a published assessment |
+
+Each key is written **only** to the app that reads it. Setting one on the wrong
+app is how you end up "tuning" a limit that never takes effect.
+
+> **`HASTE_MAX_IMAGERY_DOWNLOAD_BYTES` is not enforced in any Function App.**
+> The remote fetch runs inside the imageryprep **Batch container**
+> (`hastegeo.workflows.prepare_imagery`). The queues app reads the setting and
+> forwards it to the Batch task as an environment setting
+> ([`imagery.py`](../hastelib/src/hastegeo/core/processors/imagery.py)); without
+> that hand-off the container would always use the 8 GiB code default no matter
+> what the app setting said.
+
+### Changing a limit
+
+1. First deploy the API and queues code containing `GetEffectiveLimits` and a
+  hastegeo wheel containing the configurable assessment cap and Batch download
+  cap forwarding. The update workflow does not deploy code or upgrade wheels.
+2. Open **Settings > Environments > target environment > Environment variables**.
+  Set the desired variables from the table, for example
+  `HASTE_MAX_IMAGERY_DOWNLOAD_BYTES=30GiB`. Keep these names at environment
+  scope; repository or organization values with the same names can otherwise
+  be inherited when an environment variable is removed.
+3. Run **Update Size Limits** for that environment with `dry_run=true`. Review
+  the resolved byte counts and targets. This requires no Azure login or writes.
+4. Run it again with `dry_run=false`. Review the previous and desired values,
+  settings read-back, and HTTP sampling result in the run output and summary.
+
+The environment needs the same `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+`AZURE_SUBSCRIPTION_ID`, `RESOURCE_PREFIX`, and `RESOURCE_SUFFIX` secrets used
+by application deployment. The identity needs app-settings read/write, restart,
+and function-key read access on the target apps. Retain environment approval
+rules and restrict who can edit these configuration variables.
+
+Both [Update Size Limits](../.github/workflows/update-size-limits.yml) and
+[Deploy Azure Applications](../.github/workflows/deploy-apps.yml) read the same
+variables. There are no one-off size inputs to drift from deployment settings.
+The workflows share an environment concurrency group; coordinate local or
+portal changes separately. The lightweight workflow updates both apps without
+building or publishing code. A component deploy updates only its target app.
+
+The [shared parser](../.github/scripts/resolve_size_limits.py) accepts integer
+bytes or integer sizes: `30GiB`, `30GB`, `512MiB`. Binary units use 1024; SI units
+use 1000. `030GiB` means 30 GiB, not octal. Decimals, negatives, overflow-sized
+values, and values outside 1 MiB to 1 TiB fail before any settings are written.
+That range is a validation boundary, not a capacity recommendation: assessment
+inputs expand in memory and must fit the Function App's memory and concurrency
+budget. Imagery must fit the Batch node's disk and processing budget.
+
+### Reset and rollback
+
+Missing or blank variables restore the documented defaults on the next apply;
+they do **not** leave previous overrides unchanged. To reset one cap, set its
+variable to the table's default explicitly and run Update Size Limits. All
+three desired values are applied, so review the dry run first.
+
+To roll back, restore the previous values in GitHub and rerun the workflow.
+Settings changes can recycle workers; schedule them around active processing.
+Cross-app writes are not transactional: if the second app fails, the first may
+already have changed. Use the recorded previous values and per-app output to
+choose between retrying the desired configuration and restoring it. No automatic
+rollback or task cancellation is performed. Existing Batch tasks retain the cap
+captured when they were submitted, even after a rollback.
+
+### Infrastructure redeployment and local azd
+
+ARM/Bicep replaces the app-settings collection. These caps are therefore
+explicit parameters in [main.bicep](../infra/main.bicep), wired to the consuming
+apps in [functions.bicep](../infra/modules/functions.bicep). Never rely on an
+undeclared Azure setting surviving provisioning.
+
+Local `azd` does not read GitHub variables. Before `azd provision` or `azd up`,
+copy the environment's resolved **decimal byte counts** into the same-named
+azd variables. For example, for 30 GiB downloads and default remaining caps:
+
+```powershell
+azd env set HASTE_MAX_UPLOAD_BYTES 5368709120
+azd env set HASTE_MAX_IMAGERY_DOWNLOAD_BYTES 32212254720
+azd env set PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES 536870912
+```
+
+[main.bicepparam](../infra/main.bicepparam) maps these names to the bounded
+integer parameters. It accepts decimal bytes, not suffixes. Missing or blank
+values use defaults. Provisioning with stale or missing local values will
+replace the tuned settings, so synchronize before provisioning. See
+[ADR-0006](../spec/architecture/decisions/0006-operator-size-limits.md).
+
+### Verification scope
+
+The workflow reads back stored settings, requests app restarts, and samples
+`GET /api/GetEffectiveLimits` on both apps using function-key authentication.
+It fails if keys or hosts cannot be resolved or the responses do not converge.
+Failures may mean old code, connectivity, authentication, or stale workers;
+inspect the failure before attempting another deployment.
+
+**Matching HTTP responses are not fleet-wide verification.** Several replies
+can come from the same instance. Flex Consumption scales queue triggers on
+instances separate from HTTP triggers, and the imagery download runs in Batch.
+For download enforcement verification, submit a new imagery job, inspect its
+`HASTE_MAX_IMAGERY_DOWNLOAD_BYTES` task environment setting, and exercise an
+appropriately bounded download in that container. An HTTP check alone cannot
+prove this. Existing tasks are not changed by the workflow.
+
+To check by hand:
+
+```bash
+KEY=$(az functionapp keys list -n <funcapp> -g <rg> --query functionKeys.default -o tsv)
+HOST=$(az functionapp show -n <funcapp> -g <rg> --query defaultHostName -o tsv)
+curl -fsS -H "x-functions-key: $KEY" "https://$HOST/api/GetEffectiveLimits"
+```
+
+Do not log or share function keys. The returned `instanceId` identifies only
+the HTTP instance that answered; unrelated caps may show defaults on that app.
+
+### Adding another tunable knob
+
+Update the shared resolver, both workflows' variable mappings, each script's
+app targeting, the Bicep parameters, and the appropriate worker diagnostic.
+Extend the [configuration tests](../.github/scripts/tests/) and document the
+default, consuming process, resource budget, and verification scope.
 
 ## First-admin bootstrap
 

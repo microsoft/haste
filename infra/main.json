@@ -5,8 +5,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.46.1.21595",
-      "templateHash": "13625383512199682620"
+      "version": "0.47.16.16243",
+      "templateHash": "10142577162809525137"
     }
   },
   "parameters": {
@@ -210,6 +210,33 @@
         "description": "Runner auto-creates/resizes its pool. False for pre-created autoscale pools."
       }
     },
+    "maxUploadBytes": {
+      "type": "int",
+      "defaultValue": 5368709120,
+      "minValue": 1048576,
+      "maxValue": 1099511627776,
+      "metadata": {
+        "description": "Maximum assembled upload bytes on the API app. Match the GitHub Environment variable HASTE_MAX_UPLOAD_BYTES."
+      }
+    },
+    "maxImageryDownloadBytes": {
+      "type": "int",
+      "defaultValue": 8589934592,
+      "minValue": 1048576,
+      "maxValue": 1099511627776,
+      "metadata": {
+        "description": "Maximum remote imagery bytes per download, forwarded by the queues app to new Batch tasks."
+      }
+    },
+    "publishAssessmentMaxTotalBytes": {
+      "type": "int",
+      "defaultValue": 536870912,
+      "minValue": 1048576,
+      "maxValue": 1099511627776,
+      "metadata": {
+        "description": "Maximum combined footprints and inference GPKG input bytes for the assessment report generated during publishing."
+      }
+    },
     "publishingEnabled": {
       "type": "bool",
       "defaultValue": true,
@@ -222,6 +249,13 @@
       "defaultValue": false,
       "metadata": {
         "description": "Register/expose the Planetary Computer publishing provider."
+      }
+    },
+    "publishExplorerRenderEnabled": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Render a damage classification COG + Explorer visualization config on PC publish."
       }
     },
     "pcGeocatalogUrl": {
@@ -364,8 +398,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "11064455677118594323"
+              "version": "0.47.16.16243",
+              "templateHash": "15189054065006265096"
             }
           },
           "parameters": {
@@ -447,8 +481,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "4809665072443009441"
+              "version": "0.47.16.16243",
+              "templateHash": "7792648919414247241"
             }
           },
           "parameters": {
@@ -541,8 +575,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "18111911747360907655"
+              "version": "0.47.16.16243",
+              "templateHash": "14742313667403164574"
             }
           },
           "parameters": {
@@ -756,8 +790,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "5742332482666125630"
+              "version": "0.47.16.16243",
+              "templateHash": "7808724429436411571"
             }
           },
           "parameters": {
@@ -1007,8 +1041,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "15694273866306326963"
+              "version": "0.47.16.16243",
+              "templateHash": "2897635949521572801"
             }
           },
           "parameters": {
@@ -1160,8 +1194,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "8822775095973828812"
+              "version": "0.47.16.16243",
+              "templateHash": "9352723276380755450"
             }
           },
           "parameters": {
@@ -1389,11 +1423,23 @@
           "managePools": {
             "value": "[parameters('managePools')]"
           },
+          "maxUploadBytes": {
+            "value": "[parameters('maxUploadBytes')]"
+          },
+          "maxImageryDownloadBytes": {
+            "value": "[parameters('maxImageryDownloadBytes')]"
+          },
+          "publishAssessmentMaxTotalBytes": {
+            "value": "[parameters('publishAssessmentMaxTotalBytes')]"
+          },
           "publishingEnabled": {
             "value": "[parameters('publishingEnabled')]"
           },
           "pcProviderEnabled": {
             "value": "[parameters('pcProviderEnabled')]"
+          },
+          "publishExplorerRenderEnabled": {
+            "value": "[parameters('publishExplorerRenderEnabled')]"
           },
           "pcGeocatalogUrl": {
             "value": "[parameters('pcGeocatalogUrl')]"
@@ -1432,8 +1478,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "15205294015023622587"
+              "version": "0.47.16.16243",
+              "templateHash": "1871735418649720540"
             }
           },
           "parameters": {
@@ -1605,6 +1651,33 @@
                 "description": "Runner auto-creates/resizes its pool. False for pre-created autoscale pools."
               }
             },
+            "maxUploadBytes": {
+              "type": "int",
+              "defaultValue": 5368709120,
+              "minValue": 1048576,
+              "maxValue": 1099511627776,
+              "metadata": {
+                "description": "Maximum assembled upload bytes on the API app."
+              }
+            },
+            "maxImageryDownloadBytes": {
+              "type": "int",
+              "defaultValue": 8589934592,
+              "minValue": 1048576,
+              "maxValue": 1099511627776,
+              "metadata": {
+                "description": "Maximum remote imagery bytes per download, forwarded to new Batch tasks."
+              }
+            },
+            "publishAssessmentMaxTotalBytes": {
+              "type": "int",
+              "defaultValue": 536870912,
+              "minValue": 1048576,
+              "maxValue": 1099511627776,
+              "metadata": {
+                "description": "Maximum combined assessment input GPKG bytes during publishing."
+              }
+            },
             "publishingEnabled": {
               "type": "bool",
               "defaultValue": true,
@@ -1617,6 +1690,13 @@
               "defaultValue": false,
               "metadata": {
                 "description": "Register/expose the Planetary Computer publishing provider."
+              }
+            },
+            "publishExplorerRenderEnabled": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Render a damage classification COG + Explorer visualization config on PC publish."
               }
             },
             "pcGeocatalogUrl": {
@@ -1732,7 +1812,7 @@
                     "value": "[parameters('logAnalyticsId')]"
                   },
                   "appSettings": {
-                    "value": "[concat(createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', '/data'), createObject('name', 'DATA_PATH', 'value', '/data'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer'))), createArray(createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionApiName'), 0, min(32, length(parameters('functionApiName'))))))))]"
+                    "value": "[concat(createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', '/data'), createObject('name', 'DATA_PATH', 'value', '/data'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer')), createObject('name', 'PUBLISH_EXPLORER_RENDER_ENABLED', 'value', if(parameters('publishExplorerRenderEnabled'), 'true', 'false'))), createArray(createObject('name', 'HASTE_MAX_UPLOAD_BYTES', 'value', string(parameters('maxUploadBytes'))), createObject('name', 'PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES', 'value', string(parameters('publishAssessmentMaxTotalBytes'))), createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionApiName'), 0, min(32, length(parameters('functionApiName'))))))))]"
                   },
                   "tags": {
                     "value": "[parameters('tags')]"
@@ -1744,8 +1824,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.46.1.21595",
-                      "templateHash": "3022688711020356921"
+                      "version": "0.47.16.16243",
+                      "templateHash": "11943526678158877025"
                     }
                   },
                   "parameters": {
@@ -2042,8 +2122,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.46.1.21595",
-                      "templateHash": "3022688711020356921"
+                      "version": "0.47.16.16243",
+                      "templateHash": "11943526678158877025"
                     }
                   },
                   "parameters": {
@@ -2334,7 +2414,7 @@
                     "value": "[parameters('logAnalyticsId')]"
                   },
                   "appSettings": {
-                    "value": "[concat(createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', '/data'), createObject('name', 'DATA_PATH', 'value', '/data'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer'))), createArray(createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionQueueName'), 0, min(32, length(parameters('functionQueueName'))))))))]"
+                    "value": "[concat(createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', '/data'), createObject('name', 'DATA_PATH', 'value', '/data'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer')), createObject('name', 'PUBLISH_EXPLORER_RENDER_ENABLED', 'value', if(parameters('publishExplorerRenderEnabled'), 'true', 'false'))), createArray(createObject('name', 'HASTE_MAX_IMAGERY_DOWNLOAD_BYTES', 'value', string(parameters('maxImageryDownloadBytes'))), createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionQueueName'), 0, min(32, length(parameters('functionQueueName'))))))))]"
                   },
                   "tags": {
                     "value": "[parameters('tags')]"
@@ -2346,8 +2426,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.46.1.21595",
-                      "templateHash": "3022688711020356921"
+                      "version": "0.47.16.16243",
+                      "templateHash": "11943526678158877025"
                     }
                   },
                   "parameters": {
@@ -2662,8 +2742,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "5532319181004507698"
+              "version": "0.47.16.16243",
+              "templateHash": "18375147213419133612"
             }
           },
           "parameters": {
@@ -2795,8 +2875,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "583350182862945455"
+              "version": "0.47.16.16243",
+              "templateHash": "10500822423455486582"
             }
           },
           "parameters": {
@@ -2881,7 +2961,7 @@
               "name": "[format('{0}/{1}/{2}', parameters('apimName'), parameters('functionApiName'), 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\n  <inbound>\n    <base />\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__BID__', parameters('functionApiName'))]"
+                "value": "[replace('<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__BID__', parameters('functionApiName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionApiName'))]",
@@ -2930,7 +3010,7 @@
               "name": "[format('{0}/{1}/{2}', parameters('apimName'), parameters('functionTitilerName'), 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\n  <inbound>\n    <base />\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__BID__', parameters('functionTitilerName'))]"
+                "value": "[replace('<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__BID__', parameters('functionTitilerName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionTitilerName'))]",
@@ -3033,7 +3113,7 @@
               "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'hastestorageapi', 'get-artifacts', 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\n  <inbound>\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"modelDir\"]+ \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\n      <set-method>GET</set-method>\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\n        <value>2019-07-07</value>\n      </set-header>\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\n    </send-request>\n    <return-response response-variable-name=\"blobdata\" />\n    <base />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__SA__', parameters('storageAccountName'))]"
+                "value": "[replace('<policies>\r\n  <inbound>\r\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\r\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"modelDir\"]+ \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\r\n      <set-method>GET</set-method>\r\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\r\n        <value>2019-07-07</value>\r\n      </set-header>\r\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\r\n    </send-request>\r\n    <return-response response-variable-name=\"blobdata\" />\r\n    <base />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__SA__', parameters('storageAccountName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'hastestorageapi', 'get-artifacts')]"
@@ -3075,7 +3155,7 @@
               "name": "[format('{0}/{1}/{2}/{3}', parameters('apimName'), 'hastestorageapi', 'get-project-artifacts', 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\n  <inbound>\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\n      <set-method>GET</set-method>\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\n        <value>2019-07-07</value>\n      </set-header>\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\n    </send-request>\n    <return-response response-variable-name=\"blobdata\" />\n    <base />\n  </inbound>\n  <backend><base /></backend>\n  <outbound><base /></outbound>\n  <on-error><base /></on-error>\n</policies>', '__SA__', parameters('storageAccountName'))]"
+                "value": "[replace('<policies>\r\n  <inbound>\r\n    <send-request mode=\"new\" timeout=\"20\" response-variable-name=\"blobdata\" ignore-error=\"false\">\r\n      <set-url>@{ return \"https://__SA__.blob.core.windows.net/\" + (string)context.Request.MatchedParameters[\"container\"] + \"/\" + (string)context.Request.MatchedParameters[\"projectDir\"] + \"/\" + (string)context.Request.MatchedParameters[\"fileName\"]; }</set-url>\r\n      <set-method>GET</set-method>\r\n      <set-header name=\"x-ms-version\" exists-action=\"override\">\r\n        <value>2019-07-07</value>\r\n      </set-header>\r\n      <authentication-managed-identity resource=\"https://storage.azure.com\" />\r\n    </send-request>\r\n    <return-response response-variable-name=\"blobdata\" />\r\n    <base />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__SA__', parameters('storageAccountName'))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apimName'), 'hastestorageapi', 'get-project-artifacts')]"
@@ -3123,8 +3203,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "10920303468385780104"
+              "version": "0.47.16.16243",
+              "templateHash": "8476603807866782298"
             }
           },
           "parameters": {
@@ -3263,8 +3343,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "6727294718729000805"
+              "version": "0.47.16.16243",
+              "templateHash": "4709430948508936780"
             }
           },
           "parameters": {
@@ -3362,8 +3442,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "17197306363257697796"
+              "version": "0.47.16.16243",
+              "templateHash": "8222426449977298384"
             }
           },
           "parameters": {
@@ -3519,8 +3599,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "10615611227258247138"
+              "version": "0.47.16.16243",
+              "templateHash": "16360120872017037592"
             }
           },
           "parameters": {
@@ -3587,8 +3667,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "17045354249437602171"
+              "version": "0.47.16.16243",
+              "templateHash": "584888632795517257"
             }
           },
           "parameters": {

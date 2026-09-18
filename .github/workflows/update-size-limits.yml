@@ -1,0 +1,53 @@
+# Apply the same Environment configuration variables used by deploy-apps.
+# Missing or blank variables restore code defaults; no build is performed.
+name: Update Size Limits
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (must match a configured GitHub Environment)"
+        required: true
+        type: environment
+      dry_run:
+        description: "Resolve and validate the values, then stop without applying"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: haste-settings-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Azure Login
+        if: ${{ !inputs.dry_run }}
+        uses: azure/login@1384c340ab2dda50fed2bee3041d1d87018aa5e8 # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update size limits
+        env:
+          HASTE_MAX_UPLOAD_BYTES: ${{ vars.HASTE_MAX_UPLOAD_BYTES }}
+          HASTE_MAX_IMAGERY_DOWNLOAD_BYTES: ${{ vars.HASTE_MAX_IMAGERY_DOWNLOAD_BYTES }}
+          PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES: ${{ vars.PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES }}
+        run: |
+          chmod +x .github/scripts/update_size_limits.sh
+          .github/scripts/update_size_limits.sh \
+            "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            "${{ secrets.RESOURCE_PREFIX }}" \
+            "${{ secrets.RESOURCE_SUFFIX }}" \
+            "${{ inputs.dry_run }}"

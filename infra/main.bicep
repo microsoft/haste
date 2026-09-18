@@ -120,6 +120,21 @@ param useSas bool = false
 @description('Runner auto-creates/resizes its pool. False for pre-created autoscale pools.')
 param managePools bool = true
 
+@description('Maximum assembled upload bytes on the API app. Match the GitHub Environment variable HASTE_MAX_UPLOAD_BYTES.')
+@minValue(1048576)
+@maxValue(1099511627776)
+param maxUploadBytes int = 5368709120
+
+@description('Maximum remote imagery bytes per download, forwarded by the queues app to new Batch tasks.')
+@minValue(1048576)
+@maxValue(1099511627776)
+param maxImageryDownloadBytes int = 8589934592
+
+@description('Maximum combined footprints and inference GPKG input bytes for the assessment report generated during publishing.')
+@minValue(1048576)
+@maxValue(1099511627776)
+param publishAssessmentMaxTotalBytes int = 536870912
+
 @description('Enable the data publishing feature (Published Datasets section + Publish action). On by default.')
 param publishingEnabled bool = true
 
@@ -332,6 +347,9 @@ module functions 'modules/functions.bicep' = {
     imageryprepPoolIds: imageryprepPoolIds
     useSas: useSas
     managePools: managePools
+    maxUploadBytes: maxUploadBytes
+    maxImageryDownloadBytes: maxImageryDownloadBytes
+    publishAssessmentMaxTotalBytes: publishAssessmentMaxTotalBytes
     publishingEnabled: publishingEnabled
     pcProviderEnabled: pcProviderEnabled
     publishExplorerRenderEnabled: publishExplorerRenderEnabled
