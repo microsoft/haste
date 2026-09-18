@@ -1,4 +1,4 @@
-# ADR-0005: Operator-Owned Size Limits
+# ADR-0006: Operator-Owned Size Limits
 
 **Status:** accepted
 **Date:** 2026-09-17

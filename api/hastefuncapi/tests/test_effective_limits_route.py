@@ -63,8 +63,20 @@ class TestGetEffectiveLimits(unittest.TestCase):
         _, body = _call()
         self.assertEqual(
             body["publishAssessmentMaxTotalBytes"],
-            function_app._publish_assessment_max_total_bytes(),
+            function_app.config.publishing_config[
+                "assessment_max_total_bytes"
+            ],
         )
+
+    def test_missing_assessment_cap_reports_bounded_default(self) -> None:
+        for app_module in (function_app, queues_function_app):
+            with self.subTest(app=app_module.__name__):
+                with patch.object(app_module.config, "publishing_config", {}):
+                    response, body = _call(app_module)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    body["publishAssessmentMaxTotalBytes"], 512 * 1024**2
+                )
 
     def test_reports_configured_assessment_input_cap(self):
         with patch.dict(

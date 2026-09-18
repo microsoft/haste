@@ -156,7 +156,7 @@ The update workflow records previous values, verifies stored settings, and
 samples HTTP workers. Missing credentials or nonconvergent samples fail the
 run. Successful HTTP samples are not proof of fleet-wide or Batch enforcement.
 Cross-app updates are not transactional; existing Batch tasks keep their
-submitted caps. See [ADR-0005](../../architecture/decisions/0005-operator-size-limits.md)
+submitted caps. See [ADR-0006](../../architecture/decisions/0006-operator-size-limits.md)
 and the [operator guide](../../../docs/configuration.md#ingestion-size-limits).
 
 ## Observability

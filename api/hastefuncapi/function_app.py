@@ -489,12 +489,6 @@ def _publishing_processor() -> PublishingProcessor:
     return PublishingProcessor(config=config)
 
 
-def _publish_assessment_max_total_bytes() -> int:
-    """Cap on combined downloaded inputs for a published assessment report
-    (``PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES``, default 512 MiB)."""
-    return config.publishing_config["assessment_max_total_bytes"]
-
-
 def add_cors_headers(response: func.HttpResponse) -> func.HttpResponse:
     """Add CORS headers to the response - handled by nginx proxy in local dev."""
     # CORS headers are now handled by nginx reverse proxy
@@ -543,7 +537,7 @@ def GetEffectiveLimits(req: func.HttpRequest) -> func.HttpResponse:
                 # Resolved into Config() at import time; a stale worker reports
                 # the old value here, which is exactly the signal we want.
                 "publishAssessmentMaxTotalBytes": (
-                    _publish_assessment_max_total_bytes()
+                    config.get_assessment_max_total_bytes()
                 ),
                 "instanceId": os.environ.get("WEBSITE_INSTANCE_ID", "local"),
             }
@@ -5015,7 +5009,7 @@ async def PutPublishDatasetQueueMessage(
                     str(request.projectId),
                     request.imageLayerId,
                     request.modelId,
-                    max_total_bytes=_publish_assessment_max_total_bytes(),
+                    max_total_bytes=config.get_assessment_max_total_bytes(),
                 )
             except Exception as assessment_error:
                 logger.warning(

@@ -472,7 +472,7 @@ azd env set PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES 536870912
 integer parameters. It accepts decimal bytes, not suffixes. Missing or blank
 values use defaults. Provisioning with stale or missing local values will
 replace the tuned settings, so synchronize before provisioning. See
-[ADR-0005](../spec/architecture/decisions/0005-operator-size-limits.md).
+[ADR-0006](../spec/architecture/decisions/0006-operator-size-limits.md).
 
 ### Verification scope
 

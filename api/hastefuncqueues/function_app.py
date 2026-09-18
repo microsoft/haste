@@ -74,7 +74,7 @@ def GetEffectiveLimits(req: func.HttpRequest) -> func.HttpResponse:
                 "maxUploadBytes": max_upload_bytes(),
                 "maxImageryDownloadBytes": max_download_bytes(),
                 "publishAssessmentMaxTotalBytes": (
-                    config.publishing_config["assessment_max_total_bytes"]
+                    config.get_assessment_max_total_bytes()
                 ),
                 "instanceId": os.environ.get("WEBSITE_INSTANCE_ID", "local"),
             }

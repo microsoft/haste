@@ -51,7 +51,7 @@
 |---|---|---|---|---|
 | Shared validated parser and canonical Environment-variable workflows | `backend-dev` | Existing cap enforcement | US-005 | implemented |
 | Explicit Bicep parameters and local azd mappings | `backend-dev` | Configuration contract | US-005 | implemented |
-| Operator apply/reset/rollback guide and ADR-0005 | `backend-dev` | Scripts and templates | US-005 | implemented |
+| Operator apply/reset/rollback guide and ADR-0006 | `backend-dev` | Scripts and templates | US-005 | implemented |
 | Credential-free parser, shell and template tests; local Bicep compile | `backend-validation` | Above | US-005 | passed locally |
 | Tune, redeploy with synchronized values, verify new Batch task enforcement | `backend-validation` | Deployed wheel, routes and test environment | US-005 | pending live deployment |
 
