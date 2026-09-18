@@ -459,6 +459,7 @@ queue invocation blocks on a long-running ingestion:
 | `PC_INGESTION_SOURCE` | str | (unset) | App Settings | Only for **private** HASTE containers (`SasToken` source); public need none |
 | `PC_COLLECTION_PREFIX` | str | `haste-` | App Settings | Collection id prefix (one collection per project/event) |
 | `PUBLISH_MAX_TOTAL_BYTES` | int | 5 GiB | App Settings (override) | Max total published bytes per dataset |
+| `PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES` | int | 512 MiB | GitHub Environment variable → deploy/update workflows; explicit Bicep parameter | Max combined downloaded footprints and inference GPKG inputs for the published assessment (api app) |
 | `PUBLISHED_DOWNLOAD_SAS_MINUTES` | int | `15` | App Settings (override) | Local retrieval SAS TTL |
 | `PUBLISHING_LOCK_CONTAINER` | str | `publishing-locks` | App Settings (override) | Blob-lease container (auto-created at runtime) |
 | `PC_VERIFY_ATTEMPTS` | int | code default | App Settings (override) | Ingestion poll attempt bound |

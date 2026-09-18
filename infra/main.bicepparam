@@ -45,6 +45,13 @@ param imageryprepPoolIds = readEnvironmentVariable('HASTE_BATCH_IMAGERYPREP_POOL
 param useSas = bool(readEnvironmentVariable('HASTE_BATCH_USE_SAS', 'false'))
 param managePools = bool(readEnvironmentVariable('HASTE_BATCH_MANAGE_POOLS', 'true'))
 
+var uploadLimit = trim(readEnvironmentVariable('HASTE_MAX_UPLOAD_BYTES', ''))
+var downloadLimit = trim(readEnvironmentVariable('HASTE_MAX_IMAGERY_DOWNLOAD_BYTES', ''))
+var assessmentLimit = trim(readEnvironmentVariable('PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES', ''))
+param maxUploadBytes = int(empty(uploadLimit) ? '5368709120' : uploadLimit)
+param maxImageryDownloadBytes = int(empty(downloadLimit) ? '8589934592' : downloadLimit)
+param publishAssessmentMaxTotalBytes = int(empty(assessmentLimit) ? '536870912' : assessmentLimit)
+
 // Data publishing feature flag (Local target). On by default; override with
 // HASTE_PUBLISHING_ENABLED=false to disable.
 param publishingEnabled = bool(readEnvironmentVariable('HASTE_PUBLISHING_ENABLED', 'true'))

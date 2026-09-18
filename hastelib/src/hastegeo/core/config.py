@@ -342,14 +342,15 @@ class Config:
     def get_publishing_config():
         """Get publishing feature and provider configuration."""
         return {
-            "publishing_enabled": _get_bool_env(
-                "PUBLISHING_ENABLED", True
-            ),
-            "pc_provider_enabled": _get_bool_env(
-                "PC_PROVIDER_ENABLED", False
-            ),
+            "publishing_enabled": _get_bool_env("PUBLISHING_ENABLED", True),
+            "pc_provider_enabled": _get_bool_env("PC_PROVIDER_ENABLED", False),
             "max_total_bytes": _get_bounded_int_env(
                 "PUBLISH_MAX_TOTAL_BYTES", 5 * 1024**3, 1
+            ),
+            # Combined downloaded footprints and inference GPKG input bytes
+            # for the assessment report, not the serialized report's size.
+            "assessment_max_total_bytes": _get_bounded_int_env(
+                "PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES", 512 * 1024**2, 1
             ),
             "download_sas_minutes": _get_bounded_int_env(
                 "PUBLISHED_DOWNLOAD_SAS_MINUTES", 15, 5, 60

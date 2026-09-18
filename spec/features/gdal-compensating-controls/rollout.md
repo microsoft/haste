@@ -19,12 +19,21 @@ on the next build/deploy.
 
 | Key | Default | Action |
 |---|---|---|
-| `HASTE_MAX_UPLOAD_BYTES` | 5 GiB | leave default unless prod imagery is larger |
-| `HASTE_MAX_IMAGERY_DOWNLOAD_BYTES` | 8 GiB | tune to the largest legitimate COG |
+| `HASTE_MAX_UPLOAD_BYTES` | 5 GiB | Edit the GitHub Environment variable, then run `Update Size Limits` |
+| `HASTE_MAX_IMAGERY_DOWNLOAD_BYTES` | 8 GiB | Edit the GitHub Environment variable, then run `Update Size Limits` |
+| `PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES` | 512 MiB | Bound combined assessment input files within API memory capacity |
 | `GDAL_SKIP` | `HDF4 HDF4Image HDF5 HDF5Image netCDF` | set in Dockerfiles; do not unset |
 
 ## Validation post-deploy
 
+- First deploy a hastegeo wheel containing cap forwarding and assessment
+  configuration, plus both apps' `GetEffectiveLimits` routes. The update workflow
+  cannot install these prerequisites.
+- Dry-run the Environment variables, apply, and inspect stored values and HTTP
+  samples. For local `azd`, synchronize the same-named decimal-byte variables
+  before provisioning. Redeploy and check that the desired caps persist.
+- Inspect a newly submitted imagery Batch task's environment and confirm
+  bounded download behavior. Existing tasks retain their submitted caps.
 - Run a real image-layer prep end-to-end (mosaic → COG → footprints) and
   confirm success.
 - Confirm an oversized/wrong-type upload returns 400.
@@ -34,7 +43,11 @@ on the next build/deploy.
 
 - Revert the PR (pure code + Dockerfile env). No data migration, so rollback
   is immediate and safe. If only the download/upload limits are too strict,
-  raise the env knobs without redeploying code.
+  restore the desired GitHub Environment variables and rerun `Update Size Limits`
+  without redeploying code. Missing or blank variables restore defaults. Review
+  per-app output after partial failures; there is no automatic cross-app rollback.
+
+See the [operator procedure](../../../docs/configuration.md#ingestion-size-limits).
 
 ## Monitoring
 

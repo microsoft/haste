@@ -37,11 +37,28 @@ no needed driver was dropped.
 
 ## Manual / smoke
 
+- For US-005: tune via Environment variables, apply, redeploy with the same
+    resolved values, and verify settings persist. Submit a new imagery task,
+    inspect its cap environment setting, and confirm download enforcement.
+    Do not treat HTTP sampling as a substitute for this check.
 - In a GDAL-capable env: read a small COG, write a COG via `gdal.Translate`,
   convert a TIFF→JPEG, read+write a GPKG and read a GeoJSON — all succeed
   with the allowlist active.
 
 ## Verification environments
+
+Operator configuration tests are independent of GDAL and Azure credentials:
+
+```bash
+python -m unittest discover -s .github/scripts/tests -v
+az bicep build --file infra/main.bicep
+```
+
+The `Test size limit configuration` workflow runs these checks plus shell syntax
+and Bicep parameter compilation. Coverage includes unit conversion, decimal
+leading zeros, overflow rejection, defaults, no-Azure dry runs, per-app targeting,
+partial writes, missing keys, stale HTTP responses, and compiled-template bounds.
+Azure and HTTP calls are stubbed; successful unit tests do not verify a deployment.
 
 | Env | Runs |
 |---|---|
