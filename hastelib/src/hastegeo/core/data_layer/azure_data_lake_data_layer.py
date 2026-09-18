@@ -2,10 +2,12 @@
 # Licensed under the MIT License.
 import json
 
+from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import DefaultAzureCredential  # type: ignore
 from azure.storage.blob import BlobServiceClient
 from azure.storage.filedatalake import DataLakeServiceClient  # type: ignore
 
+from ..utils.metadata import matches_metadata_type
 from .abstract_data_layer import AbstractDataLayer
 from .conditional import JsonDocument, read_blob_document, write_blob_document
 
@@ -55,11 +57,14 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
         data_type=None,
         data_format="json",
         extra_partition_keys=None,
+        check_exists=True,
     ):
         file_name = self.get_file_path(
             identifier, data_type, data_format, extra_partition_keys
         )
         file_client = self.file_system_client.get_file_client(file_name)
+        if check_exists and not file_client.exists():
+            return None
         sas_url = file_client.url
         return str(sas_url)
 
@@ -139,24 +144,31 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
 
     def load(self, identifier, data_type, data_format="json"):
         if data_format != "json":
-            raise ValueError("Data Lake metadata supports only JSON")
-        return self.load_json_versioned(identifier, data_type)[0]
+            raise ValueError("Data Lake metadata reads support only json")
+        file_name = self.get_file_path(identifier, data_type, data_format)
+        file_client = self.file_system_client.get_file_client(file_name)
+        try:
+            download = file_client.download_file()
+            file_contents = download.readall()
+        except ResourceNotFoundError as error:
+            raise FileNotFoundError(file_name) from error
+        return json.loads(file_contents)
 
     def load_all(self, data_type, data_format="json"):
         if data_format != "json":
-            raise ValueError("Data Lake metadata supports only JSON")
+            raise ValueError("Data Lake metadata reads support only json")
         data = []
         paths = self.file_system_client.get_paths()
         for path in paths:
             parts = path.name.split("/")
+            in_partition = not self.partition_key or path.name.startswith(
+                f"{self.partition_key}/"
+            )
             if (
                 len(parts) <= 2
-                and parts[-1].startswith(f"{data_type}_")
                 and parts[-1].endswith(".json")
-                and (
-                    not self.partition_key
-                    or path.name.startswith(f"{self.partition_key}/")
-                )
+                and in_partition
+                and matches_metadata_type(path.name, data_type)
             ):
                 file_client = self.file_system_client.get_file_client(
                     path.name
@@ -170,6 +182,19 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
         data = self.load_all(data_type, data_format=data_format)
         return data
 
+    def list_identifiers(self, data_type, data_format="json"):
+        prefix = f"{self.partition_key}/{data_type}_"
+        suffix = f".{data_format}"
+        identifiers = []
+        for path in self.file_system_client.get_paths(path=self.partition_key):
+            if (
+                path.name.startswith(prefix)
+                and path.name.endswith(suffix)
+                and matches_metadata_type(path.name, data_type)
+            ):
+                identifiers.append(path.name[len(prefix) : -len(suffix)])
+        return identifiers
+
     def load_bounded(self, data_type, max_records, data_format="json"):
         if data_format != "json" or max_records < 1:
             raise ValueError("Invalid bounded Data Lake read")
@@ -181,7 +206,9 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
             if scanned_paths > scan_limit:
                 raise ValueError("Metadata scan exceeds the bounded envelope")
             parts = path.name.split("/")
-            if len(parts) > 2 or not parts[-1].startswith(f"{data_type}_"):
+            if len(parts) > 2 or not matches_metadata_type(
+                path.name, data_type
+            ):
                 continue
             file_contents = (
                 self.file_system_client.get_file_client(path.name)

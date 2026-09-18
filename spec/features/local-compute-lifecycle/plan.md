@@ -12,6 +12,7 @@
 | Run targeted and broader relevant tests and formatting/lint | `backend-dev` | Tests | All | complete |
 | Distinguish ambiguous acceptance from deterministic submission rejection across all workloads | `backend-dev` | Balanced review of #217 | US-002, US-005 through US-007 | complete |
 | Reuse PostgreSQL connection settings for construction, CRUD, and conditional metadata writes | `backend-dev` | Balanced review of #217 | US-006 | complete |
+| Integrate upstream optimized reads without losing conditional writes, scan boundaries or configured ports | `backend-dev` | Current main data-layer changes | US-006, US-007 | complete |
 
 ## Integration gates
 
@@ -26,6 +27,14 @@ The backend-neutral/AML integration remains in the feature PR. No Azure
 resources or compute configuration are changed by this prerequisite.
 
 ## Validation evidence
+
+The upstream-read integration passed **455 tests**, with four platform skips
+and two pre-existing API guard failures deselected. Both excluded cases
+were reproduced against untouched current main with HTTP blocked. Coverage
+includes all data-layer/runner tests, job state/queue/submission identity,
+metadata batch reads, and API/queue routes. New regressions cover PostgreSQL
+batch/list connection settings and local/Data Lake scan boundaries and
+metadata-type prefix collisions. No live service or compute job was used.
 
 The #217 review follow-up passed **302 tests** with one Windows
 symlink-privilege skip. The selector covered all runner/data-layer tests,

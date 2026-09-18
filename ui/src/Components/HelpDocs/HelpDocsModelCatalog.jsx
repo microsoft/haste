@@ -9,10 +9,6 @@ import useModelCatalogImage from '../../assets/helpDocs/modelCatalog/model-catal
 import removeAModelFromCatalogImage from '../../assets/helpDocs/modelCatalog/model-catalog-remove-a-model-from-model-catalog.jpg';
 
 const HelpDocsModelCatalog = ({ anchor }) => {
-  HelpDocsModelCatalog.propTypes = {
-    anchor: PropTypes.string,
-  };
-
   useEffect(() => {
     if (anchor) {
       const element = document.getElementsByName(anchor)[0];
@@ -50,7 +46,7 @@ const HelpDocsModelCatalog = ({ anchor }) => {
         <ol>
           <li><strong className='fw-semibold'>Navigate to the Models table:</strong> Go to your project page and locate the models table for the image layer whose model you want to catalog. Click on the three-dot menu icon next to the model you want to catalog. The &quot;Add Model to Catalog&quot; option will only be available for models whose inference status is &quot;Processed&quot;.
 
-            <img src={addModelsToCatalogImage} alt="Adding Models to Catalog" className="img-fluid mt-4 mb-2" />
+            <img src={addModelsToCatalogImage} alt="Adding Models to Catalog" loading="lazy" decoding="async" className="img-fluid mt-4 mb-2" />
 
           </li>
           <li><strong className='fw-semibold'>Fill in the form:</strong> A dialog will appear with the following fields:
@@ -72,7 +68,7 @@ const HelpDocsModelCatalog = ({ anchor }) => {
 
       <p>The Base Model is a parameter of the model training process. For a complete guide on training models, see <a href="/help-docs/modelTraining#train-a-new-model">Train a New Model</a>.
         <br />
-        <img src={useModelCatalogImage} alt="Using Model Catalog" className="img-fluid mt-4 mb-2" />
+        <img src={useModelCatalogImage} alt="Using Model Catalog" loading="lazy" decoding="async" className="img-fluid mt-4 mb-2" />
 
       </p>
 
@@ -89,7 +85,7 @@ const HelpDocsModelCatalog = ({ anchor }) => {
           <li><strong className='fw-semibold'>Locate the model:</strong> Use the search bar to filter models by name, description, or any other field to quickly find the model you want to remove.</li>
           <li><strong className='fw-semibold'>Open the model menu:</strong> Click on the three-dot menu icon next to the model you want to remove, then select &quot;Remove&quot;.
 
-            <img src={removeAModelFromCatalogImage} alt="Removing a Model from Catalog" className="img-fluid mt-4 mb-2" />
+            <img src={removeAModelFromCatalogImage} alt="Removing a Model from Catalog" loading="lazy" decoding="async" className="img-fluid mt-4 mb-2" />
 
           </li>
           <li><strong className='fw-semibold'>Confirm removal:</strong> A confirmation dialog will appear asking if you want to remove the model from the catalog. Click &quot;Yes&quot; to proceed or &quot;No&quot; to cancel.</li>
@@ -100,6 +96,10 @@ const HelpDocsModelCatalog = ({ anchor }) => {
       <p><strong className='fw-semibold'>Important:</strong> This action requires Administrator privileges.</p>
     </>
   );
+};
+
+HelpDocsModelCatalog.propTypes = {
+  anchor: PropTypes.string,
 };
 
 export default HelpDocsModelCatalog;

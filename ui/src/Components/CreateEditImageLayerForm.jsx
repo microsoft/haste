@@ -10,6 +10,8 @@ import {
   Dropdown,
   Option,
   Field,
+  MessageBar,
+  MessageBarBody,
   Tooltip,
 } from "@fluentui/react-components";
 
@@ -45,8 +47,29 @@ const CreateEditImageLayerModal = () => {
 
   const projectId = useParams().projectId;
   const imageLayerId = useParams().imageLayerId;
-  const [isUploading, setIsUploading] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const isUploading = componentState
+    ? validateIsUploading(
+        componentState.preEventImageryUrls,
+        componentState.postEventImageryUrls,
+        componentState.userBuildingFootprintsUrls || []
+      )
+    : false;
+
+  async function initComponent() {
+    setIsLoading(true);
+    try {
+      setComponentState(
+        await createComponentDefaultState(imageLayerId, projectId)
+      );
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
   // Add a scene picked from the Open Data Catalog explorer into the pre/post
   // imagery array (with source-type + capture-date auto-fill). Returns the
@@ -63,14 +86,7 @@ const CreateEditImageLayerModal = () => {
   }
 
   useEffect(() => {
-    async function initComponent() {
-      setIsLoading(true);
-      setComponentState(
-        await createComponentDefaultState(imageLayerId, projectId)
-      );
-      setIsLoading(false);
-    }
-
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     initComponent();
 
     return () => {
@@ -80,19 +96,20 @@ const CreateEditImageLayerModal = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (componentState) {
-      setIsUploading(
-        validateIsUploading(
-          componentState.preEventImageryUrls,
-          componentState.postEventImageryUrls,
-          componentState.userBuildingFootprintsUrls || []
-        )
-      );
-    }
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [componentState]);
+  if (loadError) {
+    return (
+      <div className="p-4 w-100">
+        <MessageBar intent="error">
+          <MessageBarBody>
+            Image layer details could not be loaded.
+          </MessageBarBody>
+        </MessageBar>
+        <Button className="mt-3" appearance="primary" onClick={initComponent}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
 
   /* SUBMIT FUNCTION */
   async function submit() {
