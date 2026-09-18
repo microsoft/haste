@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 import os
 import tempfile
-from datetime import datetime
 from typing import Dict, Iterable, Optional, Union
 
 from ..config import Config
@@ -47,6 +46,10 @@ from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
 from ..utils.tbparser import calculate_metrics, parse_tb_event_logs
+from ..utils.workflow_progress import (
+    read_training_output,
+    workflow_progress_updates,
+)
 from .job_state import Workload, persist_and_enqueue
 
 # Placeholder the training image substitutes inside the generated
@@ -368,9 +371,15 @@ class TrainPostprocessor(BaseTrainProcessor):
                     self.model_data.trainingJob.taskId,
                 )
 
+                self._append_workflow_progress(handle)
                 # Retrieve error details from the compute job before cleanup
                 error_details = self._get_task_error_details(handle)
-                failure_message = "Training job failed"
+                failure_message = (
+                    "Training job cancelled"
+                    if task_status
+                    == self.config.get_status_types().CANCELLED.value
+                    else "Training job failed"
+                )
                 if error_details:
                     failure_message += f"\n{error_details}"
                 self._update_training_progress(
@@ -613,8 +622,12 @@ class TrainPostprocessor(BaseTrainProcessor):
         return experiment_input_files
 
     def _read_job_output(
-        self, handle: ComputeJobHandle, filename: str, *, as_chunks=False
-    ):
+        self,
+        handle: ComputeJobHandle,
+        filename: str,
+        *,
+        as_chunks: bool = False,
+    ) -> Optional[Union[str, Iterable[bytes]]]:
         """Read one file from the job's workspace, or ``None``.
 
         A not-yet-produced live file (progress log before the first write,
@@ -641,17 +654,17 @@ class TrainPostprocessor(BaseTrainProcessor):
         filename: str,
         as_chunks: bool = False,
     ) -> Optional[Union[str, Iterable[bytes]]]:
-        try:
-            return self._read_job_output(handle, filename, as_chunks=as_chunks)
-        except Exception as error:
+        content, unavailable = read_training_output(
+            lambda: self._read_job_output(
+                handle, filename, as_chunks=as_chunks
+            ),
+            task_id=handle.executionId,
+            filename=filename,
+            logger=self.logger,
+        )
+        if unavailable:
             self._telemetry_unavailable = True
-            self.logger.warning(
-                "Training telemetry %s is unavailable for task %s (%s)",
-                filename,
-                self.model_data.trainingJob.taskId,
-                type(error).__name__,
-            )
-            return None
+        return content
 
     def _get_training_logs(
         self, handle: ComputeJobHandle
@@ -696,27 +709,15 @@ class TrainPostprocessor(BaseTrainProcessor):
         if not isinstance(content, str):
             self.logger.warning("Workflow progress is not text")
             return False
-        have_progress = False
-        for line in content.splitlines():
-            if not line:
-                continue
-            timestamp, separator, message = line.partition("|")
-            try:
-                if not separator or not message.strip():
-                    raise ValueError("missing progress message")
-                datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-            except ValueError:
-                self.logger.warning(
-                    "Ignoring malformed workflow progress line"
-                )
-                continue
-            have_progress = True
-            if message not in (self.model_data.statusMessage or ""):
-                self._update_training_progress(
-                    message,
-                    step=self.model_data.currentStep or 0,
-                    timestamp=timestamp,
-                )
+        have_progress, updates = workflow_progress_updates(
+            content, self.model_data.statusMessage, logger=self.logger
+        )
+        for timestamp, message in updates:
+            self._update_training_progress(
+                message,
+                step=self.model_data.currentStep or 0,
+                timestamp=timestamp,
+            )
         return have_progress
 
     def _get_task_error_details(self, handle: ComputeJobHandle) -> str:
@@ -879,6 +880,7 @@ class TrainPostprocessor(BaseTrainProcessor):
                 "Training cancellation requested: %s",
                 handle_log_fields(handle),
             )
+            self._append_workflow_progress(handle)
             # Release the execution's temporary resources
             self.execution_service.finalize(handle)
             self.model_data.trainingOutputPath = output_prefix(

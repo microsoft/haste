@@ -22,7 +22,7 @@ from azure.batch.models import (
     ErrorMessage,
     TaskState,
 )
-from azure.core.exceptions import ServiceRequestError
+from azure.core.exceptions import ServiceRequestError, ServiceResponseError
 from hastegeo.core.config import Config
 from hastegeo.core.models.compute import (
     BackendConfigurationError,
@@ -49,6 +49,8 @@ from hastegeo.core.runners.azure_batch import (
     _export_haste_job_workdir,
 )
 from hastegeo.core.runners.base import ComputeRunner
+from msrest.exceptions import ClientRequestError
+from requests import exceptions as request_errors
 from tenacity import RetryError
 
 
@@ -395,6 +397,137 @@ class TestExportHasteJobWorkdir(unittest.TestCase):
 
 
 class TestSubmit(unittest.TestCase):
+    def test_transport_failures_retain_identity_at_every_submission_phase(
+        self,
+    ) -> None:
+        for operation in (
+            "get_execution_job_pool",
+            "select_pool",
+            "create_pool_if_not_exists",
+            "get_or_create_job_for_execution",
+            "add_task",
+        ):
+            for error in (
+                ConnectionResetError("connection reset"),
+                request_errors.ReadTimeout("response lost"),
+                ClientRequestError(
+                    "request failed",
+                    request_errors.ReadTimeout("response lost"),
+                ),
+                ServiceRequestError("transport unavailable"),
+                ServiceResponseError("response lost"),
+                _batch_error("InternalServerError", 500),
+                _retry_error(_batch_error("ServerBusy", 503)),
+                _retry_error(
+                    ClientRequestError(
+                        "request failed",
+                        request_errors.ReadTimeout("response lost"),
+                    )
+                ),
+            ):
+                with self.subTest(operation=operation, error=type(error)):
+                    runner = _runner(manage_pools=True)
+                    runner.batch_config[
+                        "user_assigned_identity_resource_id"
+                    ] = "test-registry-identity"
+                    getattr(
+                        runner.batch_cluster, operation
+                    ).side_effect = error
+
+                    with self.assertRaises(
+                        SubmissionIndeterminateError
+                    ) as caught:
+                        runner.submit(_spec())
+
+                    self.assertIs(caught.exception.__cause__, error)
+                    runner.batch_cluster.terminate_job.assert_not_called()
+                    runner.batch_cluster.arm_job_auto_terminate.assert_not_called()
+
+    def test_deterministic_wrapped_rejections_are_not_indeterminate(
+        self,
+    ) -> None:
+        for operation in (
+            "get_execution_job_pool",
+            "get_or_create_job_for_execution",
+            "add_task",
+        ):
+            for error in (
+                request_errors.InvalidURL("invalid URL"),
+                request_errors.SSLError("invalid certificate"),
+                ClientRequestError(
+                    "request failed", request_errors.InvalidURL("invalid URL")
+                ),
+                _batch_error("AuthorizationFailure", 403),
+                _retry_error(_batch_error("AuthorizationFailure", 403)),
+            ):
+                with self.subTest(operation=operation, error=type(error)):
+                    runner = _runner()
+                    getattr(
+                        runner.batch_cluster, operation
+                    ).side_effect = error
+
+                    with self.assertRaises(
+                        BackendConfigurationError
+                    ) as caught:
+                        runner.submit(_spec())
+
+                    self.assertIs(caught.exception.__cause__, error)
+                    if operation == "add_task":
+                        runner.batch_cluster.terminate_job.assert_called_once_with(
+                            "haste-exec-1"
+                        )
+                    else:
+                        runner.batch_cluster.terminate_job.assert_not_called()
+                    runner.batch_cluster.arm_job_auto_terminate.assert_not_called()
+
+    def test_lost_task_acknowledgement_replays_the_same_job_and_task(
+        self,
+    ) -> None:
+        runner = _runner()
+        runner.batch_cluster.get_execution_job_pool.side_effect = [
+            None,
+            "pool-a",
+        ]
+        runner.batch_cluster.add_task.side_effect = [
+            ClientRequestError(
+                "request failed", request_errors.ReadTimeout("response lost")
+            ),
+            _batch_error("TaskExists", 409),
+        ]
+
+        with self.assertRaises(SubmissionIndeterminateError):
+            runner.submit(_spec())
+        handle = runner.submit(_spec())
+
+        self.assertEqual(handle.providerJobId, "haste-exec-1")
+        self.assertEqual(handle.providerTaskId, "exec-1")
+        attempts = runner.batch_cluster.add_task.call_args_list
+        self.assertEqual(attempts[0].kwargs, attempts[1].kwargs)
+        runner.batch_cluster.select_pool.assert_called_once()
+        runner.batch_cluster.get_or_create_job_for_execution.assert_called_once()
+        runner.batch_cluster.terminate_job.assert_not_called()
+
+    def test_track_one_cleanup_failure_after_acceptance_keeps_handle(
+        self,
+    ) -> None:
+        for error in (
+            request_errors.ReadTimeout("response lost"),
+            ClientRequestError(
+                "request failed", request_errors.ReadTimeout("response lost")
+            ),
+            _batch_error("InternalServerError", 500),
+        ):
+            with self.subTest(error=type(error)):
+                runner = _runner()
+                runner.batch_cluster.arm_job_auto_terminate.side_effect = error
+
+                handle = runner.submit(_spec())
+
+                self.assertEqual(handle.providerTaskId, "exec-1")
+                runner.batch_cluster.add_task.assert_called_once()
+                runner.batch_cluster.terminate_job.assert_not_called()
+                runner.logger.warning.assert_called_once()
+
     def test_auto_terminate_transport_failure_still_returns_handle(self):
         runner = _runner()
         runner.batch_cluster.arm_job_auto_terminate.side_effect = (

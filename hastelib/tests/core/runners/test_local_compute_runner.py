@@ -16,6 +16,7 @@ behavior it delegates to.
 """
 
 import json
+import os
 import tempfile
 import time
 import unittest
@@ -605,6 +606,7 @@ class TestGetStatus(unittest.TestCase):
 
 
 class TestReadOutput(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "Descriptor-backed reads require POSIX")
     def test_reads_friendly_log_from_the_logs_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runner = _runner(tmp)
@@ -637,17 +639,28 @@ class TestReadOutput(unittest.TestCase):
     def test_delegates_to_legacy_method(self):
         with tempfile.TemporaryDirectory() as tmp:
             runner = _runner(tmp)
-            task_dir = Path(tmp) / "job-exec-1" / "exec-1"
-            task_dir.mkdir(parents=True)
-            with open(task_dir / "progress.log", "w") as f:
-                f.write("hello")
+            runner.get_filecontent_from_task = MagicMock(return_value="hello")
             result = runner.read_output(_handle(), "progress.log")
             self.assertEqual(result, "hello")
+            runner.get_filecontent_from_task.assert_called_once_with(
+                "job-exec-1", "exec-1", "progress.log", as_chunk=False
+            )
 
+    @unittest.skipIf(os.name == "nt", "Descriptor-backed reads require POSIX")
     def test_returns_none_when_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             runner = _runner(tmp)
             self.assertIsNone(runner.read_output(_handle(), "missing.log"))
+
+    @unittest.skipUnless(os.name == "nt", "Native Windows contract")
+    def test_native_windows_fails_closed_without_a_path_based_fallback(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = _runner(tmp)
+            with self.assertRaisesRegex(NotImplementedError, "Linux"):
+                runner.read_output(_handle(), "progress.log")
+            runner.logger.warning.assert_called_once()
 
 
 class TestCancel(unittest.TestCase):

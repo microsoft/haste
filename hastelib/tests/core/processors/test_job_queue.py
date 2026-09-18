@@ -20,6 +20,7 @@ from hastegeo.core.processors.job_state import (
 from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.processors.train import TrainPostprocessor
 from hastegeo.core.runners import local
+from hastegeo.core.runners.execution_service import ComputeExecutionService
 from hastegeo.core.utils.metadata import MetadataUtils
 
 from hastelib.tests.core.processors.test_job_state import (
@@ -308,12 +309,116 @@ def test_cancel_waits_for_the_provider_to_become_terminal(
     service.get_status.return_value = ComputeJobState.RUNNING
     with pytest.raises(RuntimeError, match="waiting for provider"):
         processor.process(Workload.TRAINING, message)
+    service.read_output.assert_not_called()
     service.finalize.assert_not_called()
     assert state.repository.needs_cancellation(load(state), Workload.TRAINING)
 
 
+@pytest.mark.parametrize("already_terminal", [False, True])
+def test_training_cancellation_commits_history_before_summary_and_cleanup(
+    state, mocker, already_terminal: bool
+) -> None:
+    message, handle = submitted(state)
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    service = mocker.Mock(spec=ComputeExecutionService)
+    service.get_status.side_effect = (
+        [ComputeJobState.SUCCEEDED]
+        if already_terminal
+        else [ComputeJobState.RUNNING, ComputeJobState.CANCELLED]
+    )
+    mocker.patch.object(processor, "execution_service", service)
+    mocker.patch.object(processor, "_perform_action")
+    summary = (
+        "Task already reached Processed before cancellation"
+        if already_terminal
+        else "Task cancelled"
+    )
+
+    def read_output(
+        actual: ComputeJobHandle,
+        relative_path: str,
+        *,
+        as_chunks: bool = False,
+    ) -> str:
+        assert actual == handle
+        if already_terminal:
+            service.cancel.assert_not_called()
+        else:
+            service.cancel.assert_called_once_with(handle)
+        service.finalize.assert_not_called()
+        assert relative_path == "workflow_progress.log"
+        return (
+            "2026-01-01T00:00:00+00:00|Starting create_masks.py\n"
+            "2026-01-01T00:01:00+00:00|Completed create_masks.py\n"
+        )
+
+    def cleanup(actual: ComputeJobHandle) -> None:
+        assert actual == handle
+        persisted = load(state)
+        assert persisted["status"] == "Cancelled"
+        assert persisted["trainingJob"]["status"] == (
+            "Processed" if already_terminal else "Cancelled"
+        )
+        history = persisted["statusMessage"]
+        assert (
+            history.index("Starting create_masks.py")
+            < history.index("Completed create_masks.py")
+            < history.index(summary)
+        )
+
+    service.read_output.side_effect = read_output
+    service.finalize.side_effect = cleanup
+
+    processor.process(Workload.TRAINING, message)
+
+    service.read_output.assert_called_once_with(
+        handle, "workflow_progress.log", as_chunks=False
+    )
+    service.finalize.assert_called_once_with(handle)
+    assert state.repository.turn(load(state), Workload.TRAINING).cleanup == []
+
+
+@pytest.mark.parametrize(
+    "output", [RuntimeError("private provider detail"), b"not text"]
+)
+def test_unavailable_cancellation_history_preserves_terminal_commit(
+    state, mocker, output: RuntimeError | bytes
+) -> None:
+    message, handle = submitted(state)
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    processor.logger = mocker.Mock()
+    service = mocker.Mock(spec=ComputeExecutionService)
+    service.get_status.side_effect = [
+        ComputeJobState.RUNNING,
+        ComputeJobState.CANCELLED,
+    ]
+    if isinstance(output, Exception):
+        service.read_output.side_effect = output
+    else:
+        service.read_output.return_value = output
+    mocker.patch.object(processor, "execution_service", service)
+    mocker.patch.object(processor, "_perform_action")
+
+    processor.process(Workload.TRAINING, message)
+
+    persisted = load(state)
+    assert persisted["status"] == "Cancelled"
+    assert persisted["trainingJob"]["status"] == "Cancelled"
+    assert "Task cancelled" in persisted["statusMessage"]
+    assert "private provider detail" not in persisted["statusMessage"]
+    processor.logger.warning.assert_called_once()
+    service.finalize.assert_called_once_with(handle)
+
+
+@pytest.mark.parametrize("acknowledgement_lost", [False, True])
 def test_training_queue_and_local_lifecycle_publish_inflight_then_persisted_terminal_state(
-    state, mocker
+    state, mocker, acknowledgement_lost: bool
 ) -> None:
     engine, blobs = FakeDocker(), FakeBlobs()
     mocker.patch.object(local, "TASK_WORK_DIR", state.root / "tasks")
@@ -330,6 +435,25 @@ def test_training_queue_and_local_lifecycle_publish_inflight_then_persisted_term
         },
     )
     runner = local.LocalRunner(config=state.config)
+    interrupted = False
+    if acknowledgement_lost:
+        save_receipt = local.ReceiptStore.save
+
+        def save_then_interrupt(
+            store: local.ReceiptStore, receipt: local.LocalReceipt
+        ) -> None:
+            nonlocal interrupted
+            save_receipt(store, receipt)
+            if not interrupted:
+                interrupted = True
+                raise OSError("receipt persisted; acknowledgement lost")
+
+        mocker.patch.object(
+            local.ReceiptStore,
+            "save",
+            autospec=True,
+            side_effect=save_then_interrupt,
+        )
     blobs.inputs[("data", "config.yaml")] = b"training: {}"
     mocker.patch.object(
         TrainPostprocessor,
@@ -374,6 +498,7 @@ def test_training_queue_and_local_lifecycle_publish_inflight_then_persisted_term
     message = accepted(state)
     processor = JobQueueProcessor(state.config, repository=state.repository)
     processor.process(Workload.TRAINING, message)
+    assert interrupted is acknowledgement_lost
     identity = current_job(load(state), Workload.TRAINING)
     ids = identity["jobId"], identity["taskId"]
     assert load(state)["status"] == "InProgress"

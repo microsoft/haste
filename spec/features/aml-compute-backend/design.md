@@ -184,6 +184,14 @@ Provider exceptions map to `BackendConfigurationError`,
 `OutputNotAvailableError`, and `JobCancellationError`, defined in
 `hastegeo.core.models.compute`.
 
+Batch's legacy and neutral entrypoints share a leaf submission-error
+classifier. Requests/msrest transport interruptions and server failures
+retain the same execution identity throughout job lookup, selection,
+creation and task submission. Wrapped deterministic rejections remain
+configuration failures, not indefinite retries. Ambiguous acceptance never
+terminates the job; failure to arm cleanup after acceptance still returns
+the persisted handle for later finalization.
+
 ### Work-directory contract
 
 `HASTE_JOB_WORKDIR` becomes the application-owned workspace variable used by

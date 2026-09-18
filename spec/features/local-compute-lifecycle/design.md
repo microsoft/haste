@@ -132,6 +132,30 @@ recorded with that full handle and deferred until the fenced metadata
 commit succeeds. Backend/profile dispatch therefore survives configuration
 changes and supports local, Batch, and AML consistently.
 
+Transport interruptions and ambiguous submission responses retain the pending
+IDs instead of marking possibly accepted compute failed. SDK request/retry
+wrappers are classified by their underlying error, not assumed transient.
+Identity mismatches, invalid configuration, authentication/authorization
+rejections, and other deterministic provider failures fail the workload
+through its fenced metadata commit; recovery does not resubmit terminal
+workloads. This applies to all five workloads, including imagery.
+Neutral adapters must report ambiguous acceptance as
+`SubmissionIndeterminateError`; processors preserve that error for queue
+recovery while keeping the `ComputeJobSpec`/`ComputeJobHandle` service
+contract. Legacy `TaskSubmissionPendingError` remains a compatibility-boundary
+signal, not a replacement for the neutral contract.
+
+Local filesystem errors with confirmed receipt absence remain explicit
+failures.
+An interrupted receipt write or acknowledgement with a persisted or
+unverifiable receipt retains the same identity for reconciliation.
+
+Legacy Batch replay checks existing tasks across the configured candidate jobs
+before capacity routing and accepts a same-job `TaskExists` race without
+changing the legacy return shape. Neutral Batch submission retains its
+deterministic per-execution job/task reconciliation and returns a full
+compute handle.
+
 Only workload-owned runtime fields are merged back. New attempts,
 cancellation intent, terminal outcomes, other workloads, and user edits
 survive stale messages and racing callbacks. Follow-on work is recorded
@@ -145,6 +169,10 @@ Blob API with conditional writes; this is not a fallback storage account.
 All metadata merge/save operations use that boundary for JSON. Unsupported
 operations and storage errors fail explicitly; nothing depends on
 `publishing_enabled` or on an additional lock service.
+PostgreSQL table creation, CRUD, spatial reads/writes, and conditional
+metadata operations share the same connection helper, including the
+configured `POSTGRES_PORT`, credentials, and required SSL. Each operation
+keeps its existing connection/cursor transaction boundary.
 
 Two independent Function timers drive recovery. Every 15 seconds, one
 reconciles existing local receipts, including queued work and interrupted

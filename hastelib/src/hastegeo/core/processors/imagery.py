@@ -11,6 +11,7 @@ from ..models.compute import (
     ComputeJobSpec,
     ComputeWorkload,
     OutputNotAvailableError,
+    SubmissionIndeterminateError,
 )
 from ..models.projects import ImageLayer, ImageryPreprocessJob
 from ..utils.blob import fetch_url_text
@@ -453,16 +454,33 @@ class ImageryPostProcessor:
             f"Submitting preprocessing job for image layer id: {self.image_data.imageLayerId}"
         )
         task_id = self._pending_task_id()
-        spec = build_imagery_job_spec(
-            image_layer=self.image_data,
-            execution_id=task_id,
-            input_files=imagery_input_files,
-            config=self.config,
-            backend=self.image_data.computeBackend,
-        )
-        handle = self.execution_service.submit(
-            spec, profile=compute_profile(IMAGERY_WORKLOAD)
-        )
+        try:
+            spec = build_imagery_job_spec(
+                image_layer=self.image_data,
+                execution_id=task_id,
+                input_files=imagery_input_files,
+                config=self.config,
+                backend=self.image_data.computeBackend,
+            )
+            handle = self.execution_service.submit(
+                spec, profile=compute_profile(IMAGERY_WORKLOAD)
+            )
+        except SubmissionIndeterminateError:
+            raise
+        except Exception as error:
+            self.logger.error(
+                "Image preprocessing submission failed for %s (%s)",
+                self.image_data.imageLayerId,
+                type(error).__name__,
+            )
+            self.image_data.status = (
+                self.config.get_status_types().FAILED.value
+            )
+            self._update_imagery_progress(
+                f"Image preprocessing failed to start ({type(error).__name__})",
+                step=self.image_data.currentStep,
+            )
+            return self.image_data
         self.logger.info(
             "Imagery preprocessing submitted for image layer %s: %s",
             self.image_data.imageLayerId,

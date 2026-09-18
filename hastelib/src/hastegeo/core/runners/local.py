@@ -5,8 +5,9 @@ import json
 import os
 import shutil
 import time
+from io import TextIOWrapper
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, BinaryIO, Iterator, Optional
 from urllib.parse import urlsplit
 
 from azure.identity import DefaultAzureCredential
@@ -30,13 +31,14 @@ from ..models.compute import (
     ComputeResources,
     ComputeWorkload,
     LocalProviderDetail,
+    SubmissionIndeterminateError,
     validate_relative_path,
 )
 from ..utils.atomic_files import LockUnavailableError, atomic_write
 from ..utils.local_permissions import LOCAL_TASK_ROOT
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
-from ..utils.output_files import AmbiguousTaskOutputError, resolve_task_output
+from ..utils.output_files import AmbiguousTaskOutputError, open_task_output
 from .base import (
     BaseRunner,
     ComputeRunner,
@@ -61,6 +63,7 @@ from .local_lifecycle import (
     safe_relative_path,
     task_path,
 )
+from .submission import TaskSubmissionPendingError
 
 TASK_WORK_DIR = LOCAL_TASK_ROOT
 ACTIVE_CONTAINER_STATES = {"running", "restarting", "paused"}
@@ -118,13 +121,19 @@ class LocalRunner(BaseRunner, ComputeRunner):
         }
 
     def get_filecontent_from_task(
-        self, job_id, task_id, filename, as_chunk=False
-    ):
+        self,
+        job_id: str,
+        task_id: str,
+        filename: str,
+        as_chunk: bool = False,
+    ) -> str | Iterator[bytes] | None:
         """Read a live or completed output from this task's workspace."""
         execution_key(job_id, task_id)
         job_dir = self.work_dir / job_id / task_id
         try:
-            file_path = resolve_task_output(job_dir, filename)
+            stream = open_task_output(
+                job_dir, filename, workspace_root=self.work_dir
+            )
         except AmbiguousTaskOutputError:
             self.logger.warning(
                 "Output %s is ambiguous for job %s task %s; unavailable",
@@ -133,26 +142,31 @@ class LocalRunner(BaseRunner, ComputeRunner):
                 task_id,
             )
             return None
-        if file_path is not None:
-            if as_chunk:
-                # Return file content in chunks
-                def read_chunks():
-                    with open(file_path, "rb") as f:
-                        while True:
-                            chunk = f.read(8192)
-                            if not chunk:
-                                break
-                            yield chunk
-
-                return read_chunks()
-            else:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    return f.read()
-        else:
+        except (OSError, ValueError, NotImplementedError) as error:
+            self.logger.warning(
+                "Cannot safely read output %s for job %s task %s (%s)",
+                filename,
+                job_id,
+                task_id,
+                type(error).__name__,
+            )
+            raise
+        if stream is None:
             self.logger.warning(
                 f"File {filename} not found for job {job_id}, task {task_id}"
             )
             return None
+
+        if as_chunk:
+
+            def read_chunks(output: BinaryIO) -> Iterator[bytes]:
+                with output:
+                    while chunk := output.read(8192):
+                        yield chunk
+
+            return read_chunks(stream)
+        with TextIOWrapper(stream, encoding="utf-8") as text:
+            return text.read()
 
     def get_task_receipt(self, job_id: str, task_id: str) -> dict:
         return self.receipts.load(execution_key(job_id, task_id)).model_dump(
@@ -217,49 +231,72 @@ class LocalRunner(BaseRunner, ComputeRunner):
             env_vars,
             self._output_patterns(file_pattern, job_id, task_id),
         )
-        with self.receipts.lock(key):
-            try:
-                existing = self.receipts.load(key)
-            except FileNotFoundError:
-                existing = None
-            if existing is not None:
-                comparable = request
-                if existing.request is not None:
-                    # Existing version-one receipts predate storage descriptors.
-                    comparable = request.model_copy(
-                        update={
-                            field: None
-                            for field in (
-                                "storage_account",
-                                "storage_endpoint",
-                            )
-                            if getattr(existing.request, field) is None
-                        }
+        try:
+            with self.receipts.lock(key):
+                try:
+                    existing = self.receipts.load(key)
+                except FileNotFoundError:
+                    existing = None
+                if existing is not None:
+                    comparable = request
+                    if existing.request is not None:
+                        # Version-one receipts predate storage descriptors.
+                        comparable = request.model_copy(
+                            update={
+                                field: None
+                                for field in (
+                                    "storage_account",
+                                    "storage_endpoint",
+                                )
+                                if getattr(existing.request, field) is None
+                            }
+                        )
+                    if (
+                        existing.request is not None
+                        and existing.request.fingerprint()
+                        != comparable.fingerprint()
+                    ):
+                        raise ValueError(
+                            "Local execution identity already has another request"
+                        )
+                    return job_id, task_id
+                if (self.work_dir / job_id / task_id).exists():
+                    raise RuntimeError(
+                        "Legacy local task files exist without a durable receipt; "
+                        "refusing to repeat unknown compute"
                     )
-                if (
-                    existing.request is not None
-                    and existing.request.fingerprint()
-                    != comparable.fingerprint()
-                ):
-                    raise ValueError(
-                        "Local execution identity already has another request"
-                    )
-                return job_id, task_id
-            if (self.work_dir / job_id / task_id).exists():
-                raise RuntimeError(
-                    "Legacy local task files exist without a durable receipt; "
-                    "refusing to repeat unknown compute"
+                receipt = LocalReceipt(
+                    job_id=job_id,
+                    task_id=task_id,
+                    accepted_at=time.time(),
+                    request=request,
                 )
-            receipt = LocalReceipt(
-                job_id=job_id,
-                task_id=task_id,
-                accepted_at=time.time(),
-                request=request,
+                self.receipts.save(receipt)
+                self._phase_log(
+                    receipt, "Local task accepted; waiting for capacity"
+                )
+        except OSError as error:
+            # Atomic replacement or acknowledgement can fail after acceptance.
+            try:
+                self.receipts.load(key)
+            except FileNotFoundError:
+                raise error from None
+            except OSError as verification_error:
+                self.logger.error(
+                    "Cannot verify local receipt %s (%s)",
+                    key,
+                    type(verification_error).__name__,
+                )
+            self.logger.error(
+                "Local submission of %s/%s interrupted (%s); "
+                "receipt may be accepted, retaining pending identity",
+                job_id,
+                task_id,
+                type(error).__name__,
             )
-            self.receipts.save(receipt)
-            self._phase_log(
-                receipt, "Local task accepted; waiting for capacity"
-            )
+            raise TaskSubmissionPendingError(
+                "Local acceptance interrupted; reconcile the pending receipt"
+            ) from error
         return job_id, task_id
 
     def _request(
@@ -1227,18 +1264,23 @@ class LocalRunner(BaseRunner, ComputeRunner):
         ) = require_single_output_destination(
             spec.outputs, account_url=account_url
         )
-        self.add_task(
-            job_id=job_id,
-            task_id=task_id,
-            image_name=spec.container.imageReference,
-            command=spec.command,
-            work_dir=spec.container.workingDirectory,
-            output_container_url=container_name,
-            output_prefix=output_prefix,
-            resource_files_for_upload=resource_files or None,
-            file_pattern=patterns,
-            env_vars=dict(spec.environment),
-        )
+        try:
+            self.add_task(
+                job_id=job_id,
+                task_id=task_id,
+                image_name=spec.container.imageReference,
+                command=spec.command,
+                work_dir=spec.container.workingDirectory,
+                output_container_url=container_name,
+                output_prefix=output_prefix,
+                resource_files_for_upload=resource_files or None,
+                file_pattern=patterns,
+                env_vars=dict(spec.environment),
+            )
+        except TaskSubmissionPendingError as error:
+            raise SubmissionIndeterminateError(
+                "Local acceptance interrupted; reconcile the pending receipt"
+            ) from error
 
         return ComputeJobHandle(
             executionId=spec.executionId,

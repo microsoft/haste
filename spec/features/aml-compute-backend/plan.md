@@ -10,9 +10,11 @@ mapping and [rollout.md](rollout.md) for the deployment sequence.
 [durable local execution prerequisite](../local-compute-lifecycle/README.md)
 now replaces blocking local submission, preserves handle-based dispatch,
 and fences queue updates. It is integrated with
-[shared progress reporting](../job-progress-observability/README.md) before
-the existing local validation environment is rebuilt. Live AML validation
-remains a separate rollout gate.
+[shared progress reporting](../job-progress-observability/README.md).
+Review follow-ups preserve descriptor-owned output streams, terminal history
+and submission identity across both legacy and neutral entrypoints.
+Live AML validation remains a separate rollout gate; refreshing this stack
+does not deploy or rebuild a development environment.
 
 ## Contents
 
@@ -81,6 +83,7 @@ behavior before any refactor.
 | Migrate `local.py` to implement `ComputeRunner` natively; keep `AZ_BATCH_*` emulation internal to the adapter | `backend-dev` | Phase 3 | US-001 | done |
 | Deprecate `BaseRunner`/`UnifiedRunner` `(job_id, task_id)` methods as thin compatibility wrappers | `backend-dev` | above | US-001 | done |
 | Extend existing Batch/local runner test suites for the new contract | `backend-dev` | above | US-001 | done |
+| Share reviewed transport/rejection classification with neutral Batch submission, preserving accepted handles and deterministic replay | `backend-dev` | Lifecycle review follow-up | US-001, US-004, US-005 | done |
 
 **Exit Criteria:**
 - [x] Full existing Batch/local test suite passes against the new contract

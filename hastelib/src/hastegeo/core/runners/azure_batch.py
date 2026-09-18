@@ -45,11 +45,7 @@ from azure.batch.models import (
     UserIdentity,
     VirtualMachineConfiguration,
 )
-from azure.core.exceptions import (
-    HttpResponseError,
-    ServiceRequestError,
-    ServiceResponseError,
-)
+from azure.core.exceptions import HttpResponseError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import (
     BlobServiceClient,
@@ -100,6 +96,12 @@ from .base import (
 )
 from .base import resource_files_from_inputs as _resource_files_from_inputs
 from .base import truncate_deterministic_id
+from .submission_errors import (
+    SUBMISSION_ERRORS,
+    is_ambiguous_submission_error,
+    is_server_error,
+    unwrap_retry_error,
+)
 
 # Batch's ResourceFile.http_url / OutputFileBlobContainerDestination only
 # accept a real http(s) blob URL, and split_destination_uri (base.py)
@@ -473,6 +475,26 @@ class AzureBatchRunner(BaseRunner, ComputeRunner):
 
     def submit(self, spec: ComputeJobSpec) -> ComputeJobHandle:
         self.validate(spec)
+        try:
+            return self._submit_validated(spec)
+        except SUBMISSION_ERRORS as error:
+            if is_ambiguous_submission_error(error):
+                self.logger.error(
+                    "Batch submission interrupted for executionId=%s (%s); "
+                    "retaining the same execution identity",
+                    spec.executionId,
+                    type(error).__name__,
+                )
+                raise SubmissionIndeterminateError(
+                    "Azure Batch submission outcome is indeterminate for "
+                    f"executionId={spec.executionId}"
+                ) from error
+            raise BackendConfigurationError(
+                "Azure Batch rejected submission "
+                f"({batch_error_code(unwrap_retry_error(error)) or type(error).__name__})"
+            ) from error
+
+    def _submit_validated(self, spec: ComputeJobSpec) -> ComputeJobHandle:
         task_id = self._execution_task_id(spec.executionId)
         job_id = self._execution_job_id(spec.executionId)
         resource_files = _resource_files_from_inputs(spec.inputs)
@@ -505,19 +527,7 @@ class AzureBatchRunner(BaseRunner, ComputeRunner):
         # to return JobExists, breaking reconciliation; manage_pools
         # could also needlessly create/resize a pool this execution
         # doesn't need. See get_execution_job_pool's docstring.
-        try:
-            actual_pool = self.batch_cluster.get_execution_job_pool(job_id)
-        except RetryError as exc:
-            cause = unwrap_retry_error(exc)
-            raise SubmissionIndeterminateError(
-                "Azure Batch job lookup outcome is indeterminate for "
-                f"executionId={spec.executionId}: "
-                f"{batch_error_code(cause)}"
-            ) from exc
-        except BatchErrorException as exc:
-            raise BackendConfigurationError(
-                "Azure Batch rejected job lookup " f"({batch_error_code(exc)})"
-            ) from exc
+        actual_pool = self.batch_cluster.get_execution_job_pool(job_id)
 
         if actual_pool is None:
             # First submission for this executionId (or a genuine
@@ -559,25 +569,12 @@ class AzureBatchRunner(BaseRunner, ComputeRunner):
                     self.batch_config["node_agent_sku_id"],
                 )
 
-            try:
-                (
-                    actual_pool,
-                    we_created_job,
-                ) = self.batch_cluster.get_or_create_job_for_execution(
-                    job_id, preferred_pool
-                )
-            except RetryError as exc:
-                cause = unwrap_retry_error(exc)
-                raise SubmissionIndeterminateError(
-                    "Azure Batch job creation outcome is indeterminate "
-                    f"for executionId={spec.executionId}: "
-                    f"{batch_error_code(cause)}"
-                ) from exc
-            except BatchErrorException as exc:
-                raise BackendConfigurationError(
-                    "Azure Batch rejected job creation "
-                    f"({batch_error_code(exc)})"
-                ) from exc
+            (
+                actual_pool,
+                we_created_job,
+            ) = self.batch_cluster.get_or_create_job_for_execution(
+                job_id, preferred_pool
+            )
         else:
             # The job already existed before this attempt (read-first
             # reconciliation above) — it isn't ours to clean up if task
@@ -600,8 +597,8 @@ class AzureBatchRunner(BaseRunner, ComputeRunner):
                 env_vars=dict(spec.environment) or None,
                 retention_time=self.batch_config["task_retention_time"],
             )
-        except BatchErrorException as exc:
-            if batch_error_code(exc) == "TaskExists":
+        except SUBMISSION_ERRORS as exc:
+            if batch_error_code(unwrap_retry_error(exc)) == "TaskExists":
                 # Idempotent get-or-create: this executionId was already
                 # submitted (retry / duplicate queue delivery / two
                 # workers racing). job_id/actual_pool above are already
@@ -614,7 +611,7 @@ class AzureBatchRunner(BaseRunner, ComputeRunner):
                     job_id,
                 )
             else:
-                if we_created_job:
+                if we_created_job and not is_ambiguous_submission_error(exc):
                     # This attempt just created a job that now has no
                     # task in it (add_task failed deterministically, not
                     # via a race) — clean it up best-effort so it doesn't
@@ -634,31 +631,11 @@ class AzureBatchRunner(BaseRunner, ComputeRunner):
                             spec.executionId,
                             exc_info=True,
                         )
-                raise BackendConfigurationError(
-                    "Azure Batch rejected task submission "
-                    f"({batch_error_code(exc)})"
-                ) from exc
-        except RetryError as exc:
-            # Indeterminate outcome: the task may or may not actually
-            # exist server-side despite the client-visible failure, so
-            # the job must never be terminated here even if we created
-            # it — doing so on a false negative would destroy a task
-            # that actually did get created.
-            cause = unwrap_retry_error(exc)
-            raise SubmissionIndeterminateError(
-                "Azure Batch submission outcome is indeterminate for "
-                f"executionId={spec.executionId}: "
-                f"{batch_error_code(cause)}"
-            ) from exc
+                raise
 
         try:
             self.batch_cluster.arm_job_auto_terminate(job_id)
-        except (
-            RetryError,
-            HttpResponseError,
-            ServiceRequestError,
-            ServiceResponseError,
-        ) as exc:
+        except (HttpResponseError, *SUBMISSION_ERRORS) as exc:
             # The task is already accepted. Returning its handle is required
             # so polling and finalize() can terminate the job later.
             self.logger.warning(
@@ -861,14 +838,6 @@ class AzureBatchRunner(BaseRunner, ComputeRunner):
         )
 
 
-def is_server_error(exception):
-    if isinstance(exception, BatchErrorException):
-        # Check if the status code is in the 5xx range
-        status_code = exception.response.status_code
-        return 500 <= status_code < 600
-    return False
-
-
 def batch_error_code(exception):
     """Return the Batch error code of ``exception``, or None."""
     if not isinstance(exception, BatchErrorException):
@@ -896,24 +865,6 @@ def is_node_unavailable_error(exception):
     return is_transient_node_error(exception) or is_terminal_node_error(
         exception
     )
-
-
-def unwrap_retry_error(exception):
-    """Return the exception tenacity was retrying, or ``exception`` itself.
-
-    ``retry_on_server_error`` leaves ``reraise`` at its default, so an exhausted
-    budget surfaces as ``RetryError``. Unwrapping it at the runner boundary lets
-    callers classify the underlying Batch error without making an exhausted
-    error look retryable to an *outer* wrapper — ``apply_retry_to_methods``
-    decorates every ``AzureBatchJob`` method, and several of them call one
-    another, so a re-raised retryable error would multiply the budget (five
-    outer attempts each spending a five-attempt inner budget).
-    """
-    if isinstance(exception, RetryError):
-        last_attempt = exception.last_attempt
-        if last_attempt is not None and last_attempt.failed:
-            return last_attempt.exception()
-    return exception
 
 
 def is_retryable_batch_error(exception):
