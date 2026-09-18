@@ -1,7 +1,11 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-"""Helper script for running the entire workflow."""
+"""Training/inference worker invoked programmatically by HASTE runners.
+
+The backend supplies the job configuration via --config and selects --step.
+This worker produces files; the backend publishes their metadata on Model.
+"""
 
 import argparse
 import glob
@@ -16,7 +20,21 @@ import yaml
 
 
 def prediction_attrs_settings(config: dict) -> tuple[str, str]:
-    """Validate eager artifact settings before starting expensive inference."""
+    """Validate the caller-supplied result settings before expensive work.
+
+    ``inference.prediction_attrs_filename`` is a safe JSON basename written
+    beside the prediction GeoPackage under ``inference.output_subdir``.
+    ``inference.prediction_revision`` identifies that run's output pair, not
+    a credential or model version. The inference launcher supplies its
+    ``inf-<UUIDv4>`` task ID, generated using ``MetadataUtils.generate_id()``.
+
+    Copy the revision unchanged into the sidecar's ``predictionRevision``;
+    the backend checks it before publishing the result and the viewer uses
+    it to reject stale attributes. The caller owns a fresh ID and an isolated
+    output location for each new run; this script does not generate them.
+    Both settings are required for inference and the default combined
+    workflow. Training-only execution does not require them.
+    """
     inference = config.get("inference") or {}
     filename = inference.get("prediction_attrs_filename")
     revision = inference.get("prediction_revision")
