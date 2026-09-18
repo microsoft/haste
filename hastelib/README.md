@@ -25,6 +25,11 @@ pip install -e hastelib/
 Local/editable installs report `0.0.0+local`. CI supplies the exact PEP 440
 version when it builds an RC or stable wheel.
 
+`HASTE_SET_VERSION` is resolved through Hatchling's version source before
+metadata is cached. The wheel filename, packaged `__about__.py` and
+`METADATA` therefore use the same version; the build hook does not override
+Hatchling's private metadata cache. Editable builds do not rewrite source.
+
 ## Release process
 
 `hatch build` is build-only. GitHub Actions resolves the version, builds and
