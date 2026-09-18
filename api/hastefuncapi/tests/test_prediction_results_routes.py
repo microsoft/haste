@@ -167,6 +167,45 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(row[key], detailed[key])
                         self.assertEqual(row[key], listed[key])
 
+    async def test_all_model_row_routes_keep_current_edited_source(
+        self,
+    ) -> None:
+        self.record["gpkgUrl"] = None
+        self.record["editedPredictions"] = [
+            {
+                "version": version,
+                "gpkgUrl": f"https://storage/edited-{version}.gpkg",
+                "predictionAttrsUrl": f"https://storage/edited-{version}.json",
+                "sourcePredictionRevision": revision,
+                "buildingCount": 2,
+                "editedCount": 1,
+            }
+            for version, revision in ((1, "old"), (2, "retired"), (3, "old"))
+        ]
+        self.detail_metadata()
+        project = await function_app.GetProjectDetails(
+            self.http(includeModels="True")
+        )
+        detail = await function_app.GetLayerDetailView(self.http())
+        listing = await function_app.GetLayerModelsDetails(self.http())
+        for response in (project, detail, listing):
+            self.assertEqual(response.status_code, 200)
+        for rows in (
+            json.loads(project.get_body())["imageLayer"][0]["models"],
+            json.loads(detail.get_body())["models"],
+            json.loads(listing.get_body()),
+        ):
+            self.assertEqual(len(rows), 2)
+            for row in rows:
+                self.assertEqual(row["predictionVersion"], 3)
+                self.assertEqual(row["currentPredictionRevision"], "old")
+                self.assertTrue(row["hasEditedPredictions"])
+                self.assertTrue(row["predictionsReady"])
+                self.assertFalse(row["rawPredictionsReady"])
+                self.assertIn("version=3", row["gpkgUrl"])
+                self.assertIn("version=3", row["predictionAttrsUrl"])
+                self.assertEqual(len(row["editedPredictions"]), 3)
+
     def http(self, body: Any = None, **params: str) -> func.HttpRequest:
         return func.HttpRequest(
             method="PUT" if body is not None else "GET",
@@ -335,6 +374,14 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
         baseline = {
             **self.record,
             "predictionGpkgFilename": "original.gpkg",
+            "editedPredictions": [
+                {
+                    "version": 2,
+                    "gpkgUrl": "https://storage/edited.gpkg",
+                    "sourcePredictionRevision": "old",
+                    "buildingCount": 2,
+                }
+            ],
         }
         replacement = {
             **baseline,
@@ -342,7 +389,19 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
             "predictionRevision": "replacement",
             "predictionGpkgFilename": "replacement.gpkg",
         }
-        for params in ({}, {"predictionRevision": "old"}):
+        for params, expected_url, filename in (
+            ({}, baseline["gpkgUrl"], "original.gpkg"),
+            (
+                {"predictionRevision": "old"},
+                baseline["gpkgUrl"],
+                "original.gpkg",
+            ),
+            (
+                {"version": "2", "predictionRevision": "old"},
+                "https://storage/edited.gpkg",
+                f"building_predictions_{MODEL_ID}_v2.gpkg",
+            ),
+        ):
             with self.subTest(params=params):
                 self.metadata.load.reset_mock()
                 self.metadata.load.side_effect = [baseline, replacement]
@@ -361,11 +420,9 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 206)
                 self.assertEqual(
                     response.headers["Content-Disposition"],
-                    'attachment; filename="original.gpkg"',
+                    f'attachment; filename="{filename}"',
                 )
-                read.assert_awaited_once_with(
-                    baseline["gpkgUrl"], 0, 4, self.config
-                )
+                read.assert_awaited_once_with(expected_url, 0, 4, self.config)
                 self.metadata.load.assert_called_once_with(MODEL_ID)
 
     async def test_nonversioned_artifact_kinds_reject_explicit_raw_zero(
