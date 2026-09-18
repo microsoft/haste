@@ -10,6 +10,7 @@
 | Live subprocess streams and stage messages | backend-dev | done |
 | Review: descriptor-anchored output reads, unbuffered children, terminal stage history | backend-dev | implemented; Linux descriptor/race validation passed |
 | Empty-message and indeterminate UI states | ui | done |
+| Merge refreshed lifecycle/main while retaining upstream active-job tests and progress tests | backend-dev; ui | done |
 | Regression and integration validation | backend-validation; ui-validation | complete on the lifecycle prerequisite; final AML integration remains a separate gate |
 
 ## Validation
@@ -31,10 +32,18 @@
   before child completion, with inherited unbuffered mode explicitly unset
   in the test parent.
 - UI helper tests plus lint/build and deterministic browser checks.
-- Revalidate this prerequisite after rebasing onto the lifecycle prerequisite,
+- Revalidate this prerequisite after merging the updated lifecycle prerequisite,
   then verify the final backend-neutral integration separately.
 
 ## Current evidence and baseline limitations
+
+The current-main refresh passed **495 backend cases**, with 31 platform skips
+and the two API guard failures reproduced on unchanged main deselected.
+The active-jobs and job-progress commands passed **13 UI cases** and the
+exact-lockfile production build passed. The refreshed UI has no additional
+lint findings relative to current main (169 versus 173 baseline findings);
+the progress components/helpers pass targeted lint. No workload, deployment
+or validation VM was used for this refresh.
 
 Focused backend tests and the UI status helper cases pass. Browser checks
 exercise queued, unknown-progress, determinate, terminal, empty-message,

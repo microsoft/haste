@@ -7,11 +7,7 @@ import resultsVisualizerImage from '../../assets/helpDocs/results/results-visual
 import PropTypes from 'prop-types';
 import { useEffect } from 'react';
 
-const HelpDocsModelTraining = ({ anchor }) => {
-  HelpDocsModelTraining.propTypes = {
-    anchor: PropTypes.string,
-  };
-
+const HelpDocsResults = ({ anchor }) => {
   useEffect(() => {
     if (anchor) {
       const element = document.getElementsByName(anchor)[0];
@@ -46,7 +42,7 @@ const HelpDocsModelTraining = ({ anchor }) => {
         swipe divider left, to an even split, or right.
       </p>
 
-      <img src={resultsVisualizerImage} alt="Visualizer" className="img-fluid pe-5 pt-4 pb-4" />
+      <img src={resultsVisualizerImage} alt="Visualizer" loading="lazy" decoding="async" className="img-fluid pe-5 pt-4 pb-4" />
 
       <hr className="mt-5 pb-4" />
 
@@ -55,17 +51,21 @@ const HelpDocsModelTraining = ({ anchor }) => {
       <h3 className='pt-4'>Predictions as a geopackage</h3>
       <p>The predicted damage layer is downloadable as a geopackage file (.gpkg) that can then be integrated into other geospatial visualization tools, such as ArcGIS, QGIS, etc.</p>
 
-      <img src={resultsDownloadGeopackageImage} alt="Download Geopackage" className="img-fluid pe-5 pt-4 pb-4" />
+      <img src={resultsDownloadGeopackageImage} alt="Download Geopackage" loading="lazy" decoding="async" className="img-fluid pe-5 pt-4 pb-4" />
 
 
 
       <h3 className='pt-4'>Intermediate Outputs</h3>
       <p>All intermediate outputs, such as the saved labels, training checkpoint files, downloaded  building footprints and predictions can be downloaded as a zip file. This is useful for troubleshooting training failures. </p>
 
-      <img src={resultsDownloadAllArtifactsImage} alt="Download all artifacts" className="img-fluid pe-5 pt-4 pb-4" />
+      <img src={resultsDownloadAllArtifactsImage} alt="Download all artifacts" loading="lazy" decoding="async" className="img-fluid pe-5 pt-4 pb-4" />
 
     </>
   );
 };
 
-export default HelpDocsModelTraining;
+HelpDocsResults.propTypes = {
+  anchor: PropTypes.string,
+};
+
+export default HelpDocsResults;
