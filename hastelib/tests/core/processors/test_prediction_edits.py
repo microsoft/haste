@@ -191,7 +191,7 @@ class TestPairedEditPublication(EditTestCase):
                 urlsplit(row["predictionAttrsUrl"]).query
             ).items()
         }
-        path, _ = self.processor.resolve_artifact(
+        path, _, _ = self.processor.resolve_artifact(
             ModelArtifactRequest.model_validate(query)
         )
         self.assertEqual(
@@ -334,7 +334,7 @@ class TestPairedEditPublication(EditTestCase):
                 ],
             },
         )
-        path, _ = self.processor.resolve_artifact(
+        path, _, _ = self.processor.resolve_artifact(
             ModelArtifactRequest(
                 projectId=PROJECT_ID,
                 modelId=MODEL_ID,
