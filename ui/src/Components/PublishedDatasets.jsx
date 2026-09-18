@@ -8,9 +8,15 @@ import {
 } from "@fluentui/react-components";
 
 import { AppContext } from "../AppContext";
-import { apiGet } from "../util/api";
+import { apiGetResponse } from "../util/api";
 import { FluentIcon } from "../util/icons";
+import {
+  buildPublishedDatasetsEndpoint,
+  preparePublishedDatasetsRequest,
+  shouldPollPublishedDatasets,
+} from "../util/publishedDatasetsRequest";
 import { isPublishingStatusActive } from "../util/publishing";
+import { createSingleFlight } from "../util/singleFlight";
 import NoResultsMessage from "./NoResultsMessage";
 import PublishedDatasetRow from "./PublishedDatasetRow";
 
@@ -41,33 +47,87 @@ const PublishedDatasets = () => {
   const [sort, setSort] = useState({ key: "publishedDate", dir: "desc" });
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const requestRef = useRef(createSingleFlight());
+  const etagsRef = useRef(new Map());
+  const mountedRef = useRef(true);
+  const ownsLoadingRef = useRef(false);
 
-  async function fetchDatasets(showLoading = false) {
-    if (showLoading) setIsLoading(true, "Loading published datasets...");
-    try {
-      const query = new URLSearchParams({
-        page: String(currentPage),
-        pageSize: String(pageSize),
-        sortKey: sort.key,
-        sortDirection: sort.dir,
-      });
-      if (targetFilter !== "all") query.set("target", targetFilter);
-      if (statusFilter !== "all") query.set("status", statusFilter);
-      if (normalizedSearchText) query.set("search", normalizedSearchText);
-      const response = await apiGet(`GetPublishedDatasets?${query}`);
-      const nextItems = response.publishedDatasets || [];
-      const nextTotal = response.pagination?.totalCount ?? nextItems.length;
-      setItems(nextItems);
-      setTotalItems(nextTotal);
-      const nextTotalPages = Math.max(1, Math.ceil(nextTotal / pageSize));
-      if (currentPage > nextTotalPages) setCurrentPage(nextTotalPages);
-      setError("");
-    } catch (fetchError) {
-      setError(fetchError.message || "Unable to load published datasets.");
-    } finally {
-      if (showLoading) setIsLoading(false);
+  async function fetchDatasets(showLoading = false, forceRefresh = false) {
+    const endpoint = buildPublishedDatasetsEndpoint({
+      currentPage,
+      pageSize,
+      sort,
+      targetFilter,
+      statusFilter,
+      searchText: normalizedSearchText,
+    });
+    const request = requestRef.current;
+    const startsRequest = preparePublishedDatasetsRequest(
+      request,
+      endpoint,
+      forceRefresh
+    );
+    if (showLoading && startsRequest) {
+      ownsLoadingRef.current = true;
+      setIsLoading(true, "Loading published datasets...");
     }
+
+    const requestPromise = request.run(endpoint, async (signal) => {
+      try {
+        const headers = {};
+        if (etagsRef.current.has(endpoint)) {
+          headers["If-None-Match"] = etagsRef.current.get(endpoint);
+        }
+        if (forceRefresh) headers["Cache-Control"] = "no-cache";
+        const { data: response, etag, status } = await apiGetResponse(
+          endpoint,
+          { signal, headers }
+        );
+        if (etag) etagsRef.current.set(endpoint, etag);
+        if (!mountedRef.current) return;
+        if (status === 304) {
+          setError("");
+          return;
+        }
+
+        const nextItems = response.publishedDatasets || [];
+        const nextTotal = response.pagination?.totalCount ?? nextItems.length;
+        setItems(nextItems);
+        setTotalItems(nextTotal);
+        const nextTotalPages = Math.max(1, Math.ceil(nextTotal / pageSize));
+        if (currentPage > nextTotalPages) setCurrentPage(nextTotalPages);
+        setError("");
+      } catch (fetchError) {
+        if (fetchError.name !== "AbortError" && mountedRef.current) {
+          setError(
+            fetchError.message || "Unable to load published datasets."
+          );
+        }
+      }
+    });
+    if (showLoading && startsRequest) {
+      requestPromise.finally(() => {
+        if (ownsLoadingRef.current && !request.isRunning()) {
+          ownsLoadingRef.current = false;
+          setIsLoading(false);
+        }
+      });
+    }
+    return requestPromise;
   }
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const request = requestRef.current;
+    return () => {
+      mountedRef.current = false;
+      if (ownsLoadingRef.current) {
+        ownsLoadingRef.current = false;
+        setIsLoading(false);
+      }
+      request.abort();
+    };
+  }, [setIsLoading]);
 
   useEffect(() => {
     if (!searchReady) return;
@@ -75,7 +135,6 @@ const PublishedDatasets = () => {
     // Show the full-page loading overlay only on the first load (items === null,
     // catalog pattern); later filter/search/sort/page changes refetch silently
     // so the overlay doesn't flash on every keystroke.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchDatasets(items === null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, pageSize, targetFilter, statusFilter, normalizedSearchText, searchReady, sort]);
@@ -89,14 +148,24 @@ const PublishedDatasets = () => {
   // polling first started (which would overwrite fresh results with a stale
   // query).
   const fetchDatasetsRef = useRef(fetchDatasets);
-  fetchDatasetsRef.current = fetchDatasets;
+  useEffect(() => {
+    fetchDatasetsRef.current = fetchDatasets;
+  });
 
   useEffect(() => {
     if (!hasActiveItems || !searchReady) return undefined;
-    const interval = window.setInterval(
-      () => fetchDatasetsRef.current(false),
-      5000,
-    );
+    const interval = window.setInterval(() => {
+      if (
+        shouldPollPublishedDatasets({
+          hasActiveItems,
+          searchReady,
+          visibilityState: document.visibilityState,
+          requestRunning: requestRef.current.isRunning(),
+        })
+      ) {
+        fetchDatasetsRef.current(false);
+      }
+    }, 5000);
     return () => window.clearInterval(interval);
   }, [hasActiveItems, searchReady]);
 
@@ -244,7 +313,7 @@ const PublishedDatasets = () => {
                         key={item.datasetId}
                         item={item}
                         index={(page - 1) * pageSize + index}
-                        onRefresh={() => fetchDatasets(false)}
+                        onRefresh={() => fetchDatasets(false, true)}
                       />
                     ))}
                   </tbody>

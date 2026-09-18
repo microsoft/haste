@@ -91,6 +91,8 @@ def test_construction_uses_configured_port_and_ssl(connection_setup) -> None:
         ("load", ("key", "model"), {}, 0),
         ("load_all", ("model",), {}, 0),
         ("load_all_from_partition", ("model",), {}, 0),
+        ("list_identifiers", ("model",), {}, 0),
+        ("load_map", (["key", "missing"], "model"), {}, 0),
         ("load_bounded", ("model", 2), {}, 0),
         ("load_json_versioned", ("key", "model"), {}, 0),
         ("save_json_if_version", ("key", "model", {}, None), {}, 0),
@@ -108,6 +110,8 @@ def test_all_connection_paths_reuse_configured_port_and_lifecycle(
 ) -> None:
     setup = connection_setup
     setup.connect.reset_mock()
+    if method == "load_map":
+        setup.cursor.fetchall.return_value = [("key", {"name": "current"})]
 
     getattr(setup.layer, method)(*args, **kwargs)
 
@@ -166,8 +170,16 @@ def test_conditional_conflict_exits_the_same_transaction_with_error(
     setup.connection.close.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "method,args",
+    [
+        ("load", ("key", "model")),
+        ("list_identifiers", ("model",)),
+        ("load_map", (["key"], "model")),
+    ],
+)
 def test_connection_failure_propagates_without_retrying_the_default_port(
-    connection_setup,
+    connection_setup, method: str, args: tuple
 ) -> None:
     setup = connection_setup
     setup.connect.reset_mock()
@@ -175,7 +187,7 @@ def test_connection_failure_propagates_without_retrying_the_default_port(
     setup.connect.side_effect = error
 
     with pytest.raises(OperationalError) as caught:
-        setup.layer.load("key", "model")
+        getattr(setup.layer, method)(*args)
 
     assert caught.value is error
     setup.connect.assert_called_once_with(**setup.options)

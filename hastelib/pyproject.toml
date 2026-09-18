@@ -89,7 +89,9 @@ prepare-imagery = "hastegeo.workflows.prepare_imagery:main"
 zip-artifacts = "hastegeo.workflows.zip_artifacts:main"
 
 [tool.hatch.version]
-path = "src/hastegeo/__about__.py"
+source = "code"
+path = "haste_build.py"
+expression = "resolve_version()"
 
 [tool.hatch.envs.types]
 extra-dependencies = [

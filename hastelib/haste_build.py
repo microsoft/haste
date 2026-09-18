@@ -7,11 +7,31 @@ Pull-request source executes the hook while building a wheel, so it must never
 receive or use repository write credentials.
 """
 
+import ast
 import os
 from pathlib import Path
 from typing import Any
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+
+
+def resolve_version() -> str:
+    """Resolve the version before Hatchling validates or caches metadata."""
+    explicit_version = os.getenv("HASTE_SET_VERSION")
+    if explicit_version:
+        return explicit_version.strip()
+
+    path = Path(__file__).parent / "src" / "hastegeo" / "__about__.py"
+    for statement in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(statement, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "__version__"
+            for target in statement.targets
+        ):
+            value = ast.literal_eval(statement.value)
+            if not isinstance(value, str):
+                raise ValueError("__version__ must be a string")
+            return value
+    raise RuntimeError(f"__version__ not found in {path}")
 
 
 class CustomBuildHook(BuildHookInterface):
@@ -67,8 +87,6 @@ class CustomBuildHook(BuildHookInterface):
             )
             return
 
-        explicit_version = explicit_version.strip()
-        self.metadata._version = explicit_version
         self._write_version_file(self.metadata.version)
         print(f"Set package version to {self.metadata.version}.")
 

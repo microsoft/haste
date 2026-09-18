@@ -9,6 +9,7 @@ from pathlib import Path
 import yaml
 
 from ..utils.atomic_files import atomic_write, file_lock
+from ..utils.metadata import matches_metadata_type
 from .abstract_data_layer import AbstractDataLayer
 from .conditional import JsonDocument, RevisionConflictError, decode_document
 
@@ -118,6 +119,7 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
         data_type=None,
         data_format="json",
         extra_partition_keys=None,
+        check_exists=True,
     ):
         """Get the remote path for a file (same as local path for filesystem layer).
 
@@ -309,6 +311,8 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
             )
         for directory in directories:
             for path in directory.glob(f"{data_type}_*.{data_format}"):
+                if not matches_metadata_type(path.name, data_type):
+                    continue
                 if path.is_symlink():
                     raise ValueError("Metadata records must not be symlinks")
                 with path.open("r") as file:
@@ -349,8 +353,8 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
                         )
                     if not entry.is_file(follow_symlinks=False):
                         continue
-                    if not entry.name.startswith(
-                        f"{data_type}_"
+                    if not matches_metadata_type(
+                        entry.name, data_type
                     ) or not entry.name.endswith(f".{data_format}"):
                         continue
                     with open(entry.path, "r") as file:
@@ -364,6 +368,20 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
                             f"Metadata exceeds the {max_records:,}-record limit"
                         )
         return records
+
+    def list_identifiers(self, data_type, data_format="json"):
+        prefix = f"{data_type}_"
+        suffix = f".{data_format}"
+        identifiers = []
+        if os.path.exists(self.directory):
+            for file_name in os.listdir(self.directory):
+                if (
+                    file_name.startswith(prefix)
+                    and file_name.endswith(suffix)
+                    and matches_metadata_type(file_name, data_type)
+                ):
+                    identifiers.append(file_name[len(prefix) : -len(suffix)])
+        return identifiers
 
     def delete(self, identifier, data_type, data_format="json"):
         path = Path(self.get_file_path(identifier, data_type, data_format))

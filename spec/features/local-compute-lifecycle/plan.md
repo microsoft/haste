@@ -12,7 +12,8 @@
 | Run targeted and broader relevant tests and formatting/lint | `backend-dev` | Tests | All | complete; API/lifecycle/compute coverage passes, known baseline exception below |
 | Distinguish ambiguous acceptance from deterministic submission rejection across all workloads | `backend-dev` | Balanced review of #217 | US-002, US-005 through US-007 | complete |
 | Reuse PostgreSQL connection settings for construction, CRUD, and conditional metadata writes | `backend-dev` | Balanced review of #217 | US-006 | complete |
-| Integrate reviewed imagery rejection handling and submission scenarios with neutral compute handles | `backend-dev` | #193 and review-refresh-progress integration | US-002, US-005 through US-007 | implemented in assigned files; pending parent validation |
+| Integrate reviewed imagery rejection handling and submission scenarios with neutral compute handles | `backend-dev` | #193 and review-refresh-progress integration | US-002, US-005 through US-007 | complete; current combined host regressions passed |
+| Integrate upstream optimized reads without losing conditional writes, scan boundaries or configured ports | `backend-dev` | Current main data-layer changes | US-006, US-007 | complete |
 
 ## Integration gates
 
@@ -23,8 +24,9 @@
 | Preserve lifecycle/fencing seams in progress and backend-neutral prerequisites | `backend-dev` | Combined integration | All | complete |
 
 These completed gates record the earlier combined-branch verification.
-Validation of the current review-refresh-progress integration remains
-parent-owned after all merge conflicts are resolved.
+The current review-refresh integration passed the combined host regressions
+recorded in the [neutral compute plan](../aml-compute-backend/plan.md#current-integration-verification);
+that evidence is separate from the earlier live environment.
 
 The combined branch is validated in the existing local Docker environment
 before any prerequisite PR split. No AML resource provisioning or live AML
@@ -46,9 +48,17 @@ PROJ environment; those files are outside this change.
 The parent validated the #217 fixes with **265 tests passed and one skip**
 before publishing commits `a9c16ef` (PostgreSQL) and `f0d94fb` (submission,
 receipt, and imagery handling). These results predate the current neutral
-integration; they do not validate the unresolved combined working tree.
+integration; they do not validate the current combined working tree.
 
-The earlier #217 review follow-up passed **302 tests** with one Windows
+The upstream-read integration passed **455 tests**, with four platform skips
+and two pre-existing API guard failures deselected. Both excluded cases
+were reproduced against untouched current main with HTTP blocked. Coverage
+includes all data-layer/runner tests, job state/queue/submission identity,
+metadata batch reads, and API/queue routes. New regressions cover PostgreSQL
+batch/list connection settings and local/Data Lake scan boundaries and
+metadata-type prefix collisions. No live service or compute job was used.
+
+The #217 review follow-up passed **302 tests** with one Windows
 symlink-privilege skip. The selector covered all runner/data-layer tests,
 submission identity, job state/queue processing, imagery configuration/output
 fallback, and queue handlers. It used the existing Python 3.11 interpreter

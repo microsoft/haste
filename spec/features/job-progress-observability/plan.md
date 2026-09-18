@@ -10,7 +10,8 @@
 | Live subprocess streams and stage messages | backend-dev | done |
 | Review: descriptor-anchored output reads, unbuffered children, terminal stage history | backend-dev | implemented; Linux descriptor/race validation passed |
 | Empty-message and indeterminate UI states | ui | done |
-| Regression and integration validation | backend-validation; ui-validation | done; focused/browser checks and combined live integration pass |
+| Merge refreshed lifecycle/main while retaining upstream active-job tests and progress tests | backend-dev; ui | done |
+| Regression and integration validation | backend-validation; ui-validation | prerequisite and neutral host integration complete; earlier live evidence is retained below |
 
 ## Validation
 
@@ -31,10 +32,18 @@
   before child completion, with inherited unbuffered mode explicitly unset
   in the test parent.
 - UI helper tests plus lint/build and deterministic browser checks.
-- Revalidate this prerequisite after rebasing onto the lifecycle prerequisite,
+- Revalidate this prerequisite after merging the updated lifecycle prerequisite,
   then verify the final backend-neutral integration separately.
 
 ## Current evidence and baseline limitations
+
+The current-main refresh passed **495 backend cases**, with 31 platform skips
+and the two API guard failures reproduced on unchanged main deselected.
+The active-jobs and job-progress commands passed **13 UI cases** and the
+exact-lockfile production build passed. The refreshed UI has no additional
+lint findings relative to current main (169 versus 173 baseline findings);
+the progress components/helpers pass targeted lint. No workload, deployment
+or validation VM was used for this refresh.
 
 Focused backend tests and the UI status helper cases pass. Browser checks
 exercise queued, unknown-progress, determinate, terminal, empty-message,
@@ -47,11 +56,10 @@ exit, retained their identities across a queue-host restart, and reached
 complete progress only after output persistence. Fresh imagery processing
 and labeling also completed successfully.
 
-The full library run has one unchanged baseline failure:
-`test_artifacts.py::test_zip` calls the nonexistent `ArtifactProcessor.zip`
-method. Full UI lint also reports findings in unchanged files; all changed
-UI files pass targeted lint. These baseline issues are not silently fixed,
-suppressed, or represented as a green full-suite result by this prerequisite.
+Earlier full-library runs excluded `test_artifacts.py::test_zip`, which
+called the removed `ArtifactProcessor.zip` method; current main no longer
+contains that case. Full UI lint still reports the baseline findings noted
+above. All changed progress UI files pass targeted lint.
 
 The review follow-up uses the existing Python 3.11 test interpreter directly,
 with explicit `PYTHONPATH` and HTTP blocked; it does not synchronize or install

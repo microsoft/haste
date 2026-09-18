@@ -18,11 +18,27 @@ does not deploy or rebuild a development environment.
 
 ## Contents
 
+- [Current integration verification](#current-integration-verification)
 - [Phases](#phases)
 - [Milestones](#milestones)
 - [Agent Summary](#agent-summary)
 - [Resource Requirements](#resource-requirements)
 - [Open Questions](#open-questions)
+
+## Current integration verification
+
+The refreshed prerequisite/main integration passed **1,743 core, API, queue
+and workflow tests**, with 41 platform skips, plus **144 release-policy
+tests**. HTTP was blocked for runtime unit coverage. The two API guards
+that fail on the independent lifecycle prerequisite pass here with the
+neutral request-boundary implementation. The UI tree matches the separately
+validated progress prerequisite exactly.
+
+The six native-imagery smoke cases are outside this host run: the host's
+PROJ database is incompatible with its rasterio build. They remain worker
+image validation, not a skipped application-regression failure. Earlier
+live/local evidence does not claim live AML coverage of this refreshed head.
+No deployment, compute mutation or development-VM rebuild was performed.
 
 ## Phases
 

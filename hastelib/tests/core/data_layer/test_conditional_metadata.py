@@ -342,3 +342,56 @@ def test_local_all_records_scan_stays_within_metadata_layout(
     assert LocalFileSystemDataLayer(str(tmp_path)).load_all("model") == [
         {"name": "included"}
     ]
+
+
+@pytest.mark.parametrize("partition", [None, "partition"])
+@pytest.mark.parametrize("data_format", ["json", "yaml"])
+def test_local_scans_keep_partition_discovery_without_type_prefix_collisions(
+    tmp_path: Path, partition: str | None, data_format: str
+) -> None:
+    (tmp_path / "partition" / "nested").mkdir(parents=True)
+    (tmp_path / f"model_root.{data_format}").write_text('{"name": "root"}')
+    (tmp_path / "partition" / f"model_key.{data_format}").write_text(
+        '{"name": "partition"}'
+    )
+    (tmp_path / f"model_catalog_index.{data_format}").write_text(
+        '{"name": "catalog"}'
+    )
+    (tmp_path / "partition" / f"model_catalog_index.{data_format}").write_text(
+        '{"name": "catalog"}'
+    )
+    (
+        tmp_path / "partition" / "nested" / f"model_key.{data_format}"
+    ).write_text('{"name": "task output"}')
+
+    layer = LocalFileSystemDataLayer(str(tmp_path), partition)
+    expected = ["partition", "root"] if partition is None else ["partition"]
+
+    assert (
+        sorted(item["name"] for item in layer.load_all("model", data_format))
+        == expected
+    )
+    assert (
+        sorted(
+            item["name"]
+            for item in layer.load_all_from_partition("model", data_format)
+        )
+        == expected
+    )
+
+
+def test_local_matching_symlink_record_is_rejected(
+    tmp_path: Path, mocker
+) -> None:
+    layer = LocalFileSystemDataLayer(str(tmp_path))
+    record = tmp_path / "model_key.json"
+    record.write_text('{"name": "outside"}')
+    mocker.patch.object(
+        Path,
+        "is_symlink",
+        autospec=True,
+        side_effect=lambda path: path == record,
+    )
+
+    with pytest.raises(ValueError, match="must not be symlinks"):
+        layer.load_all("model")
