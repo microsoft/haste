@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
+import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -13,9 +15,19 @@ SCRIPTS_ROOT = REPO_ROOT / ".github" / "scripts"
 sys.path.insert(0, str(SCRIPTS_ROOT))
 
 import cleanup_rc_releases  # noqa: E402
+import publish_hastegeo_artifacts  # noqa: E402
 import publish_hastegeo_wheel  # noqa: E402
 import resolve_hastegeo_deploy  # noqa: E402
 import set_hastegeo_source  # noqa: E402
+from haste_artifacts import (  # noqa: E402
+    RCBuild,
+    artifact_set,
+    artifact_set_name,
+    image_record,
+    provenance_name,
+    registry_fingerprint,
+    wheel_manifest,
+)
 
 
 def create_wheel(
@@ -39,6 +51,185 @@ def create_wheel(
 
 
 class WheelPublisherTests(unittest.TestCase):
+    def test_legacy_publication_is_explicit_and_retains_no_overwrite(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = create_wheel(Path(directory), "1.0.26rc2")
+            arguments = [
+                "--wheel",
+                str(wheel),
+                "--expected-version",
+                "1.0.26rc2",
+                "--channel",
+                "rc",
+                "--source-sha",
+                "a" * 40,
+            ]
+            with patch.object(publish_hastegeo_wheel, "publish") as publish:
+                with self.assertRaisesRegex(
+                    ValueError, "verified build provenance"
+                ):
+                    publish_hastegeo_wheel.main(arguments)
+                publish.assert_not_called()
+            with patch.object(
+                publish_hastegeo_wheel, "publish", return_value=""
+            ) as publish:
+                self.assertEqual(
+                    publish_hastegeo_wheel.main([*arguments, "--legacy-rc"]),
+                    0,
+                )
+                publish.assert_called_once()
+                self.assertIsNone(publish.call_args.kwargs["manifest"])
+            with (
+                patch.object(
+                    publish_hastegeo_wheel,
+                    "list_release_assets",
+                    return_value=[wheel.name],
+                ),
+                self.assertRaisesRegex(ValueError, "will not be overwritten"),
+            ):
+                publish_hastegeo_wheel.main([*arguments, "--legacy-rc"])
+
+    def test_legacy_switch_cannot_bypass_supplied_provenance(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cannot bypass"):
+            publish_hastegeo_wheel.main(
+                [
+                    "--wheel",
+                    "unused.whl",
+                    "--expected-version",
+                    "1.0.26rc2",
+                    "--channel",
+                    "rc",
+                    "--source-sha",
+                    "a" * 40,
+                    "--legacy-rc",
+                    "--build-identity",
+                    "unused.json",
+                ]
+            )
+
+    def test_retry_reuses_identical_rc_and_repairs_missing_provenance(self):
+        build = RCBuild(
+            "a" * 40,
+            "12345",
+            "2026-09-11T10:00:00+00:00",
+            1700000000,
+            "1.0.25",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = create_wheel(Path(directory), build.version)
+            identity = publish_hastegeo_wheel.validate_wheel(
+                wheel, build.version, "rc"
+            )
+            manifest = wheel_manifest(build, identity.sha256)
+            assets = [wheel.name]
+            uploads = []
+
+            def run(command):
+                if "download" in command:
+                    target = Path(command[command.index("--dir") + 1])
+                    shutil.copyfile(wheel, target / wheel.name)
+                elif "upload" in command:
+                    name = Path(command[4]).name
+                    assets.append(name)
+                    uploads.append(name)
+                return ""
+
+            with (
+                patch.object(
+                    publish_hastegeo_wheel,
+                    "list_release_assets",
+                    side_effect=lambda: list(assets),
+                ),
+                patch.object(
+                    publish_hastegeo_wheel, "run_command", side_effect=run
+                ),
+            ):
+                publish_hastegeo_wheel.publish(
+                    identity,
+                    channel="rc",
+                    source_sha=build.source_sha,
+                    manifest=manifest,
+                )
+            self.assertEqual(uploads, [provenance_name(build)])
+
+    def test_retry_rejects_different_wheel_bytes_without_uploading(self):
+        build = RCBuild(
+            "a" * 40,
+            "12345",
+            "2026-09-11T10:00:00+00:00",
+            1700000000,
+            "1.0.25",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = create_wheel(Path(directory), build.version)
+            identity = publish_hastegeo_wheel.validate_wheel(
+                wheel, build.version, "rc"
+            )
+
+            def run(command):
+                self.assertIn("download", command)
+                target = Path(command[command.index("--dir") + 1])
+                (target / wheel.name).write_bytes(b"different artifact")
+                return ""
+
+            with (
+                patch.object(
+                    publish_hastegeo_wheel,
+                    "list_release_assets",
+                    return_value=[wheel.name],
+                ),
+                patch.object(
+                    publish_hastegeo_wheel, "run_command", side_effect=run
+                ) as commands,
+                self.assertRaisesRegex(ValueError, "checksum differs"),
+            ):
+                publish_hastegeo_wheel.publish(
+                    identity,
+                    channel="rc",
+                    source_sha=build.source_sha,
+                    manifest=wheel_manifest(build, identity.sha256),
+                )
+            self.assertEqual(commands.call_count, 1)
+
+    def test_conflicting_provenance_is_checked_before_any_upload(self):
+        build = RCBuild(
+            "a" * 40,
+            "12345",
+            "2026-09-11T10:00:00+00:00",
+            1700000000,
+            "1.0.25",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = create_wheel(Path(directory), build.version)
+            identity = publish_hastegeo_wheel.validate_wheel(
+                wheel, build.version, "rc"
+            )
+            with (
+                patch.object(
+                    publish_hastegeo_wheel,
+                    "list_release_assets",
+                    return_value=[provenance_name(build)],
+                ),
+                patch.object(
+                    publish_hastegeo_wheel,
+                    "verify_existing_json",
+                    side_effect=ValueError("conflicting provenance"),
+                ),
+                patch.object(
+                    publish_hastegeo_wheel, "run_command"
+                ) as commands,
+                self.assertRaisesRegex(ValueError, "conflicting"),
+            ):
+                publish_hastegeo_wheel.publish(
+                    identity,
+                    channel="rc",
+                    source_sha=build.source_sha,
+                    manifest=wheel_manifest(build, identity.sha256),
+                )
+            commands.assert_not_called()
+
     def test_validate_wheel_accepts_matching_rc_metadata(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             wheel = create_wheel(Path(temp_dir), "1.0.26rc1")
@@ -196,6 +387,49 @@ class WheelPublisherTests(unittest.TestCase):
 
 
 class DeployResolverTests(unittest.TestCase):
+    def test_rc_deploy_rejects_missing_complete_manifest(self):
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            resolve_hastegeo_deploy.resolve_rc_artifact_set(
+                "1.0.26rc12345",
+                "a" * 40,
+                ["hastegeo-1.0.26rc12345-py3-none-any.whl"],
+            )
+
+    def test_rc_deploy_rejects_a_different_application_sha(self):
+        build = RCBuild(
+            "a" * 40,
+            "12345",
+            "2026-09-11T10:00:00+00:00",
+            1700000000,
+            "1.0.25",
+        )
+        registry = registry_fingerprint("example.azurecr.io")
+        manifest = artifact_set(
+            wheel_manifest(build, "b" * 64),
+            [
+                image_record(build, family, "sha256:" + "c" * 64, registry)
+                for family in ("training", "imageryprep")
+            ],
+            build,
+        )
+
+        def download(command):
+            folder = Path(command[command.index("--dir") + 1])
+            (folder / artifact_set_name(build.version)).write_text(
+                json.dumps(manifest)
+            )
+            return ""
+
+        with (
+            patch.object(
+                resolve_hastegeo_deploy, "run_command", side_effect=download
+            ),
+            self.assertRaisesRegex(ValueError, "deployment source"),
+        ):
+            resolve_hastegeo_deploy.resolve_rc_artifact_set(
+                build.version, "d" * 40, [artifact_set_name(build.version)]
+            )
+
     def test_canonicalize_version_removes_rc_zero_padding(self):
         self.assertEqual(
             "1.5.0rc2",
@@ -282,6 +516,173 @@ class CleanupTests(unittest.TestCase):
             ["hastegeo-1.0.26rc1-py3-none-any.whl"],
             [str(asset["name"]) for asset in result],
         )
+
+
+class ImageProvenanceTests(unittest.TestCase):
+    def test_complete_build_manifest_flows_through_validation_and_assembly(
+        self,
+    ):
+        build = RCBuild(
+            "a" * 40,
+            "12345",
+            "2026-09-11T10:00:00+00:00",
+            1700000000,
+            "1.0.25",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            identity_path = root / "identity.json"
+            identity_path.write_text(json.dumps(build.to_dict()))
+            wheel = create_wheel(root, build.version)
+            manifest_path = root / "build-manifest.json"
+            common = [
+                "--wheel",
+                str(wheel),
+                "--expected-version",
+                build.version,
+                "--channel",
+                "rc",
+                "--source-sha",
+                build.source_sha,
+                "--build-identity",
+                str(identity_path),
+            ]
+            self.assertEqual(
+                publish_hastegeo_wheel.main(
+                    [
+                        *common,
+                        "--validate-only",
+                        "--json-output",
+                        str(manifest_path),
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                publish_hastegeo_wheel.main(
+                    [
+                        *common,
+                        "--validate-only",
+                        "--manifest",
+                        str(manifest_path),
+                    ]
+                ),
+                0,
+            )
+            images = root / "images"
+            images.mkdir()
+            for family in ("training", "imageryprep"):
+                record = image_record(
+                    build,
+                    family,
+                    "sha256:" + "c" * 64,
+                    registry_fingerprint("example.azurecr.io"),
+                )
+                (images / f"{family}.json").write_text(json.dumps(record))
+            self.assertEqual(
+                publish_hastegeo_artifacts.main(
+                    [
+                        "complete",
+                        "--identity",
+                        str(identity_path),
+                        "--wheel-manifest",
+                        str(manifest_path),
+                        "--images",
+                        str(images),
+                        "--output-dir",
+                        str(root / "complete"),
+                    ]
+                ),
+                0,
+            )
+            complete = json.loads(
+                (
+                    root / "complete" / artifact_set_name(build.version)
+                ).read_text()
+            )
+            self.assertEqual(complete["wheel"]["build"], build.to_dict())
+            self.assertEqual(
+                set(complete["images"]), {"training", "imageryprep"}
+            )
+
+    def test_image_must_match_source_labels_and_locked_metadata(self):
+        build = RCBuild(
+            "a" * 40,
+            "12345",
+            "2026-09-11T10:00:00+00:00",
+            1700000000,
+            "1.0.25",
+        )
+        configuration = {
+            "os": "linux",
+            "architecture": "amd64",
+            "config": {
+                "Labels": {
+                    "org.opencontainers.image.revision": build.source_sha,
+                    "org.opencontainers.image.version": build.version,
+                }
+            },
+        }
+        metadata = {
+            "digest": "sha256:" + "c" * 64,
+            "changeableAttributes": {
+                "writeEnabled": False,
+                "deleteEnabled": False,
+            },
+        }
+        record = publish_hastegeo_artifacts.record_image(
+            build, "training", "example.azurecr.io", metadata, configuration
+        )
+        self.assertEqual(record["source_sha"], build.source_sha)
+        self.assertNotIn("example.azurecr.io", json.dumps(record))
+        for field in ("writeEnabled", "deleteEnabled"):
+            for value in (True, None, "false", 0):
+                with self.subTest(field=field, value=value):
+                    metadata["changeableAttributes"] = {
+                        "writeEnabled": False,
+                        "deleteEnabled": False,
+                        field: value,
+                    }
+                    with self.assertRaisesRegex(ValueError, "locked"):
+                        publish_hastegeo_artifacts.record_image(
+                            build,
+                            "training",
+                            "example.azurecr.io",
+                            metadata,
+                            configuration,
+                        )
+            with self.subTest(missing=field):
+                metadata["changeableAttributes"] = {
+                    name: False
+                    for name in ("writeEnabled", "deleteEnabled")
+                    if name != field
+                }
+                with self.assertRaisesRegex(ValueError, "locked"):
+                    publish_hastegeo_artifacts.record_image(
+                        build,
+                        "training",
+                        "example.azurecr.io",
+                        metadata,
+                        configuration,
+                    )
+        for attributes in (None, [], "locked"):
+            with self.subTest(attributes=attributes):
+                metadata["changeableAttributes"] = attributes
+                with self.assertRaisesRegex(ValueError, "locked"):
+                    publish_hastegeo_artifacts.record_image(
+                        build,
+                        "training",
+                        "example.azurecr.io",
+                        metadata,
+                        configuration,
+                    )
+        configuration["config"]["Labels"][
+            "org.opencontainers.image.revision"
+        ] = ("b" * 40)
+        with self.assertRaisesRegex(ValueError, "source build"):
+            publish_hastegeo_artifacts.verify_image_configuration(
+                build, configuration
+            )
 
 
 if __name__ == "__main__":

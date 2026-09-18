@@ -30,6 +30,9 @@ jobs:
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       already_published: ${{ steps.resolve.outputs.already_published }}
       pr_number: ${{ steps.guard.outputs.pr_number }}
+      rc_build_identity: ${{ steps.resolve.outputs.rc_build_identity }}
+      artifact_name: ${{ steps.resolve.outputs.artifact_name }}
+      artifact_protocol: ${{ steps.resolve.outputs.artifact_protocol }}
     steps:
       - name: Checkout trusted release policy
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -77,37 +80,50 @@ jobs:
           fi
           echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
 
-      - name: Re-resolve expected version from trusted policy
+      - name: Resolve immutable build identity from trusted policy
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
           CHANNEL: ${{ github.event.workflow_run.event == 'pull_request' && 'rc' || 'release' }}
+          BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
+          BUILD_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
           python .github/scripts/resolve_hastegeo_version.py \
             --channel "$CHANNEL" \
-            --source-sha "$SOURCE_SHA"
+            --source-sha "$SOURCE_SHA" \
+            --build-run-id "$BUILD_RUN_ID" \
+            --build-attempt "$BUILD_ATTEMPT" \
+            --artifact-protocol produced \
+            --json-output expected-build.json
 
       - name: Download wheel artifact
         if: steps.resolve.outputs.already_published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          WHEEL_ARTIFACT: ${{ steps.resolve.outputs.artifact_name }}
         run: |
           gh run download "$RUN_ID" \
             --repo "${{ github.repository }}" \
-            --name "hastegeo-wheel-${RUN_ID}" \
+            --name "$WHEEL_ARTIFACT" \
             --dir release-artifact
 
       - name: Revalidate downloaded wheel
         if: steps.resolve.outputs.already_published != 'true'
+        env:
+          RC_BUILD_IDENTITY: ${{ steps.resolve.outputs.rc_build_identity }}
         run: |
+          EXTRA=()
+          if [[ -n "$RC_BUILD_IDENTITY" ]]; then
+            EXTRA=(--build-identity expected-build.json --manifest release-artifact/build-manifest.json)
+          fi
           python .github/scripts/publish_hastegeo_wheel.py \
             --wheel "release-artifact/${{ steps.resolve.outputs.wheel_name }}" \
             --expected-version "${{ steps.resolve.outputs.version }}" \
             --channel "${{ steps.resolve.outputs.channel }}" \
             --source-sha "${{ steps.resolve.outputs.source_sha }}" \
-            --validate-only
+            --validate-only "${EXTRA[@]}"
 
   publish-rc:
     needs: prepare
@@ -117,8 +133,9 @@ jobs:
       vars.HASTEGEO_RC_PUBLISH_ENABLED != 'false'
     runs-on: ubuntu-latest
     concurrency:
-      group: hastegeo-rc-publish
+      group: hastegeo-rc-publish-${{ needs.prepare.outputs.version }}
       cancel-in-progress: false
+      queue: max
     permissions:
       actions: read
       contents: write
@@ -142,22 +159,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          WHEEL_ARTIFACT: ${{ needs.prepare.outputs.artifact_name }}
         run: |
           gh run download "$RUN_ID" \
             --repo "${{ github.repository }}" \
-            --name "hastegeo-wheel-${RUN_ID}" \
+            --name "$WHEEL_ARTIFACT" \
             --dir release-artifact
 
       - name: Publish immutable RC wheel
         id: publish
         env:
           GH_TOKEN: ${{ github.token }}
+          RC_BUILD_IDENTITY: ${{ needs.prepare.outputs.rc_build_identity }}
         run: |
+          EXTRA=(--legacy-rc)
+          if [[ -n "$RC_BUILD_IDENTITY" ]]; then
+            printf '%s' "$RC_BUILD_IDENTITY" > expected-build.json
+            EXTRA=(--build-identity expected-build.json --manifest release-artifact/build-manifest.json)
+          fi
           python .github/scripts/publish_hastegeo_wheel.py \
             --wheel "release-artifact/${{ needs.prepare.outputs.wheel_name }}" \
             --expected-version "${{ needs.prepare.outputs.version }}" \
             --channel rc \
-            --source-sha "${{ needs.prepare.outputs.source_sha }}"
+            --source-sha "${{ needs.prepare.outputs.source_sha }}" \
+            "${EXTRA[@]}"
 
   # Stable publication is automatic on merge to the default branch: the PR
   # review required to land the commit there is the release approval. A second
@@ -194,10 +219,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          WHEEL_ARTIFACT: ${{ needs.prepare.outputs.artifact_name }}
         run: |
           gh run download "$RUN_ID" \
             --repo "${{ github.repository }}" \
-            --name "hastegeo-wheel-${RUN_ID}" \
+            --name "$WHEEL_ARTIFACT" \
             --dir release-artifact
 
       - name: Publish immutable stable wheel
@@ -220,9 +246,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ vars.HASTEGEO_RC_ENVIRONMENT }}
     permissions:
+      actions: read
       contents: read
       id-token: write
+    concurrency:
+      group: hastegeo-rc-image-${{ matrix.image_name }}-${{ needs.prepare.outputs.version }}
+      cancel-in-progress: false
+      queue: max
     strategy:
+      fail-fast: false
       matrix:
         include:
           - image_dir: training
@@ -234,9 +266,18 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.prepare.outputs.source_sha }}
+          path: source
+          persist-credentials: false
+
+      - name: Checkout trusted image verification policy
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: release-policy
           persist-credentials: false
 
       - name: Stamp RC version into image source
+        working-directory: source
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
@@ -266,38 +307,121 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Build, push, and lock matching RC image
+        working-directory: source
         env:
           ACR_NAME: ${{ secrets.ACR_NAME }}
           IMAGE_DIR: ${{ matrix.image_dir }}
           IMAGE_NAME: ${{ matrix.image_name }}
           VERSION: ${{ needs.prepare.outputs.version }}
           SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          RC_BUILD_IDENTITY: ${{ needs.prepare.outputs.rc_build_identity }}
         run: |
+          set -euo pipefail
           IMAGE_REF="${IMAGE_NAME}:${VERSION}"
-          if IMAGE_JSON=$(az acr repository show \
-              --name "$ACR_NAME" \
-              --image "$IMAGE_REF" \
-              --output json 2>/dev/null); then
-            WRITE_ENABLED=$(echo "$IMAGE_JSON" | \
-              jq -r '.changeableAttributes.writeEnabled')
-            if [ "$WRITE_ENABLED" = "false" ]; then
-              echo "Reusing already locked RC image: $IMAGE_REF"
-              exit 0
+          POLICY="../release-policy/.github/scripts/publish_hastegeo_artifacts.py"
+          mkdir -p ../image-evidence
+          if [[ -n "$RC_BUILD_IDENTITY" ]]; then
+            printf '%s' "$RC_BUILD_IDENTITY" > ../expected-build.json
+          fi
+          REPOSITORIES=$(az acr repository list \
+            --subscription "$SUBSCRIPTION_ID" --name "$ACR_NAME" -o json)
+          IMAGE_EXISTS=false
+          if jq -e --arg name "$IMAGE_NAME" 'index($name) != null' <<<"$REPOSITORIES" >/dev/null; then
+            MATCHES=$(az acr repository show-tags \
+              --subscription "$SUBSCRIPTION_ID" --name "$ACR_NAME" \
+              --repository "$IMAGE_NAME" --detail \
+              --query "[?name=='${VERSION}']" -o json)
+            if [[ "$(jq length <<<"$MATCHES")" -gt 0 ]]; then
+              IMAGE_EXISTS=true
             fi
-            echo "::error::Existing RC image is not locked: $IMAGE_REF"
+          fi
+          if [[ "$IMAGE_EXISTS" == false ]]; then
+            az acr build \
+              --subscription "$SUBSCRIPTION_ID" \
+              --registry "$ACR_NAME" \
+              --image "$IMAGE_REF" \
+              --build-arg "HASTE_BUILD_SOURCE_SHA=$SOURCE_SHA" \
+              --build-arg "HASTE_BUILD_VERSION=$VERSION" \
+              --file "docker/${IMAGE_DIR}/Dockerfile" .
+          else
+            echo "Verifying existing RC image before reuse: $IMAGE_REF"
+          fi
+          az acr repository show --subscription "$SUBSCRIPTION_ID" \
+            --name "$ACR_NAME" --image "$IMAGE_REF" -o json > ../image-before.json
+          if [[ -z "$RC_BUILD_IDENTITY" ]]; then
+            if [[ "$IMAGE_EXISTS" == true ]]; then
+              jq -e '.changeableAttributes |
+                .writeEnabled == false and .deleteEnabled == false' \
+                ../image-before.json >/dev/null || {
+                echo "::error::Existing legacy RC image is not locked"
+                exit 1
+              }
+            else
+              az acr repository update \
+                --subscription "$SUBSCRIPTION_ID" --name "$ACR_NAME" \
+                --image "$IMAGE_REF" --write-enabled false --delete-enabled false \
+                --output none
+            fi
+            echo "Legacy RC image locked; no verified-set provenance is claimed."
+            exit 0
+          fi
+          REGISTRY=$(az acr show --subscription "$SUBSCRIPTION_ID" \
+            --name "$ACR_NAME" --query loginServer -o tsv)
+          DIGEST=$(jq -r '.digest' ../image-before.json)
+          az acr login --subscription "$SUBSCRIPTION_ID" --name "$ACR_NAME"
+          docker buildx imagetools inspect \
+            "${REGISTRY}/${IMAGE_NAME}@${DIGEST}" \
+            --format '{{json .Image}}' |
+            jq '{os, architecture, config: {Labels: .config.Labels}}' \
+              > ../image-configuration.json
+          python "$POLICY" check-image --identity ../expected-build.json \
+            --configuration ../image-configuration.json
+          az acr repository update \
+            --subscription "$SUBSCRIPTION_ID" --name "$ACR_NAME" \
+            --image "$IMAGE_REF" --write-enabled false --delete-enabled false \
+            --output none
+          az acr repository show --subscription "$SUBSCRIPTION_ID" \
+            --name "$ACR_NAME" --image "$IMAGE_REF" -o json > ../image-metadata.json
+          test "$(jq -r '.digest' ../image-metadata.json)" = "$DIGEST"
+          python "$POLICY" image --identity ../expected-build.json \
+            --family "$IMAGE_DIR" --registry "$REGISTRY" \
+            --metadata ../image-metadata.json \
+            --configuration ../image-configuration.json \
+            --output "../image-evidence/${IMAGE_DIR}.json"
+
+      - name: Check existing image evidence before retry upload
+        id: evidence
+        if: needs.prepare.outputs.rc_build_identity != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: rc-image-${{ matrix.image_dir }}-${{ needs.prepare.outputs.version }}
+          IMAGE_DIR: ${{ matrix.image_dir }}
+        run: |
+          set -euo pipefail
+          RECORDS=$(gh api --paginate --slurp \
+            "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts")
+          COUNT=$(jq --arg name "$ARTIFACT_NAME" \
+            '[.[].artifacts[] | select(.name == $name and .expired == false)] | length' <<<"$RECORDS")
+          if [[ "$COUNT" == 1 ]]; then
+            gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" \
+              --name "$ARTIFACT_NAME" --dir existing-evidence
+            cmp "existing-evidence/${IMAGE_DIR}.json" "image-evidence/${IMAGE_DIR}.json"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$COUNT" == 0 ]]; then
+            echo "upload=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Ambiguous image evidence for this workflow run"
             exit 1
           fi
-          az acr build \
-            --subscription "$SUBSCRIPTION_ID" \
-            --registry "$ACR_NAME" \
-            --image "$IMAGE_REF" \
-            --file "docker/${IMAGE_DIR}/Dockerfile" \
-            .
-          az acr repository update \
-            --name "$ACR_NAME" \
-            --image "$IMAGE_REF" \
-            --write-enabled false \
-            --delete-enabled false
+
+      - name: Upload verified image provenance
+        if: steps.evidence.outputs.upload == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rc-image-${{ matrix.image_dir }}-${{ needs.prepare.outputs.version }}
+          if-no-files-found: error
+          path: image-evidence/${{ matrix.image_dir }}.json
 
   rc-artifact-summary:
     needs:
@@ -307,15 +431,37 @@ jobs:
     if: needs.build-rc-images.result == 'success'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: write
+      actions: read
+      contents: write
+    concurrency:
+      group: hastegeo-artifact-set-${{ needs.prepare.outputs.version }}
+      cancel-in-progress: false
+      queue: max
     steps:
+      - name: Checkout trusted artifact policy
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
       - name: Publish matching RC deployment values
+        if: needs.prepare.outputs.rc_build_identity != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          RC_BUILD_IDENTITY: ${{ needs.prepare.outputs.rc_build_identity }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          WHEEL_ARTIFACT: ${{ needs.prepare.outputs.artifact_name }}
         run: |
+          printf '%s' "$RC_BUILD_IDENTITY" > expected-build.json
+          gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" \
+            --pattern "rc-image-*-${VERSION}" --dir image-evidence
+          gh run download "$RUN_ID" --repo "${{ github.repository }}" \
+            --name "$WHEEL_ARTIFACT" --dir release-artifact
+          python .github/scripts/publish_hastegeo_artifacts.py complete \
+            --identity expected-build.json \
+            --wheel-manifest release-artifact/build-manifest.json \
+            --images image-evidence --output-dir deployment-set --publish
           BODY=$(cat <<EOF
           ### RC artifacts ready
 
@@ -325,9 +471,18 @@ jobs:
           - \`training_image_tag\`: \`${VERSION}\`
           - \`imageprep_image_tag\`: \`${VERSION}\`
           - wheel: \`hastegeo-${VERSION}-py3-none-any.whl\`
+          - verified manifest: \`hastegeo-${VERSION}-artifacts.json\`
           EOF
           )
           echo "$BODY" >> "$GITHUB_STEP_SUMMARY"
-          gh pr comment "$PR_NUMBER" \
-            --repo "${{ github.repository }}" \
-            --body "$BODY"
+
+      - name: Report legacy RC compatibility artifacts
+        if: needs.prepare.outputs.rc_build_identity == ''
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          {
+            echo "### Legacy RC artifacts published"
+            echo "Wheel and both locked worker images use version \`${VERSION}\`."
+            echo "This compatibility build does not provide a verified deployment-set manifest."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -9,6 +9,45 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class ReleaseWorkflowPolicyTests(unittest.TestCase):
+    def test_secret_scan_diagnostics_keep_full_redaction(self):
+        text = (REPO_ROOT / ".github/workflows/secret-scan.yml").read_text(
+            encoding="utf-8"
+        )
+        commands = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip().startswith(("git --", "detect --"))
+        ]
+        self.assertEqual(len(commands), 3)
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertIn("--verbose", command)
+                self.assertIn("--redact=100", command)
+                self.assertIn("--exit-code 1", command)
+
+    def test_validation_runs_for_pull_requests_against_stack_branches(self):
+        for name in (
+            "hastegeo-build.yml",
+            "docker-build-and-push.yml",
+            "config-drift.yml",
+            "dependency-validation.yml",
+            "secret-scan.yml",
+            "codeql.yml",
+        ):
+            with self.subTest(workflow=name):
+                text = (REPO_ROOT / ".github" / "workflows" / name).read_text(
+                    encoding="utf-8"
+                )
+                match = re.search(
+                    r"^  pull_request:(.*?)(?=^  (?:push|schedule|workflow_dispatch):"
+                    r"|^jobs:|^permissions:)",
+                    text,
+                    re.MULTILINE | re.DOTALL,
+                )
+                self.assertIsNotNone(match)
+                self.assertNotIn("branches:", match.group(1))
+                self.assertNotIn("branches-ignore:", match.group(1))
+
     def test_external_actions_are_pinned_to_full_sha(self):
         workflows = [
             ".github/workflows/hastegeo-build.yml",
@@ -139,7 +178,135 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         )
         self.assertIn('IMAGE_REF="${IMAGE_NAME}:${VERSION}"', image_block)
         self.assertNotIn("TAG_PREFIX", image_block)
-        self.assertIn("Reusing already locked RC image", image_block)
+        self.assertIn("Verifying existing RC image before reuse", image_block)
+        self.assertIn("check-image --identity", image_block)
+        self.assertIn("HASTE_BUILD_SOURCE_SHA=$SOURCE_SHA", image_block)
+        self.assertIn("fail-fast: false", image_block)
+        self.assertIn("path: release-policy", image_block)
+        self.assertIn('POLICY="../release-policy/', image_block)
+        self.assertNotIn("2>/dev/null", image_block)
+
+    def test_existing_rc_image_lookup_requests_tag_details(self) -> None:
+        workflow = (
+            REPO_ROOT / ".github/workflows/hastegeo-publish.yml"
+        ).read_text(encoding="utf-8")
+        image_block = workflow.split("  build-rc-images:", 1)[1].split(
+            "  rc-artifact-summary:", 1
+        )[0]
+        lookup = re.search(
+            r"MATCHES=\$\(az acr repository show-tags\s+(.*?)\)",
+            image_block,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(lookup)
+        self.assertIn("--detail", lookup.group(1).split())
+        self.assertIn("--query \"[?name=='${VERSION}']\"", lookup.group(1))
+
+    def test_candidate_identity_is_frozen_across_build_and_publication(self):
+        build = (
+            REPO_ROOT / ".github/workflows/hastegeo-build.yml"
+        ).read_text()
+        publish = (
+            REPO_ROOT / ".github/workflows/hastegeo-publish.yml"
+        ).read_text()
+        self.assertIn("BUILD_RUN_ID: ${{ github.run_id }}", build)
+        self.assertIn("SOURCE_DATE_EPOCH:", build)
+        resolve_job = build.split("  resolve-version:", 1)[1].split(
+            "  build-wheel:", 1
+        )[0]
+        self.assertIn("actions: read", resolve_job)
+        self.assertIn("build-manifest.json", build)
+        self.assertIn(
+            "BUILD_RUN_ID: ${{ github.event.workflow_run.id }}", publish
+        )
+        self.assertIn(
+            "group: hastegeo-rc-publish-${{ needs.prepare.outputs.version }}",
+            publish,
+        )
+        self.assertIn("queue: max", publish)
+        self.assertIn(
+            "group: hastegeo-rc-image-${{ matrix.image_name }}-${{ needs.prepare.outputs.version }}",
+            publish,
+        )
+        self.assertIn(
+            "name: ${{ needs.resolve-version.outputs.artifact_name }}",
+            build,
+        )
+        self.assertIn("PROTOCOL=auto", build)
+        self.assertIn('--artifact-protocol "$PROTOCOL"', build)
+        self.assertIn("--artifact-protocol produced", publish)
+        self.assertEqual(publish.count('--name "$WHEEL_ARTIFACT"'), 4)
+        self.assertNotIn('--name "hastegeo-wheel-${RUN_ID}"', publish)
+        self.assertIn(
+            "BUILD_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}",
+            publish,
+        )
+        self.assertIn(
+            "Check existing image evidence before retry upload", publish
+        )
+        self.assertNotIn("overwrite: true", publish)
+        self.assertIn(
+            "--manifest release-artifact/build-manifest.json", publish
+        )
+        self.assertNotIn("gh pr comment", publish)
+
+    def test_legacy_compatibility_does_not_claim_verified_manifests(
+        self,
+    ) -> None:
+        publish = (
+            REPO_ROOT / ".github/workflows/hastegeo-publish.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("EXTRA=(--legacy-rc)", publish)
+        self.assertIn("Existing legacy RC image is not locked", publish)
+        self.assertIn(
+            "if: needs.prepare.outputs.rc_build_identity != ''", publish
+        )
+        self.assertIn("Report legacy RC compatibility artifacts", publish)
+        self.assertIn(
+            "does not provide a verified deployment-set manifest", publish
+        )
+
+    def test_rc_deployment_checks_source_and_image_digests_before_mutation(
+        self,
+    ):
+        workflow = (
+            REPO_ROOT / ".github/workflows/deploy-apps.yml"
+        ).read_text()
+        self.assertIn('--source-sha "${{ github.sha }}"', workflow)
+        self.assertIn("Verify RC image digests", workflow)
+        self.assertIn("EXPECTED_REGISTRY_SHA", workflow)
+        self.assertLess(
+            workflow.index("Verify RC image digests"),
+            workflow.index("      - name: Deploy\n"),
+        )
+
+    def test_image_reuse_and_deployment_require_both_boolean_locks(
+        self,
+    ) -> None:
+        for name, start, end in (
+            (
+                "hastegeo-publish.yml",
+                'if [[ -z "$RC_BUILD_IDENTITY" ]]; then',
+                "Legacy RC image locked",
+            ),
+            (
+                "deploy-apps.yml",
+                "- name: Verify RC image digests",
+                "- name: Deploy\n",
+            ),
+        ):
+            with self.subTest(workflow=name):
+                workflow = (
+                    REPO_ROOT / ".github" / "workflows" / name
+                ).read_text(encoding="utf-8")
+                guard = workflow.split(start, 1)[1].split(end, 1)[0]
+                self.assertIn("jq -e", guard)
+                self.assertRegex(
+                    guard,
+                    r"\.writeEnabled\s*==\s*false\s+and\s+"
+                    r"\.deleteEnabled\s*==\s*false",
+                )
+                self.assertIn("exit 1", guard)
 
     def test_scheduled_cleanup_is_report_only(self):
         workflow = (REPO_ROOT / ".github/workflows/rc-cleanup.yml").read_text(
@@ -165,6 +332,117 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         )
         self.assertIn("func azure functionapp publish", deploy_script)
 
+    def test_deploy_apps_emits_every_aml_and_compute_backend_setting(self):
+        """Legacy deploy path must stay config-drift-free with hastegeo.
+
+        `hastegeo.core.config.Config.get_compute_config()` /
+        `get_aml_config()` read these settings (some with no code default);
+        both hastegeo deploy paths -- this script and
+        infra/modules/functions.bicep -- must emit all of them or
+        .github/scripts/check_env_drift.py fails. Regression-tests the
+        aml-compute-backend F7 fix: deploy_apps.sh silently omitted every
+        AML_* setting and hardcoded COMPUTE_BACKEND_DEFAULT instead of
+        honoring an override.
+        """
+        deploy_script = (
+            REPO_ROOT / ".github/scripts/deploy_apps.sh"
+        ).read_text(encoding="utf-8")
+
+        # COMPUTE_BACKEND_DEFAULT must honor an override, not hardcode the
+        # backward-compatible default inline.
+        self.assertIn(
+            'COMPUTE_BACKEND_DEFAULT="${COMPUTE_BACKEND_DEFAULT:-azure_batch}"',
+            deploy_script,
+        )
+        self.assertIn(
+            '"COMPUTE_BACKEND_DEFAULT=${COMPUTE_BACKEND_DEFAULT}"',
+            deploy_script,
+        )
+        self.assertIn(
+            'if [[ "$AML_MODE" != "Disabled" '
+            '&& -z "$AML_SUBSCRIPTION_ID" ]]; then',
+            deploy_script,
+        )
+        self.assertIn(
+            'AML_SUBSCRIPTION_ID="$SUBSCRIPTION_ID"',
+            deploy_script,
+        )
+        # RUNNER_TYPE stays as the deprecated, always-on legacy alias.
+        self.assertIn('"RUNNER_TYPE=azure_batch"', deploy_script)
+
+        aml_settings = (
+            "AML_MODE",
+            "AML_SUBSCRIPTION_ID",
+            "AML_RESOURCE_GROUP",
+            "AML_WORKSPACE_NAME",
+            "AML_DATASTORE_NAME",
+            "AML_COMPUTE_TRAINING",
+            "AML_COMPUTE_INFERENCE",
+            "AML_COMPUTE_EMBEDDING",
+            "AML_COMPUTE_IMAGERYPREP",
+            "AML_COMPUTE_ARTIFACTS",
+            "AML_ENVIRONMENT_TRAINING",
+            "AML_ENVIRONMENT_IMAGERYPREP",
+            "AML_IDENTITY_MODE",
+            "AML_MANAGED_IDENTITY_ID",
+        )
+        for name in aml_settings:
+            with self.subTest(setting=name):
+                # A safe-default variable declaration (empty or a real
+                # default, never a required/unset placeholder)...
+                self.assertRegex(
+                    deploy_script,
+                    re.compile(
+                        r"^{}=\"\$\{{{}:-[^}}]*\}}\"".format(name, name),
+                        re.MULTILINE,
+                    ),
+                    "{} has no safe-default variable declaration".format(name),
+                )
+                # ...and the setting is actually emitted to the Function App.
+                self.assertIn(
+                    '"{}=${{{}}}"'.format(name, name),
+                    deploy_script,
+                    "{} is not emitted by deploy_apps.sh".format(name),
+                )
+
+    def test_deploy_workflow_passes_compute_and_aml_environment_values(self):
+        workflow = (REPO_ROOT / ".github/workflows/deploy-apps.yml").read_text(
+            encoding="utf-8"
+        )
+
+        variable_settings = (
+            "COMPUTE_BACKEND_DEFAULT",
+            "AML_MODE",
+            "AML_IDENTITY_MODE",
+        )
+        for name in variable_settings:
+            with self.subTest(variable=name):
+                self.assertIn(
+                    "{}: ${{{{ vars.{} }}}}".format(name, name),
+                    workflow,
+                )
+
+        secret_settings = (
+            "AML_SUBSCRIPTION_ID",
+            "AML_RESOURCE_GROUP",
+            "AML_WORKSPACE_NAME",
+            "AML_DATASTORE_NAME",
+            "AML_COMPUTE_TRAINING",
+            "AML_COMPUTE_INFERENCE",
+            "AML_COMPUTE_EMBEDDING",
+            "AML_COMPUTE_IMAGERYPREP",
+            "AML_COMPUTE_ARTIFACTS",
+            "AML_ENVIRONMENT_TRAINING",
+            "AML_ENVIRONMENT_IMAGERYPREP",
+            "AML_MANAGED_IDENTITY_ID",
+        )
+        for name in secret_settings:
+            with self.subTest(secret=name):
+                self.assertIn(
+                    "{}: ${{{{ secrets.{} }}}}".format(name, name),
+                    workflow,
+                )
+
     def test_existing_docker_workflow_skips_hastelib_changes(self):
         workflow = (
             REPO_ROOT / ".github/workflows/docker-build-and-push.yml"
@@ -177,6 +455,113 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         )
         self.assertIn('"$HASTELIB_CHANGED" != "true"', workflow)
         self.assertIn("Build and Push Docker Image", workflow)
+
+    def test_functions_bicep_keeps_valid_aml_identity_when_disabled(
+        self,
+    ):
+        functions_bicep = (
+            REPO_ROOT / "infra/modules/functions.bicep"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "{ name: 'AML_IDENTITY_MODE', value: amlIdentityMode }",
+            functions_bicep,
+        )
+        self.assertNotIn(
+            "{ name: 'AML_IDENTITY_MODE', "
+            "value: amlMode == 'Disabled' ? '' : amlIdentityMode }",
+            functions_bicep,
+        )
+
+    def test_create_mode_aml_dependencies_are_identity_authorized(self):
+        workspace_bicep = (
+            REPO_ROOT / "infra/modules/amlWorkspace.bicep"
+        ).read_text(encoding="utf-8")
+        main_bicep = (REPO_ROOT / "infra/main.bicep").read_text(
+            encoding="utf-8"
+        )
+        storage_bicep = (REPO_ROOT / "infra/modules/storage.bicep").read_text(
+            encoding="utf-8"
+        )
+
+        required_role_ids = (
+            "b24988ac-6180-42a0-ab88-20f7382dd24c",
+            "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+            "69566ab7-960f-475b-8e7c-b3118f30c6bd",
+            "00482a5a-887f-4fb3-b363-3b7fe8e74483",
+        )
+        for role_id in required_role_ids:
+            with self.subTest(role_id=role_id):
+                self.assertIn(role_id, workspace_bicep)
+
+        required_assignments = (
+            "umiStorageContributor",
+            "umiStorageBlobDataContributor",
+            "umiStorageFileDataContributor",
+            "umiKeyVaultContributor",
+            "umiKeyVaultAdministrator",
+            "umiAppInsightsContributor",
+            "umiWorkspaceContributor",
+        )
+        for assignment in required_assignments:
+            with self.subTest(assignment=assignment):
+                self.assertIn(assignment, workspace_bicep)
+
+        self.assertGreaterEqual(
+            workspace_bicep.count("defaultAction: 'Deny'"), 2
+        )
+        self.assertIn(
+            "umiPrincipalId: identity.outputs.principalId", main_bicep
+        )
+        self.assertIn("subnetId: resolvedAmlComputeSubnetId", main_bicep)
+        self.assertIn(
+            "amlComputeSubnetId: resolvedAmlComputeSubnetId", main_bicep
+        )
+        self.assertIn("param amlComputeSubnetId string = ''", storage_bicep)
+        self.assertIn("id: amlComputeSubnetId", storage_bicep)
+
+    def test_aml_managed_identity_fallback_is_create_only(self) -> None:
+        """Source-only: Existing must preserve a blank compute identity ID."""
+        main_bicep = (REPO_ROOT / "infra/main.bicep").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("var deployAml = amlMode != 'Disabled'", main_bicep)
+        self.assertIn(
+            "var createAmlWorkspace = amlMode == 'Create'", main_bicep
+        )
+        self.assertIn(
+            "var resolvedAmlManagedIdentityResourceId = "
+            "(deployAml && amlIdentityMode == 'managed') "
+            "? (createAmlWorkspace && empty(amlManagedIdentityResourceId) "
+            "? identity.outputs.resourceId : amlManagedIdentityResourceId) "
+            ": ''",
+            " ".join(main_bicep.split()),
+        )
+
+    def test_aml_identity_settings_pass_through_without_substitution(
+        self,
+    ) -> None:
+        main_bicep = (REPO_ROOT / "infra/main.bicep").read_text(
+            encoding="utf-8"
+        )
+        functions_bicep = (
+            REPO_ROOT / "infra/modules/functions.bicep"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("amlIdentityMode: amlIdentityMode", main_bicep)
+        self.assertIn(
+            "amlManagedIdentityId: resolvedAmlManagedIdentityResourceId",
+            main_bicep,
+        )
+        self.assertIn(
+            "{ name: 'AML_IDENTITY_MODE', value: amlIdentityMode }",
+            functions_bicep,
+        )
+        self.assertIn(
+            "{ name: 'AML_MANAGED_IDENTITY_ID', value: amlManagedIdentityId }",
+            functions_bicep,
+        )
 
     def test_rc_deploy_defaults_all_artifacts_to_same_version(self):
         workflow = (REPO_ROOT / ".github/workflows/deploy-apps.yml").read_text(

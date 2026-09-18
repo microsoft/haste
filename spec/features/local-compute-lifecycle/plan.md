@@ -9,24 +9,46 @@
 | Add conditional metadata updates and execution fences | `backend-dev` | Spec | US-006 | complete |
 | Wire pending identities, queue consumers, recovery timers, and follow-ons | `backend-dev` | Lifecycle and fences | US-007 | complete |
 | Add deterministic lifecycle, backend-CAS, processor, and queue tests | `backend-dev` | Implementation | All | complete |
-| Run targeted and broader relevant tests and formatting/lint | `backend-dev` | Tests | All | complete |
+| Run targeted and broader relevant tests and formatting/lint | `backend-dev` | Tests | All | complete; API/lifecycle/compute coverage passes, known baseline exception below |
 | Distinguish ambiguous acceptance from deterministic submission rejection across all workloads | `backend-dev` | Balanced review of #217 | US-002, US-005 through US-007 | complete |
 | Reuse PostgreSQL connection settings for construction, CRUD, and conditional metadata writes | `backend-dev` | Balanced review of #217 | US-006 | complete |
+| Integrate reviewed imagery rejection handling and submission scenarios with neutral compute handles | `backend-dev` | #193 and review-refresh-progress integration | US-002, US-005 through US-007 | complete; current combined host regressions passed |
 | Integrate upstream optimized reads without losing conditional writes, scan boundaries or configured ports | `backend-dev` | Current main data-layer changes | US-006, US-007 | complete |
 
 ## Integration gates
 
 | Task | Agent | Dependencies | Story | Status |
 |---|---|---|---|---|
-| Independently validate implementation against acceptance | `backend-validation` | Parent integration | All | pending parent |
-| Validate disposable Docker execution and restart on a Docker-capable host | `backend-validation` | Approved local smoke environment | US-001 through US-005 | pending integration |
-| Preserve lifecycle/fencing seams in progress and backend-neutral prerequisites | `backend-dev` | Parent-owned stack integration | All | pending parent |
+| Validate implementation against acceptance | `backend-validation` | Combined integration | All | complete |
+| Validate disposable Docker execution and restart on a Docker-capable host | `backend-validation` | Approved local smoke environment | US-001 through US-005 | complete; API observed in-flight progress, restart without duplication, persistence and cleanup |
+| Preserve lifecycle/fencing seams in progress and backend-neutral prerequisites | `backend-dev` | Combined integration | All | complete |
 
-This is the independent lifecycle prerequisite based on current main.
-The backend-neutral/AML integration remains in the feature PR. No Azure
-resources or compute configuration are changed by this prerequisite.
+These completed gates record the earlier combined-branch verification.
+The current review-refresh integration passed the combined host regressions
+recorded in the [neutral compute plan](../aml-compute-backend/plan.md#current-integration-verification);
+that evidence is separate from the earlier live environment.
 
-## Validation evidence
+The combined branch is validated in the existing local Docker environment
+before any prerequisite PR split. No AML resource provisioning or live AML
+execution is part of this local verification.
+
+Live verification also exposed differing queue/worker UIDs. Scoped
+permission preparation and a capability-free recovery helper now preserve
+cross-UID finalization. The Linux tests exercise real distinct producer and
+consumer UIDs; the live runs confirmed that both output persistence and
+cleanup finish successfully.
+
+The broader library run identifies the pre-existing stale
+`TestArtifactProcessor.test_zip` call to a removed method. Unrelated
+imagery-runtime work in the working tree also requires its matching native
+PROJ environment; those files are outside this change.
+
+## Prior prerequisite validation
+
+The parent validated the #217 fixes with **265 tests passed and one skip**
+before publishing commits `a9c16ef` (PostgreSQL) and `f0d94fb` (submission,
+receipt, and imagery handling). These results predate the current neutral
+integration; they do not validate the current combined working tree.
 
 The upstream-read integration passed **455 tests**, with four platform skips
 and two pre-existing API guard failures deselected. Both excluded cases
@@ -54,7 +76,8 @@ standalone main-based library and queue suite passed **625 tests** with
 four platform skips and HTTP blocked. The known stale
 `test_artifacts.py` call to removed `ArtifactProcessor.zip` remains excluded.
 The five Linux permission tests also passed with real distinct producer and
-consumer UIDs. No AML/neutral-only imports are present in this prerequisite.
+consumer UIDs. That standalone prerequisite contained no AML/neutral-only
+imports.
 
 The earlier development envelope passed 156 focused cases and 316 broader
 regressions with two reproduced main API-guard failures deselected. The

@@ -5,34 +5,21 @@
 
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Iterable, Optional, Union
-
-if TYPE_CHECKING:
-    from ..runners.base import BaseRunner
+from typing import Callable, Iterable, Optional, Union
 
 TrainingOutput = Optional[Union[str, Iterable[bytes]]]
 
 
 def read_training_output(
-    runner: "BaseRunner",
+    reader: Callable[[], TrainingOutput],
     *,
-    job_id: str,
     task_id: str,
     filename: str,
     logger: logging.Logger,
-    as_chunks: bool = False,
 ) -> tuple[TrainingOutput, bool]:
-    """Return optional output and whether a provider read failed."""
+    """Use a caller-bound reader and report whether optional output failed."""
     try:
-        return (
-            runner.get_filecontent_from_task(
-                job_id=job_id,
-                task_id=task_id,
-                filename=filename,
-                as_chunk=as_chunks,
-            ),
-            False,
-        )
+        return reader(), False
     except Exception as error:
         logger.warning(
             "Training telemetry %s is unavailable for task %s (%s)",

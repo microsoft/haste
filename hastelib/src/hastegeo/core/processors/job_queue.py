@@ -4,6 +4,11 @@
 import json
 
 from ..config import Config
+from ..models.compute import (
+    TERMINAL_JOB_STATES,
+    ComputeBackend,
+    ComputeJobHandle,
+)
 from ..models.projects import (
     ImageLayer,
     LabelProject,
@@ -12,8 +17,17 @@ from ..models.projects import (
     Project,
 )
 from ..models.training import ExperimentConfig
-from ..runners.deferred_cleanup import DeferredCleanupRunner
-from ..runners.unified_runner import UnifiedRunner
+from ..runners.deferred_cleanup import DeferredCleanupService
+from ..utils.compute_jobs import resolve_compute_job_handle
+from ..utils.compute_specs import (
+    build_execution_service,
+    follow_on_backend,
+    follow_on_backend_for_record,
+    handle_log_fields,
+    map_state_to_status,
+    output_prefix,
+    output_uri,
+)
 from ..utils.data import convert_json_to_geojson
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
@@ -26,6 +40,7 @@ from .embedding import EmbeddingPostprocessor
 from .imagery import ImageryPostProcessor
 from .inference import InferencePostprocessor, InferencePreprocessor
 from .job_state import (
+    COMPUTE_WORKLOADS,
     WORKFLOWS,
     JobClaimRenewal,
     JobRecord,
@@ -50,6 +65,7 @@ class JobQueueProcessor:
         self.config = config or Config()
         self.repository = repository or JobStateRepository(self.config)
         self.logger = Logger.get_logger(__name__)
+        self.execution_service = build_execution_service(self.config)
 
     def process_message(
         self, workload: Workload | str, body: bytes, *, poison: bool = False
@@ -85,6 +101,16 @@ class JobQueueProcessor:
         baseline = self.repository.claim(workload, message)
         if baseline is None:
             return
+        handle = current_job(baseline, workload).get("computeJob")
+        self.logger.info(
+            "Processing %s project=%s record=%s compute=%s",
+            workload.value,
+            baseline["projectId"],
+            baseline[workflow.key],
+            handle_log_fields(
+                ComputeJobHandle.model_validate(handle) if handle else None
+            ),
+        )
         renewal = JobClaimRenewal(self.repository, workload, baseline)
         renewal.start()
         try:
@@ -103,9 +129,12 @@ class JobQueueProcessor:
             turn = self.repository.turn(baseline, workload)
             if turn.cleanup:
                 renewal.check()
-                runner = self._runner(workload)
                 for identity in turn.cleanup:
-                    runner.cleanup_task(identity.job_id, identity.task_id)
+                    if identity.handle is None:
+                        raise ValueError(
+                            "Cleanup requires its persisted compute handle"
+                        )
+                    self.execution_service.finalize(identity.handle)
                 baseline = self.repository.complete_action(
                     workload, baseline, "cleanup"
                 )
@@ -115,7 +144,9 @@ class JobQueueProcessor:
                 self.repository.turn(baseline, workload).actions.copy().items()
             ):
                 renewal.check()
-                self._perform_action(baseline, action, request_id)
+                self._perform_action(
+                    baseline, action, request_id, source_workload=workload
+                )
                 baseline = self.repository.complete_action(
                     workload, baseline, action
                 )
@@ -143,36 +174,14 @@ class JobQueueProcessor:
         finally:
             renewal.close()
 
-    def _runner(self, workload: Workload) -> UnifiedRunner:
-        batch = self.config.get_azure_batch_config()
-        training_pool = workload in {
-            Workload.TRAINING,
-            Workload.INFERENCE,
-            Workload.EMBEDDING,
-        }
-        candidates = (
-            "inference_pool_ids"
-            if workload == Workload.INFERENCE
-            else (
-                "training_pool_ids"
-                if training_pool
-                else "imageryprep_pool_ids"
-            )
-        )
-        return UnifiedRunner(
-            runner_type=self.config.runner_type,
-            config=self.config,
-            pool_id=batch[
-                "training_pool_id" if training_pool else "imageprep_pool_id"
-            ],
-            candidate_pool_ids=batch[candidates],
-        )
-
     def _process_current(
         self, workload: Workload, baseline: dict
     ) -> tuple[JobRecord, list[TaskIdentity]]:
         workflow = WORKFLOWS[workload]
         record = workflow.model.model_validate(baseline)
+        record.computeBackend = ComputeBackend(
+            self.repository.turn(baseline, workload).backend
+        )
         if (
             baseline.get(workflow.status)
             == self.config.get_status_types().CANCELLED.value
@@ -249,8 +258,16 @@ class JobQueueProcessor:
                         ExperimentConfig.model_validate(experiment),
                         config=self.config,
                     )
-        deferred = DeferredCleanupRunner(processor.runner)
-        processor.runner = deferred
+        deferred = DeferredCleanupService(
+            processor.execution_service,
+            before_submit=lambda spec: self.repository.require_current_submission(
+                workload, baseline
+            ),
+            record_submission=lambda handle: self.repository.record_submission(
+                workload, baseline, handle
+            ),
+        )
+        processor.execution_service = deferred
         output = (
             processor.process_zip()
             if workload == Workload.ZIP
@@ -262,8 +279,12 @@ class JobQueueProcessor:
         ):
             self._complete_imagery(output)
         return output, [
-            TaskIdentity(job_id=job_id, task_id=task_id)
-            for job_id, task_id in deferred.cleanup
+            TaskIdentity(
+                job_id=handle.providerJobId,
+                task_id=handle.providerTaskId or handle.executionId,
+                handle=handle,
+            )
+            for handle in deferred.cleanup
         ]
 
     def _cancel(
@@ -271,43 +292,72 @@ class JobQueueProcessor:
     ) -> tuple[JobRecord, list[TaskIdentity]]:
         values = record.model_dump(mode="json")
         job = current_job(values, workload)
-        identity = TaskIdentity(job_id=job["jobId"], task_id=job["taskId"])
-        runner = self._runner(workload)
-        stopped = runner.cancel_task(identity.job_id, identity.task_id)
-        job["status"] = (
-            runner.get_task_status(identity.job_id, identity.task_id)
-            if stopped is False
-            else self.config.get_status_types().CANCELLED.value
+        job_record = (
+            getattr(record, WORKFLOWS[workload].job)
+            if WORKFLOWS[workload].current_task is None
+            else next(
+                item
+                for item in getattr(record, WORKFLOWS[workload].job)
+                if item.taskId == job["taskId"]
+            )
         )
+        runtime = self.config.get_compute_runtime_config(
+            COMPUTE_WORKLOADS[workload]
+        )
+        handle = resolve_compute_job_handle(
+            job_record,
+            output_uri=output_uri(
+                runtime["output_container_url"],
+                output_prefix(record.projectId, job["taskId"]),
+            ),
+        )
+        cleanup = []
+        outcome = self.config.get_status_types().CANCELLED.value
+        if handle is not None:
+            state = self.execution_service.get_status(handle)
+            if state not in TERMINAL_JOB_STATES:
+                self.execution_service.cancel(handle)
+                state = self.execution_service.get_status(handle)
+                if state not in TERMINAL_JOB_STATES:
+                    raise RuntimeError(
+                        "Cancellation requested; waiting for provider terminal state"
+                    )
+            outcome = map_state_to_status(state, self.config)
+            cleanup.append(
+                TaskIdentity(
+                    job_id=handle.providerJobId,
+                    task_id=handle.providerTaskId or handle.executionId,
+                    handle=handle,
+                )
+            )
+        job["status"] = outcome
         job["completedDate"] = MetadataUtils.get_timestamp()
         workflow = WORKFLOWS[workload]
-        if workload == Workload.TRAINING:
-            values[
-                "trainingOutputPath"
-            ] = f"{MetadataUtils.hash_string(record.projectId)}/{identity.task_id}"
+        if handle is not None and workload == Workload.TRAINING:
+            values["trainingOutputPath"] = output_prefix(
+                record.projectId, job["taskId"]
+            )
             values[workflow.message] = self._training_cancellation_history(
-                runner, identity, values.get(workflow.message)
+                handle, values.get(workflow.message)
             )
         values[workflow.message] = MetadataUtils.append_status_message(
             values.get(workflow.message),
-            (
-                f"Task already reached {job['status']} before cancellation"
-                if stopped is False
-                else "Task cancelled"
-            ),
+            "Task cancelled"
+            if outcome == self.config.get_status_types().CANCELLED.value
+            else f"Task already reached {outcome} before cancellation",
         )
-        return workflow.model.model_validate(values), [identity]
+        return workflow.model.model_validate(values), cleanup
 
     def _training_cancellation_history(
         self,
-        runner: UnifiedRunner,
-        identity: TaskIdentity,
+        handle: ComputeJobHandle,
         status_message: str | None,
     ) -> str | None:
         content, _ = read_training_output(
-            runner,
-            job_id=identity.job_id,
-            task_id=identity.task_id,
+            lambda: self.execution_service.read_output(
+                handle, "workflow_progress.log", as_chunks=False
+            ),
+            task_id=handle.executionId,
             filename="workflow_progress.log",
             logger=self.logger,
         )
@@ -368,14 +418,31 @@ class JobQueueProcessor:
         )
 
     def _perform_action(
-        self, data: dict, action: str, request_id: str
+        self,
+        data: dict,
+        action: str,
+        request_id: str,
+        *,
+        source_workload: Workload,
     ) -> None:
         model = Model.model_validate(
             self.repository.processor(
                 Workload.TRAINING, data["projectId"]
             ).load(data["modelId"])
         )
+        origin = current_job(data, source_workload).get("computeJob")
+        inherited = (
+            follow_on_backend(
+                ComputeJobHandle.model_validate(origin).selectedBackend,
+                config=self.config,
+            )
+            if origin
+            else follow_on_backend_for_record(
+                Model.model_validate(data), config=self.config
+            )
+        )
         if action == "inference":
+            model.computeBackend = inherited
             InferencePreprocessor(model, config=self.config).send_to_queue(
                 request_id=request_id
             )
@@ -392,6 +459,7 @@ class JobQueueProcessor:
                     modelId=model.modelId,
                     imageLayerId=model.imageLayerId,
                 )
+            artifacts.computeBackend = inherited
             ArtifactProcessor(
                 partition_key=model.projectId,
                 config=self.config,
@@ -411,8 +479,8 @@ class JobQueueProcessor:
 
 
 def reconcile_local_tasks(config: Config) -> int:
-    if config.runner_type != "local":
-        return 0
-    from ..runners.local import LocalRunner
+    from ..runners.local import TASK_WORK_DIR, LocalRunner
 
+    if not (TASK_WORK_DIR / ".lifecycle").is_dir():
+        return 0
     return LocalRunner(config=config).reconcile_tasks()

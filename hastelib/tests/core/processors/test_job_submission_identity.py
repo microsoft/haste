@@ -6,6 +6,11 @@ from importlib import import_module
 from types import SimpleNamespace
 
 import pytest
+from hastegeo.core.models.compute import (
+    BackendConfigurationError,
+    SubmissionIndeterminateError,
+    synthesize_legacy_batch_handle,
+)
 from hastegeo.core.models.projects import Model
 from hastegeo.core.processors.job_queue import JobQueueProcessor
 from hastegeo.core.processors.job_state import (
@@ -15,7 +20,9 @@ from hastegeo.core.processors.job_state import (
     Workload,
     current_job,
 )
-from hastegeo.core.runners.submission import TaskSubmissionPendingError
+from hastegeo.core.runners.deferred_cleanup import DeferredCleanupService
+from hastegeo.core.runners.execution_service import ComputeExecutionService
+from hastegeo.core.utils.compute_specs import compute_profile
 from hastegeo.core.utils.metadata import MetadataUtils
 from msrest.exceptions import ClientRequestError, ValidationError
 from requests.exceptions import ReadTimeout
@@ -76,9 +83,16 @@ def submission(state, mocker, request) -> SimpleNamespace:
     )
     pending = current_job(message, workload)
     module = import_module(f"hastegeo.core.processors.{module_name}")
-    runner = mocker.Mock(config=state.config)
-    runner.add_task.return_value = ("routed-job", pending["taskId"])
-    mocker.patch.object(module, "UnifiedRunner", return_value=runner)
+    handle = synthesize_legacy_batch_handle(
+        job_id="routed-job",
+        task_id=pending["taskId"],
+        output_uri="https://account.blob.core.windows.net/data/project/task",
+    )
+    service = mocker.Mock(spec=ComputeExecutionService)
+    service.submit.return_value = handle
+    mocker.patch.object(
+        module, "build_execution_service", return_value=service
+    )
     storage_type = (
         "UnifiedArtifactStorage"
         if workload == Workload.ZIP
@@ -88,6 +102,9 @@ def submission(state, mocker, request) -> SimpleNamespace:
     storage.get_file_remote_path.return_value = (
         "https://account.blob.core.windows.net/data/"
         f"{MetadataUtils.hash_string('project')}/config.yaml?unit-test"
+    )
+    storage.get_base_url.return_value = (
+        "https://account.blob.core.windows.net/data"
     )
     zip_model = Model(
         projectId="project", modelId="model", name="name", status="Processed"
@@ -109,11 +126,17 @@ def submission(state, mocker, request) -> SimpleNamespace:
         else:
             processor = getattr(module, class_name)(model, config=state.config)
         if prepare:
-            mocker.patch.object(
-                processor,
-                prepare,
-                return_value={"config": {"file_path": "inputs/config.yaml"}},
+            prepared = (
+                [f"{MetadataUtils.hash_string('project')}/trn-source"]
+                if workload == Workload.ZIP
+                else {
+                    "config": {
+                        "file_path": "inputs/config.yaml",
+                        "http_url": "https://account.blob.core.windows.net/data/config.yaml",
+                    }
+                }
             )
+            mocker.patch.object(processor, prepare, return_value=prepared)
         return model, processor
 
     model, processor = build_processor(message)
@@ -121,7 +144,8 @@ def submission(state, mocker, request) -> SimpleNamespace:
         workload=workload,
         message=message,
         pending=pending,
-        runner=runner,
+        service=service,
+        handle=handle,
         model=model,
         processor=processor,
         method=method,
@@ -130,23 +154,23 @@ def submission(state, mocker, request) -> SimpleNamespace:
 
 
 @pytest.mark.parametrize("submission_fails", [False, True])
-def test_processors_reuse_pending_ids_and_accept_batch_routed_job_ids(
+def test_processors_reuse_pending_ids_and_persist_provider_handles(
     submission, submission_fails: bool
 ) -> None:
     workload = submission.workload
     pending, model = submission.pending, submission.model
-    runner, processor = submission.runner, submission.processor
+    service, processor = submission.service, submission.processor
+    handle = submission.handle
     method = submission.method
+    assert pending["jobId"] is None
+    assert pending["computeJob"] is None
     if submission_fails:
-        runner.add_task.side_effect = ReadTimeout("provider response lost")
-
-    if submission_fails:
-        with pytest.raises(TaskSubmissionPendingError):
+        error = SubmissionIndeterminateError("provider response lost")
+        service.submit.side_effect = error
+        with pytest.raises(SubmissionIndeterminateError) as caught:
             getattr(processor, method)()
-        assert (
-            current_job(model.model_dump(mode="json"), workload)["taskId"]
-            == pending["taskId"]
-        )
+        assert caught.value is error
+        assert current_job(model.model_dump(mode="json"), workload) == pending
         assert (
             model.model_dump(mode="json")[WORKFLOWS[workload].status]
             == "Queued"
@@ -154,12 +178,18 @@ def test_processors_reuse_pending_ids_and_accept_batch_routed_job_ids(
         return
     output = getattr(processor, method)()
 
-    assert runner.add_task.call_count == 1
-    assert runner.add_task.call_args.kwargs["job_id"] == pending["jobId"]
-    assert runner.add_task.call_args.kwargs["task_id"] == pending["taskId"]
+    service.submit.assert_called_once()
+    spec = service.submit.call_args.args[0]
+    assert spec.executionId == pending["taskId"]
+    assert service.submit.call_args.kwargs == {
+        "profile": compute_profile(spec.workload)
+    }
     values = output.model_dump(mode="json")
     assert current_job(values, workload)["jobId"] == "routed-job"
     assert current_job(values, workload)["taskId"] == pending["taskId"]
+    assert current_job(values, workload)["computeJob"] == handle.model_dump(
+        mode="json"
+    )
     assert values[WORKFLOWS[workload].status] == "InProgress"
     if WORKFLOWS[workload].current_task:
         assert len(values[WORKFLOWS[workload].job]) == 1
@@ -167,6 +197,10 @@ def test_processors_reuse_pending_ids_and_accept_batch_routed_job_ids(
 
 @pytest.fixture
 def submission_queue(state, mocker, submission) -> JobQueueProcessor:
+    mocker.patch(
+        "hastegeo.core.processors.job_queue.build_execution_service",
+        return_value=submission.service,
+    )
     processor = JobQueueProcessor(state.config, repository=state.repository)
 
     def process_current(
@@ -174,6 +208,15 @@ def submission_queue(state, mocker, submission) -> JobQueueProcessor:
     ) -> tuple[JobRecord, list[TaskIdentity]]:
         assert workload == submission.workload
         _, current = submission.build_processor(baseline)
+        current.execution_service = DeferredCleanupService(
+            current.execution_service,
+            before_submit=lambda spec: state.repository.require_current_submission(
+                workload, baseline
+            ),
+            record_submission=lambda handle: state.repository.record_submission(
+                workload, baseline, handle
+            ),
+        )
         return getattr(current, submission.method)(), []
 
     mocker.patch.object(
@@ -183,7 +226,7 @@ def submission_queue(state, mocker, submission) -> JobQueueProcessor:
 
 
 @pytest.mark.parametrize(
-    "error",
+    "cause",
     [
         ReadTimeout("provider response lost"),
         ClientRequestError(
@@ -192,17 +235,21 @@ def submission_queue(state, mocker, submission) -> JobQueueProcessor:
     ],
 )
 def test_queue_recovers_ambiguous_submission_with_the_same_pending_identity(
-    state, submission, submission_queue, error: Exception
+    state, submission, submission_queue, cause: Exception
 ) -> None:
     workload = submission.workload
-    submission.runner.add_task.side_effect = [
+    error = SubmissionIndeterminateError("provider response lost")
+    error.__cause__ = cause
+    submission.service.submit.side_effect = [
         error,
-        ("routed-job", submission.pending["taskId"]),
+        submission.handle,
     ]
 
-    with pytest.raises(TaskSubmissionPendingError):
+    with pytest.raises(SubmissionIndeterminateError) as caught:
         submission_queue.process(workload, submission.message)
 
+    assert caught.value is error
+    assert caught.value.__cause__ is cause
     current = load(state, workload)
     assert current[WORKFLOWS[workload].status] == "Queued"
     assert current_job(current, workload) == submission.pending
@@ -221,15 +268,26 @@ def test_queue_recovers_ambiguous_submission_with_the_same_pending_identity(
         current_job(current, workload)["taskId"]
         == submission.pending["taskId"]
     )
-    assert submission.runner.add_task.call_count == 2
-    for call in submission.runner.add_task.call_args_list:
-        assert call.kwargs["job_id"] == submission.pending["jobId"]
-        assert call.kwargs["task_id"] == submission.pending["taskId"]
-    submission.runner.cleanup_task.assert_not_called()
+    assert current_job(current, workload)["computeJob"] == (
+        submission.handle.model_dump(mode="json")
+    )
+    assert submission.service.submit.call_count == 2
+    for call in submission.service.submit.call_args_list:
+        spec = call.args[0]
+        assert spec.executionId == submission.pending["taskId"]
+        assert call.kwargs == {"profile": compute_profile(spec.workload)}
+    submission.service.finalize.assert_not_called()
 
 
 @pytest.mark.parametrize(
-    "failure", ["identity", "authorization", "configuration", "validation"]
+    "failure",
+    [
+        "identity",
+        "authorization",
+        "configuration",
+        "validation",
+        "backend_configuration",
+    ],
 )
 def test_deterministic_submission_failure_is_terminal_and_not_reenqueued(
     state, submission, submission_queue, failure: str
@@ -241,11 +299,13 @@ def test_deterministic_submission_failure_is_terminal_and_not_reenqueued(
         error = KeyError("batch_url")
     elif failure == "validation":
         error = ValidationError("required", "task_id", "")
+    elif failure == "backend_configuration":
+        error = BackendConfigurationError("backend configuration rejected")
     else:
         error = ValueError(
             "Local execution identity already has another request"
         )
-    submission.runner.add_task.side_effect = error
+    submission.service.submit.side_effect = error
     workload = submission.workload
 
     submission_queue.process(workload, submission.message)
@@ -256,13 +316,15 @@ def test_deterministic_submission_failure_is_terminal_and_not_reenqueued(
         current_job(current, workload)["taskId"]
         == submission.pending["taskId"]
     )
+    assert current_job(current, workload)["jobId"] is None
+    assert current_job(current, workload)["computeJob"] is None
     assert not state.repository.needs_processing(current, workload)
     assert state.repository.turn(current, workload).claim is None
     state.now.value += 31
     assert state.repository.reconcile_queues() == 0
     submission_queue.process(workload, submission.message)
-    submission.runner.add_task.assert_called_once()
-    submission.runner.cleanup_task.assert_not_called()
+    submission.service.submit.assert_called_once()
+    submission.service.finalize.assert_not_called()
 
 
 def test_submission_rejection_cannot_overwrite_racing_cancellation(
@@ -270,7 +332,7 @@ def test_submission_rejection_cannot_overwrite_racing_cancellation(
 ) -> None:
     workload = submission.workload
 
-    def reject_after_cancel(**kwargs) -> None:
+    def reject_after_cancel(spec, **kwargs) -> None:
         state.repository.begin(
             workload,
             WORKFLOWS[workload].model.model_validate(submission.message),
@@ -278,7 +340,7 @@ def test_submission_rejection_cannot_overwrite_racing_cancellation(
         )
         raise ValueError("provider rejected the submission")
 
-    submission.runner.add_task.side_effect = reject_after_cancel
+    submission.service.submit.side_effect = reject_after_cancel
 
     submission_queue.process(workload, submission.message)
 
@@ -289,7 +351,7 @@ def test_submission_rejection_cannot_overwrite_racing_cancellation(
         == submission.pending["taskId"]
     )
     assert state.repository.needs_cancellation(current, workload)
-    submission.runner.cleanup_task.assert_not_called()
+    submission.service.finalize.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -329,7 +391,6 @@ def test_every_preprocessor_persists_identity_before_sending_a_message(
     queue = mocker.patch.object(module, "AzureQueueHandler").return_value
     if workload == Workload.ZIP:
         mocker.patch.object(module, "UnifiedArtifactStorage")
-        mocker.patch.object(module, "UnifiedRunner")
         processor = module.ArtifactProcessor(
             config=state.config,
             partition_key="project",

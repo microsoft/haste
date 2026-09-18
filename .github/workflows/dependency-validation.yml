@@ -23,8 +23,6 @@ name: Validate dependency pins
 
 on:
   pull_request:
-    branches:
-      - main
     paths:
       - "api/hastefuncapi/requirements.txt"
       - "api/hastefuncqueues/requirements.txt"

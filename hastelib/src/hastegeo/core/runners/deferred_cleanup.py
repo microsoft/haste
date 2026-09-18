@@ -1,35 +1,58 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-from .base import BaseRunner
-from .unified_runner import UnifiedRunner
+from typing import Any, Callable
+
+from ..models.compute import (
+    ComputeJobHandle,
+    ComputeJobSpec,
+    ComputeJobState,
+    SubmissionIndeterminateError,
+)
+from .execution_service import ComputeExecutionService
 
 
-class DeferredCleanupRunner(BaseRunner):
-    """Keep task files until the queue's fenced metadata commit succeeds."""
+class DeferredCleanupService(ComputeExecutionService):
+    """Persist accepted handles and defer finalization until metadata commits."""
 
-    def __init__(self, runner: UnifiedRunner) -> None:
-        super().__init__(runner.config)
-        self.runner = runner
-        self.cleanup: list[tuple[str, str]] = []
+    def __init__(
+        self,
+        service: ComputeExecutionService,
+        before_submit: Callable[[ComputeJobSpec], None],
+        record_submission: Callable[[ComputeJobHandle], bool],
+    ) -> None:
+        self.service = service
+        self.before_submit = before_submit
+        self.record_submission = record_submission
+        self.cleanup: list[ComputeJobHandle] = []
 
-    def get_filecontent_from_task(
-        self, job_id: str, task_id: str, filename: str, as_chunk: bool = False
-    ):
-        return self.runner.get_filecontent_from_task(
-            job_id, task_id, filename, as_chunk=as_chunk
-        )
+    def submit(self, spec: ComputeJobSpec, **kwargs: Any) -> ComputeJobHandle:
+        self.before_submit(spec)
+        handle = self.service.submit(spec, **kwargs)
+        try:
+            current = self.record_submission(handle)
+        except Exception as error:
+            raise SubmissionIndeterminateError(
+                "Compute accepted the job, but recording its handle was "
+                f"interrupted ({type(error).__name__}); reconciliation required"
+            ) from error
+        if not current:
+            self.service.cancel(handle)
+            self.service.finalize(handle)
+            raise RuntimeError("The accepted execution was superseded")
+        return handle
 
-    def get_task_status(self, job_id: str, task_id: str) -> str:
-        return self.runner.get_task_status(job_id, task_id)
+    def get_status(self, handle: ComputeJobHandle) -> ComputeJobState:
+        return self.service.get_status(handle)
 
-    def add_task(self, job_id: str, task_id: str, **kwargs) -> tuple[str, str]:
-        return self.runner.add_task(job_id, task_id, **kwargs)
+    def read_output(
+        self, handle: ComputeJobHandle, relative_path: str, **kwargs: Any
+    ) -> Any:
+        return self.service.read_output(handle, relative_path, **kwargs)
 
-    def cleanup_task(self, job_id: str, task_id: str) -> None:
-        identity = (job_id, task_id)
-        if identity not in self.cleanup:
-            self.cleanup.append(identity)
+    def cancel(self, handle: ComputeJobHandle) -> None:
+        self.service.cancel(handle)
 
-    def cancel_task(self, job_id: str, task_id: str):
-        return self.runner.cancel_task(job_id, task_id)
+    def finalize(self, handle: ComputeJobHandle) -> None:
+        if handle not in self.cleanup:
+            self.cleanup.append(handle.model_copy(deep=True))

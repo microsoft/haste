@@ -11,7 +11,7 @@
 | Review: descriptor-anchored output reads, unbuffered children, terminal stage history | backend-dev | implemented; Linux descriptor/race validation passed |
 | Empty-message and indeterminate UI states | ui | done |
 | Merge refreshed lifecycle/main while retaining upstream active-job tests and progress tests | backend-dev; ui | done |
-| Regression and integration validation | backend-validation; ui-validation | complete on the lifecycle prerequisite; final AML integration remains a separate gate |
+| Regression and integration validation | backend-validation; ui-validation | prerequisite and neutral host integration complete; earlier live evidence is retained below |
 
 ## Validation
 
@@ -50,11 +50,16 @@ exercise queued, unknown-progress, determinate, terminal, empty-message,
 legacy-record, and reduced-motion behavior. The production UI build passes
 with the exact locked dependencies.
 
-The full library run has one unchanged baseline failure:
-`test_artifacts.py::test_zip` calls the nonexistent `ArtifactProcessor.zip`
-method. Full UI lint also reports findings in unchanged files; all changed
-UI files pass targeted lint. These baseline issues are not silently fixed,
-suppressed, or represented as a green full-suite result by this prerequisite.
+The combined local runtime was observed through the live application API:
+diagnostic jobs reported `InProgress` and nonzero progress before container
+exit, retained their identities across a queue-host restart, and reached
+complete progress only after output persistence. Fresh imagery processing
+and labeling also completed successfully.
+
+Earlier full-library runs excluded `test_artifacts.py::test_zip`, which
+called the removed `ArtifactProcessor.zip` method; current main no longer
+contains that case. Full UI lint still reports the baseline findings noted
+above. All changed progress UI files pass targeted lint.
 
 The review follow-up uses the existing Python 3.11 test interpreter directly,
 with explicit `PYTHONPATH` and HTTP blocked; it does not synchronize or install

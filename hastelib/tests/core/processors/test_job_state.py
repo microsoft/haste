@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 
 import pytest
+from hastegeo.core.models.compute import synthesize_legacy_batch_handle
 from hastegeo.core.models.projects import ImageLayer, Model, ModelArtifacts
 from hastegeo.core.processors.job_state import (
     RUNTIME_KEY,
@@ -39,6 +40,7 @@ def record(workload: Workload):
         maxEpochs="1",
         modelType="embedding" if workload == Workload.EMBEDDING else "trained",
         inferenceStatus="Queued" if workload == Workload.INFERENCE else None,
+        inferenceTotalSteps=7,
     )
 
 
@@ -69,7 +71,8 @@ def test_pending_identity_is_durable_and_replayed(
         mode="json"
     )
     assert attempt_id(first, workload)
-    assert current_job(first, workload)["jobId"]
+    assert current_job(first, workload)["jobId"] is None
+    assert current_job(first, workload)["computeJob"] is None
     assert attempt_id(second, workload) == attempt_id(first, workload)
     assert attempt_id(load(state, workload), workload) == attempt_id(
         first, workload
@@ -370,53 +373,130 @@ def test_follow_on_request_is_idempotent_even_after_child_completion(
     )
 
 
-def test_batch_queue_recovery_respects_the_persisted_backend(state) -> None:
-    state.config.runner_type = "azure_batch"
-    accepted(state)
+def test_queue_recovery_survives_a_changed_default_backend(
+    state, mocker
+) -> None:
+    mocker.patch.dict("os.environ", {"COMPUTE_BACKEND_DEFAULT": "azure_batch"})
+    message = accepted(state)
     assert state.repository.reconcile_queues() == 1
-    state.config.runner_type = "local"
-    assert state.repository.reconcile_queues() == 0
+    mocker.patch.dict("os.environ", {"COMPUTE_BACKEND_DEFAULT": "local"})
+    assert state.repository.reconcile_queues() == 1
+    claimed = state.repository.claim(Workload.TRAINING, message)
+    assert (
+        state.repository.turn(claimed, Workload.TRAINING).backend
+        == "azure_batch"
+    )
 
 
-def test_distinct_follow_on_request_waits_for_existing_execution(
+def submission_handle(message: dict):
+    return synthesize_legacy_batch_handle(
+        job_id="accepted-provider-job",
+        task_id=message["trainingJob"]["taskId"],
+        output_uri="https://account.blob.core.windows.net/data/project/task",
+    )
+
+
+def test_cancellation_during_submission_retains_the_handle_for_actual_stop(
     state,
 ) -> None:
-    first = state.repository.begin(
-        Workload.ZIP, record(Workload.ZIP), request_id="first-parent:zip"
-    )
-    with pytest.raises(RuntimeError, match="must wait"):
-        state.repository.begin(
-            Workload.ZIP, first, request_id="second-parent:zip"
-        )
-    assert (
-        state.repository.turn(
-            load(state, Workload.ZIP), Workload.ZIP
-        ).request_id
-        == "first-parent:zip"
-    )
-
-
-def test_renewed_claim_can_publish_after_original_deadline(state) -> None:
     message = accepted(state)
     baseline = state.repository.claim(Workload.TRAINING, message)
-    state.now.value += 250
-    assert state.repository.renew_claim(Workload.TRAINING, baseline)
-    state.now.value += 100
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    handle = submission_handle(message)
+
+    assert state.repository.record_submission(
+        Workload.TRAINING, baseline, handle
+    )
+
+    current = load(state)
+    assert current["status"] == "Cancelled"
+    assert current["trainingJob"]["computeJob"] == handle.model_dump(
+        mode="json"
+    )
+    assert current["trainingJob"]["status"] == "InProgress"
+    assert state.repository.needs_processing(current, Workload.TRAINING)
     assert (
         state.repository.commit(
             Workload.TRAINING,
             baseline,
             output_for(baseline, Workload.TRAINING, "InProgress"),
             [],
-        )["status"]
-        == "InProgress"
+        )
+        is None
     )
 
 
-def test_old_claim_cannot_renew_after_cancellation(state) -> None:
+@pytest.mark.parametrize("status", ["Processed", "Failed", "Cancelled"])
+def test_duplicate_submission_handle_does_not_regress_terminal_job(
+    state, status: str
+) -> None:
+    message = accepted(state)
+    baseline = state.repository.claim(Workload.TRAINING, message)
+    handle = submission_handle(message)
+    assert state.repository.record_submission(
+        Workload.TRAINING, baseline, handle
+    )
+    current = load(state)
+    final = output_for(current, Workload.TRAINING, status)
+    state.repository.processor(Workload.TRAINING, "project").save(
+        "model", final.model_dump(mode="json")
+    )
+    before = load(state)
+
+    assert state.repository.record_submission(
+        Workload.TRAINING, baseline, handle
+    )
+    assert load(state) == before
+
+
+def test_renewed_claim_can_commit_after_its_original_deadline(state) -> None:
+    baseline = state.repository.claim(Workload.TRAINING, accepted(state))
+    state.now.value += 250
+    assert state.repository.renew_claim(Workload.TRAINING, baseline)
+    state.now.value += 100
+    result = state.repository.commit(
+        Workload.TRAINING,
+        baseline,
+        output_for(baseline, Workload.TRAINING, "InProgress"),
+        [],
+    )
+    assert result is not None
+
+
+def test_cancelled_claim_cannot_be_renewed_by_the_old_worker(state) -> None:
     message = accepted(state)
     baseline = state.repository.claim(Workload.TRAINING, message)
     state.repository.begin(
         Workload.TRAINING, Model.model_validate(message), cancel=True
     )
     assert not state.repository.renew_claim(Workload.TRAINING, baseline)
+
+
+def test_distinct_follow_on_waits_instead_of_acknowledging_busy_target(
+    state,
+) -> None:
+    message = accepted(state)
+    with pytest.raises(RuntimeError, match="follow-on work"):
+        state.repository.begin(
+            Workload.TRAINING,
+            Model.model_validate(message),
+            request_id="another-parent-request",
+        )
+    assert attempt_id(load(state), Workload.TRAINING) == attempt_id(
+        message, Workload.TRAINING
+    )
+
+
+def test_submission_after_record_deletion_is_rejected_without_recreation(
+    state,
+) -> None:
+    message = accepted(state)
+    baseline = state.repository.claim(Workload.TRAINING, message)
+    state.repository.processor(Workload.TRAINING, "project").delete("model")
+    assert not state.repository.record_submission(
+        Workload.TRAINING, baseline, submission_handle(message)
+    )
+    with pytest.raises(FileNotFoundError):
+        load(state)
