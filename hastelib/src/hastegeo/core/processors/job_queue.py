@@ -17,6 +17,10 @@ from ..runners.unified_runner import UnifiedRunner
 from ..utils.data import convert_json_to_geojson
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
+from ..utils.workflow_progress import (
+    read_training_output,
+    workflow_progress_updates,
+)
 from .artifacts import ArtifactProcessor
 from .embedding import EmbeddingPostprocessor
 from .imagery import ImageryPostProcessor
@@ -276,11 +280,14 @@ class JobQueueProcessor:
             else self.config.get_status_types().CANCELLED.value
         )
         job["completedDate"] = MetadataUtils.get_timestamp()
+        workflow = WORKFLOWS[workload]
         if workload == Workload.TRAINING:
             values[
                 "trainingOutputPath"
             ] = f"{MetadataUtils.hash_string(record.projectId)}/{identity.task_id}"
-        workflow = WORKFLOWS[workload]
+            values[workflow.message] = self._training_cancellation_history(
+                runner, identity, values.get(workflow.message)
+            )
         values[workflow.message] = MetadataUtils.append_status_message(
             values.get(workflow.message),
             (
@@ -290,6 +297,33 @@ class JobQueueProcessor:
             ),
         )
         return workflow.model.model_validate(values), [identity]
+
+    def _training_cancellation_history(
+        self,
+        runner: UnifiedRunner,
+        identity: TaskIdentity,
+        status_message: str | None,
+    ) -> str | None:
+        content, _ = read_training_output(
+            runner,
+            job_id=identity.job_id,
+            task_id=identity.task_id,
+            filename="workflow_progress.log",
+            logger=self.logger,
+        )
+        if content is None:
+            return status_message
+        if not isinstance(content, str):
+            self.logger.warning("Workflow progress is not text")
+            return status_message
+        _, updates = workflow_progress_updates(
+            content, status_message, logger=self.logger
+        )
+        for timestamp, message in updates:
+            status_message = MetadataUtils.append_status_message(
+                status_message, message, timestamp=timestamp
+            )
+        return status_message
 
     def _complete_imagery(self, output: ImageLayer) -> None:
         label_id = MetadataUtils.generate_deterministic_id(

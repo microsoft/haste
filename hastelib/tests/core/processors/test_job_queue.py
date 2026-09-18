@@ -250,6 +250,101 @@ def test_cancel_failure_keeps_the_intent_and_retries_actual_stop(
     assert state.repository.reconcile_queues() == 1
 
 
+@pytest.mark.parametrize("stopped", [True, False])
+def test_training_cancellation_commits_history_before_summary_and_cleanup(
+    state, mocker, stopped: bool
+) -> None:
+    message = accepted(state)
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    runner = mocker.Mock()
+    runner.cancel_task.return_value = stopped
+    runner.get_task_status.return_value = "Processed"
+    mocker.patch.object(processor, "_runner", return_value=runner)
+    mocker.patch.object(processor, "_perform_action")
+    summary = (
+        "Task cancelled"
+        if stopped
+        else "Task already reached Processed before cancellation"
+    )
+
+    def read_output(
+        job_id: str,
+        task_id: str,
+        filename: str,
+        as_chunk: bool = False,
+    ) -> str:
+        runner.cancel_task.assert_called_once()
+        runner.cleanup_task.assert_not_called()
+        assert filename == "workflow_progress.log"
+        return (
+            "2026-01-01T00:00:00+00:00|Starting create_masks.py\n"
+            "2026-01-01T00:01:00+00:00|Completed create_masks.py\n"
+        )
+
+    def cleanup(job_id: str, task_id: str) -> None:
+        persisted = load(state)
+        assert persisted["status"] == "Cancelled"
+        assert persisted["trainingJob"]["status"] == (
+            "Cancelled" if stopped else "Processed"
+        )
+        history = persisted["statusMessage"]
+        assert (
+            history.index("Starting create_masks.py")
+            < history.index("Completed create_masks.py")
+            < history.index(summary)
+        )
+
+    runner.get_filecontent_from_task.side_effect = read_output
+    runner.cleanup_task.side_effect = cleanup
+
+    processor.process(Workload.TRAINING, message)
+
+    runner.get_filecontent_from_task.assert_called_once_with(
+        job_id=message["trainingJob"]["jobId"],
+        task_id=message["trainingJob"]["taskId"],
+        filename="workflow_progress.log",
+        as_chunk=False,
+    )
+    runner.cleanup_task.assert_called_once_with(
+        message["trainingJob"]["jobId"], message["trainingJob"]["taskId"]
+    )
+    assert state.repository.turn(load(state), Workload.TRAINING).cleanup == []
+
+
+@pytest.mark.parametrize(
+    "output", [RuntimeError("private provider detail"), b"not text"]
+)
+def test_unavailable_cancellation_history_preserves_terminal_commit(
+    state, mocker, output: RuntimeError | bytes
+) -> None:
+    message = accepted(state)
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    processor.logger = mocker.Mock()
+    runner = mocker.Mock()
+    if isinstance(output, Exception):
+        runner.get_filecontent_from_task.side_effect = output
+    else:
+        runner.get_filecontent_from_task.return_value = output
+    mocker.patch.object(processor, "_runner", return_value=runner)
+    mocker.patch.object(processor, "_perform_action")
+
+    processor.process(Workload.TRAINING, message)
+
+    persisted = load(state)
+    assert persisted["status"] == "Cancelled"
+    assert persisted["trainingJob"]["status"] == "Cancelled"
+    assert "Task cancelled" in persisted["statusMessage"]
+    assert "private provider detail" not in persisted["statusMessage"]
+    processor.logger.warning.assert_called_once()
+    runner.cleanup_task.assert_called_once()
+
+
 def test_training_queue_and_local_lifecycle_publish_inflight_then_persisted_terminal_state(
     state, mocker
 ) -> None:

@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import os
+import tempfile
+from typing import Iterable, Optional, Union
 
 from hastegeo.core.runners.submission import (
     TaskSubmissionPendingError,
@@ -24,6 +26,10 @@ from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
 from ..utils.tbparser import calculate_metrics, parse_tb_event_logs
+from ..utils.workflow_progress import (
+    read_training_output,
+    workflow_progress_updates,
+)
 from .job_state import Workload, persist_and_enqueue
 
 # Do not prefix with '$' here. This string will be replaced
@@ -132,6 +138,7 @@ class TrainPostprocessor(BaseTrainProcessor):
         self.config = config or Config()
 
     def process(self):
+        self._telemetry_unavailable = False
         self.logger.info(
             f"{self.__class__.__name__}.process: Processing model {self.model_data.modelId} with status {self.model_data.status}"
         )
@@ -170,24 +177,36 @@ class TrainPostprocessor(BaseTrainProcessor):
                 )
 
                 train_start_time, logs = self._get_training_logs()
+                self._append_workflow_progress()
+                have_metrics = False
                 if logs:
                     self.model_data.trainingJob.logs = logs
-                    self._calculate_upsert_training_metrics(job_completed=True)
+                    have_metrics = self._calculate_upsert_training_metrics(
+                        job_completed=True
+                    )
                     self.model_data.trainingJob.trainStartTime = (
                         train_start_time
                     )
-                    step = (
-                        int(self.model_data.trainingJob.completedEpochs or "0")
-                        + 1
-                    )
-                    message = (
-                        f"Training job completed successfully\n"
-                        f"trainStartTime: {self.model_data.trainingJob.trainStartTime or 'n/a'}\n"
-                        f"epoch: {self.model_data.trainingJob.completedEpochs}\n"
-                        f"elapsedDurationInMinutes: {self.model_data.trainingJob.totalElapsedTime}\n"
-                        f"completedDate: {self.model_data.trainingJob.completedDate}"
-                    )
-                    self._update_training_progress(message, step=step)
+                if not have_metrics:
+                    self.model_data.trainingJob.completedEpochs = None
+                    self.model_data.trainingJob.totalElapsedTime = None
+                    self.model_data.trainingJob.timePerEpoch = None
+                self.model_data.trainingJob.approxMinutesToComplete = "0"
+                message = (
+                    "Training job completed successfully\n"
+                    f"trainStartTime: {self.model_data.trainingJob.trainStartTime or 'n/a'}\n"
+                    f"epoch: {self.model_data.trainingJob.completedEpochs or 'n/a'}\n"
+                    f"elapsedDurationInMinutes: {self.model_data.trainingJob.totalElapsedTime or 'n/a'}\n"
+                    f"completedDate: {self.model_data.trainingJob.completedDate}"
+                )
+                if not have_metrics:
+                    message += "\nTraining metrics unavailable."
+                self.model_data.totalSteps = max(
+                    1, self.model_data.totalSteps or 0
+                )
+                self._update_training_progress(
+                    message, step=self.model_data.totalSteps
+                )
                 # Cleanup the task on the runner
                 self.runner.cleanup_task(
                     job_id=self.model_data.trainingJob.jobId,
@@ -205,12 +224,18 @@ class TrainPostprocessor(BaseTrainProcessor):
                 self.model_data.status = task_status
                 self.model_data.trainingOutputPath = f"{MetadataUtils.hash_string(self.model_data.projectId)}/{self.model_data.trainingJob.taskId}"
 
+                self._append_workflow_progress()
                 # Retrieve error details from the batch task before cleanup
                 error_details = self._get_task_error_details(
                     self.model_data.trainingJob.jobId,
                     self.model_data.trainingJob.taskId,
                 )
-                failure_message = "Training job failed"
+                failure_message = (
+                    "Training job cancelled"
+                    if task_status
+                    == self.config.get_status_types().CANCELLED.value
+                    else "Training job failed"
+                )
                 if error_details:
                     failure_message += f"\n{error_details}"
                 self._update_training_progress(
@@ -224,10 +249,13 @@ class TrainPostprocessor(BaseTrainProcessor):
             else:
                 self.model_data.status = task_status
                 self.model_data.trainingJob.status = task_status
+                have_workflow_progress = self._append_workflow_progress()
                 train_start_time, logs = self._get_training_logs()
+                have_metrics = False
                 if logs:
                     self.model_data.trainingJob.logs = logs
-                    self._calculate_upsert_training_metrics()
+                    have_metrics = self._calculate_upsert_training_metrics()
+                if have_metrics:
                     self.model_data.trainingJob.trainStartTime = (
                         train_start_time
                     )
@@ -255,6 +283,16 @@ class TrainPostprocessor(BaseTrainProcessor):
                     self._update_training_progress(
                         message, step=self.model_data.currentStep
                     )
+                elif not have_workflow_progress:
+                    message = (
+                        "Training in progress; telemetry is unavailable"
+                        if self._telemetry_unavailable
+                        else "Training in progress; metrics are not yet available"
+                    )
+                    if message not in (self.model_data.statusMessage or ""):
+                        self._update_training_progress(
+                            message, step=self.model_data.currentStep or 0
+                        )
 
         return self.model_data
 
@@ -444,33 +482,72 @@ class TrainPostprocessor(BaseTrainProcessor):
         }
         return experiment_input_files
 
-    def _get_training_logs(self):
-        # file_name = self.batch_cluster.get_file_by_match_from_task(job_id, task_id,'events.out.tfevents')
-        # if file_name is None:
-        #     return None,None
-        # output = self.batch_cluster.get_file_from_task(job_id, task_id,file_name)
-        content = self.runner.get_filecontent_from_task(
+    def _read_training_output(
+        self, filename: str, as_chunks: bool = False
+    ) -> Optional[Union[str, Iterable[bytes]]]:
+        content, unavailable = read_training_output(
+            self.runner,
             job_id=self.model_data.trainingJob.jobId,
             task_id=self.model_data.trainingJob.taskId,
-            filename="events.out.tfevents",
-            as_chunk=True,
+            filename=filename,
+            as_chunks=as_chunks,
+            logger=self.logger,
+        )
+        if unavailable:
+            self._telemetry_unavailable = True
+        return content
+
+    def _get_training_logs(self) -> tuple[Optional[str], Optional[str]]:
+        content = self._read_training_output(
+            "events.out.tfevents", as_chunks=True
         )
         if content is None:
             return None, None
-        # Read the output content and save it to a local file
-        output_path = f"{self.temp_dir}/log.tfevents"
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        with open(output_path, "wb") as f:
-            for chunk in content:
-                f.write(chunk)
-        # Parse the TensorBoard event file using tensorboard package
+        output_path = None
         try:
-            start_time, events_json = parse_tb_event_logs(output_path)
-        except Exception as e:
-            self.logger.error(f"Error parsing Tensorboard Log file: {e}")
-            events_json = None
-            start_time = None
-        return start_time, events_json
+            os.makedirs(self.temp_dir, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                dir=self.temp_dir, suffix=".tfevents", delete=False
+            ) as stream:
+                output_path = stream.name
+                for chunk in content:
+                    stream.write(chunk)
+            return parse_tb_event_logs(output_path)
+        except Exception as error:
+            self._telemetry_unavailable = True
+            self.logger.warning(
+                "Could not read training events for task %s (%s)",
+                self.model_data.trainingJob.taskId,
+                type(error).__name__,
+            )
+            return None, None
+        finally:
+            if output_path is not None:
+                try:
+                    os.unlink(output_path)
+                except OSError as error:
+                    self.logger.warning(
+                        "Could not remove temporary training events (%s)",
+                        type(error).__name__,
+                    )
+
+    def _append_workflow_progress(self) -> bool:
+        content = self._read_training_output("workflow_progress.log")
+        if content is None:
+            return False
+        if not isinstance(content, str):
+            self.logger.warning("Workflow progress is not text")
+            return False
+        have_progress, updates = workflow_progress_updates(
+            content, self.model_data.statusMessage, logger=self.logger
+        )
+        for timestamp, message in updates:
+            self._update_training_progress(
+                message,
+                step=self.model_data.currentStep or 0,
+                timestamp=timestamp,
+            )
+        return have_progress
 
     def _get_task_error_details(self, job_id: str, task_id: str) -> str:
         """Retrieve user-safe error details from a failed batch task.
@@ -523,41 +600,38 @@ class TrainPostprocessor(BaseTrainProcessor):
 
         return "\n".join(error_parts)
 
-    def _calculate_upsert_training_metrics(self, job_completed=False):
+    def _calculate_upsert_training_metrics(
+        self, job_completed: bool = False
+    ) -> bool:
         # Calculate metrics from the TensorBoard event file and set the attrbutes in the TrainingJob
         try:
             if self.model_data.trainingJob.logs:
                 metrics = calculate_metrics(
-                    self.model_data.trainingJob.logs, self.model_data.maxEpochs
+                    self.model_data.trainingJob.logs,
+                    self.model_data.maxEpochs,
+                    job_completed=job_completed,
                 )
                 if metrics is None:
+                    if self.model_data.trainingJob.logs.strip() != "[]":
+                        self._telemetry_unavailable = True
                     return False
 
-                if job_completed:
-                    self.model_data.trainingJob.completedEpochs = (
-                        self.model_data.maxEpochs
-                    )
-                    self.model_data.trainingJob.approxMinutesToComplete = "0"
-                else:
-                    self.model_data.trainingJob.completedEpochs = (
-                        str(metrics["completed_epochs"])
-                        if metrics["completed_epochs"]
-                        else "0"
-                    )
-                    self.model_data.trainingJob.approxMinutesToComplete = (
-                        str(metrics["approx_time_to_complete"])
-                        if metrics["approx_time_to_complete"]
-                        else "n/a"
-                    )
-                    self.model_data.trainingJob.timePerEpoch = (
-                        str(metrics["time_per_epoch"])
-                        if metrics["time_per_epoch"]
-                        else "n/a"
-                    )
-
+                self.model_data.trainingJob.completedEpochs = str(
+                    metrics["completed_epochs"]
+                )
+                self.model_data.trainingJob.approxMinutesToComplete = (
+                    str(metrics["approx_time_to_complete"])
+                    if metrics["approx_time_to_complete"] is not None
+                    else "n/a"
+                )
+                self.model_data.trainingJob.timePerEpoch = (
+                    str(metrics["time_per_epoch"])
+                    if metrics["time_per_epoch"] is not None
+                    else "n/a"
+                )
                 self.model_data.trainingJob.totalElapsedTime = (
                     str(metrics["total_elapsed_time"])
-                    if metrics["total_elapsed_time"]
+                    if metrics["total_elapsed_time"] is not None
                     else "n/a"
                 )
 
@@ -575,14 +649,16 @@ class TrainPostprocessor(BaseTrainProcessor):
         self, message: str, step: int = None, timestamp: str = None
     ):
         if step is not None:
-            self.model_data.currentStep = int(step)
+            self.model_data.currentStep = max(0, int(step))
         else:
-            self.model_data.currentStep += 1
-        self.model_data.progressPct = round(
-            int(self.model_data.currentStep)
-            / int(self.model_data.totalSteps)
-            * 100,
-            2,
+            self.model_data.currentStep = (
+                self.model_data.currentStep or 0
+            ) + 1
+        total = self.model_data.totalSteps or 0
+        self.model_data.progressPct = (
+            round(min(100, self.model_data.currentStep / total * 100), 2)
+            if total > 0
+            else None
         )
         self.model_data.statusMessage = MetadataUtils.append_status_message(
             self.model_data.statusMessage, message, timestamp=timestamp
@@ -623,6 +699,7 @@ class TrainPostprocessor(BaseTrainProcessor):
             self.logger.info(
                 f"Training task {self.model_data.trainingJob.taskId} cancellation message: {message}"
             )
+            self._append_workflow_progress()
             # Cleanup the task on the runner
             self.runner.cleanup_task(
                 job_id=self.model_data.trainingJob.jobId,
