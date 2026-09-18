@@ -8,7 +8,9 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from ..config import Config
+from ..models.projects import ImageLayer
 from .metadata import MetadataProcessor
+from .prediction_results import PredictionResultsProcessor
 
 
 class ProjectDetailsProcessor:
@@ -171,6 +173,7 @@ def assemble_project_details(
         image_layer_id = image_layer["imageLayerId"]
 
         if include_models:
+            layer = ImageLayer.model_validate(stored_image_layer)
             layer_models = sorted(
                 models_by_layer.get(image_layer_id, []),
                 key=lambda model: model["creationDate"],
@@ -185,7 +188,9 @@ def assemble_project_details(
                     model["labelsUrl"] = train_label_urls_by_model.get(
                         model_id
                     )
-                assembled_models.append(model)
+                assembled_models.append(
+                    PredictionResultsProcessor.model_view(model, layer)
+                )
             image_layer["models"] = assembled_models
             image_layer["modelCount"] = len(assembled_models)
 

@@ -14,6 +14,7 @@ import PropType from "prop-types";
 import { AppContext } from "../../AppContext";
 import KeyboardShortcutHelp from "../KeyboardShortcutHelp";
 import { VISUALIZER_SHORTCUTS } from "../keyboardShortcuts";
+import PredictionLegend from "./PredictionLegend";
 
 const DAMAGE_LEGEND = [
   { label: "0 - 20% damaged", color: "#FFFFFF" },
@@ -51,7 +52,9 @@ const useStyles = makeStyles({
 });
 
 const InfoPanel = ({
-  togglePredictedDamageLayerVisibility,
+  layerOptions,
+  layerVisibility,
+  onLayerVisibilityChange,
   resetMapPosition,
   visualizerResults,
   surfaceClassName,
@@ -71,7 +74,7 @@ const InfoPanel = ({
   return (
     <>
       <div
-        className={`absolute-labels info-panel col-12 ${surfaceClassName}`}
+        className={`absolute-labels info-panel col-12 d-none d-lg-block ${surfaceClassName}`}
       >
         <Button
           appearance="transparent"
@@ -91,29 +94,17 @@ const InfoPanel = ({
               Select Imagery Layers
             </Text>
             <div
-              className="mt-3 info-panel-checkboxes-wrapper d-none d-xl-flex flex-column"
+              className="mt-3 info-panel-checkboxes-wrapper d-flex flex-column"
             >
-              <Checkbox
-                defaultChecked={true}
-                label="Predicted building damage layer"
-                onChange={(e, data) =>
-                  togglePredictedDamageLayerVisibility(
-                    "predictedDamageLayer",
-                    data.checked
-                  )
-                }
-              />
-              <Checkbox
-                className="mt-2"
-                defaultChecked={false}
-                label="Predictions layer (raw)"
-                onChange={(e, data) =>
-                  togglePredictedDamageLayerVisibility(
-                    "predictionsLayer",
-                    data.checked
-                  )
-                }
-              />
+              {layerOptions.map((option) => (
+                <Checkbox
+                  key={option.key}
+                  checked={!!layerVisibility[option.key]}
+                  disabled={option.disabled}
+                  label={option.label}
+                  onChange={(_event, data) => onLayerVisibilityChange(option.key, data.checked)}
+                />
+              ))}
             </div>
           </div>
           <div className="d-flex flex-column">
@@ -121,6 +112,9 @@ const InfoPanel = ({
               Legend
             </Text>
 
+            {layerVisibility.footprints && <PredictionLegend />}
+            {layerOptions.some((option) => option.key === "predictedDamageLayer") &&
+              layerVisibility.predictedDamageLayer && (
             <div className={styles.legend} aria-label="Damage percentage legend">
               {DAMAGE_LEGEND.map((item) => (
                 <div className={styles.legendItem} key={item.label}>
@@ -133,11 +127,11 @@ const InfoPanel = ({
                 </div>
               ))}
             </div>
+            )}
 
             <Button
               appearance="transparent"
               icon={<FluentIcon name="MapPin" />}
-              className="d-none d-xl-block"
               onClick={() => {
                 resetMapPosition(visualizerResults.studyArea);
               }}
@@ -154,7 +148,9 @@ const InfoPanel = ({
 };
 
 InfoPanel.propTypes = {
-  togglePredictedDamageLayerVisibility: PropType.func.isRequired,
+  layerOptions: PropType.array.isRequired,
+  layerVisibility: PropType.object.isRequired,
+  onLayerVisibilityChange: PropType.func.isRequired,
   resetMapPosition: PropType.func.isRequired,
   visualizerResults: PropType.object.isRequired,
   surfaceClassName: PropType.string.isRequired,

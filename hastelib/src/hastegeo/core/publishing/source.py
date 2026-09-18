@@ -153,9 +153,9 @@ class PublishingSourceResolver:
             is_complete = model.status == completed
         else:
             is_complete = model.inferenceStatus == completed
-        if not is_complete:
+        if not is_complete or model.predictedBuildingCount == 0:
             raise PublishingSourceNotEligibleError(
-                "Model must be Processed before publishing"
+                "Model must have nonempty Processed predictions before publishing"
             )
         return project, image_layer, model
 
@@ -377,7 +377,21 @@ class PublishingSourceResolver:
                 + ".gpkg"
             )
             expected[ArtifactKind.GPKG].add(
-                str(PurePosixPath(project_prefix, file_name))
+                str(
+                    PurePosixPath(
+                        project_prefix,
+                        *(
+                            (
+                                "predictions",
+                                str(model.modelId),
+                                model.predictionRevision,
+                            )
+                            if model.predictionRevision
+                            else ()
+                        ),
+                        file_name,
+                    )
+                )
             )
         elif model.currentInferenceTaskId:
             current_jobs = [
@@ -395,7 +409,7 @@ class PublishingSourceResolver:
                 len(current_jobs) == 1
                 and model.inferenceOutputPath == expected_output_path
             ):
-                file_name = (
+                file_name = model.predictionGpkgFilename or (
                     ArtifactTypes.INFERENCE_GPKG.value.substitute(
                         modelName=str(model.name)
                     )

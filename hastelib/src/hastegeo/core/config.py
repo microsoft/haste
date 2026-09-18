@@ -174,6 +174,7 @@ class ArtifactTypes(Enum):
     BUILDING_EMBEDDINGS = Template("building_embeddings_${modelName}")
     BUILDING_FEATURES_SIDECAR = Template("building_features_${modelName}")
     BUILDING_PREDICTIONS_GPKG = Template("building_predictions_${modelName}")
+    PREDICTION_ATTRS = Template("prediction_attrs_${modelId}")
 
 
 class InviteConfig(NamedTuple):

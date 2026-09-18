@@ -15,17 +15,14 @@ import {
   MenuItem,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
-import { useContext, useState } from "react";
+import { useContext } from "react";
 import React from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
-import { apiDelete, buildUrl } from "../../util/api";
+import { apiDelete } from "../../util/api";
 import { AppContext } from "../../AppContext";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
-import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
-import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
-import PublishDatasetModal from "../PublishDatasetModal";
-import { fileDownload } from "../../util/file";
+import ModelResultsMenu from "./ModelResultsMenu";
 import { limitTextLength } from "../../util/conversion";
 
 // Friendly per-row label for the embedding backbone column. The Model schema
@@ -76,14 +73,10 @@ const EmbeddingModelRow = ({
   validationLabelCount = 0,
   mobile = false,
 }) => {
-  const { appParams, setDialog, setIsLoading } = useContext(AppContext);
+  const { setDialog, setIsLoading } = useContext(AppContext);
   const navigate = useNavigate();
-  const [showValidationReport, setShowValidationReport] = useState(false);
-  const [showAssessmentReport, setShowAssessmentReport] = useState(false);
-  const [showPublishDataset, setShowPublishDataset] = useState(false);
 
   const isProcessed = model.status === "Processed";
-  const hasPredictions = !!model.gpkgUrl;
   const createdDate = model.creationDate
     ? `${model.creationDate.substring(0, 10)} ${model.creationDate.substring(
         11,
@@ -106,60 +99,12 @@ const EmbeddingModelRow = ({
     setIsLoading(false);
   }
 
-  const resultsMenu = {
-    items: [
-      {
-        key: "downloadGeopackage",
-        text: "Download Geopackage (.gpkg)",
-        icon: <FluentIcon name="download" />,
-        disabled: !hasPredictions,
-        onClick: () => {
-          // Stream the predictions GeoPackage through the same-origin API
-          // (GetModelArtifact) rather than the raw blob URL, so it works for
-          // remote labelers behind the storage firewall — matching how the
-          // labeler fetches the model's other artifacts.
-          fileDownload(
-            buildUrl(
-              `GetModelArtifact?projectId=${projectId}` +
-                `&modelId=${model.modelId}&kind=gpkg`
-            ),
-            setDialog
-          );
-        },
-      },
-      {
-        key: "validationReport",
-        text: "Validation Report",
-        icon: <FluentIcon name="ReportDocument" />,
-        // Match the standard workflow (ModelResultsButton): the validation
-        // report needs Building Validation labels to compute precision/recall,
-        // so it stays disabled until at least one exists.
-        disabled: !hasPredictions || !(validationLabelCount > 0),
-        onClick: () => setShowValidationReport(true),
-      },
-      {
-        key: "assessmentReport",
-        text: "Assessment Report",
-        icon: <FluentIcon name="AnalyticsReport" />,
-        // Predictions alone (+ cached footprints) are enough for the
-        // damage-count estimate; labels are optional, so this only needs
-        // predictions — same as the standard workflow.
-        disabled: !hasPredictions,
-        onClick: () => setShowAssessmentReport(true),
-      },
-      ...(appParams.publishingEnabled
-        ? [
-            {
-              key: "publishDataset",
-              text: "Publish dataset…",
-              icon: <FluentIcon name="Upload" />,
-              disabled: !isProcessed || !hasPredictions,
-              onClick: () => setShowPublishDataset(true),
-            },
-          ]
-        : []),
-    ],
-  };
+  const resultsMenu = (
+    <ModelResultsMenu model={model} projectId={projectId} imageLayerId={imageLayerId}
+      workflow="embedding" validationLabelCount={validationLabelCount}
+      buttonId={"embeddingResults" + index}
+      className={mobile ? "dashboard-button ms-2" : "dashboard-button"} />
+  );
 
   const moreMenuOptions = {
     items: [
@@ -186,60 +131,6 @@ const EmbeddingModelRow = ({
       },
     ],
   };
-
-  const reportModals = (
-    <>
-      {showValidationReport && (
-        <ValidationReportModal
-          projectId={projectId}
-          imageLayerId={imageLayerId}
-          modelId={model.modelId}
-          modelName={model.name}
-          onDismiss={() => setShowValidationReport(false)}
-        />
-      )}
-      {showAssessmentReport && (
-        <AssessmentReportModal
-          projectId={projectId}
-          imageLayerId={imageLayerId}
-          modelId={model.modelId}
-          modelName={model.name}
-          onDismiss={() => setShowAssessmentReport(false)}
-        />
-      )}
-      {showPublishDataset && (
-        <PublishDatasetModal
-          projectId={projectId}
-          imageLayerId={imageLayerId}
-          modelId={model.modelId}
-          onDismiss={() => setShowPublishDataset(false)}
-          onStarted={() =>
-            setDialog(
-              "Publishing started",
-              "Track progress in Published Datasets.",
-              [
-                {
-                  type: "primary",
-                  key: "view",
-                  text: "View",
-                  onClick: () => {
-                    setDialog();
-                    navigate("/published-datasets");
-                  },
-                },
-                {
-                  type: "default",
-                  key: "close",
-                  text: "Close",
-                  onClick: () => setDialog(),
-                },
-              ],
-            )
-          }
-        />
-      )}
-    </>
-  );
 
   // Stacked mobile layout: one field per row with full-width action buttons,
   // mirroring ModelRowMobile's standard-model layout so the embedding list
@@ -310,32 +201,7 @@ const EmbeddingModelRow = ({
               >
                 Interactive Label
               </Button>
-              <Menu positioning="below-end">
-                <MenuTrigger disableButtonEnhancement>
-                  <Button
-                    appearance="primary"
-                    id={"embeddingResults" + index}
-                    className="dashboard-button ms-2"
-                    disabled={!hasPredictions}
-                  >
-                    Results
-                  </Button>
-                </MenuTrigger>
-                <MenuPopover>
-                  <MenuList>
-                    {resultsMenu.items.map((mi) => (
-                      <MenuItem
-                        key={mi.key}
-                        icon={mi.icon}
-                        disabled={mi.disabled}
-                        onClick={mi.onClick}
-                      >
-                        {mi.text}
-                      </MenuItem>
-                    ))}
-                  </MenuList>
-                </MenuPopover>
-              </Menu>
+              {resultsMenu}
             </div>
           </td>
         </tr>
@@ -370,7 +236,6 @@ const EmbeddingModelRow = ({
             </Menu>
           </td>
         </tr>
-        {reportModals}
       </React.Fragment>
     );
   }
@@ -427,32 +292,7 @@ const EmbeddingModelRow = ({
         >
           Interactive Label
         </Button>
-        <Menu positioning="below-end">
-          <MenuTrigger disableButtonEnhancement>
-            <Button
-              appearance="primary"
-              id={"embeddingResults" + index}
-              className="dashboard-button"
-              disabled={!hasPredictions}
-            >
-              Results
-            </Button>
-          </MenuTrigger>
-          <MenuPopover>
-            <MenuList>
-              {resultsMenu.items.map((mi) => (
-                <MenuItem
-                  key={mi.key}
-                  icon={mi.icon}
-                  disabled={mi.disabled}
-                  onClick={mi.onClick}
-                >
-                  {mi.text}
-                </MenuItem>
-              ))}
-            </MenuList>
-          </MenuPopover>
-        </Menu>
+        {resultsMenu}
         <Menu positioning="below-end">
           <MenuTrigger disableButtonEnhancement>
             <Button
@@ -481,7 +321,6 @@ const EmbeddingModelRow = ({
           </MenuPopover>
         </Menu>
       </div>
-      {reportModals}
     </div>
   );
 };

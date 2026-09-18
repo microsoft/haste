@@ -216,6 +216,20 @@ class TestAssembleProjectDetails(unittest.TestCase):
                             "labelsUrl": (
                                 "https://example.test/model-1.geojson"
                             ),
+                            "count": None,
+                            "buildingCount": None,
+                            "predictedBuildingCount": None,
+                            "predictedAt": None,
+                            "predictionRevision": None,
+                            "gpkgUrl": None,
+                            "predictionAttrsUrl": None,
+                            "predictionsReady": False,
+                            "predictionsReadiness": {
+                                "ready": False,
+                                "reason": "missing_predictions",
+                                "detail": "Run predictions or inference.",
+                            },
+                            "rawPredictionsReady": False,
                         }
                     ],
                     "modelCount": 1,
