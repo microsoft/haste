@@ -7,6 +7,8 @@ from azure.core.exceptions import HttpResponseError, ResourceExistsError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
 
+from ..utils.errors import exception_diagnostics
+from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 
 
@@ -16,6 +18,25 @@ class LeaseUnavailableError(RuntimeError):
 
 class LeaseRenewalError(RuntimeError):
     """Raised when a held dataset lease cannot be renewed."""
+
+
+def renew_lease(lease: Any) -> None:
+    """Report genuine lease loss as contention, preserving service failures."""
+    try:
+        lease.renew()
+    except HttpResponseError as error:
+        if error.status_code in (409, 412) and getattr(
+            error, "error_code", None
+        ) in {
+            "LeaseIdMismatchWithLeaseOperation",
+            "LeaseNotPresentWithLeaseOperation",
+            "LeaseIsBrokenAndCannotBeRenewed",
+            "LeaseLost",
+        }:
+            raise LeaseUnavailableError(
+                "The write lease is no longer held"
+            ) from error
+        raise
 
 
 class BlobLeaseCoordinator:
@@ -110,7 +131,7 @@ class BlobLeaseCoordinator:
             else max(5.0, lease_duration / 3)
         )
 
-        def renew_lease() -> None:
+        def renew_in_background() -> None:
             while not renewal_stop.wait(renewal_interval):
                 try:
                     lease.renew()
@@ -119,17 +140,29 @@ class BlobLeaseCoordinator:
                     return
 
         renewal_thread = Thread(
-            target=renew_lease,
+            target=renew_in_background,
             name=f"publishing-lease-{dataset_id}",
             daemon=True,
         )
         renewal_thread.start()
+        operation_failed = False
         try:
             yield lease
+        except BaseException:
+            operation_failed = True
+            raise
         finally:
             renewal_stop.set()
             renewal_thread.join(timeout=5)
-            lease.release()
+            try:
+                lease.release()
+            except Exception as error:
+                Logger.get_logger(__name__).warning(
+                    "Publishing lease release failed: %s",
+                    exception_diagnostics(error),
+                )
+                if not operation_failed and not renewal_errors:
+                    raise
         if renewal_errors:
             raise LeaseRenewalError(
                 f"Publishing lease renewal failed for {dataset_id}"

@@ -174,7 +174,7 @@ function abortError() {
 
 export function waitForMapReady(
   map,
-  { signal, timeoutMs = MAP_READY_TIMEOUT_MS, onReady } = {}
+  { signal, timeoutMs = MAP_READY_TIMEOUT_MS, onReady, ignoreError } = {}
 ) {
   return new Promise((resolve, reject) => {
     let timeoutId;
@@ -198,6 +198,7 @@ export function waitForMapReady(
       }
     };
     const handleError = (event) => {
+      if (ignoreError?.(event)) return;
       const message =
         event?.error?.message || event?.message || "Azure Maps failed to load.";
       settle(reject, new Error(message));

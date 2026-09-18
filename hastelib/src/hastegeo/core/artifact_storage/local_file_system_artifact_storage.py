@@ -75,6 +75,8 @@ class LocalFileSystemArtifactStorage(AbstractArtifactStorage):
         data: str = None,
         src_path: str = None,
         namespace: str | list = None,
+        *,
+        overwrite: bool = True,
     ) -> str:
         """Store the artifact in the local file system.
 
@@ -111,6 +113,38 @@ class LocalFileSystemArtifactStorage(AbstractArtifactStorage):
         if dst_dir:
             os.makedirs(dst_dir, exist_ok=True)
 
+        if not overwrite:
+            if src_path and os.path.isdir(src_path):
+                raise ValueError(
+                    "Create-only writes require a single artifact"
+                )
+            temporary_path = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    dir=dst_dir, delete=False
+                ) as target:
+                    temporary_path = target.name
+                    if src_path:
+                        with open(src_path, "rb") as source:
+                            shutil.copyfileobj(source, target)
+                    elif isinstance(data, bytes):
+                        target.write(data)
+                    else:
+                        text = (
+                            data if isinstance(data, str) else json.dumps(data)
+                        )
+                        target.write(text.encode("utf-8"))
+                    target.flush()
+                    os.fsync(target.fileno())
+                # link is atomic and fails if the destination already exists.
+                # Unlike exists()+replace(), it cannot overwrite a concurrent
+                # writer, nor expose partially copied bytes as a saved artifact.
+                os.link(temporary_path, dst_path)
+                return dst_path
+            finally:
+                if temporary_path and os.path.exists(temporary_path):
+                    os.unlink(temporary_path)
+
         try:
             if src_path is not None:
                 # Handle file/directory copying
@@ -145,14 +179,18 @@ class LocalFileSystemArtifactStorage(AbstractArtifactStorage):
 
     def resolve_artifact_path(self, location: str) -> str:
         parsed = urlparse(location)
-        raw_path = unquote(parsed.path) if parsed.scheme == "file" else location
+        raw_path = (
+            unquote(parsed.path) if parsed.scheme == "file" else location
+        )
         candidate = Path(raw_path)
         if not candidate.is_absolute():
             candidate = Path(self.directory, candidate)
         resolved = candidate.resolve()
         root = Path(self.directory).resolve()
         if resolved != root and root not in resolved.parents:
-            raise ValueError("Artifact path escapes the configured storage root")
+            raise ValueError(
+                "Artifact path escapes the configured storage root"
+            )
         return str(resolved.relative_to(root))
 
     def copy_artifact(

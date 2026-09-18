@@ -7,18 +7,16 @@ import {
 } from "@fluentui/react-components";
 import { useNavigate } from "react-router-dom";
 import { AppContext } from "../../AppContext";
-import { buildUrl } from "../../util/api";
 import { FluentIcon } from "../../util/icons";
 import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
 import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
+import DownloadPredictionsDialog from "../OtherComponents/DownloadPredictionsDialog";
 import PublishDatasetModal from "../PublishDatasetModal";
-import { buildRawGpkgUrl } from "../Visualizer/predictionResults.js";
-import useRawPredictionDownload from "../Visualizer/useRawPredictionDownload";
-import { modelResultsItems } from "./ModelResultsMenuHelper.js";
+import { currentPredictionRevision, modelResultsItems } from "./ModelResultsMenuHelper.js";
 
 // Common results actions only. Row layout, ZIP downloads and job-status
-// indicators stay with their workflow. Version selection belongs here when
-// the stacked editor adds its download dialog, not in either row.
+// indicators stay with their workflow. Version discovery and report/download
+// modals belong here, not in either row.
 export default function ModelResultsMenu({
   model, projectId, imageLayerId, workflow, validationLabelCount,
   buttonId, className, artifactItems,
@@ -27,17 +25,15 @@ export default function ModelResultsMenu({
   const navigate = useNavigate();
   const [modal, setModal] = useState(null);
   const ids = { projectId, imageLayerId, modelId: model.modelId };
-  const rawDownload = useRawPredictionDownload(buildUrl(buildRawGpkgUrl(ids)));
+  const currentRevision = currentPredictionRevision(model);
   const dismiss = () => setModal(null);
   const items = modelResultsItems({
     model, workflow, validationLabelCount, artifactItems,
     publishingEnabled: appParams.publishingEnabled,
-    downloading: !!rawDownload.loading,
     onView: () => navigate(`/visualizer/${projectId}/${imageLayerId}/${model.modelId}`),
-    onDownload: async () => {
-      const outcome = await rawDownload.download();
-      if (outcome.error) setDialog("Download failed", outcome.error);
-    },
+    // The existing dialog owns fresh history/default discovery, revision
+    // pinning, download errors and cancellation—even for cached raw-only rows.
+    onDownload: () => setModal("download"),
     openModal: setModal,
   });
 
@@ -68,11 +64,17 @@ export default function ModelResultsMenu({
           </MenuList>
         </MenuPopover>
       </Menu>
+      {modal === "download" && (
+        <DownloadPredictionsDialog {...ids} modelName={model.name}
+          currentRevision={currentRevision} onDismiss={dismiss} />
+      )}
       {modal === "validation" && (
-        <ValidationReportModal {...ids} modelName={model.name} onDismiss={dismiss} />
+        <ValidationReportModal {...ids} modelName={model.name}
+          currentRevision={currentRevision} onDismiss={dismiss} />
       )}
       {modal === "assessment" && (
-        <AssessmentReportModal {...ids} modelName={model.name} onDismiss={dismiss} />
+        <AssessmentReportModal {...ids} modelName={model.name}
+          currentRevision={currentRevision} onDismiss={dismiss} />
       )}
       {modal === "publish" && (
         <PublishDatasetModal {...ids} onDismiss={dismiss}

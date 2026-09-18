@@ -127,6 +127,8 @@ def build_prediction_attrs(
         if not src.crs:
             raise ValueError("Prediction GeoPackage must declare a CRS.")
         fields = set(src.schema["properties"])
+        if "edited_class" in fields:
+            raise ValueError("Use the edited builder for saved predictions.")
         required = {
             "id",
             "overture_id",
@@ -213,3 +215,202 @@ def attrs_artifact_name(model_id: str) -> str:
     ):
         raise ValueError("model_id must be a short integer ID string.")
     return f"prediction_attrs_{model_id}.json"
+
+
+MODEL_CLASS_FIELD = "model_class"
+OVERRIDE_CLASS_FIELD = "override_class"
+MODEL_DAMAGED_FIELD = "model_damaged"
+EDIT_THRESHOLD_FIELD = "edit_threshold"
+EDIT_UNKNOWN_THRESHOLD_FIELD = "edit_unknown_threshold"
+
+
+def validate_prediction_provenance(
+    prediction_revision: str, footprint_fingerprint: str | None = None
+) -> None:
+    if (
+        not isinstance(prediction_revision, str)
+        or not prediction_revision.strip()
+    ):
+        raise ValueError("prediction_revision must be a nonempty string.")
+    if footprint_fingerprint is not None and (
+        not isinstance(footprint_fingerprint, str)
+        or not footprint_fingerprint.strip()
+    ):
+        raise ValueError("footprint_fingerprint must be a nonempty string.")
+
+
+def validate_prediction_version(version: int) -> int:
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, Integral)
+        or version < 1
+    ):
+        raise ValueError(
+            "Edited prediction version must be a positive integer."
+        )
+    return int(version)
+
+
+def build_edited_prediction_attrs(
+    predictions_path: str,
+    footprints_path: str,
+    *,
+    prediction_revision: str,
+    version: int,
+    threshold: float = 0.0,
+    unknown_threshold: float = 0.0,
+    flavor: str | None = None,
+    footprint_fingerprint: str | None = None,
+) -> dict[str, Any]:
+    """Read the saved decisions, baseline and assignments from the edited GPKG."""
+    from .predictions import (
+        PredictionRow,
+        raw_prediction_class,
+        read_predictions,
+        threshold_prediction_class,
+        validate_edit_thresholds,
+        validate_prediction_class,
+    )
+
+    validate_prediction_provenance(prediction_revision, footprint_fingerprint)
+    version = validate_prediction_version(version)
+    predictions = read_predictions(
+        predictions_path, footprints_path, flavor=flavor
+    )
+    if not predictions.is_edited:
+        raise ValueError("Edited attributes require an edited GeoPackage.")
+    threshold, unknown_threshold = validate_edit_thresholds(
+        predictions.flavor, threshold, unknown_threshold
+    )
+    model_classes, overrides = [], []
+    with fiona.open(predictions_path, layer=predictions.layer_name) as src:
+        required = {
+            MODEL_CLASS_FIELD,
+            OVERRIDE_CLASS_FIELD,
+            MODEL_DAMAGED_FIELD,
+            EDIT_THRESHOLD_FIELD,
+            EDIT_UNKNOWN_THRESHOLD_FIELD,
+        }
+        if not required.issubset(src.schema["properties"]):
+            raise ValueError(
+                "Edited GeoPackage is missing baseline provenance."
+            )
+        for index, feature in enumerate(src):
+            if index >= len(predictions.rows):
+                raise FootprintPredictionMismatchError(
+                    "Edited row count changed."
+                )
+            row, props = predictions.rows[index], feature["properties"]
+            if (
+                props["id"] != row.row_index
+                or source_id(props["overture_id"]) != row.overture_id
+            ):
+                raise FootprintPredictionMismatchError(
+                    "Edited row identity changed."
+                )
+            model_row = PredictionRow(
+                row_index=row.row_index,
+                overture_id=row.overture_id,
+                damage_fraction=row.damage_fraction,
+                damaged=binary_damage(props[MODEL_DAMAGED_FIELD]),
+                unknown_fraction=row.unknown_fraction,
+            )
+            model_class = validate_prediction_class(props[MODEL_CLASS_FIELD])
+            if model_class != raw_prediction_class(model_row):
+                raise ValueError(
+                    "Stored model class disagrees with its baseline."
+                )
+            override = props[OVERRIDE_CLASS_FIELD]
+            if override is not None:
+                override = validate_prediction_class(override)
+            if (
+                props[EDIT_THRESHOLD_FIELD] != threshold
+                or props[EDIT_UNKNOWN_THRESHOLD_FIELD] != unknown_threshold
+            ):
+                raise ValueError(
+                    "Stored edit thresholds disagree with the save."
+                )
+            expected = (
+                override
+                if override is not None
+                else threshold_prediction_class(
+                    model_row,
+                    flavor=predictions.flavor,
+                    threshold=threshold,
+                    unknown_threshold=unknown_threshold,
+                )
+            )
+            if row.edited_class != expected or row.damaged != int(
+                expected == "Damaged"
+            ):
+                raise ValueError(
+                    "Stored effective class disagrees with its edit."
+                )
+            model_classes.append(model_class)
+            overrides.append(override)
+    rows = predictions.rows
+    if len(model_classes) != len(rows):
+        raise FootprintPredictionMismatchError("Edited row count changed.")
+    payload = {
+        "schemaVersion": SCHEMA_VERSION,
+        "predictionRevision": prediction_revision,
+        "predictionVersion": version,
+        "isEdited": True,
+        "flavor": predictions.flavor,
+        "threshold": threshold,
+        "unknownThreshold": unknown_threshold,
+        "n": len(rows),
+        "ids": [row.row_index for row in rows],
+        "overtureIds": [row.overture_id for row in rows],
+        "damage": [row.damage_fraction for row in rows],
+        "unknown": [row.unknown_fraction for row in rows],
+        "damaged": [row.damaged for row in rows],
+        "classes": [row.edited_class for row in rows],
+        "modelClasses": model_classes,
+        "overrideClasses": overrides,
+    }
+    if footprint_fingerprint is not None:
+        payload["footprintFingerprint"] = footprint_fingerprint
+    return payload
+
+
+def write_edited_prediction_attrs(
+    predictions_path: str,
+    footprints_path: str,
+    attrs_path: str,
+    *,
+    prediction_revision: str,
+    version: int,
+    threshold: float = 0.0,
+    unknown_threshold: float = 0.0,
+    flavor: str | None = None,
+    footprint_fingerprint: str | None = None,
+) -> dict[str, Any]:
+    """Create a new version sidecar; never overwrite inputs or an existing file."""
+    if os.path.realpath(attrs_path) in {
+        os.path.realpath(predictions_path),
+        os.path.realpath(footprints_path),
+    }:
+        raise ValueError("The sidecar must not overwrite an input GeoPackage.")
+    if os.path.lexists(attrs_path):
+        raise FileExistsError(attrs_path)
+    payload = build_edited_prediction_attrs(
+        predictions_path,
+        footprints_path,
+        prediction_revision=prediction_revision,
+        version=version,
+        threshold=threshold,
+        unknown_threshold=unknown_threshold,
+        flavor=flavor,
+        footprint_fingerprint=footprint_fingerprint,
+    )
+    created = False
+    try:
+        with open(attrs_path, "x", encoding="utf-8") as handle:
+            created = True
+            json.dump(payload, handle, separators=(",", ":"), allow_nan=False)
+    except Exception:
+        if created:
+            os.unlink(attrs_path)
+        raise
+    return payload
