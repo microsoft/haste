@@ -5,12 +5,10 @@
 //
 // Footprints are streamed from a PMTiles archive (built by the embedding
 // workflow) via Azure Maps' addProtocol hook, so only the tiles in the
-// current viewport are fetched — the labeler is no longer bottlenecked on
-// up-front loading of every building. Per-building coloring is driven by
-// feature-state on the internal Mapbox-GL map; per-building f_* feature
-// vectors come from the rendered features (tippecanoe writes them into the
-// tiles) so the in-browser model trains and predicts on whatever the user
-// is currently looking at.
+// current viewport are fetched, following an initial header/root range read.
+// Per-building coloring is driven by feature-state on the internal renderer;
+// feature vectors come from a separate HFTR sidecar, downloaded in full in
+// parallel with the archive header for local training and prediction.
 //
 // A separate "Predict all buildings" button downloads the full embeddings
 // GeoJSON once and batches the trained model across every footprint with
@@ -36,9 +34,8 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
-import { PMTiles } from "pmtiles";
 import { apiGet, buildUrl } from "../../util/api";
-import { footprintArchiveUrl, getPmtilesProtocol, InMemoryPMTilesSource } from "../../util/pmtiles.js";
+import { footprintArchiveUrl, loadFootprintArchive } from "../../util/pmtiles.js";
 import {
   getAzureMapsAuthOptions,
   isAzureMapsPlaceholder,
@@ -93,19 +90,6 @@ const writeLabelerData = createLabelerWriter(buildUrl);
 // Tippecanoe writes the buildings layer with `-l buildings`. The
 // VectorTileSource references this layer name to draw the polygons.
 const PMTILES_SOURCE_LAYER = "buildings";
-
-// Download an entire artifact through the same-origin API proxy as raw
-// bytes. Used for the PMTiles archive so it can be read fully in memory
-// (see InMemoryPMTilesSource) rather than via unsupported range requests.
-async function fetchArtifactBuffer(url, onProgress, signal) {
-  const resp = await fetch(url, { signal });
-  if (!resp.ok) {
-    throw new Error(
-      `Failed to fetch PMTiles archive (HTTP ${resp.status}).`
-    );
-  }
-  return readResponseBuffer(resp, onProgress, { signal });
-}
 
 // Class colors (match index.html). Index = class number.
 const CLASS_COLORS = ["#107C10", "#C50F1F", "#5B5FC7"]; // intact, damaged, cloudy
@@ -439,7 +423,7 @@ async function fetchFeaturesSidecar(url, onProgress, signal) {
       `Failed to fetch features sidecar (HTTP ${resp.status}).`
     );
   }
-  const buf = await readResponseBuffer(resp, onProgress);
+  const buf = await readResponseBuffer(resp, onProgress, { signal });
   if (buf.byteLength < 16) {
     throw new Error("Features sidecar is too short — header missing.");
   }
@@ -785,32 +769,18 @@ const InteractiveLabeler = () => {
         `&kind=sidecar`
     );
 
-    // Download the whole archive once and serve pmtiles.js from memory. The
-    // SWA /api proxy in front of the function app does not support HTTP range
-    // requests (a ranged GET returns a full 200), so a network-backed
-    // FetchSource fails with a byte-serving error. Reading the archive fully
-    // and handing pmtiles an in-memory source makes every subsequent range
-    // read hit the local buffer instead of the network. `getKey()` returns
-    // browserPmtilesUrl so it matches the `pmtiles://<url>` source below.
+    // Read only the archive header/root directory now. Viewport tiles use
+    // HTTP ranges through the same layer-keyed source as the Visualizer.
+    // The full feature sidecar still loads in parallel; either failure
+    // cancels the other required transfer.
     setInitialLoad({ step: 2, loaded: 0, total: null });
     let pmtilesDone = false;
     const { pmtilesHeader, sidecar } = await loadInteractiveArtifacts({
       signal,
       loadPmtiles: async (artifactSignal) => {
         try {
-          let pm = getPmtilesProtocol().get(browserPmtilesUrl);
-          if (!pm) {
-            const pmtilesBuffer = await fetchArtifactBuffer(
-              browserPmtilesUrl,
-              (loaded, total) => setInitialLoad({ step: 2, loaded, total }),
-              artifactSignal
-            );
-            pm = new PMTiles(
-              new InMemoryPMTilesSource(browserPmtilesUrl, pmtilesBuffer)
-            );
-          }
-          getPmtilesProtocol().add(pm);
-          return await pm.getHeader();
+          const { header } = await loadFootprintArchive(browserPmtilesUrl, artifactSignal);
+          return header;
         } catch (e) {
           // Without the footprint tiles there are no buildings to label, so an
           // empty map is the one thing this must not silently become. The
@@ -935,7 +905,7 @@ const InteractiveLabeler = () => {
       // Cache the PMTiles archive URL so the Advanced → Swipe pre map can draw
       // the same building footprints from the same source (see the swipe
       // effect below). Must match this source's `pmtiles://<url>` exactly so
-      // both maps route through the same in-memory pmtiles handle.
+      // both maps route through the same HTTP range source and tile cache.
       swipePmtilesUrlRef.current = browserPmtilesUrl;
       const source = new window.atlas.source.VectorTileSource("buildings", {
         type: "vector",

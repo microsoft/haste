@@ -235,6 +235,39 @@ class TestPredictionResults(ResultsTestCase):
         model.predictedBuildingCount = 0
         self.assertFalse(raw_predictions_readiness(model)["ready"])
 
+    def test_model_view_preserves_details_without_mutating_or_loading(
+        self,
+    ) -> None:
+        record = {
+            **self.record,
+            "artifacts": {"trainingZipUrl": "training.zip"},
+            "labelsUrl": "labels.geojson",
+        }
+        before = deepcopy(record)
+        result = self.processor.model_view(record, self.layer)
+        self.assertEqual(record, before)
+        self.assertTrue(result["predictionsReady"])
+        self.assertTrue(result["rawPredictionsReady"])
+        self.assertEqual(result["buildingCount"], 2)
+        self.assertEqual(result["artifacts"], record["artifacts"])
+        self.assertEqual(result["labelsUrl"], record["labelsUrl"])
+        self.assertTrue(result["gpkgUrl"].startswith("/api/GetModelArtifact?"))
+        self.metadata.load.assert_not_called()
+        self.metadata.save.assert_not_called()
+
+    def test_model_view_rejects_foreign_project_or_layer(self) -> None:
+        for fields in (
+            {"projectId": OTHER_LAYER},
+            {"imageLayerId": OTHER_LAYER},
+        ):
+            with self.subTest(fields=fields):
+                with self.assertRaises(
+                    prediction_results.PredictionRequestError
+                ):
+                    self.processor.model_view(
+                        {**self.record, **fields}, self.layer
+                    )
+
     def test_artifacts_reject_wrong_layer_and_stale_revision(self) -> None:
         for kind in (
             "gpkg",

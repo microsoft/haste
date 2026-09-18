@@ -1,29 +1,11 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-// Components
-import {
-  Button,
-  Menu,
-  MenuTrigger,
-  MenuPopover,
-  MenuList,
-  MenuItem,
-  Tooltip,
-} from "@fluentui/react-components";
-import { FluentIcon } from "../../util/icons";
-import React, { useContext, useState } from "react";
+import { useContext } from "react";
 import PropTypes from "prop-types";
-import { useNavigate } from "react-router-dom";
 import { fileDownload } from "../../util/file";
 import { AppContext } from "../../AppContext";
 import ModelResultsStatusIndicator from "../OtherComponents/ModelResultsStatusIndicator";
-import ValidationReportModal from "../BuildingValidation/ValidationReportModal";
-import AssessmentReportModal from "../BuildingValidation/AssessmentReportModal";
-import PublishDatasetModal from "../PublishDatasetModal";
-import { buildUrl } from "../../util/api";
-import { buildRawGpkgUrl, canViewResults, readinessDetail } from "../Visualizer/predictionResults.js";
-import useRawPredictionDownload from "../Visualizer/useRawPredictionDownload";
-
+import ModelResultsMenu from "./ModelResultsMenu";
 
 function formatFileSize(bytes) {
   if (bytes == null) return "";
@@ -34,16 +16,8 @@ function formatFileSize(bytes) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-
 const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationLabelCount }) => {
-  const { appParams, setDialog } = useContext(AppContext);
-  const navigate = useNavigate();
-  const [showValidationReport, setShowValidationReport] = useState(false);
-  const [showAssessmentReport, setShowAssessmentReport] = useState(false);
-  const [showPublishDataset, setShowPublishDataset] = useState(false);
-  const rawDownload = useRawPredictionDownload(buildUrl(buildRawGpkgUrl({
-    projectId, imageLayerId, modelId: model.modelId,
-  })));
+  const { setDialog } = useContext(AppContext);
 
   function handleDownload(url) {
     try {
@@ -63,188 +37,42 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
     }
   }
 
-  const trainingZipLabel = model.artifacts?.trainingZipSize
-    ? `Download Training Artifacts (${formatFileSize(model.artifacts.trainingZipSize)})`
-    : "Download Training Artifacts";
+  const artifactItems = [
+    {
+      key: "downloadTrainingArtifacts",
+      text: model.artifacts?.trainingZipSize
+        ? `Download Training Artifacts (${formatFileSize(model.artifacts.trainingZipSize)})`
+        : "Download Training Artifacts",
+      icon: "download",
+      onClick: () => handleDownload(model.artifacts.trainingZipUrl),
+      disabled: !model.artifacts?.trainingZipUrl,
+    },
+    {
+      key: "downloadInferenceArtifacts",
+      text: model.artifacts?.inferenceZipSize
+        ? `Download Inference Artifacts (${formatFileSize(model.artifacts.inferenceZipSize)})`
+        : "Download Inference Artifacts",
+      icon: "download",
+      onClick: () => handleDownload(model.artifacts.inferenceZipUrl),
+      disabled: !model.artifacts?.inferenceZipUrl,
+    },
+  ];
 
-  const inferenceZipLabel = model.artifacts?.inferenceZipSize
-    ? `Download Inference Artifacts (${formatFileSize(model.artifacts.inferenceZipSize)})`
-    : "Download Inference Artifacts";
-
-  const resultsMenuOptions = (model) => ({
-    items: [
-      {
-        disabled: !canViewResults(model),
-        tooltip: readinessDetail(model),
-        key: "viewResults",
-        text: "View",
-        icon: <FluentIcon name="Forward" />,
-        onClick: () => {
-          navigate(
-            "/visualizer/" +
-            projectId +
-            "/" +
-            imageLayerId +
-            "/" +
-            model.modelId
-          );
-        },
-      },
-      {
-        key: "downloadGeopackage",
-        text: "Download Geopackage (.gpkg)",
-        icon: <FluentIcon name="download" />,
-        onClick: async () => {
-          const outcome = await rawDownload.download();
-          if (outcome.error) setDialog("Download failed", outcome.error);
-        },
-        disabled: !model.gpkgUrl || !!rawDownload.loading,
-      },
-      {
-        key: "downloadTrainingArtifacts",
-        text: trainingZipLabel,
-        icon: <FluentIcon name="download" />,
-        onClick: () => {
-          handleDownload(model.artifacts.trainingZipUrl);
-        },
-        disabled: !(model.artifacts?.trainingZipUrl),
-      },
-      {
-        key: "downloadInferenceArtifacts",
-        text: inferenceZipLabel,
-        icon: <FluentIcon name="download" />,
-        onClick: () => {
-          handleDownload(model.artifacts.inferenceZipUrl);
-        },
-        disabled: !(model.artifacts?.inferenceZipUrl),
-      },
-      {
-        key: "validationReport",
-        text: "Validation Report",
-        icon: <FluentIcon name="ReportDocument" />,
-        disabled: model.inferenceStatus !== "Processed" || !(validationLabelCount > 0),
-        onClick: () => setShowValidationReport(true),
-      },
-      {
-        key: "assessmentReport",
-        text: "Assessment Report",
-        icon: <FluentIcon name="AnalyticsReport" />,
-        // Predictions alone (+ cached footprints) are enough for the
-        // damage-count estimate; labels are optional and just unlock the
-        // precision/recall section inside the modal.
-        disabled: model.inferenceStatus !== "Processed",
-        onClick: () => setShowAssessmentReport(true),
-      },
-      ...(appParams.publishingEnabled
-        ? [
-            {
-              key: "publishDataset",
-              text: "Publish dataset…",
-              icon: <FluentIcon name="Upload" />,
-              disabled:
-                model.inferenceStatus !== "Processed" || !model.gpkgUrl,
-              onClick: () => setShowPublishDataset(true),
-            },
-          ]
-        : []),
-    ],
-  });
-
-
-    return (
-      <React.Fragment key={"models_" + projectId + "_" + imageLayerId}>
-        <div className="d-flex align-items-center pt-1 pb-1">
-          <Menu positioning="below-end">
-            <MenuTrigger disableButtonEnhancement>
-              <Button
-                appearance="primary"
-                id={"singleModelResults" + index}
-                className="dashboard-button dashboard-button-light"
-                disabled={resultsMenuOptions(model).items.every((item) => item.disabled)}
-              >
-                Results
-              </Button>
-            </MenuTrigger>
-            <MenuPopover>
-              <MenuList>
-                {resultsMenuOptions(model).items.map((mi) => {
-                  const item = (
-                  <MenuItem
-                    key={mi.key}
-                    icon={mi.icon}
-                    disabled={mi.disabled}
-                    onClick={mi.onClick}
-                  >
-                    {mi.text}
-                  </MenuItem>);
-                  return mi.disabled && mi.tooltip ? (
-                    <Tooltip key={mi.key} content={mi.tooltip} relationship="description" withArrow>
-                      {item}
-                    </Tooltip>
-                  ) : item;
-                })}
-              </MenuList>
-            </MenuPopover>
-          </Menu>
-          {model.artifacts && model.artifacts.zipStatusMessage && (
-            <ModelResultsStatusIndicator
-              statusMessage={model.artifacts.zipStatusMessage}
-              contextLabel={`Model: ${model.name} \u00b7 Results`}
-            />
-          )}
-        </div>
-        {showValidationReport && (
-          <ValidationReportModal
-            projectId={projectId}
-            imageLayerId={imageLayerId}
-            modelId={model.modelId}
-            modelName={model.name}
-            onDismiss={() => setShowValidationReport(false)}
-          />
-        )}
-        {showAssessmentReport && (
-          <AssessmentReportModal
-            projectId={projectId}
-            imageLayerId={imageLayerId}
-            modelId={model.modelId}
-            modelName={model.name}
-            onDismiss={() => setShowAssessmentReport(false)}
-          />
-        )}
-        {showPublishDataset && (
-          <PublishDatasetModal
-            projectId={projectId}
-            imageLayerId={imageLayerId}
-            modelId={model.modelId}
-            onDismiss={() => setShowPublishDataset(false)}
-            onStarted={() =>
-              setDialog(
-                "Publishing started",
-                "Track progress in Published Datasets.",
-                [
-                  {
-                    type: "primary",
-                    key: "view",
-                    text: "View",
-                    onClick: () => {
-                      setDialog();
-                      navigate("/published-datasets");
-                    },
-                  },
-                  {
-                    type: "default",
-                    key: "close",
-                    text: "Close",
-                    onClick: () => setDialog(),
-                  },
-                ],
-              )
-            }
-          />
-        )}
-      </React.Fragment>
-    );
-  };
+  return (
+    <div className="d-flex align-items-center pt-1 pb-1">
+      <ModelResultsMenu model={model} projectId={projectId} imageLayerId={imageLayerId}
+        workflow="inference" validationLabelCount={validationLabelCount}
+        buttonId={"singleModelResults" + index}
+        className="dashboard-button dashboard-button-light" artifactItems={artifactItems} />
+      {model.artifacts?.zipStatusMessage && (
+        <ModelResultsStatusIndicator
+          statusMessage={model.artifacts.zipStatusMessage}
+          contextLabel={`Model: ${model.name} \u00b7 Results`}
+        />
+      )}
+    </div>
+  );
+};
 
 ModelResultsButton.propTypes = {
   model: PropTypes.object.isRequired,
@@ -254,4 +82,4 @@ ModelResultsButton.propTypes = {
   validationLabelCount: PropTypes.number,
 };
 
-  export default ModelResultsButton;
+export default ModelResultsButton;

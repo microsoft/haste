@@ -268,17 +268,24 @@ class PredictionResultsProcessor:
     ) -> list[dict[str, Any]]:
         layer = self.layer(project_id, layer_id)
         rows = self.metadata(project_id).load_all_from_partition()
-        for row in rows:
-            if row.get("imageLayerId") == layer_id:
-                state = self.response(Model.model_validate(row), layer)
-                row.update(
-                    {
-                        k: v
-                        for k, v in state.items()
-                        if k not in ("gpkgUrl", "predictionAttrsUrl")
-                    }
-                )
-        return [row for row in rows if row.get("imageLayerId") == layer_id]
+        return [
+            self.model_view(row, layer)
+            for row in rows
+            if row.get("imageLayerId") == layer_id
+        ]
+
+    @classmethod
+    def model_view(
+        cls, raw: dict[str, Any], layer: ImageLayer
+    ) -> dict[str, Any]:
+        """Project result readiness without losing artifact/label row details."""
+        model = Model.model_validate(raw)
+        if (
+            model.projectId != layer.projectId
+            or model.imageLayerId != layer.imageLayerId
+        ):
+            raise PredictionRequestError("Model does not belong to this layer")
+        return {**raw, **cls.response(model, layer)}
 
     def resolve_artifact(
         self, request: ModelArtifactRequest

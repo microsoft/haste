@@ -269,7 +269,11 @@ test("read-only modules do not import editor or preparation machinery", async ()
   assert.doesNotMatch(source, /visualizerEditButton/);
   for (const file of ["ModelResultsButton.jsx", "EmbeddingModelRow.jsx"]) {
     const row = await readFile(new URL(`../ProjectManagement/${file}`, import.meta.url), "utf8");
-    assert.match(row, /buildRawGpkgUrl/);
+    assert.match(row, /ModelResultsMenu/);
     assert.doesNotMatch(row, /handleDownload\(model\.gpkgUrl\)/);
   }
+  const menu = await readFile(new URL("../ProjectManagement/ModelResultsMenu.jsx", import.meta.url), "utf8");
+  assert.match(menu, /buildRawGpkgUrl/);
+  assert.match(menu, /useRawPredictionDownload/);
+  assert.doesNotMatch(menu, /fileDownload|model\.gpkgUrl/);
 });
