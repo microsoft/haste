@@ -3,7 +3,8 @@
 **Status:** implemented
 **Date:** 2026-09-06
 **Priority:** P0
-**Work items:** [#183](https://github.com/microsoft/haste/pull/183), [#136](https://github.com/microsoft/haste/pull/136)
+**Work item:** [#200](https://github.com/microsoft/haste/pull/200)
+**Dependency:** Layer-owned footprint tiles, merged in [#183](https://github.com/microsoft/haste/pull/183)
 
 Standard inference and interactive labeling share the existing View Results
 page. Both produce the prediction-attribute sidecar when they create predictions,

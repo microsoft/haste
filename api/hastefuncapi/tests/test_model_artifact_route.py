@@ -39,9 +39,7 @@ class TestGetModelArtifact(unittest.IsolatedAsyncioTestCase):
         processor.resolve_artifact.return_value = (
             "https://account.test/model.gpkg",
             False,
-        )
-        processor.download_filename.return_value = (
-            "building_predictions_42.gpkg"
+            "building_predictions_42.gpkg",
         )
         blob = BlobRange(
             data=b"gpkg",
