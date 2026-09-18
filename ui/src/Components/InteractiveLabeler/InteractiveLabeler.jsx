@@ -60,7 +60,11 @@ import { getGpu } from "./gpuLogreg.js";
 import InteractiveLabelerLoader from "./InteractiveLabelerLoader.jsx";
 import { loadInteractiveArtifacts } from "./loadInteractiveArtifacts.js";
 import { loadInteractiveMetadata } from "./loadInteractiveMetadata.js";
-import { readResponseBuffer, waitForMapReady } from "./interactiveLabelerLoading.js";
+import {
+  readResponseBuffer,
+  throwFootprintTilesLoadError,
+  waitForMapReady,
+} from "./interactiveLabelerLoading.js";
 import KeyboardShortcutHelp from "../KeyboardShortcutHelp.jsx";
 import {
   INTERACTIVE_LABELER_SHORTCUTS,
@@ -770,18 +774,13 @@ const InteractiveLabeler = () => {
     // the layer has no pre-event imagery).
     layerImageryRef.current = metadata.layerData?.imagery || null;
 
-    // Resolve the model's PMTiles URL. Models are returned by
-    // GetLayerModelsDetails; pick ours by modelId. The pmtilesUrl is
-    // populated by the embedding workflow's postprocessor.
-    const pmtilesUrl = metadata.model?.pmtilesUrl || "";
+    // The features sidecar is per model, so it still comes from
+    // GetLayerModelsDetails. The footprint tiles do not: geometry belongs
+    // to the image layer and one archive is shared by every model on it,
+    // so those are requested by kind below.
     const sidecarUrl = metadata.model?.featuresSidecarUrl || "";
     setInitialLoad({ step: 1, loaded: null, total: null });
     signal.throwIfAborted();
-    if (!pmtilesUrl) {
-      throw new Error(
-        "No PMTiles available for this model — the embedding workflow has not produced building tiles."
-      );
-    }
     if (!sidecarUrl) {
       throw new Error(
         "No features sidecar available for this model — re-embed the layer to produce one."
@@ -794,7 +793,7 @@ const InteractiveLabeler = () => {
     // remote/mobile labelers hit a 403.
     const browserPmtilesUrl = buildUrl(
       `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
-        `&kind=pmtiles`
+        `&imageLayerId=${imageLayerId}&kind=footprint_pmtiles`
     );
     const browserSidecarUrl = buildUrl(
       `GetModelArtifact?projectId=${projectId}&modelId=${modelId}` +
@@ -824,6 +823,13 @@ const InteractiveLabeler = () => {
             );
             _pmtilesProtocol.add(pm);
             return pm.getHeader();
+          })
+          .catch((e) => {
+            // Without the footprint tiles there are no buildings to label, so an
+            // empty map is the one thing this must not silently become. The
+            // archive belongs to the image layer and is built once its footprints
+            // are cached, so the usual cause is that job not having finished yet.
+            throwFootprintTilesLoadError(e);
           })
           .finally(() => {
             pmtilesDone = true;

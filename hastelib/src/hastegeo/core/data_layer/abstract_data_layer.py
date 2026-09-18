@@ -56,6 +56,12 @@ class AbstractDataLayer(ABC):
         """
         pass
 
+    def merge_json(
+        self, identifier: str, data_type: str, fields: dict
+    ) -> dict:
+        """Atomically merge top-level metadata fields."""
+        raise NotImplementedError("Atomic JSON merge is not supported")
+
     @abstractmethod
     def save_chunk(
         self,
