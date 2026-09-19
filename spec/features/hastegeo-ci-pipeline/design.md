@@ -73,25 +73,6 @@ Stable push:
 - If the tag exists but the asset is missing, the same version is rebuilt.
 - A tag at a different SHA or an existing mismatched asset is a hard failure.
 
-### Version resolution before packaging
-
-Hatchling's supported `code` version source resolves `HASTE_SET_VERSION`
-before metadata is evaluated. When unset, it reads the existing version file
-through Hatchling's regex source. Explicit values are normalized as PEP 440
-versions; blank or invalid overrides fail instead of using the local marker.
-The build backend is pinned to the tested Hatchling release.
-
-The build hook only writes the already-resolved version into the wheel's
-bundled `__about__.py` and emits artifact paths. It never mutates Hatchling's
-private version caches. Editable builds do not rewrite the version file;
-without an override, local and editable builds keep `0.0.0+local`.
-
-This avoids the mismatch exposed by Hatchling 1.32.1's separate original-version
-metadata: a late override could rename a wheel while its `METADATA` still
-reported the local version. Real build regressions cover RC, stable,
-normalized, local, and editable artifacts, including metadata prepared before
-the wheel build. The existing credential-free wheel validator remains required.
-
 ## Trust Boundaries
 
 ### Build job

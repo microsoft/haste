@@ -28,11 +28,6 @@ Then the build job has read-only contents permission and no persisted Git creden
 And it uploads a validated RC wheel only as an Actions artifact
 ```
 
-The requested version must agree in the wheel filename, `.dist-info` directory,
-`METADATA`, and bundled `hastegeo/__about__.py`, including when metadata was
-prepared before the build. Invalid explicit versions fail; local/editable
-builds without an override retain the local marker.
-
 ```gherkin
 Given the PR is from a fork
 When the workflow runs

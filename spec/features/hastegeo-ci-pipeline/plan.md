@@ -17,8 +17,6 @@
 | 5 | Pin action/tool versions | `backend-dev` | complete |
 | 6 | Add tests and validate Docker/package/workflows | `backend-validation` | targeted tests complete; full suite blocked by pre-existing Azurite Queue auth issue |
 | 6 | Update PR and run pre-landing review | `backend-validation` | pending |
-| Maintenance | Resolve explicit versions through a supported Hatchling version source before packaging | `backend-dev` | complete |
-| Maintenance | Pin the backend and exercise real wheel/editable metadata consistency | `backend-validation` | complete |
 
 ## Dependencies
 
@@ -49,15 +47,3 @@ by `HASTEGEO_RC_ENVIRONMENT`. Set
 Known gap: minor and major stable releases have no automated path. The publisher
 accepts only `push` and same-repository `pull_request` upstream events, so a
 `workflow_dispatch` build carrying `bump` or `set_version` is never published.
-
-## Hatchling compatibility repair: 2026-09-18
-
-Replace the late private-cache override with early `code` version resolution.
-Hatchling 1.32.3 is pinned; local/editable builds and source-distribution
-rebuilds remain supported without changing publication or deployment policy.
-
-All 96 build/release regressions pass, including actual RC/stable wheels,
-canonicalization, prepared metadata, invalid overrides, local/editable builds,
-and a wheel rebuilt from an sdist. A separate `hatch build -t wheel` also passed
-the existing credential-free wheel validator. Local validation used disposable
-source copies and did not publish artifacts or modify the development version.
