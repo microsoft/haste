@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
-"""Hatch build hook for stamping an explicitly resolved hastegeo version.
+"""Hatch version source and build hook for explicit hastegeo versions.
 
 Version selection and GitHub publication deliberately live outside this hook.
 Pull-request source executes the hook while building a wheel, so it must never
@@ -12,6 +12,19 @@ from pathlib import Path
 from typing import Any
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+from hatchling.version.source.regex import RegexSource
+from packaging.version import Version
+
+
+def get_build_version() -> str:
+    """Resolve the version before Hatchling caches package metadata."""
+    version = os.getenv("HASTE_SET_VERSION")
+    if version is None:
+        version = RegexSource(
+            str(Path(__file__).parent),
+            {"path": "src/hastegeo/__about__.py"},
+        ).get_version_data()["version"]
+    return str(Version(version.strip()))
 
 
 class CustomBuildHook(BuildHookInterface):
@@ -60,15 +73,13 @@ class CustomBuildHook(BuildHookInterface):
             return
 
         explicit_version = os.getenv("HASTE_SET_VERSION")
-        if not explicit_version:
+        if explicit_version is None:
             print(
                 "HASTE_SET_VERSION is not set; building the committed local "
                 f"version {self.metadata.version}."
             )
             return
 
-        explicit_version = explicit_version.strip()
-        self.metadata._version = explicit_version
         self._write_version_file(self.metadata.version)
         print(f"Set package version to {self.metadata.version}.")
 
