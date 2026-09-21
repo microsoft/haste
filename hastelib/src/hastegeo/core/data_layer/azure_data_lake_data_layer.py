@@ -2,9 +2,11 @@
 # Licensed under the MIT License.
 import json
 
+from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import DefaultAzureCredential  # type: ignore
 from azure.storage.filedatalake import DataLakeServiceClient  # type: ignore
 
+from ..utils.metadata import matches_metadata_type
 from .abstract_data_layer import AbstractDataLayer
 
 
@@ -12,6 +14,8 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
     def __init__(self, account_url, file_system, partition_key=None):
         super().__init__(partition_key)
         credential = DefaultAzureCredential()
+        self.account_url = account_url
+        self.credential = credential
         self.service_client = DataLakeServiceClient(
             account_url=account_url, credential=credential
         )
@@ -49,11 +53,14 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
         data_type=None,
         data_format="json",
         extra_partition_keys=None,
+        check_exists=True,
     ):
         file_name = self.get_file_path(
             identifier, data_type, data_format, extra_partition_keys
         )
         file_client = self.file_system_client.get_file_client(file_name)
+        if check_exists and not file_client.exists():
+            return None
         sas_url = file_client.url
         return str(sas_url)
 
@@ -83,6 +90,24 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
                 "Unsupported data format. Only dict and bytes are supported."
             )
 
+    def merge_json(
+        self, identifier: str, data_type: str, fields: dict
+    ) -> dict:
+        from azure.storage.blob import BlobServiceClient
+
+        from .json_merge import merge_blob_json
+
+        # ADLS Gen2 exposes the same file through its atomic Blob endpoint.
+        with BlobServiceClient(
+            self.account_url.replace(".dfs.", ".blob."),
+            credential=self.credential,
+        ) as service:
+            blob = service.get_blob_client(
+                self.file_system_client.file_system_name,
+                self.get_file_path(identifier, data_type, "json"),
+            )
+            return merge_blob_json(blob, fields)
+
     def save_chunk(
         self,
         identifier,
@@ -111,22 +136,28 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
     def update(self, data, identifier, data_type):
         self.save(data, identifier, data_type)
 
-    def load(self, identifier, data_type):
-        file_name = self.get_file_path(identifier, data_type)
+    def load(self, identifier, data_type, data_format="json"):
+        if data_format != "json":
+            raise ValueError("Data Lake metadata reads support only json")
+        file_name = self.get_file_path(identifier, data_type, data_format)
         file_client = self.file_system_client.get_file_client(file_name)
-        download = file_client.download_file()
-        file_contents = download.readall()
+        try:
+            download = file_client.download_file()
+            file_contents = download.readall()
+        except ResourceNotFoundError as error:
+            raise FileNotFoundError(file_name) from error
         return json.loads(file_contents)
 
-    def load_all(self, data_type):
+    def load_all(self, data_type, data_format="json"):
+        if data_format != "json":
+            raise ValueError("Data Lake metadata reads support only json")
         data = []
         paths = self.file_system_client.get_paths()
         for path in paths:
-            if (
-                path.name.startswith(f"{self.partition_key}/{data_type}_")
-                if self.partition_key
-                else path.name.startswith(f"{data_type}_")
-            ):
+            in_partition = not self.partition_key or path.name.startswith(
+                f"{self.partition_key}/"
+            )
+            if in_partition and matches_metadata_type(path.name, data_type):
                 file_client = self.file_system_client.get_file_client(
                     path.name
                 )
@@ -135,9 +166,22 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
                 data.append(json.loads(file_contents))
         return data
 
-    def load_all_from_partition(self, data_type):
-        data = self.load_all(data_type)
+    def load_all_from_partition(self, data_type, data_format="json"):
+        data = self.load_all(data_type, data_format=data_format)
         return data
+
+    def list_identifiers(self, data_type, data_format="json"):
+        prefix = f"{self.partition_key}/{data_type}_"
+        suffix = f".{data_format}"
+        identifiers = []
+        for path in self.file_system_client.get_paths(path=self.partition_key):
+            if (
+                path.name.startswith(prefix)
+                and path.name.endswith(suffix)
+                and matches_metadata_type(path.name, data_type)
+            ):
+                identifiers.append(path.name[len(prefix) : -len(suffix)])
+        return identifiers
 
     def load_bounded(self, data_type, max_records, data_format="json"):
         if data_format != "json" or max_records < 1:
@@ -150,7 +194,9 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
             if scanned_paths > scan_limit:
                 raise ValueError("Metadata scan exceeds the bounded envelope")
             parts = path.name.split("/")
-            if len(parts) > 2 or not parts[-1].startswith(f"{data_type}_"):
+            if len(parts) > 2 or not matches_metadata_type(
+                path.name, data_type
+            ):
                 continue
             file_contents = (
                 self.file_system_client.get_file_client(path.name)

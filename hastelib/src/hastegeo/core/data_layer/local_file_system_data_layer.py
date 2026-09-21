@@ -6,6 +6,7 @@ import shutil
 
 import yaml
 
+from ..utils.metadata import matches_metadata_type
 from .abstract_data_layer import AbstractDataLayer
 
 
@@ -90,6 +91,7 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
         data_type=None,
         data_format="json",
         extra_partition_keys=None,
+        check_exists=True,
     ):
         """Get the remote path for a file (same as local path for filesystem layer).
 
@@ -168,6 +170,35 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
                 raise ValueError(
                     f"{self.__class__.__name__}.save: Unsupported data format. Only json and bytes are supported."
                 )
+
+    def merge_json(
+        self, identifier: str, data_type: str, fields: dict
+    ) -> dict:
+        from pathlib import Path
+        from tempfile import NamedTemporaryFile
+
+        from ..utils.file_lock import file_lock
+
+        path = Path(self.get_file_path(identifier, data_type, "json"))
+        with file_lock(path.with_suffix(".lock")):
+            try:
+                with path.open() as source:
+                    current = json.load(source)
+            except FileNotFoundError:
+                current = {}
+            merged = {**current, **fields}
+            with NamedTemporaryFile(
+                mode="w", dir=path.parent, delete=False
+            ) as output:
+                temporary = Path(output.name)
+                try:
+                    json.dump(merged, output)
+                    output.flush()
+                    os.fsync(output.fileno())
+                    os.replace(temporary, path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            return merged
 
     def save_chunk(
         self,
@@ -271,9 +302,9 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
     def load_all(self, data_type, data_format="json"):
         data = []
         for file_name in os.listdir(self.directory):
-            if file_name.startswith(f"{data_type}_") and file_name.endswith(
-                f".{data_format}"
-            ):
+            if matches_metadata_type(
+                file_name, data_type
+            ) and file_name.endswith(f".{data_format}"):
                 with open(
                     os.path.join(self.directory, file_name), "r"
                 ) as file:
@@ -318,9 +349,9 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
                         )
                     if not entry.is_file(follow_symlinks=False):
                         continue
-                    if not entry.name.startswith(f"{data_type}_") or not entry.name.endswith(
-                        f".{data_format}"
-                    ):
+                    if not matches_metadata_type(
+                        entry.name, data_type
+                    ) or not entry.name.endswith(f".{data_format}"):
                         continue
                     with open(entry.path, "r") as file:
                         records.append(
@@ -333,6 +364,20 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
                             f"Metadata exceeds the {max_records:,}-record limit"
                         )
         return records
+
+    def list_identifiers(self, data_type, data_format="json"):
+        prefix = f"{data_type}_"
+        suffix = f".{data_format}"
+        identifiers = []
+        if os.path.exists(self.directory):
+            for file_name in os.listdir(self.directory):
+                if (
+                    file_name.startswith(prefix)
+                    and file_name.endswith(suffix)
+                    and matches_metadata_type(file_name, data_type)
+                ):
+                    identifiers.append(file_name[len(prefix) : -len(suffix)])
+        return identifiers
 
     def delete(self, identifier, data_type, data_format="json"):
         file_path = self.get_file_path(identifier, data_type, data_format)
