@@ -59,7 +59,7 @@
     "undici": "^6.27.0",
     "launch-editor": "^2.14.1",
     "tar": "^7.5.16",
-    "joi": "^17.13.4",
+    "joi": "^17.13.7",
     "@babel/core": "^7.29.6"
   },
   "devDependencies": {
