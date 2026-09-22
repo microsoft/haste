@@ -16,6 +16,7 @@ jobs:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       (github.event.workflow_run.event == 'push' ||
+       github.event.workflow_run.event == 'workflow_dispatch' ||
        (github.event.workflow_run.event == 'pull_request' &&
         github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
@@ -77,16 +78,46 @@ jobs:
           fi
           echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
 
+      # The channel is derived from the triggering event type, which comes from
+      # the trusted workflow_run payload. It is deliberately never read from
+      # the build's inputs or artifact: those originate on the built ref, and a
+      # branch that could name its own channel could publish itself as stable.
+      # A dispatch is therefore always 'dev', whatever channel it built with --
+      # an rc/release dispatch builds a differently named wheel, so the
+      # revalidate step below fails closed rather than publishing it.
       - name: Re-resolve expected version from trusted policy
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
-          CHANNEL: ${{ github.event.workflow_run.event == 'pull_request' && 'rc' || 'release' }}
+          CHANNEL: >-
+            ${{ github.event.workflow_run.event == 'pull_request' && 'rc'
+            || github.event.workflow_run.event == 'workflow_dispatch' && 'dev'
+            || 'release' }}
         run: |
           python .github/scripts/resolve_hastegeo_version.py \
             --channel "$CHANNEL" \
             --source-sha "$SOURCE_SHA"
+
+      # A dev wheel is only ever built because somebody dispatched one, so a
+      # skipped publish strands them: the run goes green and the missing wheel
+      # surfaces much later as a deploy-apps "release asset does not exist".
+      # Fail here instead. RC and stable publication stay silent when halted --
+      # both are automatic, so annotating every PR would be noise.
+      - name: Fail loudly when dev publication is disabled
+        if: >-
+          steps.resolve.outputs.channel == 'dev' &&
+          steps.resolve.outputs.already_published != 'true' &&
+          vars.HASTEGEO_DEV_PUBLISH_ENABLED == 'false'
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          echo "::error::Dev publication is halted by the repository variable" \
+               "HASTEGEO_DEV_PUBLISH_ENABLED=false, so ${VERSION} was NOT" \
+               "published to haste-binaries and cannot be deployed. The wheel" \
+               "is still attached to the build run as an artifact. Unset the" \
+               "variable, or set it to anything other than 'false', to resume."
+          exit 1
 
       - name: Download wheel artifact
         if: steps.resolve.outputs.already_published != 'true'
@@ -98,6 +129,21 @@ jobs:
             --repo "${{ github.repository }}" \
             --name "hastegeo-wheel-${RUN_ID}" \
             --dir release-artifact
+
+      # Turns the fail-closed channel mismatch above into a legible error.
+      - name: Confirm the artifact matches the resolved channel
+        if: steps.resolve.outputs.already_published != 'true'
+        env:
+          WHEEL_NAME: ${{ steps.resolve.outputs.wheel_name }}
+          CHANNEL: ${{ steps.resolve.outputs.channel }}
+        run: |
+          if [ ! -f "release-artifact/${WHEEL_NAME}" ]; then
+            echo "::error::Expected ${WHEEL_NAME} for the ${CHANNEL} channel," \
+                 "but the build produced: $(ls -m release-artifact)." \
+                 "A dispatched build publishes only on the dev channel;" \
+                 "re-run 'Build hastegeo wheel' with channel: dev."
+            exit 1
+          fi
 
       - name: Revalidate downloaded wheel
         if: steps.resolve.outputs.already_published != 'true'
@@ -158,6 +204,81 @@ jobs:
             --expected-version "${{ needs.prepare.outputs.version }}" \
             --channel rc \
             --source-sha "${{ needs.prepare.outputs.source_sha }}"
+
+  # Dev wheels exist to iterate on a function app without minting a release
+  # candidate: an RC drags in matching locked images it does not need, because
+  # deploy-apps requires image tags to equal any *rc* wheel version. A .devN
+  # version carries no such coupling, so a dev wheel deploys against whatever
+  # images are already there. They are published, immutable, and pruned by
+  # rc-cleanup.yml like RCs -- never tagged, and never a release input.
+  publish-dev:
+    needs: prepare
+    if: >-
+      needs.prepare.outputs.channel == 'dev' &&
+      needs.prepare.outputs.already_published != 'true' &&
+      vars.HASTEGEO_DEV_PUBLISH_ENABLED != 'false'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: hastegeo-dev-publish
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout trusted publisher
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Download wheel artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          gh run download "$RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name "hastegeo-wheel-${RUN_ID}" \
+            --dir release-artifact
+
+      - name: Publish immutable dev wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/publish_hastegeo_wheel.py \
+            --wheel "release-artifact/${{ needs.prepare.outputs.wheel_name }}" \
+            --expected-version "${{ needs.prepare.outputs.version }}" \
+            --channel dev \
+            --source-sha "${{ needs.prepare.outputs.source_sha }}"
+
+      - name: Summarise how to deploy it
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ### Dev wheel published
+
+          \`hastegeo ${VERSION}\` from \`${BRANCH}\`.
+
+          Deploy it with **Deploy Azure Applications**:
+
+          - \`hastegeo_version\`: \`${VERSION}\`
+          - \`component\`: \`funcqueue\` (or \`funcapi\`)
+          - \`training_image_tag\` / \`imageprep_image_tag\`: **required** --
+            no images are built for a dev wheel, so pass the tags this
+            environment already runs (see \`AZURE_BATCH_DOCKER_IMAGE\` on the
+            queue app). The deploy refuses to run without them.
+
+          Dev wheels are pruned by **Report or prune RC wheels**; add the
+          filename to \`.github/rc-retain.txt\` to pin one an environment is
+          still running.
+          EOF
 
   # Stable publication is automatic on merge to the default branch: the PR
   # review required to land the commit there is the release approval. A second

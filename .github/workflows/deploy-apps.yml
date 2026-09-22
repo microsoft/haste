@@ -93,6 +93,18 @@ jobs:
               echo "::error::RC deployments require matching wheel and image tags"
               exit 1
             fi
+          elif [[ "$VERSION" == *.dev* ]]; then
+            # A dev wheel is a function-app iteration aid: no images are built
+            # for it, so the default would silently point Batch at a tag that
+            # does not exist. Require the operator to name the images the
+            # environment should keep running.
+            if [[ -z "$TRAINING_INPUT" || -z "$IMAGEPREP_INPUT" ]]; then
+              echo "::error::Deploying the dev wheel $VERSION requires explicit" \
+                   "training_image_tag and imageprep_image_tag; no images are" \
+                   "built for dev wheels. Use the tags this environment already" \
+                   "runs (see AZURE_BATCH_DOCKER_IMAGE on the queue app)."
+              exit 1
+            fi
           fi
           echo "training_tag=$TRAINING_TAG" >> "$GITHUB_OUTPUT"
           echo "imageprep_tag=$IMAGEPREP_TAG" >> "$GITHUB_OUTPUT"

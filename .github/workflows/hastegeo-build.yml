@@ -17,11 +17,12 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "Build channel"
+        description: "Build channel. 'dev' is the only one a dispatch publishes; rc/release dispatches build and validate only."
         required: true
-        default: "rc"
+        default: "dev"
         type: choice
         options:
+          - dev
           - rc
           - release
       bump:
@@ -34,7 +35,7 @@ on:
           - minor
           - major
       set_version:
-        description: "Optional exact X.Y.Z or (for RC) X.Y.ZrcN"
+        description: "Optional exact X.Y.Z, or X.Y.ZrcN / X.Y.Z.devN for those channels"
         required: false
         default: ""
         type: string

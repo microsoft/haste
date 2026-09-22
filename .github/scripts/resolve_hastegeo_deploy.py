@@ -23,22 +23,27 @@ from haste_release import (  # noqa: E402
 )
 
 DEPLOY_VERSION_RE = re.compile(
-    r"^(\d+)\.(\d+)\.(\d+)(?:\.?rc0*(\d+))?$",
+    r"^(\d+)\.(\d+)\.(\d+)(?:\.?rc0*(\d+)|\.?dev0*(\d+))?$",
     re.IGNORECASE,
 )
 
 
 def canonicalize_version(value: str) -> str:
-    """Canonicalize stable or RC input, including ``rc01`` -> ``rc1``."""
+    """Canonicalize stable, RC, or dev input, including ``rc01`` -> ``rc1``."""
     match = DEPLOY_VERSION_RE.fullmatch(value.strip())
     if not match:
         raise ValueError(
-            f"Invalid hastegeo version {value!r}; expected X.Y.Z or X.Y.ZrcN"
+            f"Invalid hastegeo version {value!r}; expected X.Y.Z, X.Y.ZrcN, "
+            "or X.Y.Z.devN"
         )
     major, minor, patch = (int(part) for part in match.groups()[:3])
-    rc = match.group(4)
+    rc, dev = match.group(4), match.group(5)
     base = f"{major}.{minor}.{patch}"
-    return f"{base}rc{int(rc)}" if rc is not None else base
+    if rc is not None:
+        return f"{base}rc{int(rc)}"
+    if dev is not None:
+        return f"{base}.dev{int(dev)}"
+    return base
 
 
 def resolve_deploy_wheel(
