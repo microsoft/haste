@@ -14,7 +14,7 @@ export function formatProjectDate(date) {
 }
 
 export function parseProjectDate(value) {
-  const match = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(value);
+  const match = /^\s*(\d{2})\/(\d{2})\/(\d{4})\s*$/.exec(value);
   if (!match) return null;
 
   const month = Number(match[1]);
