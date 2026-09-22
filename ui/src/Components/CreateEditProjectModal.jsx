@@ -225,7 +225,7 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
       if (projectId !== undefined) {
         const response = await apiPut("PutProject", componentState);
         tempProjectId = response.projectId;
-        onClose();
+        onClose(true);
         setIsLoading(false);
         setDialog(
           "Success",
@@ -245,7 +245,7 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
 
         const response = await apiPut("PutProject", apiBody);
         tempProjectId = response.projectId;
-        onClose();
+        onClose(true);
         setIsLoading(false);
         setDialog(
           "Success",

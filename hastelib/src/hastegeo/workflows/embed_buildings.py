@@ -14,7 +14,12 @@ only) and adapted to the HASTE workflow contract used by
   MOSAIKS (torchgeo RCF) model on the crop, mask the building polygon into the
   token grid, and average the token features into one vector per building.
 * Writes three outputs to ``outputs/``: a GeoJSON of footprints + ``f_0..f_N``
-  feature columns, a PMTiles vector-tile file (via tippecanoe), and a manifest.
+  feature columns, a binary feature sidecar, and a manifest.
+
+This workflow does NOT tile the footprints. The layer's shared footprint
+PMTiles archive is built once per image layer by
+``workflows.prepare_footprint_tiles`` and reused by every model trained on
+that layer, so tiling the same geometry per model produced a duplicate.
 
 CRITICAL — row-order invariant:
     ``GetValidationReport`` / ``GetAssessmentReport`` join predictions to the
@@ -29,7 +34,6 @@ import argparse
 import json
 import math
 import os
-import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -709,60 +713,6 @@ def embed_footprints(
     return out
 
 
-def write_pmtiles(geojson_path: str, pmtiles_path: str) -> None:
-    """Convert a GeoJSON to PMTiles via tippecanoe.
-
-    Keeps only the row-index ``id`` and ``overture_id`` attributes on each
-    feature (via ``-y``); the heavy ``f_*`` columns ride in a separate
-    binary sidecar (see :func:`write_features_sidecar`). Without ``-y``
-    every tile would carry several KB of feature vectors per building,
-    blowing up archive size and slowing every pan.
-
-    Lift the per-tile size cap so a dense max-zoom tile carrying every
-    geometry-only feature isn't trimmed; with ``f_*`` no longer in the
-    tiles this is a very cheap "keep all buildings" guarantee.
-    """
-    cmd = [
-        "tippecanoe",
-        "-o",
-        pmtiles_path,
-        "-l",
-        "buildings",
-        # Bake the row-index `id` into each tile as the MVT feature id. This
-        # gives every footprint a stable, native feature id so the interactive
-        # labeler can drive per-building coloring via map feature-state — both
-        # MapLibre and Azure Maps need this (Azure Maps' VectorTileSource does
-        # not honor client-side promoteId).
-        "--use-attribute-for-id=id",
-        # Strip every attribute except id + overture_id. The labeler does
-        # not need anything else in the tiles — feature vectors are looked
-        # up from the sidecar by id, and Overture id is needed for the
-        # PutInteractiveLabels round-trip.
-        "-y",
-        "id",
-        "-y",
-        "overture_id",
-        "--force",
-        # Cull world-scale levels — buildings are invisible below z=10,
-        # so generating tiles there only adds bytes.
-        "--minimum-zoom=10",
-        # Pin the max zoom to the labeler's working zoom + 1. Tiles at
-        # z>15 are rendered by the SDK via overzoom; the interactive
-        # labeler's queryRenderedFeatures + setFeatureState work unchanged
-        # on overzoomed tiles.
-        "--maximum-zoom=15",
-        # With f_* gone from the tiles even a dense urban tile is small;
-        # we still pass --no-tile-size-limit so the default 500 KB cap
-        # never bites and the build never silently drops a footprint.
-        "--no-tile-size-limit",
-        # Last-resort safety valve.
-        "--drop-densest-as-needed",
-        geojson_path,
-    ]
-    log_progress(f"Running tippecanoe -> {os.path.basename(pmtiles_path)}")
-    subprocess.run(cmd, check=True)
-
-
 # Binary sidecar format:
 #   bytes  0-3  : magic "HFTR" (4 ASCII chars)
 #   bytes  4-7  : u32 LE  version (currently 1)
@@ -787,8 +737,9 @@ def write_features_sidecar(
 
     The labeler fetches this file once at session start and looks vectors
     up by their row-index id — the in-tile attributes are kept down to just
-    id + overture_id (see ``write_pmtiles``), so the PMTiles archive stays
-    small and the labeler still has the data it needs to train + predict.
+    id + overture_id, so the layer's shared footprint PMTiles archive
+    stays small and the labeler still has what it needs to train and
+    predict.
 
     Returns ``(num_buildings, feat_dim)``.
     """
@@ -860,9 +811,6 @@ def main():
     embeddings_name = files.get(
         "embeddings", f"building_embeddings_{config.get('model_id')}.geojson"
     )
-    pmtiles_name = files.get(
-        "pmtiles", f"building_pmtiles_{config.get('model_id')}.pmtiles"
-    )
     sidecar_name = files.get(
         "sidecar", f"building_features_{config.get('model_id')}.bin"
     )
@@ -896,18 +844,11 @@ def main():
         log_progress(f"Writing {len(gdf)} buildings -> {embeddings_path}")
         gdf.to_file(embeddings_path, driver="GeoJSON")
 
-        # Features sidecar — must be written BEFORE the PMTiles step strips
-        # the f_* columns from the tiles, so the in-memory gdf is still
-        # the authoritative source for both.
         sidecar_path = os.path.join(output_dir, os.path.basename(sidecar_name))
         num_buildings, feat_dim = write_features_sidecar(gdf, sidecar_path)
 
-        pmtiles_path = os.path.join(output_dir, os.path.basename(pmtiles_name))
-        write_pmtiles(embeddings_path, pmtiles_path)
-
         manifest = {
             "embeddings_filename": os.path.basename(embeddings_path),
-            "pmtiles_filename": os.path.basename(pmtiles_path),
             "sidecar_filename": os.path.basename(sidecar_path),
             "num_buildings": int(num_buildings),
             "num_features": int(feat_dim),

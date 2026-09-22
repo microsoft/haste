@@ -1,6 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { Button, Text, Tooltip } from "@fluentui/react-components";
+import {
+  Button,
+  MessageBar,
+  MessageBarBody,
+  Text,
+  Tooltip,
+} from "@fluentui/react-components";
 import OpenProject from "./Home/OpenProject";
 import OngoingJobs from "./Home/OngoingJobs";
 import { useState, useEffect, useContext } from "react";
@@ -13,6 +19,8 @@ import { FluentIcon } from "../util/icons";
 import PropTypes from "prop-types";
 import { formatProjectDate } from "./ProjectManagement/projectStatus";
 import CreateEditProjectModal from "./CreateEditProjectModal";
+import { loadHomeData } from "./Home/loadHomeData";
+import { RouteLoading } from "./MapRoute";
 
 const StatCard = ({ icon, value, label, onClick }) => (
   <div
@@ -84,14 +92,16 @@ EmptyWidgetPlaceholder.propTypes = {
   message: PropTypes.string.isRequired,
 };
 
-
 const Home = () => {
   const navigate = useNavigate();
-  const { setIsLoading, initCurrentTour, setAppHeaderRightButtons, appParams, setAppParams } =
+  const { initCurrentTour, setAppHeaderRightButtons, appParams } =
     useContext(AppContext);
   const [dashboardData, setDashboardData] = useState(null);
   const [catalog, setCatalog] = useState([]);
   const [modalComponent, setModalComponent] = useState(null);
+  const [nowMs] = useState(Date.now);
+  const [loadError, setLoadError] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   const openCreateProjectModal = () => {
     setModalComponent(
@@ -100,25 +110,7 @@ const Home = () => {
   };
 
   useEffect(() => {
-    const fetchProjects = async () => {
-      setIsLoading(true);
-      try {
-        const response = await apiGet("GetDashboardData");
-        setDashboardData(response);
-        
-      } catch (error) {
-        console.error("Error fetching projects:", error);
-      }
-      try {
-        const catalogResponse = await apiGet("GetModelCatalog");
-        setCatalog(catalogResponse?.modelCatalog || []);
-      } catch (error) {
-        // Catalog is supplementary; ignore if unavailable.
-        console.warn("Model catalog unavailable for dashboard:", error);
-      }
-      setIsLoading(false);
-    };
-
+    let active = true;
     initCurrentTour("dashboardGuide");
     setAppHeaderRightButtons([
       {
@@ -136,19 +128,62 @@ const Home = () => {
       },
     ]);
 
-    fetchProjects();
+    const controller = new AbortController();
+    const { dashboard, catalog: catalogRequest } = loadHomeData(apiGet, {
+      signal: controller.signal,
+    });
+    dashboard
+      .then((response) => {
+        if (!active) return;
+        setDashboardData(response);
+        setLoadError(false);
+      })
+      .catch((error) => {
+        if (!active || error.name === "AbortError") return;
+        console.error("Error fetching projects:", error);
+        setLoadError(true);
+      });
+    catalogRequest
+      .then((response) => {
+        if (active) setCatalog(response);
+      })
+      .catch((error) => {
+        if (active && error.name !== "AbortError") {
+          console.warn("Model catalog unavailable for dashboard:", error);
+        }
+      });
 
     //On component dismount
     return () => {
+      active = false;
+      controller.abort();
       setModalComponent(null);
       initGuidedTourState("dashboardGuide", appParams.guidedTourProperties);
     };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadAttempt]);
 
   if (!dashboardData) {
-    return <> </>;
+    return loadError ? (
+      <div className="p-4 w-100">
+        <MessageBar intent="error">
+          <MessageBarBody>
+            Dashboard data could not be loaded.
+          </MessageBarBody>
+        </MessageBar>
+        <Button
+          className="mt-3"
+          appearance="primary"
+          onClick={() => {
+            setLoadError(false);
+            setLoadAttempt((value) => value + 1);
+          }}
+        >
+          Retry
+        </Button>
+      </div>
+    ) : <RouteLoading label="Loading dashboard" />;
   }
 
   const projects = dashboardData.projects || [];
@@ -172,7 +207,6 @@ const Home = () => {
     .filter(Boolean)
     .sort();
 
-  const nowMs = Date.now();
   const newLast30 = projects.filter((project) => {
     const created = Date.parse(project.creationDate);
     return !Number.isNaN(created) && nowMs - created <= 30 * 86400000;
@@ -304,7 +338,7 @@ const Home = () => {
                 {isEmpty ? (
                   <EmptyWidgetPlaceholder message="No ongoing jobs to display." />
                 ) : (
-                  <OngoingJobs projects={projects} />
+                  <OngoingJobs />
                 )}
               </WidgetShell>
             </div>
