@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.3"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.hooks.custom]
@@ -85,7 +85,9 @@ prepare-imagery = "hastegeo.workflows.prepare_imagery:main"
 zip-artifacts = "hastegeo.workflows.zip_artifacts:main"
 
 [tool.hatch.version]
-path = "src/hastegeo/__about__.py"
+source = "code"
+path = "haste_build.py"
+expression = "get_build_version()"
 
 [tool.hatch.envs.types]
 extra-dependencies = [

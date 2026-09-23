@@ -2,23 +2,15 @@
 // Licensed under the MIT License.
 import { Dropdown, Option } from "@fluentui/react-components";
 import PropTypes from "prop-types";
-import { useNavigate } from "react-router-dom";
 
 const HelpDocsNav = ({ helpSections, selectedKey }) => {
-  HelpDocsNav.propTypes = {
-    helpSections: PropTypes.array.isRequired,
-    selectedKey: PropTypes.string,
-  };
-
-  const navigate = useNavigate();
-
   const handleSelection = (optionKey) => {
     if (optionKey) {
       for (const section of helpSections[0].links) {
         if (section.links && section.links.length > 0) {
           for (const link of section.links) {
             if (link.key === optionKey) {
-              navigate(`/help-docs/${link.onClick()}`);
+              link.onClick();
               return;
             }
           }
@@ -43,10 +35,10 @@ const HelpDocsNav = ({ helpSections, selectedKey }) => {
                   className={`help-docs-nav-link ${
                     link.key === selectedKey ? "help-docs-nav-link-active" : ""
                   }`}
-                  onClick={() => navigate(`/help-docs/${link.onClick()}`)}
+                  onClick={link.onClick}
                   onKeyUp={(e) => {
                     if (e.key === "Enter") {
-                      navigate(`/help-docs/${link.onClick()}`);
+                      link.onClick();
                     }
                   }}
                 >
@@ -83,6 +75,11 @@ const HelpDocsNav = ({ helpSections, selectedKey }) => {
       </Dropdown>
     </div>
   );
+};
+
+HelpDocsNav.propTypes = {
+  helpSections: PropTypes.array.isRequired,
+  selectedKey: PropTypes.string,
 };
 
 export default HelpDocsNav;

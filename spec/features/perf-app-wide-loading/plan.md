@@ -4,6 +4,7 @@
 
 - [Slices](#slices)
 - [Projects Cancellation Follow-Up](#projects-cancellation-follow-up)
+- [CXL-01 Follow-Up](#cxl-01-follow-up)
 - [Exit Gates](#exit-gates)
 - [Agent Summary](#agent-summary)
 
@@ -27,9 +28,10 @@ dependency changes are planned.
 
 CXL-05P extracts only the Projects list from the broader CXL-05 cancellation
 work. Implementation was approved on 2026-09-16 and PR preparation on
-2026-09-17. The independent branch now starts at `main` (`2dad150`), whose
-source tree matches the original #210 base (`3834fb4`). CXL-01 / #223 and
-unrelated working-tree edits are unchanged.
+2026-09-17. The independent branch originally started at `main` (`2dad150`),
+whose source tree matches the original #210 base (`3834fb4`). On 2026-09-23,
+`main` (`86aa6f7`) was merged into #227 after #223 landed, preserving both
+CXL-01 and CXL-05P. Unrelated working-tree edits are unchanged.
 
 | Task | Agent | Validating Agent | Story | Status |
 |---|---|---|---|---|
@@ -43,6 +45,26 @@ Other CXL-05 list/admin pages remain pending. This change is prepared as a
 separate draft PR against `main`; it does not depend on #223. No application
 deployment or live configuration change is included.
 See [browser test commands](test-plan.md#projects-cancellation-regressions).
+
+## CXL-01 Follow-Up
+
+Prepared on 2026-09-16 as a separate change based on the cumulative #210 tip
+`3834fb45e06910a03fb9a5680a26ee42605ace2f`. Implementation is isolated from the
+reviewed performance branches and unrelated working-tree edits.
+
+| Task | Agent | Validating Agent | Story | Status |
+|---|---|---|---|---|
+| Abort ImageLayer reads, guard stale results, use local loading and Retry | `ui` | `ui-validation` | US-005 | implemented locally |
+| Abort thumbnail fetches, retain compatible native fallback, release Blob URLs | `ui` | `ui-validation` | US-005 | implemented locally |
+| Unit, real-browser lifecycle, consumer integration, CSP and responsive checks | `ui` | `ui-validation` | US-005 | passed locally |
+| Smoke-test representative authenticated Dev1 imagery | `ui` | `ui-validation` | US-005 | pending before rollout |
+
+No backend, infrastructure, dependency, save, export, or job-submission changes
+are included. CXL-01 was merged through #223 on 2026-09-23; the Projects-only
+follow-up is tracked separately above. Other cancellation work packages remain
+pending.
+See [test commands](test-plan.md#cxl-01-browser-regressions) and
+[verification results](results.md#cxl-01-local-verification).
 
 ## Exit Gates
 

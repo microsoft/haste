@@ -101,7 +101,7 @@ const HelpDocsLabeling = ({ anchor }) => {
       </div>
 
       <h3 className='pt-4'>Saving Labels</h3>
-      <p>Click on &quot;Save&quot; to save all labels drawn so far. Alternatively, click on the down arrow next to &quot;Save&quot; to save labels and initiate model training in one click.</p>
+      <p>Click on &quot;Actions&quot; and then &quot;Save&quot; to save all labels drawn so far. Alternatively, click on &quot;Save and Train&quot; to save labels and initiate model training in one click.</p>
 
       <hr className="mt-5 pb-4" />
 

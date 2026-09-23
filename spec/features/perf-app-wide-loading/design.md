@@ -159,6 +159,30 @@ This corrects the reproduced request accumulation and stale-loader behavior.
 It is not a fix for the separately measured multi-second gateway/network waits
 or Function host startup delays.
 
+### CXL-01: Image Layer and Thumbnails
+
+ImageLayer owns its initial read by project ID, image-layer ID, and retry
+attempt. Effect cleanup aborts that generation. Results check the signal before
+updating state, including when transport completion races navigation. Loading
+and retryable errors are local; this read never changes the global overlay.
+
+The row/card thumbnail hook keeps its existing `isLoading` and `loadedUrl`
+interface. Its helper fetches with an owned signal, decodes a Blob URL, and
+keeps that URL alive until replacement or unmount. Cleanup aborts the transfer,
+detaches native handlers, clears the image source, and revokes the Blob URL.
+State from an aborted generation cannot revive a revoked URL on A-to-B-to-A
+changes.
+
+Fetch-policy/network `TypeError` failures retain native-image compatibility.
+This fallback does not run after cancellation or HTTP errors. Native cleanup
+prevents late callbacks but is not a guarantee of transfer cancellation.
+Same-origin and CORS-enabled reads use the abortable path. No proxy, CSP,
+authentication, or shared-asset policy changes are introduced.
+
+The checked-in CSP permits same-origin fetch and Blob image display; a browser
+fixture verifies both. Actual Dev1 imagery compatibility remains a rollout
+check. Other audited route, map, catalog, and drawer gaps are separate work.
+
 ## Security
 
 - Identity comes only from the decoded SWA principal; no user ID is accepted

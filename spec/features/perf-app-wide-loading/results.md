@@ -7,6 +7,7 @@
 - [Expected Impact](#expected-impact)
 - [Local Verification](#local-verification)
 - [Projects Cancellation Verification](#projects-cancellation-verification)
+- [CXL-01 Local Verification](#cxl-01-local-verification)
 - [Open Validation](#open-validation)
 
 ## Baseline
@@ -127,6 +128,41 @@ that its source tree matches the original #210 base. All 169 existing tests
 and eight browser scenarios passed again on the new branch. The browser
 runner uses an external Playwright installation; no application dependencies
 were added or changed.
+
+On 2026-09-23, #227 incorporated `main` (`86aa6f7`) after CXL-01 / #223
+merged. The combined tree passed 178 UI/unit/request-failure tests and both
+browser suites: eight CXL-01 scenarios and eight Projects scenarios. The
+production build completed in 483 ms. Full UI lint reports 169 diagnostics
+(161 errors, eight warnings). Both implementations and their browser tests
+were preserved byte-for-byte; four shared spec conflicts were resolved by
+retaining both follow-up sections. No application deployment was performed.
+
+## CXL-01 Local Verification
+
+On 2026-09-16, the isolated CXL-01 change based on #210 (`3834fb4`) passed
+176 UI/unit/request-failure tests, including seven new thumbnail lifecycle
+tests. Eight Playwright browser scenarios passed under React StrictMode
+(nine Node test entries including their parent). The production UI build
+transformed 2,425 modules and completed in 403 ms.
+
+Scoped ESLint passes for the changed UI files, and documentation links and
+`git diff --check` pass. Full UI lint still reports the existing 173-diagnostic
+baseline (165 errors, 8 warnings); unrelated lint debt was not changed.
+
+The same browser harness against untouched #210 failed its navigation assertion:
+the ImageLayer request was not aborted. The candidate passes that assertion
+and verifies late-response isolation, layer-ID replacement, retry, native
+fallback, actual row/card consumers, Blob URL revocation, and CSP compatibility.
+Desktop loading and mobile error screenshots were inspected for text fitting
+and overlap. Tests emitted existing ImageLayer table-nesting warnings and
+fixture/legacy prop warnings; no application lifecycle exceptions occurred in
+the passing run.
+
+Browser traffic was synthetic and local. This is not a measurement of Dev1
+bandwidth savings, destination p95, or server-side cancellation. Cross-origin
+native-image fallback remains best-effort cleanup, and a representative
+authenticated Dev1 imagery smoke check is still required before rollout.
+No deployment, branch rewrite, or backend change was performed.
 
 ## Open Validation
 

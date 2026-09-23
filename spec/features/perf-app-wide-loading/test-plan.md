@@ -5,6 +5,7 @@
 - [Test Strategy](#test-strategy)
 - [Regression Matrix](#regression-matrix)
 - [Projects Cancellation Regressions](#projects-cancellation-regressions)
+- [CXL-01 Browser Regressions](#cxl-01-browser-regressions)
 - [Performance Matrix](#performance-matrix)
 - [Sign-Off](#sign-off)
 
@@ -77,6 +78,41 @@ ignore abort to verify stale-result guards. Expected simulated failure logs are
 allowed; unhandled page exceptions fail the tests. Responsive loading/error
 screenshots supplement these assertions; no backend latency improvement is
 inferred from local fixture timings.
+
+## CXL-01 Browser Regressions
+
+Use the existing Node and external Playwright tooling. The harness starts and
+stops its own ephemeral Vite/HTTP servers, mounts real components in StrictMode,
+and never changes production authentication or contacts partner services.
+
+```bash
+node --test ui/src/Components/ProjectManagement/imagePreload.test.js
+NODE_PATH=/path/to/playwright/node_modules node --test \
+	spec/features/perf-app-wide-loading/tools/cxl01.test.cjs
+```
+
+Playwright and its Chromium binary must already be installed in the external
+tooling directory. No application dependency change is required. Optional
+`CXL_OUTPUT_DIR` writes desktop loading and mobile error screenshots outside
+the repository. `CXL_UI_ROOT` can point at an untouched worktree for a negative
+baseline run; the default is this checkout's UI.
+
+| Scenario | Evidence |
+|---|---|
+| Navigate during ImageLayer body read, then return | Real browser request failure with abort; server closes stream; destination unaffected; fresh read succeeds |
+| Change only layer ID with late responses | Deliberately non-cooperative transport cannot apply the obsolete result |
+| HTTP failure or missing layer, then Retry | Local error ends loading; fresh attempt succeeds without global loader writes |
+| Navigate/change thumbnail URL during transfer | Real streamed image fetch aborts; old URL is released |
+| Empty, failed, cached and repeated thumbnail URLs | No stuck loader; each allocated Blob URL is revoked once after use |
+| Cross-origin image with/without CORS | Abortable Blob path or native compatibility path displays as appropriate |
+| Real LayerRow and LayerCard consumers | Both use returned Blob URLs and release them on departure |
+| Checked-in CSP | Same-origin fetch and decoded Blob display succeed under the actual policy |
+
+The harness observes application-triggered cancellation; it does not use
+Playwright `route.abort()` to simulate it. Unit tests additionally cover abort
+during body decoding, late native callbacks, decode failures, and suppression
+of fallback after cancellation. Direct no-CORS fallback transfer cancellation
+and actual authenticated Dev1 imagery are not claimed by these synthetic tests.
 
 ## Performance Matrix
 
