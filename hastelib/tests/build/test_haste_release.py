@@ -191,3 +191,50 @@ class HasteReleaseDevChannelTests(unittest.TestCase):
                 tags=[],
                 set_version="1.0.26.dev1",
             )
+
+
+class ExplicitZeroOverrideTests(unittest.TestCase):
+    """rc0 and dev0 are valid PEP 440. `explicit or next_*()` discarded them,
+    because 0 is falsy, and allocated a different number than was asked for."""
+
+    ASSETS = [
+        "hastegeo-1.0.25-py3-none-any.whl",
+        "hastegeo-1.0.26rc5-py3-none-any.whl",
+        "hastegeo-1.0.26.dev5-py3-none-any.whl",
+    ]
+
+    def test_exact_rc_zero_is_preserved(self):
+        result = resolve(
+            channel="rc",
+            source_sha="abc",
+            assets=self.ASSETS,
+            tags=[],
+            set_version="1.0.26rc0",
+        )
+
+        self.assertEqual("1.0.26rc0", result.version)
+
+    def test_exact_dev_zero_is_preserved(self):
+        result = resolve(
+            channel="dev",
+            source_sha="abc",
+            assets=self.ASSETS,
+            tags=[],
+            set_version="1.0.26.dev0",
+        )
+
+        self.assertEqual("1.0.26.dev0", result.version)
+
+    def test_absent_override_still_allocates_the_next_number(self):
+        self.assertEqual(
+            "1.0.26.dev6",
+            resolve(
+                channel="dev", source_sha="abc", assets=self.ASSETS, tags=[]
+            ).version,
+        )
+        self.assertEqual(
+            "1.0.26rc6",
+            resolve(
+                channel="rc", source_sha="abc", assets=self.ASSETS, tags=[]
+            ).version,
+        )

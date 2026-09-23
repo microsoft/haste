@@ -69,6 +69,33 @@ jobs:
         with:
           python-version: "3.11"
 
+      # hastegeo-publish.yml re-resolves the version from trusted policy on the
+      # default branch, and calls the resolver with only --channel and
+      # --source-sha -- it cannot read a dispatch's inputs, by design, since
+      # they originate on the built ref. A dev dispatch that bumps or pins a
+      # version therefore builds one wheel while the publisher expects the
+      # default patch version, and the artifact-name check fails after the
+      # build. Refuse up front instead of wasting the build on a run that
+      # cannot publish.
+      - name: Reject version overrides on a publishable dev dispatch
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.channel == 'dev' &&
+          (github.event.inputs.bump != 'patch' ||
+           github.event.inputs.set_version != '')
+        env:
+          BUMP: ${{ github.event.inputs.bump }}
+          SET_VERSION: ${{ github.event.inputs.set_version }}
+        run: |
+          echo "::error::A dev dispatch must use the default 'patch' bump and" \
+               "an empty set_version (got bump='${BUMP}'," \
+               "set_version='${SET_VERSION}'). The trusted publisher" \
+               "re-resolves the version with defaults and cannot see these" \
+               "inputs, so any other value builds a wheel it will refuse." \
+               "Use bump/set_version only with channel rc or release, which" \
+               "are build-and-validate only."
+          exit 1
+
       - name: Resolve version
         id: resolve
         env:

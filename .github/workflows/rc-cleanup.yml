@@ -1,4 +1,4 @@
-name: Report or prune RC wheels
+name: Report or prune prerelease wheels
 
 on:
   schedule:
@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       apply:
-        description: "Delete the reported assets after approval"
+        description: "Delete the reported assets after approval. Covers BOTH rc and dev wheels -- a dev wheel an environment still runs must be pinned in .github/rc-retain.txt first."
         type: boolean
         default: false
       keep:
-        description: "RC wheels to keep per unreleased version"
+        description: "Prerelease wheels (rc AND dev) to keep, counted separately per unreleased version"
         default: "5"
         type: string
 
@@ -36,7 +36,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Report stale RC wheels
+      - name: Report stale prerelease wheels
         env:
           GH_TOKEN: ${{ github.token }}
           KEEP: ${{ github.event.inputs.keep || '5' }}
@@ -46,7 +46,7 @@ jobs:
             --retain-file .github/rc-retain.txt \
             | tee rc-cleanup-report.txt
           {
-            echo "### RC cleanup report"
+            echo "### Prerelease cleanup report (rc and dev wheels)"
             echo ""
             echo '```text'
             cat rc-cleanup-report.txt
@@ -74,7 +74,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Delete approved stale RC wheels
+      - name: Delete approved stale prerelease wheels
         env:
           GH_TOKEN: ${{ github.token }}
           KEEP: ${{ github.event.inputs.keep || '5' }}

@@ -157,7 +157,19 @@ def _next_prerelease(
     target: tuple[int, int, int],
     pattern: re.Pattern[str],
 ) -> int:
-    """Return one more than the highest prerelease number for ``target``."""
+    """Return one more than the highest prerelease number for ``target``.
+
+    Known race, accepted: the number is allocated from the release assets at
+    *build* time, before the publish job's concurrency group serialises
+    anything. Two overlapping builds can therefore pick the same number; the
+    first publishes and the second fails as a duplicate rather than advancing.
+    That fails closed -- no asset is overwritten, and a re-dispatch picks the
+    next free number -- so it is a nuisance, not a correctness problem.
+
+    This predates the dev channel and applies identically to rc. Removing it
+    means allocating a suffix without consulting mutable assets, which changes
+    the version scheme for both channels; see PR #230 review discussion.
+    """
     numbers = []
     for asset in assets:
         match = pattern.fullmatch(asset)
@@ -223,18 +235,29 @@ def resolve(
             )
 
     if set_version:
-        target, explicit_rc = parse_set_version(set_version, channel)
+        target, explicit_number = parse_set_version(set_version, channel)
     else:
         target = bump_version(latest_stable(assets), bump)
-        explicit_rc = None
+        explicit_number = None
 
     target_text = ".".join(str(part) for part in target)
+    # `is not None`, not truthiness: rc0 and dev0 are valid PEP 440 overrides,
+    # and `0 or next_*()` would silently discard them and allocate a different
+    # number than the caller asked for.
     if channel == "rc":
-        rc_number = explicit_rc or next_rc(assets, target)
+        rc_number = (
+            explicit_number
+            if explicit_number is not None
+            else next_rc(assets, target)
+        )
         version = f"{target_text}rc{rc_number}"
         source_tag = ""
     elif channel == "dev":
-        dev_number = explicit_rc or next_dev(assets, target)
+        dev_number = (
+            explicit_number
+            if explicit_number is not None
+            else next_dev(assets, target)
+        )
         version = f"{target_text}.dev{dev_number}"
         source_tag = ""
     else:

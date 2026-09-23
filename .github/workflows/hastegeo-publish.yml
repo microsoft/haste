@@ -275,7 +275,7 @@ jobs:
             environment already runs (see \`AZURE_BATCH_DOCKER_IMAGE\` on the
             queue app). The deploy refuses to run without them.
 
-          Dev wheels are pruned by **Report or prune RC wheels**; add the
+          Dev wheels are pruned by **Report or prune prerelease wheels**; add the
           filename to \`.github/rc-retain.txt\` to pin one an environment is
           still running.
           EOF
