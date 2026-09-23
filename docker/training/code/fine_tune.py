@@ -9,7 +9,12 @@ import os
 
 import lightning.pytorch as pl
 import torch
-from bda.config import get_args, normalize_gpu_ids, resolve_constraint_indices
+from bda.config import (
+    get_args,
+    normalize_gpu_ids,
+    resolve_constraint_indices,
+    select_precision,
+)
 from bda.datamodules import SegmentationDataModule
 from bda.trainers import CustomSemanticSegmentationTask
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -242,14 +247,7 @@ def main() -> None:
     accelerator = "gpu" if gpu_ids else "cpu"
     devices = gpu_ids if gpu_ids else 1
     strategy = "ddp" if world_size > 1 else "auto"
-    # bf16 needs Ampere or later. HASTE's Batch pools are not homogeneous
-    # (T4s are Turing and have no bf16), so ask the device rather than
-    # assuming, and stay in fp32 on CPU.
-    precision = (
-        "bf16-mixed"
-        if gpu_ids and torch.cuda.is_bf16_supported()
-        else "32-true"
-    )
+    precision = select_precision(gpu_ids, torch.cuda)
     print(
         f"Using accelerator: {accelerator}, device(s): {devices} "
         f"(strategy={strategy}, precision={precision}, "

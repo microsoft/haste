@@ -21,7 +21,41 @@ from bda.config import (  # noqa: E402
     normalize_class_name,
     normalize_gpu_ids,
     resolve_constraint_indices,
+    select_precision,
 )
+
+
+class FakeCuda:
+    """Answers ``is_bf16_supported`` the way PyTorch 2.5 does on one GPU."""
+
+    def __init__(self, native_bf16: bool):
+        self.native_bf16 = native_bf16
+
+    def is_bf16_supported(self, including_emulation: bool = True) -> bool:
+        # Any CUDA GPU can emulate bf16, so the default answer is always
+        # True; only the native-only question tells a T4 from an A100.
+        return self.native_bf16 or including_emulation
+
+
+class TestSelectPrecision(unittest.TestCase):
+    def test_turing_t4_stays_in_fp32(self):
+        self.assertEqual(
+            select_precision([0], FakeCuda(native_bf16=False)), "32-true"
+        )
+
+    def test_ampere_and_later_use_bf16(self):
+        self.assertEqual(
+            select_precision([0], FakeCuda(native_bf16=True)), "bf16-mixed"
+        )
+
+    def test_multi_gpu_uses_bf16_when_native(self):
+        self.assertEqual(
+            select_precision([0, 1], FakeCuda(native_bf16=True)),
+            "bf16-mixed",
+        )
+
+    def test_cpu_stays_in_fp32_without_asking_cuda(self):
+        self.assertEqual(select_precision([], cuda=None), "32-true")
 
 
 class TestNormalizeGpuIds(unittest.TestCase):
