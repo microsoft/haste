@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import hashlib
+import json
 import random
 import re
 import uuid
@@ -10,7 +11,7 @@ from functools import lru_cache
 # Job monitors re-queue their whole record, status history included, on every
 # poll, and an Azure Storage queue message cannot exceed 64 KiB. Keeping the
 # history well under that leaves room for the rest of the record.
-MAX_STATUS_MESSAGE_CHARS = 16 * 1024
+MAX_STATUS_MESSAGE_BYTES = 16 * 1024
 STATUS_HISTORY_TRIMMED = "Earlier status messages were trimmed"
 
 # append_status_message writes each entry as "\n<ISO-8601 timestamp>: <message>",
@@ -18,6 +19,29 @@ STATUS_HISTORY_TRIMMED = "Earlier status messages were trimmed"
 _STATUS_ENTRY_START = re.compile(
     r"\n(?=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?: )"
 )
+
+
+def _serialized_size(text: str) -> int:
+    """Return how many bytes ``text`` adds to a queued JSON message.
+
+    Records are queued with ``json.dumps``, which escapes non-ASCII by default,
+    so its output is ASCII and its length is the byte count. One character can
+    take up to twelve bytes (an escaped surrogate pair).
+    """
+    return len(json.dumps(text)) - 2
+
+
+def _longest_fit(text: str, max_bytes: int, keep_end: bool) -> str:
+    """Return the longest prefix (or suffix) of ``text`` within ``max_bytes``."""
+    low, high = 0, len(text)
+    while low < high:
+        mid = (low + high + 1) // 2
+        part = text[len(text) - mid :] if keep_end else text[:mid]
+        if _serialized_size(part) <= max_bytes:
+            low = mid
+        else:
+            high = mid - 1
+    return text[len(text) - low :] if keep_end else text[:low]
 
 
 @lru_cache(maxsize=1)
@@ -120,27 +144,33 @@ class MetadataUtils:
 
     @staticmethod
     def trim_status_message(
-        status_message: str, max_chars: int = MAX_STATUS_MESSAGE_CHARS
+        status_message: str, max_bytes: int = MAX_STATUS_MESSAGE_BYTES
     ):
-        """Keep the newest whole entries of ``status_message`` within ``max_chars``.
+        """Keep the newest whole entries of ``status_message`` within ``max_bytes``.
 
-        Dropped history is replaced by a single entry saying so, stamped with
-        the oldest retained entry's time so the history stays in order.
+        The budget is measured as the history's size once serialized into a
+        queued JSON message, so escaped non-ASCII text counts at its real
+        size. Dropped history is replaced by a single entry saying so, stamped
+        with the oldest retained entry's time so the history stays in order.
         """
-        if not status_message or len(status_message) <= max_chars:
+        if not status_message or (
+            _serialized_size(status_message) <= max_bytes
+        ):
             return status_message
         entry_starts = [
             match.start()
             for match in _STATUS_ENTRY_START.finditer(status_message)
         ]
         if not entry_starts:
-            return status_message[-max_chars:]
+            return _longest_fit(status_message, max_bytes, keep_end=True)
         for start in entry_starts[1:]:
             retained = status_message[start:]
             timestamp = retained[1:].partition(": ")[0]
             marker = f"\n{timestamp}: {STATUS_HISTORY_TRIMMED}"
-            if len(marker) + len(retained) <= max_chars:
+            if _serialized_size(marker + retained) <= max_bytes:
                 return marker + retained
         # Not even the newest entry fits on its own: keep its beginning,
         # which carries its timestamp and the start of its message.
-        return status_message[entry_starts[-1] :][:max_chars]
+        return _longest_fit(
+            status_message[entry_starts[-1] :], max_bytes, keep_end=False
+        )

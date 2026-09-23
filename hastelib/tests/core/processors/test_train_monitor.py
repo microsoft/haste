@@ -8,7 +8,7 @@ from hastegeo.core.processors.train import (
     TRAINING_IN_PROGRESS_MESSAGE,
     TrainPostprocessor,
 )
-from hastegeo.core.utils.metadata import MetadataUtils
+from hastegeo.core.utils.metadata import STATUS_HISTORY_TRIMMED, MetadataUtils
 
 STATUS = Config.get_status_types()
 # Azure Storage rejects larger queue messages with RequestBodyTooLarge.
@@ -112,3 +112,22 @@ class TestTrainingMonitorQueueMessage:
         assert history.index(TRAINING_IN_PROGRESS_MESSAGE) < history.index(
             "Training job completed successfully"
         )
+
+    def test_non_ascii_history_still_fits_the_queue_message(self, mocker):
+        # Under 16 KiB of characters, but json.dumps escapes each of these to
+        # six bytes: counted by characters it would stay and overflow.
+        processor = _monitor(mocker)
+        model = _submitted_model()
+        model.statusMessage += "".join(
+            f"\n2026-09-22T19:{minute:02d}:00+00:00: " + "训练失败" * 75
+            for minute in range(45)
+        )
+        processor.model_data = model
+
+        processor.process()
+
+        payload = processor.queue_client.put_message.call_args.args[0]
+        assert len(payload.encode("utf-8")) < QUEUE_MESSAGE_LIMIT_BYTES
+        history = json.loads(payload)["statusMessage"]
+        assert STATUS_HISTORY_TRIMMED in history
+        assert history.count(TRAINING_IN_PROGRESS_MESSAGE) == 1

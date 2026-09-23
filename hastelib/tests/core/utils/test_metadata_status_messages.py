@@ -1,10 +1,20 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
+import json
 import unittest
 
-from hastegeo.core.utils.metadata import STATUS_HISTORY_TRIMMED, MetadataUtils
+from hastegeo.core.utils.metadata import (
+    MAX_STATUS_MESSAGE_BYTES,
+    STATUS_HISTORY_TRIMMED,
+    MetadataUtils,
+)
 
 PROGRESS = "Training job in progress"
+
+
+def _serialized_size(text: str) -> int:
+    # Monitors queue records with json.dumps, which escapes non-ASCII.
+    return len(json.dumps(text)) - 2
 
 
 def _progress(minutes) -> str:
@@ -124,7 +134,7 @@ class TestTrimStatusMessage(unittest.TestCase):
 
         trimmed = MetadataUtils.trim_status_message(history, 400)
 
-        self.assertLessEqual(len(trimmed), 400)
+        self.assertLessEqual(_serialized_size(trimmed), 400)
         marker, retained = trimmed[1:].split("\n", 1)
         retained = "\n" + retained
         self.assertTrue(marker.endswith(f": {STATUS_HISTORY_TRIMMED}"))
@@ -138,18 +148,45 @@ class TestTrimStatusMessage(unittest.TestCase):
             marker.partition(": ")[0], retained[1:].partition(": ")[0]
         )
 
+    def test_the_budget_counts_escaped_non_ascii_text(self) -> None:
+        # Fewer characters than the budget, but each of these escapes to six
+        # bytes in the queued message: measured by characters, this history
+        # would pass untrimmed and overflow the 64 KiB queue limit.
+        entries = [
+            f"\n2026-09-22T19:{minute:02d}:00+00:00: " + "训练失败" * 75
+            for minute in range(45)
+        ]
+        history = "".join(entries)
+        self.assertLess(len(history), MAX_STATUS_MESSAGE_BYTES)
+        self.assertGreater(_serialized_size(history), 64 * 1024)
+
+        trimmed = MetadataUtils.trim_status_message(history)
+
+        self.assertLessEqual(
+            _serialized_size(trimmed), MAX_STATUS_MESSAGE_BYTES
+        )
+        self.assertTrue(trimmed.endswith(entries[-1]))
+        self.assertIn(STATUS_HISTORY_TRIMMED, trimmed)
+
     def test_an_oversized_newest_entry_keeps_its_beginning(self) -> None:
         newest = "\n2026-09-22T19:21:00+00:00: " + "x" * 5000
         history = "\n2026-09-22T19:20:17+00:00: Queued for training" + newest
 
-        self.assertEqual(
-            MetadataUtils.trim_status_message(history, 100), newest[:100]
-        )
+        trimmed = MetadataUtils.trim_status_message(history, 100)
+
+        # The longest start of the entry that fits: the leading newline
+        # serializes to two bytes, so one fewer character than the budget.
+        self.assertEqual(trimmed, newest[:99])
+        self.assertEqual(_serialized_size(trimmed), 100)
 
     def test_unstructured_text_keeps_its_tail(self) -> None:
         self.assertEqual(
             MetadataUtils.trim_status_message("a" * 50 + "b" * 50, 50),
             "b" * 50,
+        )
+        self.assertEqual(
+            MetadataUtils.trim_status_message("a" * 50 + "é" * 50, 60),
+            "é" * 10,
         )
 
 
