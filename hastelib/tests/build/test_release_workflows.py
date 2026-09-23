@@ -262,11 +262,17 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        import yaml
+        # Parsed as text, not with PyYAML: the build-wheel job installs only
+        # the pinned build frontend, so this suite must stay dependency-free.
+        block = workflow.split("\n      component:", 1)[1]
+        block = re.split(r"\n      \w+:", block, maxsplit=1)[0]
+        options = re.findall(r"^\s+- (.+?)\s*$", block, re.MULTILINE)
 
-        options = yaml.safe_load(workflow)[True]["workflow_dispatch"][
-            "inputs"
-        ]["component"]["options"]
+        self.assertEqual(
+            ["all", "funcapi", "funcqueue", "titiler", "swa"],
+            options,
+            "component options changed; deploy_apps.sh must accept each one",
+        )
         for option in options:
             self.assertRegex(option, r"^[a-z]+$", f"{option!r} is not bare")
             self.assertIn(f"    {option})", script)
