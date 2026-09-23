@@ -27,6 +27,7 @@ import { MemoryRouter, Routes, Route, Link, useNavigate } from 'react-router-dom
 import { FluentProvider, webLightTheme } from '@fluentui/react-components';
 import { AppContext } from '/src/AppContext.jsx';
 import Projects from '/src/Components/Projects.jsx';
+import Home from '/src/Components/Home.jsx';
 import Loading from '/src/Components/OtherComponents/Loading.jsx';
 import { loadCountryNames } from '/src/util/countries.js';
 import 'bootstrap/dist/css/bootstrap.min.css';
@@ -82,6 +83,7 @@ function Harness() {
     React.createElement('div', { className: params.isLoading ? 'app-body-shell--blocked' : '' },
       React.createElement(Loading),
       React.createElement(Routes, null,
+        React.createElement(Route, { path: '/home', element: React.createElement(Home) }),
         React.createElement(Route, { path: '/projects', element: React.createElement(Projects) }),
         React.createElement(Route, { path: '/destination', element: React.createElement(Destination) }),
         React.createElement(Route, { path: '*', element: React.createElement('div', null, 'Start') }))),
@@ -89,7 +91,7 @@ function Harness() {
       ...(dialog.buttons || []).map(button => React.createElement('button', { key: button.key, onClick: button.onClick }, button.text)))
   );
 }
-createRoot(document.getElementById('root')).render(React.createElement(StrictMode, null,
+createRoot(document.getElementById('root')).render(React.createElement(window.projectsTestStrictMode ? StrictMode : React.Fragment, null,
   React.createElement(FluentProvider, { theme: webLightTheme }, React.createElement(MemoryRouter, null, React.createElement(Harness)))));
 `;
 
@@ -133,6 +135,8 @@ test("Projects request ownership", { timeout: 120000 }, async (suite) => {
             if (mode === "hold") hold(response, pending);
             else if (mode === "error") json(response, {}, 500);
             else json(response, mode === "invalid" ? {} : data);
+          } else if (url.pathname === "/__projects/GetModelCatalog") {
+            json(response, { modelCatalog: [] });
           } else if (url.pathname === "/assets/json/world.geojson") {
             if (holdCountries) hold(response, countryReads);
             else json(response, countries);
@@ -154,13 +158,14 @@ test("Projects request ownership", { timeout: 120000 }, async (suite) => {
   const browser = await chromium.launch({ headless: true });
   suite.after(() => browser.close());
 
-  async function open(context, width = 1440) {
+  async function open(context, width = 1440, strictMode = true) {
     mode = "hold"; holdCountries = false; holdWrites = false; data = projectData();
     const page = await browser.newPage({ viewport: { width, height: width < 600 ? 844 : 900 } });
     context.after(() => page.close());
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     context.after(() => assert.deepEqual(errors, []));
+    await page.addInitScript(value => { window.projectsTestStrictMode = value; }, strictMode);
     await page.goto(`${base}/__projects-test`);
     await page.waitForFunction(() => Boolean(window.navigate));
     return page;
@@ -182,6 +187,37 @@ test("Projects request ownership", { timeout: 120000 }, async (suite) => {
     if (!outputDir) return;
     mkdirSync(outputDir, { recursive: true });
     await page.screenshot({ path: path.join(outputDir, `${name}.png`) });
+  }
+
+  for (const scenario of ["pending", "HTTP failure"]) {
+    await suite.test(`Home to Projects clears inherited controls during ${scenario} without StrictMode`, async context => {
+      const page = await open(context, 1440, false);
+      await page.evaluate(() => window.navigate("/home"));
+      await page.getByText("Loading dashboard", { exact: true }).waitFor();
+      assert.equal(await page.locator("#header-state").textContent(), "Help");
+      assert.equal(await page.locator("#tour-state").textContent(), "dashboardGuide");
+
+      if (scenario === "pending") {
+        await enterPending(page);
+      } else {
+        mode = "error";
+        await page.getByRole("link", { name: "Projects link", exact: true }).click();
+        await page.getByText("Projects could not be loaded.", { exact: true }).waitFor();
+      }
+      assert.equal(await page.locator("#header-state").textContent(), "");
+      assert.equal(await page.locator("#tour-state").textContent(), "");
+
+      if (scenario === "pending") {
+        pending.at(-1).response.end(JSON.stringify(projectData()));
+      } else {
+        mode = "ready";
+        await page.getByRole("button", { name: "Retry", exact: true }).click();
+      }
+      await page.getByRole("link", { name: "Current project", exact: true }).waitFor();
+      assert.equal(await page.locator("#header-state").textContent(), "Help");
+      assert.equal(await page.locator("#tour-state").textContent(), "projectsGuide");
+      assert.deepEqual(await page.evaluate(() => window.events.filter(event => event.type === "loading")), []);
+    });
   }
 
   await suite.test("repeated interrupted visits abort actual requests without global loading writes", async context => {

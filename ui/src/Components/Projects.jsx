@@ -113,6 +113,8 @@ const Projects = () => {
 
   useEffect(() => {
     mountedRef.current = true;
+    setAppHeaderRightButtons([]);
+    initCurrentTour(null);
     initComponent();
     return () => {
       mountedRef.current = false;

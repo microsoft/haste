@@ -143,6 +143,11 @@ checks its controller before committing data, header buttons, or tour state.
 Only the current request may finish the local loader, including under React
 StrictMode setup/cleanup/setup.
 
+On mount, Projects clears inherited header buttons and the current tour before
+starting its read. Pending and failed reads cannot retain another route's Help
+controls; a successful read installs the Projects controls. This reset is not
+repeated for retries or post-delete refreshes.
+
 Initial reads and retries use the existing route-local loading surface and a
 retryable error state. A malformed summary response is an error; an empty
 `projects` array is successful. Reads no longer write the global blocking

@@ -48,9 +48,10 @@
 ## Projects Cancellation Regressions
 
 The colocated spec tool mounts the real Projects component, row/card controls,
-Fluent UI, and route-loading CSS in React StrictMode. It uses isolated local
-HTTP fixtures and its own temporary Vite cache. It never calls Dev1 or changes
-production authentication.
+Fluent UI, and route-loading CSS in React StrictMode. Two additional scenarios
+mount real Home and Projects without StrictMode to check inherited controls on
+route entry. It uses isolated local HTTP fixtures and its own temporary Vite
+cache. It never calls Dev1 or changes production authentication.
 
 ```bash
 NODE_PATH=/path/to/playwright/node_modules node --test \
@@ -64,6 +65,7 @@ The test server and browser close at the end of the run.
 
 | Scenario | Required Evidence |
 |---|---|
+| Home to Projects with a pending or failed read, without StrictMode | Dashboard Help and tour clear on entry; success or Retry installs Projects controls without global loading writes |
 | Five interrupted visits followed by return | Signals abort, actual HTTP reads close, no abandoned global loader writes, fresh read succeeds |
 | Obsolete success/failure with non-cooperative transport | Destination header, tour, and explicit-action overlay remain intact; neither the new pending loader nor its successful data is replaced |
 | HTTP failure, malformed response, and Retry | Local errors are visible, each retry gets a fresh read, success renders content |

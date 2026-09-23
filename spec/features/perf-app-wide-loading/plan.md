@@ -39,6 +39,7 @@ CXL-01 and CXL-05P. Unrelated working-tree edits are unchanged.
 | Use local read loading/error/Retry and guard shared-country callbacks | `ui` | `ui-validation` | US-005 | implemented locally |
 | Preserve preference-save and awaitable row/card delete-refresh contracts | `ui` | `ui-validation` | US-005 | verified locally |
 | StrictMode, interrupted-navigation, error, shared-data, and action regression tests | `ui` | `ui-validation` | US-005 | passed locally |
+| Clear inherited header/tour state on mount; test pending and failed Home-to-Projects entry without StrictMode | `ui` | `ui-validation` | US-005 | passed locally |
 | Human review, CI and authenticated Dev1 smoke test | `ui` | `ui-validation` | US-005 | pending |
 
 Other CXL-05 list/admin pages remain pending. This change is prepared as a

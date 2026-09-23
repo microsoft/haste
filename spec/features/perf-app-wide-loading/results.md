@@ -137,6 +137,19 @@ production build completed in 483 ms. Full UI lint reports 169 diagnostics
 were preserved byte-for-byte; four shared spec conflicts were resolved by
 retaining both follow-up sections. No application deployment was performed.
 
+The subsequent #227 Copilot review identified inherited Dashboard Help and tour
+state during Projects loading or failure. Two Home-to-Projects browser tests
+without StrictMode failed on the unchanged component while all eight existing
+StrictMode scenarios passed. Clearing inherited controls at Projects mount
+made all ten scenarios pass, including successful loading and Retry recovery
+(11 Node entries including the parent suite).
+
+The 2026-09-23 review fix also passed all 178 UI/unit/request-failure tests,
+scoped ESLint, and a production build in 392 ms. Full UI lint retains the same
+169 diagnostics (161 errors, eight warnings). Home and the existing request,
+mutation, and shared-data lifetimes were not changed. No Dev1 deployment or
+authenticated smoke test was performed.
+
 ## CXL-01 Local Verification
 
 On 2026-09-16, the isolated CXL-01 change based on #210 (`3834fb4`) passed
