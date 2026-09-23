@@ -11,6 +11,8 @@ from hastegeo.core.processors.artifacts import (
 from hastegeo.core.utils.metadata import MetadataUtils
 
 STATUS = Config.get_status_types()
+# Azure Storage rejects larger queue messages with RequestBodyTooLarge.
+QUEUE_MESSAGE_LIMIT_BYTES = 64 * 1024
 
 
 class TestArtifactProcessor:
@@ -48,45 +50,44 @@ class TestArtifactProcessor:
         assert queued["zipJobs"][0]["logs"] == queued["zipStatusMessage"]
         assert "Submitting zip task" in queued["zipStatusMessage"]
 
-    def test_a_new_zip_job_drops_earlier_jobs_logs(self, mocker):
+    def test_queueing_a_new_zip_drops_earlier_jobs_logs(self, mocker):
         processor = ArtifactProcessor.__new__(ArtifactProcessor)
         processor.config = mocker.Mock()
         processor.config.get_status_types.return_value = STATUS
-        processor.config.get_azure_batch_config.return_value = {
-            "artifact_batch_job_id": "artifacts",
-            "imageprep_docker_image": "image",
-        }
-        processor.logger = mocker.Mock()
-        processor.runner = mocker.Mock()
-        processor.runner.add_task.return_value = ("artifacts", "zip-3")
         processor.queue_client = mocker.Mock()
-        processor.training_zip_name = "training.zip"
-        processor.inference_zip_name = "inference.zip"
-        mocker.patch.object(processor, "prepare_zip_job", return_value={})
-        processor.model_data = mocker.Mock(
-            trainingOutputPath="training", inferenceOutputPath=None
-        )
-        finished_run = MetadataUtils.append_status_message(
-            "", "Zipping artifacts completed successfully"
-        )
+        finished_run = MetadataUtils.append_status_message("", "x" * 16_400)
         processor.model_artifacts = ModelArtifacts(
             modelId="6283",
             projectId="project-1",
+            zipStatus=STATUS.COMPLETED.value,
             zipJobs=[
                 ZipJob(
                     taskId=f"zip-{run}", status="Completed", logs=finished_run
                 )
-                for run in (1, 2)
+                for run in range(1, 5)
             ],
         )
+        # The stored record the API re-queues: four finished runs, each
+        # carrying a full status history, exceed the queue limit as-is.
+        stored = json.dumps(processor.model_artifacts.dict())
+        assert len(stored.encode("utf-8")) > QUEUE_MESSAGE_LIMIT_BYTES
 
-        processor.submit_zip_job()
+        processor.send_to_zip_queue()
 
-        jobs = processor.model_artifacts.zipJobs
-        assert [job.taskId for job in jobs] == ["zip-1", "zip-2", "zip-3"]
-        assert [job.status for job in jobs[:2]] == ["Completed", "Completed"]
-        assert [job.logs for job in jobs[:2]] == ["", ""]
-        assert processor.model_artifacts.currentZipJobUid == "zip-3"
+        payload = processor.queue_client.put_message.call_args.args[0]
+        assert len(payload.encode("utf-8")) < QUEUE_MESSAGE_LIMIT_BYTES
+        queued = json.loads(payload)
+        assert queued["zipStatus"] == STATUS.PENDING.value
+        assert [job["taskId"] for job in queued["zipJobs"]] == [
+            "zip-1",
+            "zip-2",
+            "zip-3",
+            "zip-4",
+        ]
+        assert [job["status"] for job in queued["zipJobs"]] == [
+            "Completed"
+        ] * 4
+        assert [job["logs"] for job in queued["zipJobs"]] == [""] * 4
 
     def test_fetch_artifact_delegates_to_storage(self, mocker):
         processor = ArtifactProcessor.__new__(ArtifactProcessor)

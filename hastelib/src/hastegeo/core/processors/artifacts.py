@@ -108,6 +108,12 @@ class ArtifactProcessor:
         )
         self.model_artifacts.zipUrl = None
         self.model_artifacts.currentZipJobUid = None
+        # Earlier zip jobs keep their status and dates but not their logs.
+        # Each copy is a finished run's history that nothing reads, and the
+        # whole record is queued now and on every poll: keeping one per run
+        # would let repeated zips outgrow the 64 KiB queue message limit.
+        for previous_job in self.model_artifacts.zipJobs:
+            previous_job.logs = ""
         # Setting visibility timeout to 0 to make sure the message is processed immediately
         self.queue_client.put_message(
             json.dumps(self.model_artifacts.dict()), visibility_timeout=0
@@ -340,12 +346,6 @@ class ArtifactProcessor:
                 srcArtifactPaths.append(self.model_data.trainingOutputPath)
             if self.model_data.inferenceOutputPath:
                 srcArtifactPaths.append(self.model_data.inferenceOutputPath)
-            # Earlier zip jobs keep their status and dates but not their logs.
-            # Each copy is the finished run's history, nothing reads it, and
-            # the whole record is re-queued on every poll: keeping one per run
-            # would let repeated zips outgrow the 64 KiB queue message limit.
-            for previous_job in self.model_artifacts.zipJobs:
-                previous_job.logs = ""
             self.model_artifacts.zipJobs.append(
                 ZipJob(
                     projectId=self.model_artifacts.projectId,
