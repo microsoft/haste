@@ -2,9 +2,22 @@
 # Licensed under the MIT License.
 import hashlib
 import random
+import re
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
+
+# Job monitors re-queue their whole record, status history included, on every
+# poll, and an Azure Storage queue message cannot exceed 64 KiB. Keeping the
+# history well under that leaves room for the rest of the record.
+MAX_STATUS_MESSAGE_CHARS = 16 * 1024
+STATUS_HISTORY_TRIMMED = "Earlier status messages were trimmed"
+
+# append_status_message writes each entry as "\n<ISO-8601 timestamp>: <message>",
+# and a message may itself span several lines.
+_STATUS_ENTRY_START = re.compile(
+    r"\n(?=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?: )"
+)
 
 
 @lru_cache(maxsize=1)
@@ -77,3 +90,57 @@ class MetadataUtils:
             status_message = ""
         timestamp = timestamp if timestamp else MetadataUtils.get_timestamp()
         return status_message + f"\n{timestamp}: {message}"
+
+    @staticmethod
+    def upsert_status_message(
+        status_message: str,
+        message: str,
+        replace_prefix: str,
+        timestamp: str = None,
+    ):
+        """Append ``message``, replacing the last entry if it starts with ``replace_prefix``.
+
+        Monitors that report the same kind of progress on every poll use this
+        so a long-running job keeps one current progress entry instead of
+        adding one per poll.
+        """
+        status_message = status_message or ""
+        entry_starts = [
+            match.start()
+            for match in _STATUS_ENTRY_START.finditer(status_message)
+        ]
+        if entry_starts:
+            last_entry = status_message[entry_starts[-1] + 1 :]
+            _, _, last_message = last_entry.partition(": ")
+            if last_message.startswith(replace_prefix):
+                status_message = status_message[: entry_starts[-1]]
+        return MetadataUtils.append_status_message(
+            status_message, message, timestamp=timestamp
+        )
+
+    @staticmethod
+    def trim_status_message(
+        status_message: str, max_chars: int = MAX_STATUS_MESSAGE_CHARS
+    ):
+        """Keep the newest whole entries of ``status_message`` within ``max_chars``.
+
+        Dropped history is replaced by a single entry saying so, stamped with
+        the oldest retained entry's time so the history stays in order.
+        """
+        if not status_message or len(status_message) <= max_chars:
+            return status_message
+        entry_starts = [
+            match.start()
+            for match in _STATUS_ENTRY_START.finditer(status_message)
+        ]
+        if not entry_starts:
+            return status_message[-max_chars:]
+        for start in entry_starts[1:]:
+            retained = status_message[start:]
+            timestamp = retained[1:].partition(": ")[0]
+            marker = f"\n{timestamp}: {STATUS_HISTORY_TRIMMED}"
+            if len(marker) + len(retained) <= max_chars:
+                return marker + retained
+        # Not even the newest entry fits on its own: keep its beginning,
+        # which carries its timestamp and the start of its message.
+        return status_message[entry_starts[-1] :][:max_chars]

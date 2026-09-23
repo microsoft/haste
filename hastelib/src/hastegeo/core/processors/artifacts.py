@@ -16,6 +16,7 @@ from hastegeo.core.utils.queues import AzureQueueHandler
 
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 ZIP_PREFIX = "zip"
+ZIP_IN_PROGRESS_MESSAGE = "Zipping in progress"
 
 _SLUG_INVALID = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -227,7 +228,12 @@ class ArtifactProcessor:
             else:
                 self.model_artifacts.zipStatus = task_status
                 self.model_artifacts.zipJobs[idx].status = task_status
-                self._update_zip_progress("Zipping in progress")
+                # Replace rather than append: the whole record is re-queued
+                # on every poll and a queue message cannot exceed 64 KiB.
+                self._update_zip_progress(
+                    ZIP_IN_PROGRESS_MESSAGE,
+                    replace_prefix=ZIP_IN_PROGRESS_MESSAGE,
+                )
                 self.model_artifacts.zipJobs[
                     idx
                 ].logs = self.model_artifacts.zipStatusMessage
@@ -382,11 +388,22 @@ class ArtifactProcessor:
         data = blob_client.download_blob().readall()
         return json.loads(data)
 
-    def _update_zip_progress(self, message: str, timestamp: str = None):
-        self.model_artifacts.zipStatusMessage = (
-            MetadataUtils.append_status_message(
+    def _update_zip_progress(
+        self, message: str, timestamp: str = None, replace_prefix: str = None
+    ):
+        if replace_prefix:
+            status_message = MetadataUtils.upsert_status_message(
+                self.model_artifacts.zipStatusMessage,
+                message,
+                replace_prefix,
+                timestamp=timestamp,
+            )
+        else:
+            status_message = MetadataUtils.append_status_message(
                 self.model_artifacts.zipStatusMessage,
                 message,
                 timestamp=timestamp,
             )
+        self.model_artifacts.zipStatusMessage = (
+            MetadataUtils.trim_status_message(status_message)
         )

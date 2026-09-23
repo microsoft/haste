@@ -26,6 +26,7 @@ from ..utils.tbparser import calculate_metrics, parse_tb_event_logs
 # at runtime with the generated working directory for the task
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 TRAINING_PREFIX = "trn"
+TRAINING_IN_PROGRESS_MESSAGE = "Training job in progress"
 
 
 class BaseTrainProcessor:
@@ -230,15 +231,21 @@ class TrainPostprocessor(BaseTrainProcessor):
                         )
 
                     message = (
-                        f"Training job in progress\n"
+                        f"{TRAINING_IN_PROGRESS_MESSAGE}\n"
                         f"trainStartTime: {self.model_data.trainingJob.trainStartTime or 'n/a'}\n"
                         # We're in progress in the one after the latest completed epoch
                         f"epoch: {int(self.model_data.trainingJob.completedEpochs or '0') + 1}\n"
                         f"elapsedDurationInMinutes: {self.model_data.trainingJob.totalElapsedTime}\n"
                         f"approxMinutesToComplete: {approxTimeStr}"
                     )
+                    # Every poll re-queues the whole model, so progress must
+                    # replace the previous update rather than pile up: an
+                    # appended update per poll exceeds the 64 KiB queue
+                    # message limit after about three hours of training.
                     self._update_training_progress(
-                        message, step=self.model_data.currentStep
+                        message,
+                        step=self.model_data.currentStep,
+                        replace_prefix=TRAINING_IN_PROGRESS_MESSAGE,
                     )
                 self.queue_client.put_message(
                     json.dumps(self.model_data.dict())
@@ -558,7 +565,11 @@ class TrainPostprocessor(BaseTrainProcessor):
         return True
 
     def _update_training_progress(
-        self, message: str, step: int = None, timestamp: str = None
+        self,
+        message: str,
+        step: int = None,
+        timestamp: str = None,
+        replace_prefix: str = None,
     ):
         if step is not None:
             self.model_data.currentStep = int(step)
@@ -570,8 +581,19 @@ class TrainPostprocessor(BaseTrainProcessor):
             * 100,
             2,
         )
-        self.model_data.statusMessage = MetadataUtils.append_status_message(
-            self.model_data.statusMessage, message, timestamp=timestamp
+        if replace_prefix:
+            status_message = MetadataUtils.upsert_status_message(
+                self.model_data.statusMessage,
+                message,
+                replace_prefix,
+                timestamp=timestamp,
+            )
+        else:
+            status_message = MetadataUtils.append_status_message(
+                self.model_data.statusMessage, message, timestamp=timestamp
+            )
+        self.model_data.statusMessage = MetadataUtils.trim_status_message(
+            status_message
         )
 
     def cancel(self):
