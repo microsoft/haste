@@ -2678,6 +2678,20 @@ const InteractiveLabeler = () => {
             )}
           </div>
         )}
+
+        {/* Coordinates are measured from the map canvas, so the selection
+            overlay must use the map area as its positioning context. */}
+        <div
+          ref={boxRef}
+          style={{
+            position: "absolute",
+            display: "none",
+            border: "2px dashed #3388ff",
+            background: "rgba(51,136,255,0.15)",
+            pointerEvents: "none",
+            zIndex: 900,
+          }}
+        />
       </div>
 
       {isMapReady && (
@@ -3011,19 +3025,6 @@ const InteractiveLabeler = () => {
           </div>
         </div>
       )}
-
-      {/* Box-select rectangle (Ctrl+drag) */}
-      <div
-        ref={boxRef}
-        style={{
-          position: "absolute",
-          display: "none",
-          border: "2px dashed #3388ff",
-          background: "rgba(51,136,255,0.15)",
-          pointerEvents: "none",
-          zIndex: 900,
-        }}
-      />
 
       {/* Full-coverage Predict-all progress modal. */}
       {fullPredict && (
