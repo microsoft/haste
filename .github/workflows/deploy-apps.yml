@@ -14,10 +14,10 @@ on:
         type: choice
         options:
           - all
-          - funcapi
-          - funcqueue
-          - titiler
-          - swa
+          - funcapi (API backend)
+          - funcqueue (Job processor)
+          - titiler (Tile server)
+          - swa (UI)
       training_image_tag:
         description: "Training image tag, used for training/inference jobs; "
         required: true
