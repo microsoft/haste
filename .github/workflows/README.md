@@ -28,6 +28,14 @@ derives the channel from the upstream event — `pull_request` is `rc`, `push` i
 `release`, `workflow_dispatch` is `dev` — so a dispatch can never publish a
 stable wheel however its `channel` input was set.
 
+That guard fails closed rather than quietly: dispatching with `channel: rc` or
+`release` builds a wheel the publisher will not accept, because it looks for
+the `.devN` name it resolved and finds an `rcN` or stable one instead. **Publish
+hastegeo wheel and images** then ends **red** on its artifact-name check. The
+wheel is still attached to the build run as an artifact, so use an rc/release
+dispatch only to validate that a version resolves and builds — and expect the
+failed publish run that follows.
+
 ### Dev Wheels: Iterating on a Function App
 
 To change `hastegeo` and test it in a deployed function app without minting a

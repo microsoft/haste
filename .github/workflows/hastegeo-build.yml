@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "Build channel. 'dev' is the only one a dispatch publishes; rc/release dispatches build and validate only."
+        description: "Manual runs only: dev publishes the wheel, rc/release build without publishing. PRs always publish an rc."
         required: true
         default: "dev"
         type: choice
@@ -26,7 +26,7 @@ on:
           - rc
           - release
       bump:
-        description: "Version bump when set_version is blank"
+        description: "Bumps the latest stable version: patch by default, or minor/major. Ignored when an exact version is given."
         required: true
         default: "patch"
         type: choice
@@ -35,7 +35,7 @@ on:
           - minor
           - major
       set_version:
-        description: "Optional exact X.Y.Z, or X.Y.ZrcN / X.Y.Z.devN for those channels"
+        description: "Optional exact version: X.Y.Z on any channel, or X.Y.ZrcN / X.Y.Z.devN to pin the rc/dev number."
         required: false
         default: ""
         type: string

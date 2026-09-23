@@ -19,21 +19,21 @@ on:
           - titiler
           - swa
       training_image_tag:
-        description: "Training image tag (blank = resolved hastegeo version)"
+        description: "Training image tag, used for training/inference jobs; blank = resolved hastegeo version, and must equal it for an RC."
         required: false
         default: ""
         type: string
       imageprep_image_tag:
-        description: "Imageryprep image tag (blank = resolved hastegeo version)"
+        description: "Imageryprep image tag, used for imagery preparation jobs; blank = resolved hastegeo version. Need not match the training tag except for an RC."
         required: false
         default: ""
         type: string
       app_tag:
-        description: "Application version tag"
+        description: "Application version tag; recorded as a tag on the Azure resources."
         required: true
         type: string
       hastegeo_version:
-        description: "hastegeo wheel version to deploy (blank = latest stable release)"
+        description: "hastegeo wheel version, used by funcapi and funcqueue (blank = latest stable release)"
         required: false
         default: ""
         type: string
