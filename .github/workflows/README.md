@@ -50,10 +50,10 @@ substring and carries no such coupling, so it deploys against whatever images
 the environment already runs. PEP 440 orders `1.0.2.dev1 < 1.0.2rc1 < 1.0.2`,
 so a dev wheel can never shadow a real release.
 
-Because no images are built for a dev wheel, `deploy-apps.yml` **requires**
-`training_image_tag` and `imageprep_image_tag` explicitly rather than letting
-them default to a tag that does not exist. Use the tags the environment already
-runs — see `AZURE_BATCH_DOCKER_IMAGE` on the queue app.
+No images are built for a dev wheel, so leave both image tags **blank**:
+`deploy-apps.yml` then reuses whatever the target environment is already
+running, read back from `AZURE_BATCH_DOCKER_IMAGE` on the queue app. Only a
+first deploy to an environment with no images yet needs them passed.
 
 Dev wheels are immutable, never tagged, and pruned by `rc-cleanup.yml` on the
 same rules as RCs, counted separately so rapid dev iteration never evicts a
@@ -131,22 +131,51 @@ or to build images from an arbitrary branch.
 **Building is unconstrained**: any branch, any tag string. `image_tag` is free
 text, so throwaway tags like `meygha-test-3` are fine and expected.
 
-**Deploying what you built** has one rule, and it is enforced by
-`deploy-apps.yml`, not here. Image tags default to the resolved
-`hastegeo_version` but may be overridden — *except* when that version is an RC
-(`X.Y.ZrcN`), where both image tags must equal it exactly:
+**Deploying what you built** is governed by `deploy-apps.yml`, not here.
+Leaving an input blank does **not** mean the same thing for the wheel as it
+does for the images:
+
+| Input | Blank means |
+|---|---|
+| `hastegeo_version` | **the latest stable wheel** — *not* the one currently deployed |
+| `training_image_tag` / `imageprep_image_tag` | **keep the image the app is running** |
+
+The asymmetry is forced, not a choice. The image tag is stored on the app as
+`AZURE_BATCH_DOCKER_IMAGE`, so the deploy can read it back — off the app it is
+about to deploy, the API app for `funcapi` and the queue app for `funcqueue`
+and `all`. The wheel is pinned into `requirements.txt` at deploy time and
+recorded nowhere, so there is nothing to read back and no way to know which
+wheel an app is running.
+
+**Consequence worth knowing:** a blank `hastegeo_version` moves the function
+apps onto the latest stable wheel, even when you are deploying a branch that
+changed no Python at all. Pin it explicitly if you need the deployed wheel to
+stay put — and note this is what silently reverts a `.devN` escape hatch.
+
+Each app that installs the wheel is now tagged `hastegeo_version=<version>` in
+Azure, alongside the existing `env` and `deployed_version` tags, so you can at
+least *see* what an environment is running without inspecting its
+`requirements.txt`. Apps with no hastegeo line, such as titiler, are not
+tagged. Nothing reads the tag back yet — making blank mean "keep the deployed
+wheel" is future work.
+
+Once a wheel version is chosen, the image tags are constrained only for an RC:
 
 | `hastegeo_version` being deployed | Image tags |
 |---|---|
-| blank (latest stable) or `X.Y.Z` | anything you want |
+| blank (latest stable) or `X.Y.Z` | anything, or blank to keep the running image |
 | `X.Y.ZrcN` | must match the wheel version exactly |
+| `X.Y.Z.devN` | anything, or blank to keep the running image |
 
-So to deploy a custom-tagged test image, pair it with a *stable* wheel and pass
-`training_image_tag` / `imageprep_image_tag` explicitly. The only refused
-combination is a custom image alongside an RC wheel: the RC channel exists to
-ship a wheel and its images as one locked, coherent set, and mixing a
-hand-tagged image into it defeats that. For RC testing, let the PR pipeline in
-`hastegeo-publish.yml` build the matching wheel and images instead.
+To deploy a custom-tagged test image, pass `training_image_tag` /
+`imageprep_image_tag` explicitly. The only refused combination is a custom
+image alongside an RC wheel: the RC channel exists to ship a wheel and its
+images as one locked, coherent set, and mixing a hand-tagged image into it
+defeats that. For RC testing, let the PR pipeline in `hastegeo-publish.yml`
+build the matching wheel and images instead.
+
+A first deploy to an environment with no images yet has nothing to inherit, so
+it fails with an explicit message rather than guessing.
 
 Note that `deploy_apps.sh` interpolates the tag into `hastetraining:<tag>`
 without checking that it exists in ACR, so a typo deploys cleanly and only

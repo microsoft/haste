@@ -89,10 +89,14 @@ branch image cannot be labelled as a release.
 > **Known gap:** `hastegeo-publish.yml` still tags RC images with the
 > resolved *wheel* version (e.g. `1.0.40rc4`), and there is no stable image
 > build on merge at all — stable images are still built by hand via
-> `workflow_dispatch`. Until that is fixed, **always pass
-> `training_image_tag` / `imageprep_image_tag` explicitly when deploying**;
-> a blank input defaults to the wheel version and will pull the wrong image.
-> Deploying a `dev` wheel refuses to run without them for that reason.
+> `workflow_dispatch`.
+>
+> Deploying is no longer affected: a blank `training_image_tag` /
+> `imageprep_image_tag` now reuses the image the app being deployed is
+> already running, read from its own `AZURE_BATCH_DOCKER_IMAGE`, rather than
+> defaulting to the wheel version and pulling a tag that does not exist. Pass
+> them explicitly only to *change* the image, or on a first deploy to an
+> environment that has none.
 
 ## Cutting a product release
 
