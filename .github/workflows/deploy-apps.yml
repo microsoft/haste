@@ -8,7 +8,9 @@ on:
         required: true
         type: string
       component:
-        description: "Which component to deploy"
+        # A choice option is the literal value passed to deploy_apps.sh, not a
+        # display label, so these must stay bare names. Describe them here.
+        description: "Which component to deploy. funcapi = API backend, funcqueue = job processor, titiler = tile server, swa = UI."
         required: true
         default: "all"
         type: choice
@@ -19,21 +21,21 @@ on:
           - titiler
           - swa
       training_image_tag:
-        description: "Training image tag (blank = resolved hastegeo version)"
+        description: "Training image tag, for training/inference jobs. Blank = keep the image this environment already runs."
         required: false
         default: ""
         type: string
       imageprep_image_tag:
-        description: "Imageryprep image tag (blank = resolved hastegeo version)"
+        description: "Imageryprep image tag, for imagery preparation jobs. Blank = keep the image this environment already runs. Need not match the training tag except for an RC."
         required: false
         default: ""
         type: string
       app_tag:
-        description: "Application version tag"
+        description: "Application version; recorded as a tag on the Azure resources."
         required: true
         type: string
       hastegeo_version:
-        description: "hastegeo wheel version to deploy (blank = latest stable release)"
+        description: "hastegeo wheel version, used by funcapi and funcqueue. Blank = latest available stable release"
         required: false
         default: ""
         type: string
@@ -78,31 +80,93 @@ jobs:
           python .github/scripts/resolve_hastegeo_deploy.py \
             --version "${{ inputs.hastegeo_version }}"
 
-      - name: Resolve matching image tags
-        id: artifacts
-        env:
-          VERSION: ${{ steps.hastegeo.outputs.version }}
-          TRAINING_INPUT: ${{ inputs.training_image_tag }}
-          IMAGEPREP_INPUT: ${{ inputs.imageprep_image_tag }}
-        run: |
-          TRAINING_TAG="${TRAINING_INPUT:-$VERSION}"
-          IMAGEPREP_TAG="${IMAGEPREP_INPUT:-$VERSION}"
-          if [[ "$VERSION" == *rc* ]]; then
-            if [[ "$TRAINING_TAG" != "$VERSION" || \
-                  "$IMAGEPREP_TAG" != "$VERSION" ]]; then
-              echo "::error::RC deployments require matching wheel and image tags"
-              exit 1
-            fi
-          fi
-          echo "training_tag=$TRAINING_TAG" >> "$GITHUB_OUTPUT"
-          echo "imageprep_tag=$IMAGEPREP_TAG" >> "$GITHUB_OUTPUT"
-
       - name: Azure Login
         uses: azure/login@1384c340ab2dda50fed2bee3041d1d87018aa5e8 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Runs after Azure Login because a blank tag inherits what the target
+      # environment is already running. Deploying a branch that changes neither
+      # hastelib/ nor docker/ builds no images at all, and there is no stable
+      # image build on merge to fall back on, so the old default -- the
+      # resolved hastegeo version -- named a tag that usually does not exist.
+      # Inheriting means a contributor with no image changes leaves both
+      # fields empty and nothing about Batch moves.
+      - name: Resolve matching image tags
+        id: artifacts
+        env:
+          VERSION: ${{ steps.hastegeo.outputs.version }}
+          TRAINING_INPUT: ${{ inputs.training_image_tag }}
+          IMAGEPREP_INPUT: ${{ inputs.imageprep_image_tag }}
+          # Only these components write the Batch image settings; titiler and
+          # swa pass `false` for that block in deploy_apps.sh.
+          NEEDS_IMAGES: ${{ inputs.component == 'all' || inputs.component == 'funcapi' || inputs.component == 'funcqueue' }}
+          COMPONENT: ${{ inputs.component }}
+          RESOURCE_GROUP: ${{ secrets.RESOURCE_PREFIX }}-haste-${{ secrets.RESOURCE_SUFFIX }}-rg
+          API_APP: ${{ secrets.RESOURCE_PREFIX }}haste${{ secrets.RESOURCE_SUFFIX }}func
+          QUEUE_APP: ${{ secrets.RESOURCE_PREFIX }}hastequeue${{ secrets.RESOURCE_SUFFIX }}func
+        run: |
+          TRAINING_TAG="$TRAINING_INPUT"
+          IMAGEPREP_TAG="$IMAGEPREP_INPUT"
+
+          # An RC publishes wheel and images together at one locked version, so
+          # a blank input means that version and a mismatch is refused.
+          if [[ "$VERSION" == *rc* ]]; then
+            TRAINING_TAG="${TRAINING_TAG:-$VERSION}"
+            IMAGEPREP_TAG="${IMAGEPREP_TAG:-$VERSION}"
+            if [[ "$TRAINING_TAG" != "$VERSION" || \
+                  "$IMAGEPREP_TAG" != "$VERSION" ]]; then
+              echo "::error::RC deployments require matching wheel and image tags"
+              exit 1
+            fi
+          fi
+
+          if [[ "$NEEDS_IMAGES" == "true" && \
+                ( -z "$TRAINING_TAG" || -z "$IMAGEPREP_TAG" ) ]]; then
+            # Read from the app actually being deployed, so "keep the running
+            # image" is literally true. funcapi and funcqueue each carry their
+            # own copy of these settings (deploy_apps.sh passes true for the
+            # settings block on both), and deploying them separately lets the
+            # two drift; reading the wrong one would silently move an app onto
+            # the other's image. `all` writes both, so either source unifies
+            # them -- use the queue app, which is the one submitting Batch jobs.
+            if [[ "$COMPONENT" == "funcapi" ]]; then
+              SOURCE_APP="$API_APP"
+            else
+              SOURCE_APP="$QUEUE_APP"
+            fi
+            echo "Reading current images from ${SOURCE_APP}..."
+            # Settings hold a full ref, <acr>.azurecr.io/hastetraining:<tag>.
+            # Keep only what follows the final colon, and treat a ref with no
+            # colon as absent rather than mistaking the repository for a tag.
+            read_tag() {
+              local ref
+              ref=$(az functionapp config appsettings list \
+                --name "$SOURCE_APP" \
+                --resource-group "$RESOURCE_GROUP" \
+                --query "[?name=='$1'].value | [0]" \
+                -o tsv 2>/dev/null) || ref=""
+              [[ "$ref" == *:* ]] && printf '%s' "${ref##*:}"
+            }
+            TRAINING_TAG="${TRAINING_TAG:-$(read_tag AZURE_BATCH_DOCKER_IMAGE)}"
+            IMAGEPREP_TAG="${IMAGEPREP_TAG:-$(read_tag AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE)}"
+          fi
+
+          if [[ "$NEEDS_IMAGES" == "true" && \
+                ( -z "$TRAINING_TAG" || -z "$IMAGEPREP_TAG" ) ]]; then
+            echo "::error::No image tag given and none to inherit --" \
+                 "${SOURCE_APP:-the target app} has no AZURE_BATCH_DOCKER_IMAGE" \
+                 "yet, so this looks like a first deploy to this environment." \
+                 "Pass training_image_tag and imageprep_image_tag explicitly."
+            exit 1
+          fi
+
+          echo "Training image tag:   ${TRAINING_TAG:-<unused for this component>}"
+          echo "Imageryprep image tag: ${IMAGEPREP_TAG:-<unused for this component>}"
+          echo "training_tag=$TRAINING_TAG" >> "$GITHUB_OUTPUT"
+          echo "imageprep_tag=$IMAGEPREP_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Git LFS Pull
         run: git lfs pull
@@ -132,6 +196,11 @@ jobs:
           # `func publish` (deploy_apps.sh); the editable default can't resolve
           # on Azure's remote build.
           HASTEGEO_WHEEL_URL: ${{ steps.hastegeo.outputs.url }}
+          # Recorded as a `hastegeo_version` tag on each app that installs the
+          # wheel, so there is a durable record of what is deployed. Nothing
+          # reads it back yet -- a blank hastegeo_version still resolves to
+          # latest stable.
+          HASTEGEO_VERSION: ${{ steps.hastegeo.outputs.version }}
           # Batch pool wiring. All optional: unset reproduces the legacy
           # single-pool behavior. Stored as environment *secrets* (not
           # variables) so the values are masked in this repo's public

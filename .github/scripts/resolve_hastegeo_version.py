@@ -17,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "hastelib"))
 
 from haste_release import (  # noqa: E402
+    CHANNELS,
     Resolution,
     list_release_assets,
     resolve,
@@ -46,7 +47,7 @@ def emit_outputs(resolution: Resolution) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--channel", choices=["rc", "release"], required=True)
+    parser.add_argument("--channel", choices=list(CHANNELS), required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument(
         "--bump",

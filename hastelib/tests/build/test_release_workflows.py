@@ -179,16 +179,103 @@ class ReleaseWorkflowPolicyTests(unittest.TestCase):
         self.assertIn("Build and Push Docker Image", workflow)
 
     def test_rc_deploy_defaults_all_artifacts_to_same_version(self):
+        """An RC ships wheel and images as one locked set, so a blank image
+        tag means the wheel version and a mismatch is refused. Only RC
+        defaults this way: other channels inherit the deployed image instead
+        (see test_blank_image_tag_inherits_the_deployed_image)."""
         workflow = (REPO_ROOT / ".github/workflows/deploy-apps.yml").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn('TRAINING_TAG="${TRAINING_INPUT:-$VERSION}"', workflow)
-        self.assertIn('IMAGEPREP_TAG="${IMAGEPREP_INPUT:-$VERSION}"', workflow)
+        self.assertIn('if [[ "$VERSION" == *rc* ]]; then', workflow)
+        self.assertIn('TRAINING_TAG="${TRAINING_TAG:-$VERSION}"', workflow)
+        self.assertIn('IMAGEPREP_TAG="${IMAGEPREP_TAG:-$VERSION}"', workflow)
         self.assertIn(
             "RC deployments require matching wheel and image tags",
             workflow,
         )
+
+    def test_blank_image_tag_inherits_the_deployed_image(self):
+        """A branch touching neither hastelib/ nor docker/ builds no images,
+        and there is no stable image build on merge, so the old default (the
+        resolved wheel version) named a tag that did not exist. Blank must
+        mean 'keep what is running', not 'guess'."""
+        workflow = (REPO_ROOT / ".github/workflows/deploy-apps.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("AZURE_BATCH_DOCKER_IMAGE", workflow)
+        self.assertIn("AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE", workflow)
+        self.assertIn(
+            'TRAINING_TAG="${TRAINING_TAG:-$(read_tag '
+            'AZURE_BATCH_DOCKER_IMAGE)}"',
+            workflow,
+        )
+        # Inheriting needs credentials, so it must follow Azure Login.
+        self.assertLess(
+            workflow.index("Azure Login"),
+            workflow.index("Resolve matching image tags"),
+            "image-tag resolution must run after Azure Login",
+        )
+        # funcapi and funcqueue each hold their own copy of the setting and
+        # can drift, so the tag must be read from the app being deployed --
+        # reading the wrong one silently moves an app onto the other's image.
+        self.assertIn('if [[ "$COMPONENT" == "funcapi" ]]; then', workflow)
+        self.assertIn('SOURCE_APP="$API_APP"', workflow)
+        self.assertIn('SOURCE_APP="$QUEUE_APP"', workflow)
+        self.assertIn('--name "$SOURCE_APP"', workflow)
+        # A first deploy has nothing to inherit and must say so, not guess.
+        self.assertIn("No image tag given and none to inherit", workflow)
+
+    def test_deployed_wheel_version_is_recorded_as_a_tag(self):
+        """Nothing on a function app says which hastegeo it runs -- the wheel
+        is pinned into requirements.txt and forgotten -- so a blank
+        hastegeo_version silently moves an app to latest stable. This tag is
+        the record; the read-back that would consume it is future work."""
+        script = (REPO_ROOT / ".github/scripts/deploy_apps.sh").read_text(
+            encoding="utf-8"
+        )
+        workflow = (REPO_ROOT / ".github/workflows/deploy-apps.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "HASTEGEO_VERSION: ${{ steps.hastegeo.outputs.version }}", workflow
+        )
+        self.assertIn(
+            'EXTRA_TAGS="tags.hastegeo_version=${PINNED_HASTEGEO}"', script
+        )
+        # Only apps that actually pinned a wheel: an empty value would clobber
+        # a correct tag, and titiler never installs hastegeo at all.
+        self.assertIn('PINNED_HASTEGEO="${HASTEGEO_VERSION:-}"', script)
+        self.assertIn('if [ -n "$PINNED_HASTEGEO" ]; then', script)
+        self.assertIn("--set $AZ_FUNCTIONAPP_TAGS $EXTRA_TAGS", script)
+
+    def test_component_options_are_bare_values(self):
+        """A choice option is the literal value passed to deploy_apps.sh,
+        which rejects anything outside its case list -- so a decorated label
+        like 'funcapi (API backend)' would break every non-all deploy."""
+        workflow = (REPO_ROOT / ".github/workflows/deploy-apps.yml").read_text(
+            encoding="utf-8"
+        )
+        script = (REPO_ROOT / ".github/scripts/deploy_apps.sh").read_text(
+            encoding="utf-8"
+        )
+
+        # Parsed as text, not with PyYAML: the build-wheel job installs only
+        # the pinned build frontend, so this suite must stay dependency-free.
+        block = workflow.split("\n      component:", 1)[1]
+        block = re.split(r"\n      \w+:", block, maxsplit=1)[0]
+        options = re.findall(r"^\s+- (.+?)\s*$", block, re.MULTILINE)
+
+        self.assertEqual(
+            ["all", "funcapi", "funcqueue", "titiler", "swa"],
+            options,
+            "component options changed; deploy_apps.sh must accept each one",
+        )
+        for option in options:
+            self.assertRegex(option, r"^[a-z]+$", f"{option!r} is not bare")
+            self.assertIn(f"    {option})", script)
 
     @staticmethod
     def _top_level_block(content, key):

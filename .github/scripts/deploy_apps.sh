@@ -179,9 +179,11 @@ deploy_function() {
     # editable hastegeo default in requirements.txt (used by docker-compose)
     # must be swapped for the published wheel. Apps without a hastegeo line
     # (e.g. titiler) are left untouched.
+    local PINNED_HASTEGEO=""
     if [ -n "${HASTEGEO_WHEEL_URL:-}" ] && grep -qE '^[[:space:]]*#?[[:space:]]*(-e[[:space:]]+[^[:space:]]*hastelib|hastegeo[[:space:]]*@)' "$FUNCTION_DIR/requirements.txt" 2>/dev/null; then
         echo "Pinning hastegeo wheel for $FUNCTION_NAME: $HASTEGEO_WHEEL_URL"
         python3 "$(dirname "$0")/set_hastegeo_source.py" --mode wheel --url "$HASTEGEO_WHEEL_URL" "$FUNCTION_DIR/requirements.txt"
+        PINNED_HASTEGEO="${HASTEGEO_VERSION:-}"
     fi
 
     echo "Deploying function code..."
@@ -196,8 +198,23 @@ deploy_function() {
     )
     echo "Function deployment completed successfully."
 
+    # Record the wheel this app actually installed. Nothing else on the app
+    # says which hastegeo it is running -- the wheel is pinned into
+    # requirements.txt at deploy time and then forgotten -- so a blank
+    # hastegeo_version on the next deploy silently moves the app to latest
+    # stable. This tag is the record a future deploy can read back to offer
+    # "keep the deployed wheel"; nothing consumes it yet.
+    #
+    # Only apps that actually pinned a wheel are tagged: titiler has no
+    # hastegeo line, and an empty value would clobber a correct tag on a
+    # component-scoped deploy that skipped wheel resolution.
+    local EXTRA_TAGS=""
+    if [ -n "$PINNED_HASTEGEO" ]; then
+        EXTRA_TAGS="tags.hastegeo_version=${PINNED_HASTEGEO}"
+    fi
+
     echo "Setting tags for Function App $FUNCTION_NAME ..."
-    az functionapp update --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --set $AZ_FUNCTIONAPP_TAGS
+    az functionapp update --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --set $AZ_FUNCTIONAPP_TAGS $EXTRA_TAGS
 }
 
 deploy_static_web_app() {

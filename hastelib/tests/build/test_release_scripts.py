@@ -195,6 +195,126 @@ class WheelPublisherTests(unittest.TestCase):
                 )
 
 
+class DevChannelPublisherTests(unittest.TestCase):
+    """The dev channel is a privileged publication path -- it is the only one
+    a dispatch can reach -- so it needs the same validator and immutability
+    coverage the rc channel has."""
+
+    def test_validate_wheel_accepts_matching_dev_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = create_wheel(Path(temp_dir), "1.0.26.dev1")
+
+            identity = publish_hastegeo_wheel.validate_wheel(
+                wheel, "1.0.26.dev1", "dev"
+            )
+
+        self.assertEqual("1.0.26.dev1", identity.version)
+        self.assertEqual(64, len(identity.sha256))
+
+    def test_validate_wheel_rejects_dev_metadata_version_mismatch(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = create_wheel(
+                Path(temp_dir),
+                "1.0.26.dev1",
+                metadata_version="1.0.26.dev2",
+            )
+
+            with self.assertRaises(ValueError):
+                publish_hastegeo_wheel.validate_wheel(
+                    wheel, "1.0.26.dev1", "dev"
+                )
+
+    def test_validate_wheel_rejects_stable_version_on_dev_channel(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = create_wheel(Path(temp_dir), "1.0.26")
+
+            with self.assertRaisesRegex(ValueError, "requires a .devN"):
+                publish_hastegeo_wheel.validate_wheel(wheel, "1.0.26", "dev")
+
+    def test_validate_wheel_rejects_rc_version_on_dev_channel(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = create_wheel(Path(temp_dir), "1.0.26rc1")
+
+            with self.assertRaisesRegex(ValueError, "requires a .devN"):
+                publish_hastegeo_wheel.validate_wheel(
+                    wheel, "1.0.26rc1", "dev"
+                )
+
+    def test_validate_wheel_rejects_dev_version_on_release_channel(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = create_wheel(Path(temp_dir), "1.0.26.dev1")
+
+            with self.assertRaisesRegex(ValueError, "stable version"):
+                publish_hastegeo_wheel.validate_wheel(
+                    wheel, "1.0.26.dev1", "release"
+                )
+
+    @patch.object(
+        publish_hastegeo_wheel,
+        "list_release_assets",
+        return_value=["hastegeo-1.0.26.dev1-py3-none-any.whl"],
+    )
+    def test_publish_existing_dev_fails_without_clobber(self, _assets):
+        """Dev wheels are immutable like every other channel: a re-dispatch
+        must not silently replace the bytes an environment is running."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = create_wheel(Path(temp_dir), "1.0.26.dev1")
+            identity = publish_hastegeo_wheel.validate_wheel(
+                wheel, "1.0.26.dev1", "dev"
+            )
+
+            with self.assertRaisesRegex(ValueError, "will not be overwritten"):
+                publish_hastegeo_wheel.publish(
+                    identity,
+                    channel="dev",
+                    source_sha="abc",
+                )
+
+    @patch.object(
+        publish_hastegeo_wheel,
+        "list_release_assets",
+        return_value=["hastegeo-1.0.26-py3-none-any.whl"],
+    )
+    def test_publish_dev_fails_after_stable_release_exists(self, _assets):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = create_wheel(Path(temp_dir), "1.0.26.dev3")
+            identity = publish_hastegeo_wheel.validate_wheel(
+                wheel, "1.0.26.dev3", "dev"
+            )
+
+            with self.assertRaisesRegex(ValueError, "stable asset"):
+                publish_hastegeo_wheel.publish(
+                    identity,
+                    channel="dev",
+                    source_sha="abc",
+                )
+
+    @patch.object(publish_hastegeo_wheel, "ensure_stable_tag")
+    @patch.object(
+        publish_hastegeo_wheel, "list_release_assets", return_value=[]
+    )
+    def test_publish_dev_never_creates_a_source_tag(self, _assets, tag_mock):
+        """A source tag marks a stable release and makes a re-run idempotent.
+        A dev wheel must never mint one."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = create_wheel(Path(temp_dir), "1.0.26.dev1")
+            identity = publish_hastegeo_wheel.validate_wheel(
+                wheel, "1.0.26.dev1", "dev"
+            )
+            with patch.object(
+                publish_hastegeo_wheel, "run_command"
+            ), patch.object(
+                publish_hastegeo_wheel,
+                "list_release_assets",
+                side_effect=[[], [identity.filename]],
+            ):
+                publish_hastegeo_wheel.publish(
+                    identity, channel="dev", source_sha="abc"
+                )
+
+        tag_mock.assert_not_called()
+
+
 class DeployResolverTests(unittest.TestCase):
     def test_canonicalize_version_removes_rc_zero_padding(self):
         self.assertEqual(
@@ -255,6 +375,65 @@ class CleanupTests(unittest.TestCase):
     def test_load_retain_requires_configured_file(self):
         with self.assertRaises(FileNotFoundError):
             cleanup_rc_releases._load_retain("missing-retain-file.txt")
+
+    def test_dev_and_rc_wheels_retain_independently(self):
+        """Counted per kind, so rapid dev iteration cannot evict a release
+        candidate -- and the approval UI now says both kinds are in scope."""
+        assets = [{"name": "hastegeo-1.0.25-py3-none-any.whl", "apiUrl": "s"}]
+        assets += [
+            {
+                "name": f"hastegeo-1.0.26rc{n}-py3-none-any.whl",
+                "apiUrl": f"rc{n}",
+            }
+            for n in range(1, 5)
+        ]
+        assets += [
+            {
+                "name": f"hastegeo-1.0.26.dev{n}-py3-none-any.whl",
+                "apiUrl": f"dev{n}",
+            }
+            for n in range(1, 5)
+        ]
+
+        doomed = {
+            a["name"]
+            for a in cleanup_rc_releases.plan_deletions(assets, 2, set())
+        }
+
+        # Two of each kind survive, not two across both.
+        self.assertEqual(
+            {
+                "hastegeo-1.0.26rc1-py3-none-any.whl",
+                "hastegeo-1.0.26rc2-py3-none-any.whl",
+                "hastegeo-1.0.26.dev1-py3-none-any.whl",
+                "hastegeo-1.0.26.dev2-py3-none-any.whl",
+            },
+            doomed,
+        )
+
+    def test_stable_release_removes_dev_except_retained_asset(self):
+        """Publishing a stable wheel obsoletes its dev wheels too. An
+        environment still running one must pin it in rc-retain.txt."""
+        assets = [
+            {"name": "hastegeo-1.0.26-py3-none-any.whl", "apiUrl": "stable"},
+            {
+                "name": "hastegeo-1.0.26.dev1-py3-none-any.whl",
+                "apiUrl": "dev1",
+            },
+            {
+                "name": "hastegeo-1.0.26.dev2-py3-none-any.whl",
+                "apiUrl": "dev2",
+            },
+        ]
+
+        doomed = {
+            a["name"]
+            for a in cleanup_rc_releases.plan_deletions(
+                assets, 5, {"hastegeo-1.0.26.dev2-py3-none-any.whl"}
+            )
+        }
+
+        self.assertEqual({"hastegeo-1.0.26.dev1-py3-none-any.whl"}, doomed)
 
     def test_stable_release_removes_rc_except_retained_asset(self):
         assets = [
