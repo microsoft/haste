@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import json
+from datetime import datetime, timedelta, timezone
 
 from hastegeo.core.config import Config
 from hastegeo.core.models.projects import Model, TrainingJob
@@ -131,3 +132,39 @@ class TestTrainingMonitorQueueMessage:
         history = json.loads(payload)["statusMessage"]
         assert STATUS_HISTORY_TRIMMED in history
         assert history.count(TRAINING_IN_PROGRESS_MESSAGE) == 1
+
+    def test_oversized_legacy_history_is_trimmed_without_new_logs(
+        self, mocker
+    ):
+        # A record queued before the limit existed, with an update appended
+        # on every poll, and a poll that finds no new training logs to add.
+        processor = _monitor(mocker)
+        processor._get_training_logs.return_value = (None, None)
+        started = datetime(2026, 9, 22, 19, 20, tzinfo=timezone.utc)
+        model = _submitted_model()
+        for poll in range(500):
+            timestamp = (
+                started + timedelta(seconds=poll * SECONDS_PER_POLL)
+            ).isoformat()
+            message = (
+                f"{TRAINING_IN_PROGRESS_MESSAGE}\n"
+                "trainStartTime: 2026-09-22T19:24:47+00:00\n"
+                "epoch: 1\n"
+                f"elapsedDurationInMinutes: {poll * SECONDS_PER_POLL / 60:.2f}\n"
+                "approxMinutesToComplete: 120"
+            )
+            model.statusMessage = MetadataUtils.append_status_message(
+                model.statusMessage, message, timestamp=timestamp
+            )
+        newest_entry = f"\n{timestamp}: {message}"
+        legacy = json.dumps(model.dict())
+        assert len(legacy.encode("utf-8")) > QUEUE_MESSAGE_LIMIT_BYTES
+        processor.model_data = model
+
+        processor.process()
+
+        payload = processor.queue_client.put_message.call_args.args[0]
+        assert len(payload.encode("utf-8")) < QUEUE_MESSAGE_LIMIT_BYTES
+        history = json.loads(payload)["statusMessage"]
+        assert STATUS_HISTORY_TRIMMED in history
+        assert history.endswith(newest_entry)

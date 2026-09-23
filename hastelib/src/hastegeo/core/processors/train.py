@@ -247,6 +247,14 @@ class TrainPostprocessor(BaseTrainProcessor):
                         step=self.model_data.currentStep,
                         replace_prefix=TRAINING_IN_PROGRESS_MESSAGE,
                     )
+                # Bound the history even when this poll added nothing to it:
+                # a record queued before the limit existed can already be too
+                # large to re-queue.
+                self.model_data.statusMessage = (
+                    MetadataUtils.trim_status_message(
+                        self.model_data.statusMessage
+                    )
+                )
                 self.queue_client.put_message(
                     json.dumps(self.model_data.dict())
                 )
