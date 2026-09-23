@@ -25,7 +25,6 @@ const useStyles = makeStyles({
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     boxShadow: tokens.shadow8,
   },
-  navigation: { flexDirection: "row" },
 });
 
 const Labels = ({
@@ -86,7 +85,7 @@ const Labels = ({
 
   return (
     <>
-      <div className={`labeling-tool-surface labeling-navigation-controls ${styles.navigation}`}>
+      <div className="labeling-tool-surface labeling-navigation-controls">
         <Button
           appearance="transparent"
           id="visualizerBackButton"

@@ -19,6 +19,9 @@ there is no prediction-preparation queue, route, or first-open job.
 ## Interaction
 
 Enter edit mode using the pencil beside Back or E, without changing routes.
+Back and Edit/Done stay on one horizontal navigation row above the imagery
+labels. The Results-specific layout takes precedence over shared toolbar
+styles regardless of which lazy route loads its CSS first.
 Use a compact Fluent UI class-picker panel and vector-first Azure Maps swipe
 view. Class choices use the same semantic colors as the prediction legend and
 map. Keep the existing version selector and download control outside the editor;

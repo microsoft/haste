@@ -78,6 +78,7 @@ import {
   createLabelerWriter,
   saveBuildingPredictions,
 } from "./interactiveLabelerPersistence.js";
+import "../../assets/css/drawingToolbar.css";
 
 const writeLabelerData = createLabelerWriter(buildUrl);
 
@@ -2543,6 +2544,19 @@ const InteractiveLabeler = () => {
           style={{ position: "absolute", inset: 0 }}
         />
 
+        {/* Drag coordinates are relative to the map, not the outer layout. */}
+        <div
+          ref={boxRef}
+          style={{
+            position: "absolute",
+            display: "none",
+            border: "2px dashed #3388ff",
+            background: "rgba(51,136,255,0.15)",
+            pointerEvents: "none",
+            zIndex: 900,
+          }}
+        />
+
         {/* Pane labels, shown only while swipe is on. Rendered inside this
             relative wrapper so left/right map to the map area (not the window).
             "Pre imagery" sits at the very top-left (above the Back button, which
@@ -2989,19 +3003,6 @@ const InteractiveLabeler = () => {
           </div>
         </div>
       )}
-
-      {/* Box-select rectangle (Ctrl+drag) */}
-      <div
-        ref={boxRef}
-        style={{
-          position: "absolute",
-          display: "none",
-          border: "2px dashed #3388ff",
-          background: "rgba(51,136,255,0.15)",
-          pointerEvents: "none",
-          zIndex: 900,
-        }}
-      />
 
       {/* Full-coverage Predict-all progress modal. */}
       {fullPredict && (

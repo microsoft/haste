@@ -108,6 +108,11 @@ before retry. Navigation aborts owned metadata and artifact work. The existing
 Interactive Labeler loader delegates presentation to the shared workspace loader
 without changing its stages or readiness contract.
 
+The Interactive Labeler imports its navigation/surface styles directly so a
+cold route load does not depend on another map page having been visited.
+Its Ctrl-drag overlay shares the positioned map area with both swipe canvases,
+keeping the visible rectangle aligned with the canvas-relative selection query.
+
 ## Active Jobs
 
 ### `GET /api/GetActiveJobs`
