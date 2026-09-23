@@ -8,7 +8,7 @@ from hastegeo.core.processors.artifacts import (
     ZIP_IN_PROGRESS_MESSAGE,
     ArtifactProcessor,
 )
-from hastegeo.core.utils.metadata import MetadataUtils
+from hastegeo.core.utils.metadata import MetadataUtils, queued_message_size
 
 STATUS = Config.get_status_types()
 # Azure Storage rejects larger queue messages with RequestBodyTooLarge.
@@ -88,6 +88,46 @@ class TestArtifactProcessor:
             "Completed"
         ] * 4
         assert [job["logs"] for job in queued["zipJobs"]] == [""] * 4
+
+    def test_in_progress_polls_leave_finished_logs_out_of_the_queue(
+        self, mocker
+    ):
+        processor = ArtifactProcessor.__new__(ArtifactProcessor)
+        processor.config = mocker.Mock()
+        processor.config.get_status_types.return_value = STATUS
+        processor.logger = mocker.Mock()
+        processor.runner = mocker.Mock()
+        processor.runner.get_task_status.return_value = (
+            STATUS.IN_PROGRESS.value
+        )
+        processor.queue_client = mocker.Mock()
+        finished_run = MetadataUtils.append_status_message("", "x" * 16_400)
+        # A legacy record already in flight: finished runs still carry logs.
+        processor.model_artifacts = ModelArtifacts(
+            modelId="6283",
+            projectId="project-1",
+            zipStatus=STATUS.IN_PROGRESS.value,
+            currentZipJobUid="zip-5",
+            zipStatusMessage=MetadataUtils.append_status_message(
+                "", "Submitting zip task"
+            ),
+            zipJobs=[
+                ZipJob(
+                    taskId=f"zip-{run}", status="Completed", logs=finished_run
+                )
+                for run in range(1, 5)
+            ]
+            + [ZipJob(taskId="zip-5", status=STATUS.IN_PROGRESS.value)],
+        )
+
+        processor.process_zip()
+
+        payload = processor.queue_client.put_message.call_args.args[0]
+        assert queued_message_size(payload) <= QUEUE_MESSAGE_LIMIT_BYTES
+        queued = json.loads(payload)
+        assert [job["logs"] for job in queued["zipJobs"][:4]] == [""] * 4
+        assert queued["zipJobs"][4]["logs"] == queued["zipStatusMessage"]
+        assert ZIP_IN_PROGRESS_MESSAGE in queued["zipStatusMessage"]
 
     def test_fetch_artifact_delegates_to_storage(self, mocker):
         processor = ArtifactProcessor.__new__(ArtifactProcessor)

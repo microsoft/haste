@@ -7,10 +7,17 @@ import re
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
+from xml.sax.saxutils import escape as _xml_escape
+
+# Azure Storage rejects a queue request body over 64 KiB. The queue client
+# sends a record's json.dumps output (ASCII, since non-ASCII is escaped) in an
+# XML envelope of about 95 bytes, escaping "&", "<" and ">".
+QUEUE_MESSAGE_LIMIT_BYTES = 64 * 1024
+_QUEUE_ENVELOPE_BYTES = 128
 
 # Job monitors re-queue their whole record, status history included, on every
-# poll, and an Azure Storage queue message cannot exceed 64 KiB. Keeping the
-# history well under that leaves room for the rest of the record.
+# poll. Keeping the history well under the queue limit leaves room for the
+# rest of the record.
 MAX_STATUS_MESSAGE_BYTES = 16 * 1024
 STATUS_HISTORY_TRIMMED = "Earlier status messages were trimmed"
 
@@ -21,14 +28,19 @@ _STATUS_ENTRY_START = re.compile(
 )
 
 
+def queued_message_size(payload: str) -> int:
+    """Return the size in bytes of the queue request that carries ``payload``."""
+    return len(_xml_escape(payload)) + _QUEUE_ENVELOPE_BYTES
+
+
 def _serialized_size(text: str) -> int:
     """Return how many bytes ``text`` adds to a queued JSON message.
 
-    Records are queued with ``json.dumps``, which escapes non-ASCII by default,
-    so its output is ASCII and its length is the byte count. One character can
-    take up to twelve bytes (an escaped surrogate pair).
+    Records are queued with ``json.dumps``, which escapes non-ASCII to up to
+    twelve bytes per character, and the queue request then XML-escapes
+    ``&``, ``<`` and ``>``.
     """
-    return len(json.dumps(text)) - 2
+    return len(_xml_escape(json.dumps(text))) - 2
 
 
 def _longest_fit(text: str, max_bytes: int, keep_end: bool) -> str:
@@ -174,3 +186,41 @@ class MetadataUtils:
         return _longest_fit(
             status_message[entry_starts[-1] :], max_bytes, keep_end=False
         )
+
+    @staticmethod
+    def fit_queue_payload(record: dict, histories: list) -> str:
+        """Serialize ``record`` for a queue message, trimming histories to fit.
+
+        ``histories`` lists ``(container, key)`` pairs naming status-history
+        strings inside ``record``. When the record is over the queue limit,
+        they share whatever room the rest of the record leaves, keeping
+        their newest entries.
+
+        Raises:
+            ValueError: If the record is over the limit even without its
+                status histories.
+        """
+        payload = json.dumps(record)
+        if queued_message_size(payload) <= QUEUE_MESSAGE_LIMIT_BYTES:
+            return payload
+        originals = [container[key] or "" for container, key in histories]
+        for container, key in histories:
+            container[key] = ""
+        room = QUEUE_MESSAGE_LIMIT_BYTES - queued_message_size(
+            json.dumps(record)
+        )
+        if room > 0 and histories:
+            share = room // len(histories)
+            for (container, key), history in zip(histories, originals):
+                container[key] = MetadataUtils.trim_status_message(
+                    history, share
+                )
+        payload = json.dumps(record)
+        size = queued_message_size(payload)
+        if size > QUEUE_MESSAGE_LIMIT_BYTES:
+            raise ValueError(
+                f"Queued record needs {size} bytes even without its status"
+                f" history, over the {QUEUE_MESSAGE_LIMIT_BYTES}-byte queue"
+                " message limit."
+            )
+        return payload

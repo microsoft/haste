@@ -1,12 +1,17 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
+import base64
 import json
 import unittest
 
+from azure.core.pipeline.transport import HttpTransport
+from azure.storage.queue import QueueClient
 from hastegeo.core.utils.metadata import (
     MAX_STATUS_MESSAGE_BYTES,
+    QUEUE_MESSAGE_LIMIT_BYTES,
     STATUS_HISTORY_TRIMMED,
     MetadataUtils,
+    queued_message_size,
 )
 
 PROGRESS = "Training job in progress"
@@ -15,6 +20,39 @@ PROGRESS = "Training job in progress"
 def _serialized_size(text: str) -> int:
     # Monitors queue records with json.dumps, which escapes non-ASCII.
     return len(json.dumps(text)) - 2
+
+
+class _CaptureTransport(HttpTransport):
+    """Records the request body the queue client would send, sends nothing."""
+
+    body = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def open(self):
+        pass
+
+    def close(self):
+        pass
+
+    def send(self, request, **kwargs):
+        body = request.body
+        _CaptureTransport.body = (
+            body if isinstance(body, bytes) else str(body).encode("utf-8")
+        )
+        raise ConnectionAbortedError("captured, not sent")
+
+
+def _history(entries: int, text: str) -> str:
+    return "".join(
+        f"\n2026-09-22T{19 + n // 3600:02d}:{n // 60 % 60:02d}:"
+        f"{n % 60:02d}+00:00: {text} {n}"
+        for n in range(entries)
+    )
 
 
 def _progress(minutes) -> str:
@@ -188,6 +226,69 @@ class TestTrimStatusMessage(unittest.TestCase):
             MetadataUtils.trim_status_message("a" * 50 + "é" * 50, 60),
             "é" * 10,
         )
+
+
+class TestQueuePayload(unittest.TestCase):
+    def test_size_covers_the_request_the_queue_client_sends(self) -> None:
+        client = QueueClient(
+            account_url="https://example.queue.core.windows.net",
+            queue_name="train-queue",
+            credential={
+                "account_name": "example",
+                "account_key": base64.b64encode(b"k" * 32).decode(),
+            },
+            transport=_CaptureTransport(),
+        )
+        for status in (
+            "plain progress text",
+            "<Error><Code>RequestBodyTooLarge</Code></Error> & more",
+            "训练失败 é 🚀",
+        ):
+            with self.subTest(status=status):
+                payload = json.dumps({"statusMessage": status * 40})
+                with self.assertRaises(ConnectionAbortedError):
+                    client.send_message(payload)
+                sent = len(_CaptureTransport.body)
+                self.assertGreaterEqual(queued_message_size(payload), sent)
+                self.assertLess(queued_message_size(payload) - sent, 128)
+
+    def test_records_within_the_limit_are_unchanged(self) -> None:
+        record = {"statusMessage": _history(10, "event"), "other": "x"}
+
+        payload = MetadataUtils.fit_queue_payload(
+            record, [(record, "statusMessage")]
+        )
+
+        self.assertEqual(payload, json.dumps(record))
+
+    def test_histories_share_the_room_the_record_leaves(self) -> None:
+        first, second = _history(400, "first"), _history(400, "second")
+        record = {"large": "y" * 40_000, "job": {"logs": second}}
+        record["statusMessage"] = first
+
+        payload = MetadataUtils.fit_queue_payload(
+            record, [(record, "statusMessage"), (record["job"], "logs")]
+        )
+
+        self.assertLessEqual(
+            queued_message_size(payload), QUEUE_MESSAGE_LIMIT_BYTES
+        )
+        queued = json.loads(payload)
+        self.assertEqual(queued["large"], "y" * 40_000)
+        for history, original in (
+            (queued["statusMessage"], first),
+            (queued["job"]["logs"], second),
+        ):
+            self.assertIn(STATUS_HISTORY_TRIMMED, history)
+            self.assertTrue(history.endswith(original[-40:]))
+
+    def test_a_record_too_large_without_history_is_rejected(self) -> None:
+        record = {"large": "y" * 70_000, "statusMessage": _history(5, "e")}
+
+        with self.assertRaisesRegex(ValueError, "queue message limit"):
+            MetadataUtils.fit_queue_payload(
+                record, [(record, "statusMessage")]
+            )
 
 
 if __name__ == "__main__":

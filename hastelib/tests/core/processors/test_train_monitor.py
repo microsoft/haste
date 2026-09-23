@@ -9,7 +9,11 @@ from hastegeo.core.processors.train import (
     TRAINING_IN_PROGRESS_MESSAGE,
     TrainPostprocessor,
 )
-from hastegeo.core.utils.metadata import STATUS_HISTORY_TRIMMED, MetadataUtils
+from hastegeo.core.utils.metadata import (
+    STATUS_HISTORY_TRIMMED,
+    MetadataUtils,
+    queued_message_size,
+)
 
 STATUS = Config.get_status_types()
 # Azure Storage rejects larger queue messages with RequestBodyTooLarge.
@@ -17,6 +21,26 @@ QUEUE_MESSAGE_LIMIT_BYTES = 64 * 1024
 # The monitor polls about every 32 seconds, so this is nearly nine hours.
 POLLS = 1000
 SECONDS_PER_POLL = 32
+
+
+def _epoch_logs(epochs: int) -> str:
+    """Per-epoch TensorBoard summaries, shaped like parse_tb_event_logs."""
+    return json.dumps(
+        [
+            {
+                "epoch": epoch,
+                "step": (epoch + 1) * 1024 - 1,
+                "timestamp": f"2026-09-22T19:{epoch % 60:02d}:00+00:00",
+                "train_loss": 0.1234567 + epoch,
+                "val_loss": 0.2345678 + epoch,
+                "train_MulticlassAccuracy": 0.8765432,
+                "val_MulticlassAccuracy": 0.7654321,
+                "train_MulticlassJaccardIndex": 0.6543210,
+                "val_MulticlassJaccardIndex": 0.5432109,
+            }
+            for epoch in range(epochs)
+        ]
+    )
 
 
 def _submitted_model() -> Model:
@@ -168,3 +192,50 @@ class TestTrainingMonitorQueueMessage:
         history = json.loads(payload)["statusMessage"]
         assert STATUS_HISTORY_TRIMMED in history
         assert history.endswith(newest_entry)
+
+    def test_large_training_logs_leave_less_room_for_history(self, mocker):
+        processor = _monitor(mocker)
+        logs = _epoch_logs(epochs=180)
+        processor._get_training_logs.return_value = (
+            "2026-09-22T19:24:47+00:00",
+            logs,
+        )
+        model = _submitted_model()
+        model.statusMessage += "".join(
+            f"\n2026-09-22T19:{n // 60:02d}:{n % 60:02d}+00:00: "
+            f"Epoch {n} checkpoint saved to checkpoint/epoch={n}.ckpt"
+            for n in range(300)
+        )
+        processor.model_data = model
+
+        processor.process()
+
+        # The saved record keeps a 16 KiB history, which together with these
+        # logs is over the limit: the queued copy must make room.
+        unfitted = json.dumps(processor.model_data.dict())
+        assert queued_message_size(unfitted) > QUEUE_MESSAGE_LIMIT_BYTES
+        payload = processor.queue_client.put_message.call_args.args[0]
+        assert queued_message_size(payload) <= QUEUE_MESSAGE_LIMIT_BYTES
+        queued = json.loads(payload)
+        assert queued["trainingJob"]["logs"] == logs
+        assert STATUS_HISTORY_TRIMMED in queued["statusMessage"]
+        assert queued["statusMessage"].count(TRAINING_IN_PROGRESS_MESSAGE) == 1
+
+    def test_oversized_training_logs_are_left_out_of_the_queue(self, mocker):
+        processor = _monitor(mocker)
+        logs = _epoch_logs(epochs=400)
+        assert len(logs) > QUEUE_MESSAGE_LIMIT_BYTES
+        processor._get_training_logs.return_value = (
+            "2026-09-22T19:24:47+00:00",
+            logs,
+        )
+        processor.model_data = _submitted_model()
+
+        processor.process()
+
+        payload = processor.queue_client.put_message.call_args.args[0]
+        assert queued_message_size(payload) <= QUEUE_MESSAGE_LIMIT_BYTES
+        assert json.loads(payload)["trainingJob"]["logs"] is None
+        # The record the trigger saves keeps them; the next poll re-reads
+        # them from the task anyway.
+        assert processor.model_data.trainingJob.logs == logs

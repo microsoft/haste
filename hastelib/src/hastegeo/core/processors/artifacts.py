@@ -116,7 +116,7 @@ class ArtifactProcessor:
             previous_job.logs = ""
         # Setting visibility timeout to 0 to make sure the message is processed immediately
         self.queue_client.put_message(
-            json.dumps(self.model_artifacts.dict()), visibility_timeout=0
+            self._queue_payload(), visibility_timeout=0
         )
         return self.model_artifacts
 
@@ -243,9 +243,7 @@ class ArtifactProcessor:
                 self.model_artifacts.zipJobs[
                     idx
                 ].logs = self.model_artifacts.zipStatusMessage
-                self.queue_client.put_message(
-                    json.dumps(self.model_artifacts.dict())
-                )
+                self.queue_client.put_message(self._queue_payload())
         else:
             self.model_artifacts.zipStatus = (
                 self.config.get_status_types().FAILED.value
@@ -366,9 +364,7 @@ class ArtifactProcessor:
             self._update_zip_progress(
                 f"Zipping submitted with task id {task_id}"
             )
-            self.queue_client.put_message(
-                json.dumps(self.model_artifacts.dict())
-            )
+            self.queue_client.put_message(self._queue_payload())
             self.logger.info(
                 f"InProgress message to queue sent for model {self.model_artifacts.modelId}"
             )
@@ -393,6 +389,22 @@ class ArtifactProcessor:
         )
         data = blob_client.download_blob().readall()
         return json.loads(data)
+
+    def _queue_payload(self) -> str:
+        """Serialize the artifacts record for the zip queue within its limit.
+
+        Finished zip jobs' logs are left out of the queued copy, since only
+        the current job's logs are read. The status history and the current
+        job's copy of it share the room the rest of the record leaves.
+        """
+        record = self.model_artifacts.dict()
+        histories = [(record, "zipStatusMessage")]
+        for job in record["zipJobs"]:
+            if job["taskId"] == record["currentZipJobUid"]:
+                histories.append((job, "logs"))
+            else:
+                job["logs"] = ""
+        return MetadataUtils.fit_queue_payload(record, histories)
 
     def _update_zip_progress(
         self, message: str, timestamp: str = None, replace_prefix: str = None

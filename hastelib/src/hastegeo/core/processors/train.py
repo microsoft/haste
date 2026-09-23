@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
-import json
 import os
 
 from hastegeo.core.runners.unified_runner import UnifiedRunner
@@ -27,6 +26,26 @@ from ..utils.tbparser import calculate_metrics, parse_tb_event_logs
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 TRAINING_PREFIX = "trn"
 TRAINING_IN_PROGRESS_MESSAGE = "Training job in progress"
+
+
+def _queue_payload(model: Model) -> str:
+    """Serialize ``model`` for the train queue within the message size limit.
+
+    The status history gets the room the rest of the record leaves. Only if
+    that is not enough is the TensorBoard summary left out of the queued
+    copy: every poll reads it from the task again.
+    """
+    record = model.dict()
+    try:
+        return MetadataUtils.fit_queue_payload(
+            record, [(record, "statusMessage")]
+        )
+    except ValueError:
+        if not (model.trainingJob and model.trainingJob.logs):
+            raise
+    record = model.dict()
+    record["trainingJob"]["logs"] = None
+    return MetadataUtils.fit_queue_payload(record, [(record, "statusMessage")])
 
 
 class BaseTrainProcessor:
@@ -76,7 +95,7 @@ class TrainPreprocessor:
             self.model_data.status = status
             # Cancel the training job ASAP
             self.queue_client.put_message(
-                json.dumps(self.model_data.dict()), visibility_timeout=1
+                _queue_payload(self.model_data), visibility_timeout=1
             )
             self.model_data.statusMessage = (
                 MetadataUtils.append_status_message(
@@ -90,7 +109,7 @@ class TrainPreprocessor:
             self.model_data.currentStep = 0
             self.model_data.progressPct = 0.0
             self.model_data.totalSteps = int(self.model_data.maxEpochs) + 1
-            self.queue_client.put_message(json.dumps(self.model_data.dict()))
+            self.queue_client.put_message(_queue_payload(self.model_data))
             self.model_data.statusMessage = (
                 MetadataUtils.append_status_message(
                     self.model_data.statusMessage, "Queued for training"
@@ -255,9 +274,7 @@ class TrainPostprocessor(BaseTrainProcessor):
                         self.model_data.statusMessage
                     )
                 )
-                self.queue_client.put_message(
-                    json.dumps(self.model_data.dict())
-                )
+                self.queue_client.put_message(_queue_payload(self.model_data))
 
         return self.model_data
 
@@ -311,7 +328,7 @@ class TrainPostprocessor(BaseTrainProcessor):
             self._update_training_progress(
                 f"Training submitted with task id {task_id}", step=0
             )
-            self.queue_client.put_message(json.dumps(self.model_data.dict()))
+            self.queue_client.put_message(_queue_payload(self.model_data))
             self.logger.info(
                 f"InProgress message to queue sent for model {self.model_data.modelId}"
             )
