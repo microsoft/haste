@@ -19,17 +19,17 @@ on:
           - titiler
           - swa
       training_image_tag:
-        description: "Training image tag, used for training/inference jobs; blank = resolved hastegeo version, and must equal it for an RC."
-        required: false
+        description: "Training image tag, used for training/inference jobs; "
+        required: true
         default: ""
         type: string
       imageprep_image_tag:
-        description: "Imageryprep image tag, used for imagery preparation jobs; blank = resolved hastegeo version. Need not match the training tag except for an RC."
-        required: false
+        description: "Imageryprep image tag, used for imagery preparation jobs; Need not match the training tag except for an RC."
+        required: true
         default: ""
         type: string
       app_tag:
-        description: "Application version tag; recorded as a tag on the Azure resources."
+        description: "Application version; recorded as a tag on the Azure resources."
         required: true
         type: string
       hastegeo_version:
