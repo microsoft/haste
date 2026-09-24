@@ -19,6 +19,8 @@ const PrimaryClassCreator = ({
   componentState,
   projectId,
   setDialog,
+  invalid,
+  errorMessageId,
 }) => {
   PrimaryClassCreator.propTypes = {
     primaryClass: proptypes.object.isRequired,
@@ -27,15 +29,23 @@ const PrimaryClassCreator = ({
     componentState: proptypes.object.isRequired,
     projectId: proptypes.string,
     setDialog: proptypes.func.isRequired,
+    invalid: proptypes.bool,
+    errorMessageId: proptypes.string,
   };
 
   return (
     <React.Fragment key={"primaryClass" + index}>
       <div className="col-12 flex-column flex-md-row d-flex pt-1 mb-1">
-        <Field label="Name" className="me-2 flex-grow-1">
+        <Field
+          label="Name"
+          className="me-2 flex-grow-1"
+          validationState={invalid ? "error" : "none"}
+        >
           <Input
+            id={`createEditProjectPrimaryClassName-${index}`}
             disabled={projectId !== undefined}
             value={primaryClass.name}
+            aria-describedby={invalid ? errorMessageId : undefined}
             maxLength={25}
             onChange={(e, data) => {
               const filteredValue = data.value.replace(/[^A-Za-z0-9\-_\s]/g, "");
@@ -43,8 +53,7 @@ const PrimaryClassCreator = ({
                 index,
                 "name",
                 filteredValue,
-                setComponentState,
-                componentState
+                setComponentState
               );
             }}
           />
@@ -61,8 +70,7 @@ const PrimaryClassCreator = ({
                 index,
                 "color",
                 color,
-                setComponentState,
-                componentState
+                setComponentState
               )
             }
           />
