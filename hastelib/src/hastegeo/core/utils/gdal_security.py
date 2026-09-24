@@ -183,7 +183,11 @@ def assert_matches_declared(path: str, declared: str) -> None:
         )
 
 
-def _int_env(name: str, default: int) -> int:
+# Named to match the `_get_*env` typed-wrapper convention (see
+# `_get_bounded_int_env` in hastegeo.core.config): the env-drift check in
+# .github/scripts/check_env_drift.py only recognises readers on that shape,
+# and reports the setting as dead config otherwise.
+def _get_int_env(name: str, default: int) -> int:
     raw = os.environ.get(name)
     if not raw:
         return default
@@ -196,12 +200,12 @@ def _int_env(name: str, default: int) -> int:
 
 def max_upload_bytes() -> int:
     """Max assembled chunked-upload size (``HASTE_MAX_UPLOAD_BYTES``)."""
-    return _int_env("HASTE_MAX_UPLOAD_BYTES", _DEFAULT_MAX_UPLOAD_BYTES)
+    return _get_int_env("HASTE_MAX_UPLOAD_BYTES", _DEFAULT_MAX_UPLOAD_BYTES)
 
 
 def max_download_bytes() -> int:
     """Max remote imagery fetch size
     (``HASTE_MAX_IMAGERY_DOWNLOAD_BYTES``)."""
-    return _int_env(
+    return _get_int_env(
         "HASTE_MAX_IMAGERY_DOWNLOAD_BYTES", _DEFAULT_MAX_DOWNLOAD_BYTES
     )

@@ -21,12 +21,22 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "hastelib"))
 
 from haste_release import (  # noqa: E402
+    CHANNELS,
+    DEV_VERSION_RE,
+    PRERELEASE_CHANNELS,
     RC_VERSION_RE,
     RELEASE_TAG,
     REPOSITORY,
     STABLE_VERSION_RE,
     list_release_assets,
 )
+
+# Version shape each channel is allowed to publish.
+CHANNEL_VERSION_RE = {
+    "rc": RC_VERSION_RE,
+    "dev": DEV_VERSION_RE,
+    "release": STABLE_VERSION_RE,
+}
 
 
 @dataclass(frozen=True)
@@ -63,20 +73,18 @@ def validate_wheel(
     wheel_path: Path, expected_version: str, channel: str
 ) -> WheelIdentity:
     """Validate filename, channel policy, ZIP structure, and METADATA."""
-    if channel == "rc":
-        if not RC_VERSION_RE.fullmatch(expected_version):
-            raise ValueError(
-                f"PR publication requires an rcN version, got "
-                f"{expected_version!r}"
-            )
-    elif channel == "release":
-        if not STABLE_VERSION_RE.fullmatch(expected_version):
-            raise ValueError(
-                f"Main publication requires a stable version, got "
-                f"{expected_version!r}"
-            )
-    else:
+    pattern = CHANNEL_VERSION_RE.get(channel)
+    if pattern is None:
         raise ValueError(f"Unsupported channel: {channel!r}")
+    if not pattern.fullmatch(expected_version):
+        shape = {
+            "rc": "an rcN version",
+            "dev": "a .devN version",
+            "release": "a stable version",
+        }[channel]
+        raise ValueError(
+            f"Channel {channel!r} requires {shape}, got {expected_version!r}"
+        )
 
     expected_name = f"hastegeo-{expected_version}-py3-none-any.whl"
     if wheel_path.name != expected_name:
@@ -176,11 +184,13 @@ def publish(
     source_tag = (
         f"hastegeo-v{identity.version}" if channel == "release" else ""
     )
-    if channel == "rc":
-        rc_match = RC_VERSION_RE.fullmatch(identity.version)
-        if not rc_match:
-            raise ValueError(f"Invalid RC version: {identity.version}")
-        stable_version = ".".join(rc_match.groups()[:3])
+    if channel in PRERELEASE_CHANNELS:
+        match = CHANNEL_VERSION_RE[channel].fullmatch(identity.version)
+        if not match:
+            raise ValueError(
+                f"Invalid {channel} version: {identity.version}"
+            )
+        stable_version = ".".join(match.groups()[:3])
         stable_name = f"hastegeo-{stable_version}-py3-none-any.whl"
         if stable_name in assets:
             raise ValueError(
@@ -258,7 +268,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", type=Path, required=True)
     parser.add_argument("--expected-version", required=True)
-    parser.add_argument("--channel", choices=["rc", "release"], required=True)
+    parser.add_argument("--channel", choices=list(CHANNELS), required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument(
         "--validate-only",

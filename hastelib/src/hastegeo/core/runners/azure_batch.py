@@ -164,6 +164,7 @@ class AzureBatchRunner(BaseRunner):
         resource_files_for_upload=None,
         file_pattern=None,
         env_vars=None,
+        idempotent=False,
     ):
         if image_name is None:
             image_name = self.batch_config["docker_image"]
@@ -186,7 +187,27 @@ class AzureBatchRunner(BaseRunner):
         # Capacity-aware routing (v2.1.0): pick the pool at submit time from the
         # ordered candidates (preference-first, spillover-second), then bind the
         # job to it.
-        selected_pool = self.batch_cluster.select_pool(self.candidate_pool_ids)
+        existing_job = None
+        if idempotent:
+            try:
+                self.batch_cluster.batch_client.task.get(job_id, task_id)
+                return job_id, task_id
+            except BatchErrorException as error:
+                if batch_error_code(error) not in (
+                    "TaskNotFound",
+                    "JobNotFound",
+                ):
+                    raise
+            try:
+                existing_job = self.batch_cluster.batch_client.job.get(job_id)
+            except BatchErrorException as error:
+                if batch_error_code(error) != "JobNotFound":
+                    raise
+        selected_pool = (
+            existing_job.pool_info.pool_id
+            if existing_job
+            else self.batch_cluster.select_pool(self.candidate_pool_ids)
+        )
         self.batch_cluster.pool_id = selected_pool
         self.logger.info(
             "Selected pool %s for job_id: %s task_id: %s",
@@ -198,7 +219,10 @@ class AzureBatchRunner(BaseRunner):
         # A Batch job is pinned to one pool, so the job id has to follow the
         # pool this task was routed to; otherwise a second task that spills over
         # to another pool collides with the job the first one created.
-        job_id = resolve_job_id(job_id, selected_pool, self.candidate_pool_ids)
+        if not idempotent:
+            job_id = resolve_job_id(
+                job_id, selected_pool, self.candidate_pool_ids
+            )
 
         # Pre-created IaC/autoscale pools manage their own lifecycle; only
         # auto-create/resize for legacy single-pool envs (manage_pools=True).
@@ -231,22 +255,34 @@ class AzureBatchRunner(BaseRunner):
         self.logger.info(
             "Creating job for job_id: %s and task_id: %s", job_id, task_id
         )
-        job_id = self.batch_cluster.create_job(job_id)
+        if idempotent:
+            if existing_job is None:
+                try:
+                    self.batch_cluster._add_job(job_id)
+                except BatchErrorException as error:
+                    if batch_error_code(error) != "JobExists":
+                        raise
+        else:
+            job_id = self.batch_cluster.create_job(job_id)
 
-        self.batch_cluster.add_task(
-            job_id=job_id,
-            task_id=task_id,
-            image_name=image_name,
-            command=command,
-            arguments=arguments,
-            work_dir=work_dir,
-            output_container_url=output_container_url,
-            output_prefix=output_prefix,
-            resource_files_for_upload=resource_files_for_upload,
-            file_pattern=file_pattern,
-            env_vars=env_vars,
-            retention_time=self.batch_config["task_retention_time"],
-        )
+        try:
+            self.batch_cluster.add_task(
+                job_id=job_id,
+                task_id=task_id,
+                image_name=image_name,
+                command=command,
+                arguments=arguments,
+                work_dir=work_dir,
+                output_container_url=output_container_url,
+                output_prefix=output_prefix,
+                resource_files_for_upload=resource_files_for_upload,
+                file_pattern=file_pattern,
+                env_vars=env_vars,
+                retention_time=self.batch_config["task_retention_time"],
+            )
+        except BatchErrorException as error:
+            if not idempotent or batch_error_code(error) != "TaskExists":
+                raise
         return job_id, task_id
 
     def cleanup_task(self, job_id, task_id):

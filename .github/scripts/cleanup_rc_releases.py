@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
-"""Prune old hastegeo release-candidate wheels from the haste-binaries release.
+"""Prune old hastegeo prerelease wheels from the haste-binaries release.
 
-For each target version, once its stable wheel is published every rc for that
-version is obsolete and removed; otherwise the most recent ``--keep`` rc wheels
-are retained. Asset names listed in ``--retain-file`` are never deleted.
-Dry-run by default; pass ``--apply`` to actually delete.
+Covers both rc and dev wheels. For each target version, once its stable wheel
+is published every prerelease for that version is obsolete and removed;
+otherwise the most recent ``--keep`` are retained, counted separately per kind
+so rapid dev iteration never evicts a release candidate. Asset names listed in
+``--retain-file`` are never deleted -- use it to pin a dev wheel that an
+environment is currently running. Dry-run by default; pass ``--apply``.
 """
 
 import argparse
@@ -20,6 +22,10 @@ REPO = "microsoft/haste"
 RELEASE_TAG = "haste-binaries"
 STABLE_RE = re.compile(r"^hastegeo-(\d+)\.(\d+)\.(\d+)-py3-none-any\.whl$")
 RC_RE = re.compile(r"^hastegeo-(\d+)\.(\d+)\.(\d+)rc(\d+)-py3-none-any\.whl$")
+DEV_RE = re.compile(
+    r"^hastegeo-(\d+)\.(\d+)\.(\d+)\.dev(\d+)-py3-none-any\.whl$"
+)
+PRERELEASE_RES = {"rc": RC_RE, "dev": DEV_RE}
 
 
 def _gh(args: Sequence[str]) -> str:
@@ -53,25 +59,33 @@ def plan_deletions(
     keep: int,
     retain: set[str],
 ) -> list[dict[str, object]]:
-    """Return the list of rc assets that should be deleted."""
+    """Return the list of prerelease (rc and dev) assets to delete."""
     if keep < 0:
         raise ValueError("keep must be non-negative")
 
     stable = set()
-    rcs: dict[tuple[int, int, int], list[tuple[int, dict[str, object]]]] = {}
+    # Keyed by (kind, target) so dev and rc wheels retain independently.
+    buckets: dict[
+        tuple[str, tuple[int, int, int]],
+        list[tuple[int, dict[str, object]]],
+    ] = {}
     for asset in assets:
         name = str(asset["name"])
         stable_match = STABLE_RE.match(name)
         if stable_match:
             stable.add(tuple(int(x) for x in stable_match.groups()))
             continue
-        rc_match = RC_RE.match(name)
-        if rc_match:
-            target = tuple(int(x) for x in rc_match.groups()[:3])
-            rcs.setdefault(target, []).append((int(rc_match.group(4)), asset))
+        for kind, pattern in PRERELEASE_RES.items():
+            match = pattern.match(name)
+            if match:
+                target = tuple(int(x) for x in match.groups()[:3])
+                buckets.setdefault((kind, target), []).append(
+                    (int(match.group(4)), asset)
+                )
+                break
 
     to_delete = []
-    for target, items in rcs.items():
+    for (_, target), items in buckets.items():
         items.sort(key=lambda pair: pair[0])
         if target in stable:
             doomed = items  # superseded by the stable release

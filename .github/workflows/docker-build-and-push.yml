@@ -16,7 +16,7 @@ on:
         - training
         - imageryprep
       image_tag:
-        description: 'Docker image tag'
+        description: 'ACR image tag. For a release build, dispatch on the release tag and enter that release version (e.g. 3.0.0).'
         required: true
         default: 'test-manual'
         type: string
@@ -92,6 +92,116 @@ jobs:
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # The ACR image tag and the hastegeo version inside the image answer two
+      # different questions and are deliberately not coupled. The tag says
+      # which release an artifact belongs to and is chosen by the operator
+      # (image_tag) -- a product release cut for a funcapp-only change still
+      # gets that release's tag. This step only sets what is *inside*: both
+      # Dockerfiles COPY hastelib/src/hastegeo from the checked-out tree rather
+      # than installing a wheel, so the image's hastegeo is always the source
+      # of the ref being built and otherwise reports the development marker
+      # 0.0.0+local.
+      #
+      # Always derived from the ref, never a dispatch input, because nothing
+      # downstream verifies that a stamp matches the code it was applied to:
+      #
+      #   tag build   -> the hastegeo release reachable from the tag, using the
+      #                  same rule release.yml uses to decide which wheel a
+      #                  product release ships (highest hastegeo-v* merged in).
+      #   branch/PR   -> 0.0.0+<branch>.<sha>, self-evidently non-release.
+      #
+      # Kept inline rather than factored into .github/scripts/ because
+      # hastegeo-publish.yml stamps after checking out untrusted PR head source
+      # and must not source a shared stamper from it.
+      - name: Stamp hastegeo version into image source
+        if: steps.resolve.outputs.run == 'true'
+        env:
+          # head_ref is the source branch on PRs, where ref_name is "<n>/merge";
+          # head.sha is the real branch tip rather than the synthetic merge sha.
+          REF_LABEL: ${{ github.head_ref || github.ref_name }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          IS_TAG: ${{ github.ref_type == 'tag' }}
+        run: |
+          # Only a tag build may carry a real version. Branch and PR builds
+          # cannot reach this, so an in-flight hastelib change can never be
+          # stamped with the release version it is merely descended from.
+          HASTEGEO_VERSION=""
+          if [[ "$IS_TAG" == "true" ]]; then
+            # The default checkout is shallow; --merged needs real history.
+            git fetch --tags --force --unshallow --quiet 2>/dev/null \
+              || git fetch --tags --force --quiet
+            HASTEGEO_VERSION=$(git tag --list 'hastegeo-v*' --merged HEAD \
+              | sed 's/^hastegeo-v//' | sort -V | tail -1)
+            if [[ -z "$HASTEGEO_VERSION" ]]; then
+              echo "::warning::No hastegeo-v* tag is reachable from ${REF_LABEL};" \
+                   "stamping a non-release marker instead."
+            fi
+          fi
+          export HASTEGEO_VERSION
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+
+          def branch_marker():
+              """0.0.0+<branch>.<sha>, a PEP 440 local version.
+
+              Local segments allow only alphanumerics separated by dots. Whole
+              components are kept so a truncated label stays readable.
+              """
+              parts = [p for p in re.split(r"[^a-z0-9]+", os.environ["REF_LABEL"].lower()) if p]
+              label = ""
+              for part in parts:
+                  candidate = f"{label}.{part}" if label else part
+                  if len(candidate) > 40:
+                      break
+                  label = candidate
+              sha = re.sub(r"[^a-f0-9]", "", os.environ["SOURCE_SHA"].lower())[:7]
+              suffix = ".".join(part for part in (label, sha) if part)
+              return f"0.0.0+{suffix}" if suffix else "0.0.0+branch"
+
+
+          # A tag build that resolved a real hastegeo release stamps it verbatim;
+          # everything else gets the non-release marker.
+          release = os.environ.get("HASTEGEO_VERSION", "").strip()
+          if release:
+              version = release
+              if not re.fullmatch(r"[0-9]+(\.[0-9]+)*([.\-_a-z0-9]*)", version):
+                  raise SystemExit(f"Resolved an invalid hastegeo version: {version!r}")
+          else:
+              version = branch_marker()
+              if not re.fullmatch(r"0\.0\.0\+[a-z0-9]+(\.[a-z0-9]+)*", version):
+                  raise SystemExit(f"Derived an invalid version: {version!r}")
+
+          path = Path("hastelib/src/hastegeo/__about__.py")
+          text = path.read_text(encoding="utf-8")
+          text, count = re.subn(
+              r'^__version__ = ".*"$',
+              f'__version__ = "{version}"',
+              text,
+              flags=re.MULTILINE,
+          )
+          if count != 1:
+              raise SystemExit("Expected exactly one __version__ assignment")
+          path.write_text(text, encoding="utf-8")
+          print(f"Stamped hastegeo version {version}")
+          PY
+
+      # Dispatching on a tag is the release-build signal, so leaving the
+      # placeholder tag in place would publish release code to :test-manual and
+      # silently produce no release artifact at all.
+      - name: Guard against a placeholder tag on a release build
+        if: >-
+          steps.resolve.outputs.run == 'true' &&
+          github.ref_type == 'tag' &&
+          github.event.inputs.image_tag == 'test-manual'
+        run: |
+          echo "::error::Building from tag ${{ github.ref_name }} with the" \
+               "placeholder image_tag 'test-manual'. Enter the release version" \
+               "you intend to publish (e.g. 3.0.0)."
+          exit 1
 
       - name: Build image locally (Dependabot PRs)
         if: steps.resolve.outputs.run == 'true' && github.actor == 'dependabot[bot]'

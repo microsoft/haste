@@ -15,6 +15,7 @@ from azure.storage.blob import BlobClient, BlobServiceClient
 from azure.storage.queue import QueueServiceClient
 from docker.types import DeviceRequest
 from hastegeo.core.config import Config
+from hastegeo.core.utils.file_lock import file_lock
 from hastegeo.core.utils.logs import Logger
 
 import docker
@@ -156,6 +157,41 @@ class LocalRunner(BaseRunner):
             return self.config.get_status_types().IN_PROGRESS.value
 
     def add_task(
+        self, job_id=None, task_id=None, *, idempotent=False, **kwargs
+    ):
+        if not idempotent:
+            return self._add_task(job_id, task_id, **kwargs)
+        if not job_id or not task_id:
+            raise ValueError("Idempotent tasks require job and task IDs")
+        task_dir = self.work_dir / job_id / task_id
+        with file_lock(self.work_dir / job_id / f"{task_id}.lock"):
+            if (task_dir / "status.json").is_file():
+                return job_id, task_id
+            return self._add_task(job_id, task_id, idempotent=True, **kwargs)
+
+    def _task_container(
+        self, job_id, task_id, *args, idempotent=False, **kwargs
+    ):
+        if not idempotent:
+            return self.docker_client.containers.run(*args, **kwargs)
+        name = f"haste-{job_id}-{task_id}"
+        try:
+            container = self.docker_client.containers.get(name)
+        except docker.errors.NotFound:
+            container = self.docker_client.containers.create(
+                *args,
+                name=name,
+                **{
+                    key: value
+                    for key, value in kwargs.items()
+                    if key not in ("detach", "remove", "stdout", "stderr")
+                },
+            )
+        if container.status == "created":
+            container.start()
+        return container
+
+    def _add_task(
         self,
         job_id=None,
         task_id=None,
@@ -168,6 +204,7 @@ class LocalRunner(BaseRunner):
         resource_files_for_upload=None,
         file_pattern=None,
         env_vars=None,
+        idempotent=False,
         **kwargs,
     ):
         """Add and execute a task locally using Docker."""
@@ -649,8 +686,11 @@ class LocalRunner(BaseRunner):
                             f"Failed to configure GPU device request, continuing without GPU: {gpu_err}"
                         )
 
-                container = self.docker_client.containers.run(
+                container = self._task_container(
+                    job_id,
+                    task_id,
                     container_image,
+                    idempotent=idempotent,
                     command=container_command,
                     environment=task_env,
                     volumes=volumes,
@@ -706,7 +746,10 @@ class LocalRunner(BaseRunner):
                 exit_code = container_result["StatusCode"]
 
                 # Only auto-remove container if CLEANUP_CONTAINERS not disabled
-                if os.getenv("CLEANUP_CONTAINERS", "1") == "1":
+                if (
+                    not idempotent
+                    and os.getenv("CLEANUP_CONTAINERS", "1") == "1"
+                ):
                     try:
                         container.remove()
                     except Exception as e:
@@ -907,6 +950,14 @@ class LocalRunner(BaseRunner):
 
     def cleanup_task(self, job_id, task_id):
         """Clean up local task files."""
+        if job_id == task_id and task_id.startswith("ftl-"):
+            try:
+                container = self.docker_client.containers.get(
+                    f"haste-{job_id}-{task_id}"
+                )
+                container.remove()
+            except docker.errors.NotFound:
+                pass
         if os.getenv("PRESERVE_LOCAL_TASK_DIRS", "0") == "1":
             self.logger.info(
                 "Skipping task directory cleanup because PRESERVE_LOCAL_TASK_DIRS is set"

@@ -8,6 +8,7 @@
 ## Table of Contents
 
 - [Installation](#installation)
+- [Release process](#release-process)
 - [License](#license)
 
 ## Installation
@@ -24,6 +25,8 @@ pip install -e hastelib/
 
 Local/editable installs report `0.0.0+local`. CI supplies the exact PEP 440
 version when it builds an RC or stable wheel.
+Hatchling resolves that override before packaging; the filename, package
+metadata, and bundled version file use the same canonical version.
 
 ## Release process
 

@@ -6,7 +6,7 @@ This directory contains GitHub Actions workflows for the HASTE project, focused 
 
 `hastegeo-build.yml` handles changes under `hastelib/`:
 
-1. A trusted read-only resolver chooses the next RC or stable version.
+1. A trusted read-only resolver chooses the next dev, RC, or stable version.
 2. An untrusted-source build job runs without write credentials and uploads the
    validated wheel as an Actions artifact.
 3. `hastegeo-publish.yml`, loaded from `main` through `workflow_run`, validates
@@ -23,10 +23,48 @@ required to land that commit is the release approval. Set
 `HASTEGEO_PUBLISH_ENABLED=true` to enable it; set it to anything else to halt
 stable publication.
 
-Minor and major stable releases have no automated path today. The publisher only
-accepts `push` and same-repository `pull_request` upstream events, so a
-`workflow_dispatch` build is not published even though `hastegeo-build.yml`
-accepts `bump` and `set_version` inputs.
+Minor and major stable releases have no automated path today. The publisher
+derives the channel from the upstream event — `pull_request` is `rc`, `push` is
+`release`, `workflow_dispatch` is `dev` — so a dispatch can never publish a
+stable wheel however its `channel` input was set.
+
+That guard fails closed rather than quietly: dispatching with `channel: rc` or
+`release` builds a wheel the publisher will not accept, because it looks for
+the `.devN` name it resolved and finds an `rcN` or stable one instead. **Publish
+hastegeo wheel and images** then ends **red** on its artifact-name check. The
+wheel is still attached to the build run as an artifact, so use an rc/release
+dispatch only to validate that a version resolves and builds — and expect the
+failed publish run that follows.
+
+### Dev Wheels: Iterating on a Function App
+
+To change `hastegeo` and test it in a deployed function app without minting a
+release candidate, dispatch **Build hastegeo wheel** on your branch with
+`channel: dev`. It publishes `X.Y.Z.devN` to `haste-binaries`, which
+`deploy-apps.yml` accepts as `hastegeo_version`.
+
+An RC would work too, but drags in artifacts you do not need: `deploy-apps.yml`
+requires image tags to equal any `rc` wheel version exactly, so an RC deploy
+also needs matching locked images built. A `.devN` version contains no `rc`
+substring and carries no such coupling, so it deploys against whatever images
+the environment already runs. PEP 440 orders `1.0.2.dev1 < 1.0.2rc1 < 1.0.2`,
+so a dev wheel can never shadow a real release.
+
+No images are built for a dev wheel, so leave both image tags **blank**:
+`deploy-apps.yml` then reuses whatever the target environment is already
+running, read back from `AZURE_BATCH_DOCKER_IMAGE` on the queue app. Only a
+first deploy to an environment with no images yet needs them passed.
+
+Dev wheels are immutable, never tagged, and pruned by `rc-cleanup.yml` on the
+same rules as RCs, counted separately so rapid dev iteration never evicts a
+release candidate. Add a filename to `.github/rc-retain.txt` to pin one an
+environment is still running. Dev publication is automatic unless
+`HASTEGEO_DEV_PUBLISH_ENABLED=false`.
+
+> For a faster loop that needs no CI at all, the function app requirements
+> default to `-e ../../hastelib`, so `func start` runs your working tree
+> directly. Reach for a dev wheel when you need the *deployed* environment —
+> managed identity, live queue triggers, real Batch submission.
 
 RC publication is automatic unless `HASTEGEO_RC_PUBLISH_ENABLED=false`.
 Fork PRs remain build-only. The RC image environment is selected through
@@ -73,11 +111,12 @@ changes, `hastegeo-build.yml` owns the coherent wheel and image build instead.
 on:
   workflow_dispatch:
     inputs:
-      image_dir: # choice: all, training, imageryprep
-      image_tag: # string: custom tag
+      image_dir:         # choice: all, training, imageryprep
+      image_tag:         # string: custom tag
 ```
 
-**When**: Manually triggered from the GitHub Actions UI for production releases.
+**When**: Manually triggered from the GitHub Actions UI for production releases,
+or to build images from an arbitrary branch.
 
 **Parameters**:
 - **Image Directory**: Choose from dropdown (`all`, `training`, `imageryprep`)
@@ -86,8 +125,119 @@ on:
 **How to Use**:
 1. Go to GitHub Actions tab
 2. Select "Build and Push Docker Images" workflow
-3. Click "Run workflow"
+3. Click "Run workflow" and pick the branch to build
 4. Choose parameters and run
+
+**Building is unconstrained**: any branch, any tag string. `image_tag` is free
+text, so throwaway tags like `meygha-test-3` are fine and expected.
+
+**Deploying what you built** is governed by `deploy-apps.yml`, not here.
+Leaving an input blank does **not** mean the same thing for the wheel as it
+does for the images:
+
+| Input | Blank means |
+|---|---|
+| `hastegeo_version` | **the latest stable wheel** — *not* the one currently deployed |
+| `training_image_tag` / `imageprep_image_tag` | **keep the image the app is running** |
+
+The asymmetry is forced, not a choice. The image tag is stored on the app as
+`AZURE_BATCH_DOCKER_IMAGE`, so the deploy can read it back — off the app it is
+about to deploy, the API app for `funcapi` and the queue app for `funcqueue`
+and `all`. The wheel is pinned into `requirements.txt` at deploy time and
+recorded nowhere, so there is nothing to read back and no way to know which
+wheel an app is running.
+
+**Consequence worth knowing:** a blank `hastegeo_version` moves the function
+apps onto the latest stable wheel, even when you are deploying a branch that
+changed no Python at all. Pin it explicitly if you need the deployed wheel to
+stay put — and note this is what silently reverts a `.devN` escape hatch.
+
+Each app that installs the wheel is now tagged `hastegeo_version=<version>` in
+Azure, alongside the existing `env` and `deployed_version` tags, so you can at
+least *see* what an environment is running without inspecting its
+`requirements.txt`. Apps with no hastegeo line, such as titiler, are not
+tagged. Nothing reads the tag back yet — making blank mean "keep the deployed
+wheel" is future work.
+
+Once a wheel version is chosen, the image tags are constrained only for an RC:
+
+| `hastegeo_version` being deployed | Image tags |
+|---|---|
+| blank (latest stable) or `X.Y.Z` | anything, or blank to keep the running image |
+| `X.Y.ZrcN` | must match the wheel version exactly |
+| `X.Y.Z.devN` | anything, or blank to keep the running image |
+
+To deploy a custom-tagged test image, pass `training_image_tag` /
+`imageprep_image_tag` explicitly. The only refused combination is a custom
+image alongside an RC wheel: the RC channel exists to ship a wheel and its
+images as one locked, coherent set, and mixing a hand-tagged image into it
+defeats that. For RC testing, let the PR pipeline in `hastegeo-publish.yml`
+build the matching wheel and images instead.
+
+A first deploy to an environment with no images yet has nothing to inherit, so
+it fails with an explicit message rather than guessing.
+
+Note that `deploy_apps.sh` interpolates the tag into `hastetraining:<tag>`
+without checking that it exists in ACR, so a typo deploys cleanly and only
+fails later when a Batch task tries to pull the image.
+
+#### 3. Release Builds
+
+To build images for a product release, **dispatch on the release tag** — the
+ref dropdown lists tags as well as branches — and enter that release version as
+the image tag:
+
+| Field | Value |
+|---|---|
+| Ref (dropdown) | `v3.0.0` |
+| `image_dir` | `all` |
+| `image_tag` | `3.0.0` |
+
+**Result**: `hastetraining:3.0.0` and `hasteimageryprep:3.0.0`, built from the
+source at `v3.0.0`.
+
+The image tag tracks the **product** release, not hastegeo's version. Those
+numbers move independently on purpose: a release cut for a funcapp-only change
+still gets its own image tag even though hastegeo did not change.
+
+Because `deploy-apps.yml` defaults image tags to the resolved *hastegeo*
+version, deploying a product-tagged image means passing `training_image_tag`
+and `imageprep_image_tag` explicitly. That default is unchanged and still
+correct for the RC path, which requires wheel and image tags to match.
+
+Building from a tag while leaving `image_tag` at the `test-manual` placeholder
+fails the run rather than publishing release code to a throwaway tag.
+
+### hastegeo Version in Images
+
+**There is no input for this, by design.** Both Dockerfiles `COPY
+hastelib/src/hastegeo` from the checked-out tree instead of installing a wheel,
+and set `PYTHONPATH=/app` to import it. The hastegeo in an image is therefore
+*always* the source of the ref being built — this workflow cannot build an
+image against a published wheel or another branch's hastegeo. The source tree
+ships the development marker `0.0.0+local`, so the build stamps `__about__.py`
+before handing the context to ACR:
+
+| Build | Stamped version | Resolved from |
+|---|---|---|
+| Tag | `1.0.42` | highest `hastegeo-v*` tag merged into the tag |
+| Tag with no `hastegeo-v*` reachable | `0.0.0+v2.0.0.<sha>` | ref name + sha, with a warning |
+| Branch / PR | `0.0.0+<branch>.<sha>` | ref name + sha |
+
+The tag case uses the same rule as [`release.yml`](release.yml)'s "Resolve the
+matching hastegeo wheel" step, so an image built from `v3.0.0` reports the same
+hastegeo version its release notes cite.
+
+The stamp is always **derived, never typed**. Nothing downstream verifies that
+a stamp matches the code it was applied to, so a hand-entered `1.0.42` could
+make a WIP image indistinguishable at runtime from a real release. Restricting
+real versions to tag builds means an in-flight `hastelib` change can never be
+stamped with a release version it is merely descended from, and the `0.0.0+`
+prefix keeps every branch image self-evidently non-release.
+
+Note this is *only* a label on the contents. Wheels themselves — and the locked
+RC images — come from `hastegeo-publish.yml`, which stamps the version it
+resolved for that exact sha.
 
 ### Semantic Versioning Strategy
 
@@ -154,6 +304,24 @@ Configure these secrets in your GitHub repository:
 | Variable Name | Description | Example |
 |---------------|-------------|---------|
 | `TAG_PREFIX` | Semantic version prefix for RC builds | `1.0.1` |
+
+#### hastegeo Publication Variables
+
+Repository-level Actions variables gating `hastegeo-publish.yml` and
+`rc-cleanup.yml`. Note the asymmetry: the two prerelease channels are **on
+unless disabled**, while stable publication and the destructive cleanup are
+**off unless explicitly enabled**.
+
+| Variable Name | Default when unset | Effect |
+|---------------|--------------------|--------|
+| `HASTEGEO_DEV_PUBLISH_ENABLED` | enabled | Set to `false` to stop publishing dev wheels. The build still runs and attaches the wheel as an artifact; `prepare` then **fails** rather than skipping quietly, because a dev build is always an explicit dispatch. |
+| `HASTEGEO_RC_PUBLISH_ENABLED` | enabled | Set to `false` to stop publishing RC wheels on PRs. Skips silently — RC publication is automatic, so annotating every PR would be noise. |
+| `HASTEGEO_PUBLISH_ENABLED` | **disabled** | Must equal `true` for stable publication on merge to the default branch. Also required by the `rc-cleanup.yml` deletion job. |
+| `HASTEGEO_RC_ENVIRONMENT` | **no images** | Name of the GitHub Environment used to build locked RC images. Empty or unset skips `build-rc-images`, keeping environment names out of the workflow. |
+| `HASTEGEO_RELEASE_APPROVAL_CONFIGURED` | **disabled** | Must equal `true` to allow the destructive prerelease deletion job in `rc-cleanup.yml`. Deliberately *not* read by the publish jobs. |
+
+Comparisons are case-insensitive, but only the literal string `false` disables
+the first two — `0`, `no`, and `off` leave them enabled.
 
 #### Permissions
 

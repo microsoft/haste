@@ -46,6 +46,24 @@ a wheel version can never be reused as a product or image tag.
 The wheel line (`1.0.x`) is versioned on its own cadence and has no
 relationship to the product version (`2.x`). Do not try to sync them.
 
+Wheels publish on three channels, all to `haste-binaries`, all immutable:
+
+| Channel | Version | Built by | Source tag |
+|---|---|---|---|
+| `release` | `1.0.40` | merge to `main` touching `hastelib/` | `hastegeo-v1.0.40` |
+| `rc` | `1.0.40rc1` | a PR touching `hastelib/` | none |
+| `dev` | `1.0.40.dev1` | **Build hastegeo wheel** dispatched on a branch | none |
+
+Dev wheels exist to test a change in a *deployed* function app without
+minting a release candidate: an RC additionally requires matching locked
+images, because `deploy-apps.yml` makes image tags equal any `rc` wheel
+version exactly. PEP 440 orders `1.0.40.dev1 < 1.0.40rc1 < 1.0.40`, so a dev
+wheel can never shadow a release. They are pruned on the same schedule as
+RCs — pin one in `.github/rc-retain.txt` if an environment depends on it.
+
+The channel is derived from the triggering event, never from a build input,
+so a dispatch cannot publish itself as stable however it was configured.
+
 ### Docker images — `<MAJOR>.<MINOR>.<PATCH>[-rc<NN>]`
 
 Image tags carry the **product** version, matching the git tag with the
@@ -54,12 +72,31 @@ an image tag as a PEP 440 version, so the dash and the zero padding are
 both free here — and they act as a deliberate marker that a given tag is
 **not** a wheel version.
 
+To build them, dispatch
+[`docker-build-and-push.yml`](.github/workflows/docker-build-and-push.yml)
+with the **release tag selected in the ref dropdown** (tags are listed there
+alongside branches) and the product version as `image_tag`. Building from a
+tag while `image_tag` is still the `test-manual` placeholder fails the run
+rather than publishing release code to a throwaway tag.
+
+Images embed `hastegeo` as copied source, not an installed wheel, so the
+build stamps `__about__.py` from the ref: a tag build gets the hastegeo
+release reachable from it (the same rule `release.yml` uses to decide which
+wheel a product release ships), and a branch build gets
+`0.0.0+<branch>.<sha>`. The stamp is always derived, never typed, so a
+branch image cannot be labelled as a release.
+
 > **Known gap:** `hastegeo-publish.yml` still tags RC images with the
 > resolved *wheel* version (e.g. `1.0.40rc4`), and there is no stable image
-> build on merge at all — stable images have been built by hand via
-> `workflow_dispatch`. Until that is fixed, **always pass
-> `training_image_tag` / `imageprep_image_tag` explicitly when deploying**;
-> a blank input defaults to the wheel version and will pull the wrong image.
+> build on merge at all — stable images are still built by hand via
+> `workflow_dispatch`.
+>
+> Deploying is no longer affected: a blank `training_image_tag` /
+> `imageprep_image_tag` now reuses the image the app being deployed is
+> already running, read from its own `AZURE_BATCH_DOCKER_IMAGE`, rather than
+> defaulting to the wheel version and pulling a tag that does not exist. Pass
+> them explicitly only to *change* the image, or on a first deploy to an
+> environment that has none.
 
 ## Cutting a product release
 

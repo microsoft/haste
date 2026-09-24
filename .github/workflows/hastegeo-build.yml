@@ -17,15 +17,16 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "Build channel"
+        description: "Manual runs only: dev publishes the wheel, rc/release build without publishing. PRs always publish an rc."
         required: true
-        default: "rc"
+        default: "dev"
         type: choice
         options:
+          - dev
           - rc
           - release
       bump:
-        description: "Version bump when set_version is blank"
+        description: "Bumps the latest stable version: patch by default, or minor/major. Ignored when an exact version is given."
         required: true
         default: "patch"
         type: choice
@@ -34,7 +35,7 @@ on:
           - minor
           - major
       set_version:
-        description: "Optional exact X.Y.Z or (for RC) X.Y.ZrcN"
+        description: "Optional exact version: X.Y.Z on any channel, or X.Y.ZrcN / X.Y.Z.devN to pin the rc/dev number."
         required: false
         default: ""
         type: string
@@ -67,6 +68,33 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
+
+      # hastegeo-publish.yml re-resolves the version from trusted policy on the
+      # default branch, and calls the resolver with only --channel and
+      # --source-sha -- it cannot read a dispatch's inputs, by design, since
+      # they originate on the built ref. A dev dispatch that bumps or pins a
+      # version therefore builds one wheel while the publisher expects the
+      # default patch version, and the artifact-name check fails after the
+      # build. Refuse up front instead of wasting the build on a run that
+      # cannot publish.
+      - name: Reject version overrides on a publishable dev dispatch
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.channel == 'dev' &&
+          (github.event.inputs.bump != 'patch' ||
+           github.event.inputs.set_version != '')
+        env:
+          BUMP: ${{ github.event.inputs.bump }}
+          SET_VERSION: ${{ github.event.inputs.set_version }}
+        run: |
+          echo "::error::A dev dispatch must use the default 'patch' bump and" \
+               "an empty set_version (got bump='${BUMP}'," \
+               "set_version='${SET_VERSION}'). The trusted publisher" \
+               "re-resolves the version with defaults and cannot see these" \
+               "inputs, so any other value builds a wheel it will refuse." \
+               "Use bump/set_version only with channel rc or release, which" \
+               "are build-and-validate only."
+          exit 1
 
       - name: Resolve version
         id: resolve
