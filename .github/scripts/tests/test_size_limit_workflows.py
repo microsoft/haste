@@ -35,6 +35,12 @@ az() {
             esac ;;
         "functionapp keys list"*)
             if [ "${FAIL_KEYS:-}" = true ]; then return 1; fi
+            if [ -n "${FLAKY_KEYS:-}" ]; then
+                tries=$(cat "$KEY_ATTEMPTS" 2>/dev/null || echo 0)
+                tries=$((tries + 1))
+                echo "$tries" > "$KEY_ATTEMPTS"
+                if [ "$tries" -le "$FLAKY_KEYS" ]; then return 1; fi
+            fi
             echo test-only-key ;;
         "functionapp show"*) echo example.invalid ;;
     esac
@@ -64,6 +70,7 @@ class TestUpdateWorkflow(unittest.TestCase):
                 "PYTHON": Path(sys.executable).as_posix(),
                 "SCRIPT": (SCRIPTS / "update_size_limits.sh").as_posix(),
                 "CALL_LOG": log.as_posix(),
+                "KEY_ATTEMPTS": (Path(directory) / "keys.count").as_posix(),
                 "GITHUB_STEP_SUMMARY": summary.as_posix(),
                 "GITHUB_ACTIONS": "false",
                 "MOCK_RESPONSE": json.dumps({
@@ -132,6 +139,34 @@ class TestUpdateWorkflow(unittest.TestCase):
         result, _, _ = self.run_script({"FAIL_KEYS": "true"})
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("HTTP verification could not run", result.stderr)
+
+    def test_endpoint_is_resolved_before_the_restart(self) -> None:
+        """The key store stops answering for a few seconds after a restart, so
+        reading the host key afterwards returned empty and failed verification
+        even though the settings had been written."""
+        _, calls, _ = self.run_script()
+        order = calls.splitlines()
+        first_key = next(
+            i for i, line in enumerate(order)
+            if line.startswith("functionapp keys list")
+        )
+        first_restart = next(
+            i for i, line in enumerate(order)
+            if line.startswith("functionapp restart")
+        )
+        self.assertLess(first_key, first_restart)
+
+    def test_transient_key_failure_is_retried(self) -> None:
+        result, calls, _ = self.run_script({"FLAKY_KEYS": "2"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no host key for", result.stderr)
+        self.assertGreaterEqual(
+            len([
+                line for line in calls.splitlines()
+                if line.startswith("functionapp keys list")
+            ]),
+            3,
+        )
 
     def test_stale_http_sample_fails(self) -> None:
         result, _, _ = self.run_script({"MOCK_RESPONSE": "{}"})
