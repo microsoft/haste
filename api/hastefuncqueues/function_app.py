@@ -37,6 +37,10 @@ from hastegeo.core.processors.stats import StatsPostProcessor
 from hastegeo.core.processors.train import TrainPostprocessor
 from hastegeo.core.utils.data import convert_json_to_geojson
 from hastegeo.core.utils.errors import describe_exception
+from hastegeo.core.utils.gdal_security import (
+    max_download_bytes,
+    max_upload_bytes,
+)
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
 from pydantic import ValidationError  # type: ignore
@@ -49,6 +53,40 @@ logger = Logger.get_logger(
     __name__, f"{__name__}_pid_{process_id}.log", log_dir=log_dir
 )
 app = func.FunctionApp()
+
+
+@app.route(
+    route="GetEffectiveLimits",
+    auth_level=func.AuthLevel.FUNCTION,
+    methods=["GET"],
+)
+def GetEffectiveLimits(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Report the size caps as this app's HTTP worker sees them.
+
+    Mirrors the identically-named route on the api app. This app is otherwise
+    queue-triggered only, but it owns HASTE_MAX_IMAGERY_DOWNLOAD_BYTES -- it is
+    ImageryPostProcessor that forwards the cap to the imageryprep Batch task --
+    but Flex Consumption scales HTTP and queue triggers separately. This route
+    cannot verify queue-worker state or Batch download enforcement.
+
+    Returns:
+        func.HttpResponse: 200 with the effective limits in bytes.
+    """
+    return func.HttpResponse(
+        json.dumps(
+            {
+                "maxUploadBytes": max_upload_bytes(),
+                "maxImageryDownloadBytes": max_download_bytes(),
+                "publishAssessmentMaxTotalBytes": (
+                    config.get_assessment_max_total_bytes()
+                ),
+                "instanceId": os.environ.get("WEBSITE_INSTANCE_ID", "local"),
+            }
+        ),
+        status_code=200,
+        mimetype="application/json",
+    )
 
 
 @app.function_name(name="GetProcessImageLayerQueueTrigger")

@@ -107,6 +107,10 @@ from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.footprint_artifacts import (
     validate_layer_footprint_url,
 )
+from hastegeo.core.utils.gdal_security import (
+    max_download_bytes,
+    max_upload_bytes,
+)
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
 from hastegeo.core.utils.source_types import normalize_source_type
@@ -184,7 +188,6 @@ _EMAIL_RE = re.compile(
 # to leave room for the field to grow without ever admitting an unbounded
 # string into log lines or blob paths.
 _SHORT_INT_ID_RE = re.compile(r"^[0-9]{1,8}$")
-_PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES = 512 * 1024**2
 
 
 def _require_guid_param(req: func.HttpRequest, name: str) -> str:
@@ -506,6 +509,46 @@ def handle_options(req: func.HttpRequest) -> func.HttpResponse:
     """Handle preflight OPTIONS requests for CORS."""
     response = func.HttpResponse("", status_code=200)
     return add_cors_headers(response)
+
+
+@app.route(
+    route="GetEffectiveLimits",
+    auth_level=func.AuthLevel.FUNCTION,
+    methods=["GET"],
+)
+def GetEffectiveLimits(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Report the ingestion/publishing size caps as the *serving worker* sees them.
+
+    The Update Size Limits workflow writes these as app settings, but a stored
+    setting is not a live one: hastegeo reads them into module-level state at
+    import, so a value only takes effect once the worker recycles. This endpoint
+    closes that gap by reporting what this process would actually enforce.
+
+    ``instanceId`` identifies the HTTP instance that answered. Matching samples
+    do not prove that all instances, queue workers or Batch tasks use the cap.
+
+    Returns:
+        func.HttpResponse: 200 with the effective limits in bytes.
+    """
+    return func.HttpResponse(
+        json.dumps(
+            {
+                # Read from os.environ on each call, so these track the
+                # process environment rather than a cached snapshot.
+                "maxUploadBytes": max_upload_bytes(),
+                "maxImageryDownloadBytes": max_download_bytes(),
+                # Resolved into Config() at import time; a stale worker reports
+                # the old value here, which is exactly the signal we want.
+                "publishAssessmentMaxTotalBytes": (
+                    config.get_assessment_max_total_bytes()
+                ),
+                "instanceId": os.environ.get("WEBSITE_INSTANCE_ID", "local"),
+            }
+        ),
+        status_code=200,
+        mimetype="application/json",
+    )
 
 
 @app.route(
@@ -5052,7 +5095,7 @@ async def PutPublishDatasetQueueMessage(
                     str(request.projectId),
                     request.imageLayerId,
                     request.modelId,
-                    max_total_bytes=_PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES,
+                    max_total_bytes=config.get_assessment_max_total_bytes(),
                 )
             except Exception as assessment_error:
                 logger.warning(

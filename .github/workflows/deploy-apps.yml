@@ -40,6 +40,10 @@ on:
         default: ""
         type: string
 
+concurrency:
+  group: haste-settings-${{ inputs.environment }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -181,6 +185,9 @@ jobs:
           # publish-storage target are Environment *secrets* (masked in logs).
           # Each defaults to off/unset in deploy_apps.sh when absent.
           PUBLISHING_ENABLED: ${{ vars.PUBLISHING_ENABLED }}
+          HASTE_MAX_UPLOAD_BYTES: ${{ vars.HASTE_MAX_UPLOAD_BYTES }}
+          HASTE_MAX_IMAGERY_DOWNLOAD_BYTES: ${{ vars.HASTE_MAX_IMAGERY_DOWNLOAD_BYTES }}
+          PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES: ${{ vars.PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES }}
           PC_PROVIDER_ENABLED: ${{ vars.PC_PROVIDER_ENABLED }}
           PUBLISH_EXPLORER_RENDER_ENABLED: ${{ vars.PUBLISH_EXPLORER_RENDER_ENABLED }}
           PC_COLLECTION_PREFIX: ${{ vars.PC_COLLECTION_PREFIX }}

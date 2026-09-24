@@ -89,6 +89,21 @@ param useSas bool = false
 @description('Runner auto-creates/resizes its pool. False for pre-created autoscale pools.')
 param managePools bool = true
 
+@description('Maximum assembled upload bytes on the API app.')
+@minValue(1048576)
+@maxValue(1099511627776)
+param maxUploadBytes int = 5368709120
+
+@description('Maximum remote imagery bytes per download, forwarded to new Batch tasks.')
+@minValue(1048576)
+@maxValue(1099511627776)
+param maxImageryDownloadBytes int = 8589934592
+
+@description('Maximum combined assessment input GPKG bytes during publishing.')
+@minValue(1048576)
+@maxValue(1099511627776)
+param publishAssessmentMaxTotalBytes int = 536870912
+
 // --- data publishing ---------------------------------------------------------
 
 @description('Enable the Published Datasets section + Publish action (feature flag). On by default.')
@@ -227,6 +242,8 @@ module apiApp 'functionApp.bicep' = {
     // Unique host id per app so the publishing reconciler TimerTrigger's
     // host-scoped Singleton lock doesn't collide across apps sharing storage.
     appSettings: concat(appConfigSettings, [
+      { name: 'HASTE_MAX_UPLOAD_BYTES', value: string(maxUploadBytes) }
+      { name: 'PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES', value: string(publishAssessmentMaxTotalBytes) }
       {
         name: 'AzureFunctionsWebHost__hostId'
         value: toLower(substring(functionApiName, 0, min(32, length(functionApiName))))
@@ -273,6 +290,7 @@ module queueApp 'functionApp.bicep' = {
     functionsSubnetName: functionsSubnetName
     logAnalyticsId: logAnalyticsId
     appSettings: concat(appConfigSettings, [
+      { name: 'HASTE_MAX_IMAGERY_DOWNLOAD_BYTES', value: string(maxImageryDownloadBytes) }
       {
         name: 'AzureFunctionsWebHost__hostId'
         value: toLower(substring(functionQueueName, 0, min(32, length(functionQueueName))))

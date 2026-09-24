@@ -24,6 +24,14 @@ STATIC_APP_DOMAIN=${13:-FIXME}
 EMAIL_CONNECTION_STRING=${14}
 COMPONENT=${15:-all}
 
+if [[ "$COMPONENT" == "all" || "$COMPONENT" == "funcapi" || "$COMPONENT" == "funcqueue" ]]; then
+    PY_BIN=${PYTHON:-$(command -v python3 || command -v python)}
+    RESOLVED_LIMITS=$("$PY_BIN" "$(dirname "$0")/resolve_size_limits.py")
+    while IFS='=' read -r key value; do
+        export "$key=$value"
+    done <<< "$RESOLVED_LIMITS"
+fi
+
 az config set core.login_experience_v2=off
 az config set extension.use_dynamic_install=yes_without_prompt
 az config set extension.dynamic_install_allow_preview=true
@@ -102,6 +110,14 @@ deploy_function() {
     HOST_ID=$(printf '%s' "$FUNCTION_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-32)
 
     if [ "${SET_APPSETTINGS:-true}" = "true" ]; then
+        local size_settings=()
+        if [ "$FUNCTION_NAME" = "$FUNCTION_API" ]; then
+            size_settings+=("HASTE_MAX_UPLOAD_BYTES=$HASTE_MAX_UPLOAD_BYTES")
+            size_settings+=("PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES=$PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES")
+        elif [ "$FUNCTION_NAME" = "$FUNCTION_QUEUE_API" ]; then
+            size_settings+=("HASTE_MAX_IMAGERY_DOWNLOAD_BYTES=$HASTE_MAX_IMAGERY_DOWNLOAD_BYTES")
+        fi
+
         # Get storage account connection string with error handling
         echo "Retrieving storage account connection string..."
         BLOB_CONNECTION_STRING=$(az storage account show-connection-string --name "$STORAGE_ACCOUNT" --resource-group "$RESOURCE_GROUP" --query connectionString -o tsv) || {
@@ -117,6 +133,7 @@ deploy_function() {
         }
 
         az functionapp config appsettings set --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --settings \
+            "${size_settings[@]}" \
             "env=${ENVIRONMENT}" \
             "IMAGE_QUEUE_NAME=image-layers-queue" \
             "INFERENCE_QUEUE_NAME=inference-queue" \

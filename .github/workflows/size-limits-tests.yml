@@ -1,0 +1,37 @@
+name: Test size limit configuration
+
+on:
+  pull_request:
+    paths:
+      - ".github/scripts/resolve_size_limits.py"
+      - ".github/scripts/update_size_limits.sh"
+      - ".github/scripts/deploy_apps.sh"
+      - ".github/scripts/tests/**"
+      - ".github/workflows/*size-limit*.yml"
+      - ".github/workflows/deploy-apps.yml"
+      - "infra/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Compile infrastructure without deploying
+        run: |
+          az bicep build --file infra/main.bicep
+          az bicep build-params --file infra/main.bicepparam --outfile "$RUNNER_TEMP/parameters.json"
+      - name: Check shell syntax
+        run: |
+          bash -n .github/scripts/update_size_limits.sh
+          bash -n .github/scripts/deploy_apps.sh
+      - name: Test limits without Azure credentials
+        run: python -m unittest discover -s .github/scripts/tests -v

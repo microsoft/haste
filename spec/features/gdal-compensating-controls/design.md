@@ -52,7 +52,11 @@ covered too. No API surface, data model, or UI changes.
 
 ## API Design
 
-No new HTTP endpoints, queue messages, or response-shape changes.
+The operator extension adds function-key-protected `GET /api/GetEffectiveLimits`
+on the API and queues apps. It reports configured caps and the serving HTTP
+instance ID. It does not verify queue-worker or Batch state. Queue messages are
+unchanged; new imagery Batch tasks receive the download cap as an environment
+setting.
 
 ### Internal Interfaces (hastegeo)
 
@@ -134,12 +138,26 @@ No new HTTP endpoints, queue messages, or response-shape changes.
 
 | Config Key | Type | Default | Where Set | Description |
 |---|---|---|---|---|
-| `HASTE_MAX_UPLOAD_BYTES` | int | 5 GiB | App Settings / compose env | Cap for assembled chunked uploads |
-| `HASTE_MAX_IMAGERY_DOWNLOAD_BYTES` | int | 8 GiB | App Settings / compose env | Cap for remote imagery fetch |
+| `HASTE_MAX_UPLOAD_BYTES` | int | 5 GiB | GitHub Environment variable / Bicep parameter / compose env | API cap for assembled chunked uploads |
+| `HASTE_MAX_IMAGERY_DOWNLOAD_BYTES` | int | 8 GiB | GitHub Environment variable / Bicep parameter / compose env | Queues cap forwarded to each new imageryprep Batch task |
+| `PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES` | int | 512 MiB | GitHub Environment variable / Bicep parameter | Combined downloaded footprints and inference GPKG input bytes during publishing |
 | `GDAL_SKIP` | str | `HDF4 HDF4Image HDF5 HDF5Image netCDF` | Dockerfiles | Drivers GDAL refuses to register (subprocess/runtime) |
 
 > Defaults are deliberately generous (satellite COGs are legitimately large);
 > the goal is to bound pathological/hostile inputs, not to rate-limit normal use.
+
+Both Actions workflows use the same variables and shared size parser. Missing
+or blank values restore defaults; invalid or out-of-range values fail before
+settings writes. Bicep explicitly declares each cap on its consuming app.
+Local `azd` environments must supply matching decimal byte counts before
+provisioning; GitHub variables are not automatically available locally.
+
+The update workflow records previous values, verifies stored settings, and
+samples HTTP workers. Missing credentials or nonconvergent samples fail the
+run. Successful HTTP samples are not proof of fleet-wide or Batch enforcement.
+Cross-app updates are not transactional; existing Batch tasks keep their
+submitted caps. See [ADR-0006](../../architecture/decisions/0006-operator-size-limits.md)
+and the [operator guide](../../../docs/configuration.md#ingestion-size-limits).
 
 ## Observability
 
