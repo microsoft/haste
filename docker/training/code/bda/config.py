@@ -98,6 +98,28 @@ def normalize_gpu_ids(
     return ids
 
 
+def select_precision(gpu_ids: Sequence[int], cuda) -> str:
+    """Return the Lightning precision to train with on ``gpu_ids``.
+
+    bf16 is only fast on GPUs that support it natively (Ampere and later).
+    ``torch.cuda.is_bf16_supported()`` also reports emulated bf16 by default,
+    which makes it True on a T4, and emulated bf16 trained about six times
+    slower than fp32 there. HASTE's Batch pools mix GPU generations, so ask
+    the device for native support and otherwise stay in fp32, as on CPU.
+
+    Args:
+        gpu_ids: The GPUs training will use; empty for CPU.
+        cuda: The ``torch.cuda`` module, passed in so this stays importable
+            and testable without torch.
+
+    Returns:
+        ``"bf16-mixed"`` or ``"32-true"``.
+    """
+    if gpu_ids and cuda.is_bf16_supported(including_emulation=False):
+        return "bf16-mixed"
+    return "32-true"
+
+
 # Mask value / output channel that the rest of the pipeline treats as the
 # damaged class. merge_with_building_footprints.py derives the damage fraction
 # from this raster value and inference.py assigns it the red palette entry, so
