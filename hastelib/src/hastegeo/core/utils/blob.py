@@ -236,8 +236,8 @@ def parse_byte_range(
 
     Raises:
         ValueError: for suffix ranges (``bytes=-N``), multi-range values,
-            or otherwise malformed syntax. Callers should fall back to a
-            full ``200`` response in that case.
+            or otherwise malformed syntax. The caller decides how to reject
+            unsupported ranges; PMTiles must not fall back to a full download.
     """
     if not value:
         return 0, None, False

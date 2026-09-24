@@ -1,17 +1,56 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-"""Helper script for running the entire workflow."""
+"""Training/inference worker invoked programmatically by HASTE runners.
+
+The backend supplies the job configuration via --config and selects --step.
+This worker produces files; the backend publishes their metadata on Model.
+"""
 
 import argparse
 import glob
 import os
+import re
 import subprocess
 import sys
 import traceback
 from datetime import datetime, timezone
 
 import yaml
+
+
+def prediction_attrs_settings(config: dict) -> tuple[str, str]:
+    """Validate the caller-supplied result settings before expensive work.
+
+    ``inference.prediction_attrs_filename`` is a safe JSON basename written
+    beside the prediction GeoPackage under ``inference.output_subdir``.
+    ``inference.prediction_revision`` identifies that run's output pair, not
+    a credential or model version. The inference launcher supplies its
+    ``inf-<UUIDv4>`` task ID, generated using ``MetadataUtils.generate_id()``.
+
+    Copy the revision unchanged into the sidecar's ``predictionRevision``;
+    the backend checks it before publishing the result and the viewer uses
+    it to reject stale attributes. The caller owns a fresh ID and an isolated
+    output location for each new run; this script does not generate them.
+    Both settings are required for inference and the default combined
+    workflow. Training-only execution does not require them.
+    """
+    inference = config.get("inference") or {}
+    filename = inference.get("prediction_attrs_filename")
+    revision = inference.get("prediction_revision")
+    if (
+        not isinstance(filename, str)
+        or len(filename) > 255
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.json", filename)
+    ):
+        raise ValueError(
+            "inference.prediction_attrs_filename must be a safe JSON basename."
+        )
+    if not isinstance(revision, str) or not revision.strip():
+        raise ValueError(
+            "inference.prediction_revision must be a nonempty string."
+        )
+    return filename, revision
 
 
 def run_subprocess(command, step_name):
@@ -49,6 +88,9 @@ def main():
 
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
+
+    if args.step in ("inference", "all"):
+        attrs_filename, prediction_revision = prediction_attrs_settings(config)
 
     if args.step == "training" or args.step == "all":
         if not os.path.exists(config.get("labels").get("fn")):
@@ -133,6 +175,10 @@ def main():
                 f"{inference_dir}. Please download all artifacts for this model"
                 " and check the stderr and stdout files for more information."
             )
+        if len(predictions_files) != 1:
+            raise ValueError(
+                "Expected exactly one prediction raster for this generation."
+            )
         predicted_damage_fn = predictions_files[0]
         gpkg_prefix = config["inference"]["predictions_gpkg_fileprefix"]
         merged_building_predictions_fn = os.path.join(
@@ -151,6 +197,19 @@ def main():
                 "--overwrite",
             ],
             "merge_with_building_footprints.py",
+        )
+
+        # Eager producer-owned attributes: this output follows the GPKG
+        # through the existing Batch/local upload path. No preparation job.
+        from hastegeo.core.utils.prediction_attrs import write_prediction_attrs
+
+        log_progress("Writing prediction attributes")
+        write_prediction_attrs(
+            merged_building_predictions_fn,
+            downloaded_footprints_fn,
+            os.path.join(inference_dir, attrs_filename),
+            prediction_revision=prediction_revision,
+            flavor="inference",
         )
 
         # Generate visualizer output - same file name, but with a .tif extension

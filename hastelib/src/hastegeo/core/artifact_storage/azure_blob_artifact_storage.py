@@ -89,9 +89,7 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
                         f"Container '{container}' created successfully."
                     )
                 except ResourceExistsError:
-                    self.logger.info(
-                        f"Container '{container}' already exists."
-                    )
+                    self.logger.info(f"Container '{container}' already exists.")
                 if self.serves_read_sas:
                     self._create_or_update_managed_access_policy()
                 _INITIALIZED_CONTAINERS.add(cache_key)
@@ -332,22 +330,14 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
         if parsed.scheme:
             container_url = urlparse(self.container_client.url)
             if parsed.netloc.lower() != container_url.netloc.lower():
-                raise ValueError(
-                    "Artifact URL does not belong to configured storage"
-                )
+                raise ValueError("Artifact URL does not belong to configured storage")
             container_path = container_url.path.rstrip("/") + "/"
             if not parsed.path.startswith(container_path):
-                raise ValueError(
-                    "Artifact URL does not belong to configured container"
-                )
+                raise ValueError("Artifact URL does not belong to configured container")
             location = unquote(parsed.path[len(container_path) :])
 
         normalized = str(PurePosixPath(location.lstrip("/")))
-        if (
-            not normalized
-            or normalized == "."
-            or ".." in PurePosixPath(normalized).parts
-        ):
+        if not normalized or normalized == "." or ".." in PurePosixPath(normalized).parts:
             raise ValueError("Invalid artifact path")
         return normalized
 

@@ -36,9 +36,11 @@ class TestGetModelArtifact(unittest.IsolatedAsyncioTestCase):
             body=b"",
         )
         processor = Mock()
-        processor.load.return_value = {
-            "gpkgUrl": "https://account.test/model.gpkg"
-        }
+        processor.resolve_artifact.return_value = (
+            "https://account.test/model.gpkg",
+            False,
+            "building_predictions_42.gpkg",
+        )
         blob = BlobRange(
             data=b"gpkg",
             total_size=4,
@@ -47,10 +49,10 @@ class TestGetModelArtifact(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.object(
-            function_app, "MetadataProcessor", return_value=processor
+            function_app, "PredictionResultsProcessor", return_value=processor
         ), patch.object(
             function_app,
-            "read_blob_range",
+            "read_result_artifact",
             new=AsyncMock(return_value=blob),
         ):
             response = await function_app.GetModelArtifact(request)
