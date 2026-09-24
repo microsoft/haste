@@ -16,6 +16,235 @@ _Nothing yet._
 
 ---
 
+## [v4.0.0] — Prediction editing, shared results, and app-wide performance
+
+A major release. Model predictions can now be reviewed and corrected in the
+browser and saved as immutable versions, and both labeling workflows reach that
+same results view through one shared path. Building footprints are tiled once
+per **image layer** rather than once per model, which is the breaking change in
+this release: `Model.pmtilesUrl` and the `BUILDING_PMTILES` artifact type
+retire, and layers prepared before this release carry no footprint archive until
+they are re-tiled. Loading is materially faster throughout the app — a 50-layer
+project's details call went from 20.8 s to 1.85 s uncached, and the main JS
+bundle from 1.49 MB to about 120 KB. The ingestion size caps that previously
+lived in code are now per-environment configuration.
+
+### Upgrade actions
+
+> Read this before upgrading. Details are in the linked entries below.
+
+1. **Re-tile the building footprints of every existing image layer.** Layers
+   prepared before this release have no `footprintPmtilesUrl`, and existing
+   embedding models point at a per-model archive that nothing writes any more,
+   so the Interactive Labeler and the shared results view have no buildings to
+   draw. Imagery prep queues tiling only for layers it prepares from now on;
+   older layers are re-tiled by enqueuing one message per layer onto
+   `footprint-tiles-queue` — `{"projectId": "<id>", "imageLayerId": "<id>"}`,
+   adding `"force": true` to rebuild a layer that already has an archive.
+   Re-running imagery prep is not required. See *Building footprints are tiled
+   once per image layer*.
+2. **Move API clients off `GetModelArtifact` `kind=pmtiles`.** That per-model
+   kind is gone; the layer-scoped `footprint_pmtiles` replaces it. `modelId` is
+   now optional for that kind when `imageLayerId` is supplied — a
+   standard-workflow layer can have no models at all — while every model-scoped
+   kind still requires it. `footprint_pmtiles` is served **only** to HTTP range
+   requests, since the client reads it with `pmtiles.js`; full-archive fetches
+   are rejected on both the browser and API paths.
+3. **Re-run any training job that was marked Failed after about three hours.**
+   Its Batch task most likely ran to completion — the monitor's queue record
+   overflowed and the failure path recorded no output path, so no artifact ZIP
+   exists for it. See *Long training runs were marked Failed while their Batch
+   task succeeded*.
+4. **Deploy code and the `hastegeo` wheel before changing an ingestion size
+   limit.** The **Update Size Limits** workflow writes app settings only; it
+   does not deploy code or upgrade wheels, and a new limit does not take effect
+   until an `api`/`queues` build containing `GetEffectiveLimits` and a wheel
+   carrying the configurable assessment cap and Batch download-cap forwarding
+   are live. See [docs/configuration.md](docs/configuration.md#ingestion-size-limits).
+
+### Added
+
+- **Edit and version prediction results** — a processed model result can now be
+  corrected in the browser instead of only viewed. Buildings are reclassified by
+  clicking them or Ctrl-dragging a rectangle over them, with colored class
+  choices, `1`/`2`/`3` for direct annotation, and arrow-key review filtered to a
+  single class; **Previous**/**Next** controls and a one-based *Building X of Y*
+  indicator walk the filtered set, and are disabled for empty categories. The
+  raw-score damage threshold can be changed on both raw and saved standard
+  predictions without discarding manual assignments, and a draft with no changes
+  cannot be saved. Saving allocates an immutable version — paired edited
+  GeoPackage and attribute sidecar, guarded version allocation, idempotent save
+  receipts — so earlier generations and the original raw prediction remain
+  intact and downloadable, and assessment reports are generated from the
+  analyst's classes against an independently selected version. Drafts survive
+  native navigation and save failures. Review locations that aren't cached
+  resolve through an exact single-building query against the footprints
+  endpoint rather than downloading the archive in full. Design in
+  [`spec/features/prediction-editing/`](spec/features/prediction-editing).
+- **The same results view for both labeling workflows** — viewing a finished
+  damage assessment no longer depends on which workflow produced it. Interactive
+  prediction saves and the standard inference job now emit matching prediction
+  GeoPackages and attribute sidecars, and both are served through one
+  vector-first results view that draws from the image layer's footprint archive.
+  Results are published as immutable generations behind authoritative result
+  metadata, with clears, stale completions, cancellation, and model recreation
+  all guarded; raw legacy access and protected downloads are preserved. There is
+  no results-preparation queue and no generation on first open — the artifacts
+  exist by the time the result does. Project, layer, and model-list rows share
+  one results-readiness projection, and the two workflows share the Results
+  actions and modals while keeping their distinct ZIP and completion rules.
+  Design in
+  [`spec/features/common-prediction-results/`](spec/features/common-prediction-results);
+  API contract in [docs/api/hastefuncapi.md](docs/api/hastefuncapi.md).
+- **Configurable ingestion size limits** — the caps on assembled uploads, remote
+  imagery downloads, and published-assessment inputs were compiled-in constants
+  and are now per-environment settings: `HASTE_MAX_UPLOAD_BYTES` (5 GiB
+  default, read by `api`), `HASTE_MAX_IMAGERY_DOWNLOAD_BYTES` (8 GiB, read by
+  `queues` and forwarded to the imageryprep Batch task, which is where the fetch
+  actually runs), and `PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES` (512 MiB, `api`).
+  GitHub **Environment configuration variables** are the source of truth; each
+  key is written only to the app that reads it, and a new **Update Size Limits**
+  workflow applies them with a `dry_run` mode that resolves byte counts and
+  targets without an Azure login or any writes. A `GetEffectiveLimits` endpoint
+  reports what the running apps actually enforce. See
+  [docs/configuration.md](docs/configuration.md#ingestion-size-limits).
+- **On-demand wheel and image builds** — the manual **Build hastegeo wheel**
+  dispatch gained a `dev` channel, which is now the only dispatch channel that
+  publishes; `rc` and `release` dispatches build without publishing, and a `dev`
+  dispatch that also overrides `bump` or `set_version` is refused up front
+  rather than failing after the build, because the publisher re-resolves the
+  version from trusted policy on the default branch and cannot see a dispatch's
+  inputs. Docker images can likewise be built on demand against an explicit tag.
+  Unchanged: merging to `main` under `hastelib/**` still publishes a stable
+  wheel automatically. See [RELEASING.md](RELEASING.md) and
+  [.github/workflows/README.md](.github/workflows/README.md).
+
+### Changed
+
+- **Building footprints are tiled once per image layer** — footprint geometry
+  belongs to the layer, since every model trained on a layer draws the same
+  buildings, but the embedding job tiled them once per *model* and standard
+  layers got no tiles at all. The two archives were byte-for-byte the same file:
+  same tippecanoe invocation, same layer name, same `--use-attribute-for-id=id`,
+  same zoom range, over the same rows in the same order — so every embedding
+  layer was paying for a duplicate. Imagery prep now queues a tiling job as soon
+  as a layer's footprints are cached, for both workflow types, and the archive
+  lands on `ImageLayer.footprintPmtilesUrl`. `embed_buildings` stops tiling and
+  drops `tippecanoe` and `subprocess` entirely, emitting the embeddings GeoJSON,
+  the HFTR feature sidecar (genuinely per model, and unchanged) and a manifest.
+  Tiling runs as a queued task in the training container through the existing
+  `UnifiedRunner`, because `tippecanoe` ships only in that image and is not in
+  the imageryprep base image's apt repos; the queue is named
+  `footprint-tiles-queue` rather than for any one consumer, since it tiles
+  layers for every workflow. Tile state is server-owned, privileged artifact
+  reads are validated against the owning namespace, `ImageLayer` updates merge
+  atomically, and queue messages and logs carry no credential-bearing URLs.
+  **See upgrade action 1: existing layers must be re-tiled.**
+- **Project details, the dashboard, and labeling load materially faster** — the
+  project-details path was an N+1 against storage that grew super-linearly: on a
+  synthetic 50-layer, 5-models-per-layer project it issued 603 logical data-layer
+  calls and took 20.8 s, with per-call cost climbing from 8.5 ms to 22 ms as the
+  partition grew. Reads are now batched and keyed across metadata backends
+  behind one process-wide blocking-I/O budget, with reusable Blob clients and
+  delegation keys and atomic artifact downloads; project-detail orchestration
+  moved into a keyed processor fronted by a bounded, single-flight process-local
+  cache with ETag and refresh semantics. The same request now costs 7 logical
+  calls and 1.85 s uncached, or 9.1 ms against a warm cache. The browser makes
+  one initial call instead of many, stops polling while the tab is hidden or
+  when every known job is terminal, and revalidates with HTTP `304`. Dashboard
+  Active Jobs, the publishing dataset list, and the labeling workspace each load
+  independently through their own bounded endpoints, and Interactive Labeler
+  metadata and artifacts are fetched concurrently with cancellation and
+  retry isolation. Cache numbers are process-local and do not imply
+  cross-instance coherence. New tuning settings — `HASTE_BLOB_DOWNLOAD_WORKERS`,
+  `HASTE_METADATA_LOAD_WORKERS`, `HASTE_ARTIFACT_DOWNLOAD_WORKERS`,
+  `HASTE_PROJECTDETAILS_CACHE_SECONDS`, `HASTE_PROJECTDETAILS_CACHE_ENTRIES` —
+  all have working defaults and are not yet Bicep parameters; load-test any
+  override before production rollout. Measurements and reproduction steps in
+  [`spec/features/perf-layer-loading/`](spec/features/perf-layer-loading) and
+  [`spec/features/perf-app-wide-loading/`](spec/features/perf-app-wide-loading).
+- **The app loads only the code and map assets a route needs** — every page
+  previously pulled the Azure Maps control, drawing scripts, and styles
+  globally, including pages with no map on them; in the test environment those
+  four CDN requests blocked `DOMContentLoaded` for about 14 s. Routes are now
+  code-split and Maps assets load on demand, per capability, just before a
+  map-dependent screen mounts, which cut the main JS chunk from 1.49 MB to about
+  120 KB and moved `DOMContentLoaded` to 68 ms. A failed lazy route recovers
+  through a reload boundary instead of a blank screen.
+- **The imagery container is rebased on a supported image** — the previous
+  Debian base reached end of life and stopped resolving for ACR builds. The
+  image now uses a digest-pinned MCR Ubuntu 22.04 / Python 3.11 base, with HASTE
+  dependencies isolated from the bundled inference server and an optional
+  non-secret local pip index override for local builds; remote builds keep their
+  existing index behavior. Design in
+  [`spec/features/imagery-runtime-base/`](spec/features/imagery-runtime-base).
+- **GitHub Actions are pinned to full-length commit SHAs** across all workflows.
+- **Release notes are shorter** — release bodies carry upgrade actions, the
+  changelog link, and artifacts, without the lead paragraph.
+
+### Removed
+
+- **`Model.pmtilesUrl` and `ArtifactTypes.BUILDING_PMTILES`** — with a single
+  layer-scoped archive there is no per-model one to point at. `GetModelArtifact`
+  serves `footprint_pmtiles` as a layer-scoped kind instead. The Interactive
+  Labeler's guard that refused to start when a model had no archive goes with
+  the field, so a failed tile load now raises a clear error rather than warning
+  to the console and leaving an empty map with no buildings to label. See
+  upgrade actions 1 and 2.
+
+### Fixed
+
+- **Long training runs were marked Failed while their Batch task succeeded** —
+  the training and artifact-ZIP monitors re-queue their whole record on every
+  poll, roughly every 30 seconds, and appended a new progress entry each time.
+  After about 357 polls — 3 hours 12 minutes — the record exceeded Azure
+  Storage's 64 KiB queue message limit, the re-queue failed with
+  `RequestBodyTooLarge`, and `GetCreateModelRunQueueTrigger` marked the model
+  **Failed** while its Batch task kept running to completion. Because the
+  failure path never recorded an output path, no artifact ZIP was produced, and
+  the raw Storage error XML surfaced in the status message. Monitors now replace
+  the trailing progress entry rather than appending, and keep the newest whole
+  entries within a 16 KiB budget measured against the *serialized* payload —
+  `json.dumps` escapes every non-ASCII character to at least six bytes, so a
+  character-counted cap could still overflow — recording that older entries were
+  trimmed. A regression test drives 1,000 polls through the real queue round
+  trip; the unfixed code overflows at poll 342. **See upgrade action 3.**
+- **Training was five times slower on T4 GPUs** — `fine_tune.py` selected
+  `bf16-mixed` whenever `torch.cuda.is_bf16_supported()` returned `True`, but in
+  the pinned PyTorch 2.5.1 that call counts *emulated* bf16 by default, so it
+  returns `True` on Turing T4s, contrary to the stated intent in the code. On a
+  T4 running the published training image against a production configuration
+  (UNet/ResNeXt50, batch 32, 256 px patches, constraint loss), emulated bf16 ran
+  at 4.94 s/step versus 0.81 s/step in fp32 — three epochs took over four hours
+  instead of about 41 minutes, long enough to hit the monitor's queue limit
+  above. Precision selection now asks for native support only: Ampere and later
+  keep `bf16-mixed`, and T4s train in fp32 as they did before bf16 was
+  introduced.
+- **Project form validation** — the country combobox filtered case-sensitively
+  and kept stale input after a selection; typed event dates fell back to today
+  instead of failing validation, and now parse strictly as `MM/DD/YYYY` with
+  two-digit day and month. Validation errors are announced to screen readers,
+  stale invalid states are cleared, the first invalid field is focused and
+  scrolled to, and duplicate submissions are blocked while a save is in flight.
+- **Help Docs** — selected links no longer navigate to `/undefined`. The
+  labeling, model training, model catalog, and project/image-layer walkthroughs
+  were re-recorded, the results visualizer and GeoPackage download screenshots
+  refreshed, and the combined artifacts screenshot split into separate training
+  and inference examples with their troubleshooting contents documented.
+- **Interactive Labeler layout** — the shared toolbar styles load on direct
+  navigation, the Ctrl-drag selection rectangle is positioned inside the map
+  area rather than offset by the Back-button column, and **Back** and
+  **Edit**/**Done** stay on one row regardless of lazy-route stylesheet order.
+  Prediction viewers remain usable when Azure basemaps are unavailable, and
+  cancelled footprint downloads no longer surface a misleading missing-tiles
+  overlay.
+- **Wheel version resolution** — versions are resolved before metadata
+  generation, so a build cannot embed a version the publisher will reject.
+- **Dependency updates** — `js-yaml` 4.3.1 → 5.4.1, `joi` 17.13.4 → 17.13.7,
+  `browserslist` 4.28.4 → 4.28.9, and `baseline-browser-mapping` in `ui`.
+
+---
+
 ## [v3.0.0] — Data publishing, UI refresh, and training correctness
 
 A major release. The UI is significantly reskinned for a more app-like look and
