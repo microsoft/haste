@@ -177,6 +177,29 @@ test("native tile errors fail the renderer instead of leaving a ready grey map",
   assert.equal(operations.filter(([op]) => op === "removeSource").length, 2);
 });
 
+test("optional Azure basemap 401 does not dispose ready prediction sources", async (t) => {
+  const { create, maps, errors, operations } = fixture(t);
+  const renderer = create();
+  await renderer.ready;
+  maps[0].map.emit("error", {
+    error: {
+      status: 401,
+      url: "https://atlas.microsoft.com/map/tileset?tilesetId=microsoft.base",
+    },
+  });
+  assert.equal(errors.length, 0);
+  assert.equal(operations.filter(([op]) => op === "removeSource").length, 0);
+  assert.equal(renderer.getPanes().length, 2);
+  maps[0].map.emit("error", {
+    error: {
+      status: 401,
+      url: "http://localhost/api/GetModelArtifact?kind=footprint_pmtiles",
+      message: "Prediction archive unauthorized",
+    },
+  });
+  assert.match(errors[0].message, /Prediction archive unauthorized/);
+});
+
 test("feature-state failures and mismatched source IDs surface visible errors", async (t) => {
   const { create, maps, errors } = fixture(t);
   maps[0].map.setFeatureState = () => { throw new Error("renderer rejected feature-state"); };
@@ -246,4 +269,25 @@ test("theme lookup produces parseable colors, and renderer access is duck-typed"
   const gl = { setFeatureState() {} };
   assert.equal(findGlMap({ _map: gl }), gl);
   assert.equal(findGlMap({}), null);
+});
+
+test("live presentation, selection and dimming update both renderers and reset to read-only classes", async (t) => {
+  const { create, operations } = fixture(t);
+  const renderer = create();
+  await renderer.ready;
+  const boundary = operations.length;
+  renderer.setPresentation({
+    classes: ["NotDamaged", "Damaged"], editedIds: new Set([0]), selectedId: 1, dimmedIds: new Set([0]),
+  });
+  const changed = operations.slice(boundary).filter(([op]) => op === "state");
+  assert.equal(changed.length, 4);
+  for (const entry of changed) {
+    if (entry[2].id === 0) assert.deepEqual(entry[3], { cls: 2, edited: true, dim: true, selected: false });
+    else assert.deepEqual(entry[3], { cls: 1, edited: false, dim: false, selected: true });
+  }
+  const resetBoundary = operations.length;
+  renderer.setPresentation(null);
+  const reset = operations.slice(resetBoundary).filter(([op]) => op === "state");
+  assert.equal(reset.length, 4);
+  assert.ok(reset.every((entry) => !entry[3].selected && !entry[3].dim && !entry[3].edited));
 });

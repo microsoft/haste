@@ -4,19 +4,18 @@ import hashlib
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
 from threading import Lock
 
 import yaml
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
-from azure.storage.blob import AccessPolicy  # type: ignore
 from azure.storage.blob import BlobBlock  # type: ignore
-from azure.storage.blob import ContainerSasPermissions, generate_container_sas
+from azure.storage.blob import generate_container_sas
 
 from ..utils.blob import (
     get_blob_service_client,
     get_cached_user_delegation_key,
 )
+from ..utils.blob_access_policy import ensure_container_read_policy
 from ..utils.metadata import matches_metadata_type
 from ..utils.parallel import parallel_map
 from .abstract_data_layer import AbstractDataLayer
@@ -70,37 +69,12 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
                 self._create_or_update_managed_access_policy()
                 _INITIALIZED_CONTAINERS.add(cache_key)
 
-    def _create_or_update_managed_access_policy(self):
-        expiration_days = 90
-        expiration_date = datetime.now(timezone.utc) + timedelta(
-            days=expiration_days
+    def _create_or_update_managed_access_policy(self) -> None:
+        ensure_container_read_policy(
+            self.container_client,
+            self.container_read_policy,
+            expiration_days=90,
         )
-        # Check if the policy already exists
-        existing_policies = self.container_client.get_container_access_policy()
-        if self.container_read_policy in existing_policies.get(
-            "signed_identifiers", {}
-        ):
-            policy = existing_policies["signed_identifiers"][
-                self.container_read_policy
-            ]
-            if policy["expiry"] < datetime.now(timezone.utc):
-                # Policy exists but is expired, extend the expiration date
-                policy["expiry"] = expiration_date
-                self.container_client.set_container_access_policy(
-                    signed_identifiers={self.container_read_policy: policy}
-                )
-        else:
-            # Policy does not exist, create a new one
-            logging.info("Policy does not exist, create a new one")
-            read_policy = AccessPolicy(
-                permission=ContainerSasPermissions(read=True),
-                expiry=expiration_date,
-            )
-            identifiers = {self.container_read_policy: read_policy}
-            self.container_client.set_container_access_policy(
-                signed_identifiers=identifiers
-            )
-            logging.info("Policy set")
 
     def get_file_path(
         self,

@@ -4,10 +4,12 @@
 import json
 import os
 import unittest
+from contextlib import nullcontext
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import azure.functions as func
+from azure.core.exceptions import HttpResponseError
 
 os.environ.setdefault("DEVELOPMENT_MODE", "true")
 os.environ.setdefault("DATA_PATH", "/tmp/haste-results-api-tests")
@@ -165,6 +167,45 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(row[key], detailed[key])
                         self.assertEqual(row[key], listed[key])
 
+    async def test_all_model_row_routes_keep_current_edited_source(
+        self,
+    ) -> None:
+        self.record["gpkgUrl"] = None
+        self.record["editedPredictions"] = [
+            {
+                "version": version,
+                "gpkgUrl": f"https://storage/edited-{version}.gpkg",
+                "predictionAttrsUrl": f"https://storage/edited-{version}.json",
+                "sourcePredictionRevision": revision,
+                "buildingCount": 2,
+                "editedCount": 1,
+            }
+            for version, revision in ((1, "old"), (2, "retired"), (3, "old"))
+        ]
+        self.detail_metadata()
+        project = await function_app.GetProjectDetails(
+            self.http(includeModels="True")
+        )
+        detail = await function_app.GetLayerDetailView(self.http())
+        listing = await function_app.GetLayerModelsDetails(self.http())
+        for response in (project, detail, listing):
+            self.assertEqual(response.status_code, 200)
+        for rows in (
+            json.loads(project.get_body())["imageLayer"][0]["models"],
+            json.loads(detail.get_body())["models"],
+            json.loads(listing.get_body()),
+        ):
+            self.assertEqual(len(rows), 2)
+            for row in rows:
+                self.assertEqual(row["predictionVersion"], 3)
+                self.assertEqual(row["currentPredictionRevision"], "old")
+                self.assertTrue(row["hasEditedPredictions"])
+                self.assertTrue(row["predictionsReady"])
+                self.assertFalse(row["rawPredictionsReady"])
+                self.assertIn("version=3", row["gpkgUrl"])
+                self.assertIn("version=3", row["predictionAttrsUrl"])
+                self.assertEqual(len(row["editedPredictions"]), 3)
+
     def http(self, body: Any = None, **params: str) -> func.HttpRequest:
         return func.HttpRequest(
             method="PUT" if body is not None else "GET",
@@ -203,6 +244,49 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
             self.http(self.request().model_dump())
         )
         self.assertEqual(response.status_code, 500)
+
+    async def test_storage_500_logs_safe_service_diagnostics(self) -> None:
+        error = HttpResponseError("https://storage/blob?sig=private-token")
+        error.status_code = 403
+        error.error_code = "AuthorizationPermissionMismatch"
+        with patch.object(
+            function_app.PredictionResultsProcessor,
+            "save_building_predictions",
+            side_effect=error,
+        ), patch.object(function_app, "logger") as logger:
+            response = await function_app.PutBuildingPredictions(
+                self.http(self.request().model_dump())
+            )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.get_body(), b"Error saving building predictions."
+        )
+        diagnostics = logger.error.call_args.args[2][0]
+        self.assertEqual(diagnostics["status"], 403)
+        self.assertEqual(
+            diagnostics["code"], "AuthorizationPermissionMismatch"
+        )
+        self.assertTrue(diagnostics["frames"])
+        self.assertNotIn("private-token", str(logger.mock_calls))
+
+    async def test_renewal_lease_loss_returns_conflict_without_publication(
+        self,
+    ) -> None:
+        lease = MagicMock()
+        error = HttpResponseError("lease lost")
+        error.status_code = 409
+        error.error_code = "LeaseIdMismatchWithLeaseOperation"
+        lease.renew.side_effect = error
+        with patch(
+            "hastegeo.core.processors.prediction_results.prediction_edit_lock",
+            return_value=nullcontext(lease),
+        ):
+            response = await function_app.PutBuildingPredictions(
+                self.http(self.request(predictions=[]).model_dump())
+            )
+        self.assertEqual(response.status_code, 409)
+        self.metadata.save.assert_not_called()
+        self.assertEqual(self.record["predictionRevision"], "old")
 
     async def test_protected_artifact_query_range_and_cache(self) -> None:
         with patch.object(
@@ -290,6 +374,14 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
         baseline = {
             **self.record,
             "predictionGpkgFilename": "original.gpkg",
+            "editedPredictions": [
+                {
+                    "version": 2,
+                    "gpkgUrl": "https://storage/edited.gpkg",
+                    "sourcePredictionRevision": "old",
+                    "buildingCount": 2,
+                }
+            ],
         }
         replacement = {
             **baseline,
@@ -297,7 +389,19 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
             "predictionRevision": "replacement",
             "predictionGpkgFilename": "replacement.gpkg",
         }
-        for params in ({}, {"predictionRevision": "old"}):
+        for params, expected_url, filename in (
+            ({}, baseline["gpkgUrl"], "original.gpkg"),
+            (
+                {"predictionRevision": "old"},
+                baseline["gpkgUrl"],
+                "original.gpkg",
+            ),
+            (
+                {"version": "2", "predictionRevision": "old"},
+                "https://storage/edited.gpkg",
+                f"building_predictions_{MODEL_ID}_v2.gpkg",
+            ),
+        ):
             with self.subTest(params=params):
                 self.metadata.load.reset_mock()
                 self.metadata.load.side_effect = [baseline, replacement]
@@ -316,9 +420,17 @@ class TestResultsRoutes(ResultsTestCase, unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 206)
                 self.assertEqual(
                     response.headers["Content-Disposition"],
-                    'attachment; filename="original.gpkg"',
+                    f'attachment; filename="{filename}"',
                 )
-                read.assert_awaited_once_with(
-                    baseline["gpkgUrl"], 0, 4, self.config
-                )
+                read.assert_awaited_once_with(expected_url, 0, 4, self.config)
                 self.metadata.load.assert_called_once_with(MODEL_ID)
+
+    async def test_nonversioned_artifact_kinds_reject_explicit_raw_zero(
+        self,
+    ) -> None:
+        for kind in ("sidecar", "geojson", "footprint_pmtiles"):
+            for version in ("0", "1"):
+                response = await function_app.GetModelArtifact(
+                    self.http(kind=kind, version=version)
+                )
+                self.assertEqual(response.status_code, 400)

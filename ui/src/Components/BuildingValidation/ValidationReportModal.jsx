@@ -1,6 +1,5 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { useEffect, useState } from "react";
 import {
   Button,
   Spinner,
@@ -17,7 +16,9 @@ import {
 } from "@fluentui/react-components";
 import { FluentIcon } from "../../util/icons";
 import PropTypes from "prop-types";
-import { buildUrl } from "../../util/api";
+import PredictionVersionPicker from "../OtherComponents/PredictionVersionPicker";
+import usePredictionReport from "./usePredictionReport";
+import { versionLabel } from "../Visualizer/predictionVersions.js";
 
 /* ── Theme-aware design tokens (follow light/dark via Fluent) ─── */
 const tokens = {
@@ -193,58 +194,9 @@ ConfusionMatrix.propTypes = {
 };
 
 /* ── Main component ──────────────────────────────────────────── */
-const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, onDismiss }) => {
-  ValidationReportModal.propTypes = {
-    projectId: PropTypes.string.isRequired,
-    imageLayerId: PropTypes.string.isRequired,
-    modelId: PropTypes.string.isRequired,
-    modelName: PropTypes.string,
-    onDismiss: PropTypes.func.isRequired,
-  };
-
-  const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  const fetchReport = () => {
-    setLoading(true);
-    setError(null);
-    setReport(null);
-    // Fetch directly (not via apiGet) so we can read the JSON body on a 404.
-    // GetValidationReport returns { error } with a 404 when a prerequisite is
-    // missing — no inference results, no saved validation labels, or no
-    // building footprints — and with a 200 when nothing matched. Surface that
-    // specific message as a soft notice; only an opaque/unparseable response
-    // is a hard error.
-    fetch(
-      buildUrl(
-        `GetValidationReport?projectId=${projectId}&imageLayerId=${imageLayerId}&modelId=${modelId}`
-      )
-    )
-      .then(async (response) => {
-        let data = null;
-        try {
-          data = await response.json();
-        } catch {
-          data = null;
-        }
-        if (data && data.error) {
-          setError({ message: data.error, soft: true });
-        } else if (!response.ok || !data) {
-          setError({ message: "Failed to load validation report.", soft: false });
-        } else {
-          setReport(data);
-        }
-      })
-      .catch(() =>
-        setError({ message: "Failed to load validation report.", soft: false })
-      )
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    fetchReport();
-  }, [projectId, imageLayerId, modelId]);
+const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, currentRevision, onDismiss }) => {
+  const { report, loading, error, version, selectVersion, retry: fetchReport, manifest } =
+    usePredictionReport("GetValidationReport", { projectId, imageLayerId, modelId });
 
   const subText = loading
     ? undefined
@@ -277,6 +229,13 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
             </div>
           </DialogTitle>
           <DialogContent>
+            <PredictionVersionPicker versions={manifest.data?.versions || []} value={version}
+              onChange={selectVersion} disabled={loading || manifest.loading}
+              currentRevision={manifest.data?.currentPredictionRevision ?? currentRevision} label="Report on" />
+            {manifest.error && <MessageBar intent="warning"><MessageBarBody>
+              {manifest.error} <Button onClick={manifest.retry}>Retry versions</Button>
+            </MessageBarBody></MessageBar>}
+            {report && <Text block>Report source: {versionLabel(report.predictionVersion ?? 0)}</Text>}
             {subText && (
               <Text style={{ display: "block", color: tokens.colorNeutralForeground2, marginBottom: 16 }}>
                 {subText}
@@ -293,8 +252,8 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
             )}
 
             {!loading && error && (
-              <MessageBar intent={error.soft ? "warning" : "error"}>
-                <MessageBarBody>{error.message}</MessageBarBody>
+              <MessageBar intent="error">
+                <MessageBarBody>{error}</MessageBarBody>
               </MessageBar>
             )}
 
@@ -318,6 +277,7 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
                       <MetricCard label="Damaged labels" value={report.labelCounts?.Damaged ?? 0} accent={tokens.colorDangerForeground1} />
                       <MetricCard label="Not Damaged labels" value={report.labelCounts?.NotDamaged ?? 0} accent={tokens.colorSuccessForeground1} />
                       <MetricCard label="Unknown labels (excluded)" value={report.labelCounts?.Unknown ?? 0} accent={tokens.colorNeutralForeground3} />
+                      <MetricCard label="Labeled Unknown predictions (excluded, not Not Damaged)" value={report.excludedUnknownPredictions ?? 0} accent={tokens.colorNeutralForeground3} />
                       <MetricCard label="Matched to predictions" value={report.matched} />
                     </div>
                   </div>
@@ -374,6 +334,15 @@ const ValidationReportModal = ({ projectId, imageLayerId, modelId, modelName, on
       </DialogSurface>
     </Dialog>
   );
+};
+
+ValidationReportModal.propTypes = {
+  projectId: PropTypes.string.isRequired,
+  imageLayerId: PropTypes.string.isRequired,
+  modelId: PropTypes.string.isRequired,
+  modelName: PropTypes.string,
+  currentRevision: PropTypes.string,
+  onDismiss: PropTypes.func.isRequired,
 };
 
 export default ValidationReportModal;

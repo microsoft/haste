@@ -6,6 +6,17 @@ export const VISUALIZER_SHORTCUTS = [
     keys: ["A", "S", "D"],
     description: "Move the swipe divider left / split / right — left shows more post-event imagery",
   },
+  { keys: ["E"], description: "Enter or leave prediction edit mode" },
+];
+
+export const PREDICTION_EDIT_SHORTCUTS = [
+  { keys: ["1", "2", "3"], description: "Label the highlighted building, or choose a painting class when none is highlighted" },
+  { keys: ["←", "→"], description: "Review the previous / next building in the selected class group" },
+  { keys: ["Click"], description: "Paint the chosen class" },
+  { keys: ["Ctrl", "drag"], separator: " + ", description: "Box-select and paint footprints on either pane" },
+  { keys: ["Right-click"], description: "Restore the building's original model class" },
+  { keys: ["A", "S", "D"], description: "Move the divider left / centre / right; left shows more post-event imagery" },
+  { keys: ["E"], description: "Leave edit mode" },
 ];
 
 export const INTERACTIVE_LABELER_SHORTCUTS = [

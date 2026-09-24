@@ -3,6 +3,7 @@
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
+import PredictionNavigationBridge from "./Components/Visualizer/PredictionNavigationBridge.jsx";
 import 'bootstrap/dist/css/bootstrap.min.css';
 
 import { AppProvider } from "./AppContext.jsx";
@@ -16,10 +17,12 @@ applyPaletteCssVars(getInitialPalette());
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <BrowserRouter>
+    <PredictionNavigationBridge>
     <ThemeProvider>
       <AppProvider>
         <App />
       </AppProvider>
     </ThemeProvider>
+    </PredictionNavigationBridge>
   </BrowserRouter>
 );

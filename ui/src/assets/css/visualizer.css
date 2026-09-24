@@ -24,6 +24,11 @@ html {
   background-color: var(--colorNeutralBackground2);
 }
 
+.visualizer-container .labeling-navigation-controls {
+  flex-direction: row;
+  align-items: center;
+}
+
 .resizable-div {
   position: absolute;
   height: 100%;

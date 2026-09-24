@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from numbers import Integral, Real
 from typing import Iterable, Optional
 
 from .gdal_security import harden_gdal
@@ -44,7 +45,8 @@ class AssessmentInputs:
 
     Attributes:
         damage_fractions: mapping from building id (e.g. Overture string id)
-            to the model's predicted damage fraction in [0, 1].
+            to the model's predicted damage fraction in [0, 1], or None
+            when unscored. These are not replaced by analyst decisions.
         unknown_fractions: mapping from building id to the cloud/unknown
             cover fraction in [0, 1]; defaults to 0 for any id missing.
         areas_m2: mapping from building id to footprint area in square
@@ -52,12 +54,20 @@ class AssessmentInputs:
             the population estimate (filtered by ``min_area_m2``).
         labels: mapping from building id to one of {Damaged, NotDamaged,
             Unknown}. Ids absent from the map are unlabeled.
+        effective_classes: Complete categorical snapshot for an edited
+            source; None keeps raw score-based reporting and its defaults.
+        is_edited: Explicit selected-source marker. Edited sources must
+            provide effective_classes, even when the snapshot has zero rows.
     """
 
-    damage_fractions: dict[str, float]
-    unknown_fractions: dict[str, float] = field(default_factory=dict)
+    damage_fractions: dict[str, float | None]
+    unknown_fractions: dict[str, float | None] = field(default_factory=dict)
     areas_m2: dict[str, Optional[float]] = field(default_factory=dict)
     labels: dict[str, str] = field(default_factory=dict)
+    # None means raw continuous scores, including binary-valued inference.
+    # A saved snapshot supplies a complete categorical map instead.
+    effective_classes: dict[str, str] | None = None
+    is_edited: bool = False
 
 
 # Critical z value for a two-sided 95% CI (norm.ppf(1 - 0.05/2)). Hard-coded
@@ -153,6 +163,7 @@ def compute_assessment_report(
     threshold: float = 0.1,
     min_area_m2: float = 50.0,
     pr_curve_max_points: int = 200,
+    unknown_threshold: float = 0.0,
 ) -> dict:
     """Compute the assessment report dictionary.
 
@@ -169,6 +180,11 @@ def compute_assessment_report(
     it goes over the wire — the modal renders an SVG with at most a few
     hundred points, no point shipping thousands.
 
+    Raw scores retain the existing 0.1 report threshold default. Saved
+    effective classes are categorical: neither report threshold changes them.
+    Unknown predictions abstain from binary metrics but do not remove known
+    ground-truth labels from the population-estimation sample.
+
     The return shape is documented on the
     ``GetAssessmentReport`` HTTP endpoint.
     """
@@ -177,18 +193,48 @@ def compute_assessment_report(
     areas_m2 = inputs.areas_m2 or {}
     labels = inputs.labels or {}
 
-    total = len(damage_fractions)
+    for name, value in (
+        ("threshold", threshold),
+        ("unknown_threshold", unknown_threshold),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, Real)
+            or not math.isfinite(value)
+            or not 0 <= value <= 1
+        ):
+            raise ValueError(f"{name} must be a finite fraction in [0, 1].")
+    categorical = inputs.effective_classes is not None
+    if inputs.is_edited and not categorical:
+        raise ValueError("Edited assessment inputs require effective classes.")
+    if categorical:
+        effective = dict(inputs.effective_classes)
+        if set(effective) != set(damage_fractions):
+            raise ValueError("Effective classes must cover every prediction.")
+        if any(
+            value not in (DAMAGED, NOT_DAMAGED, UNKNOWN)
+            for value in effective.values()
+        ):
+            raise ValueError("Invalid effective prediction class.")
+    else:
+        effective = {}
+        for bid, damage in damage_fractions.items():
+            unknown = unknown_fractions.get(bid, 0.0)
+            if (
+                damage is None
+                or unknown is None
+                or not math.isfinite(damage)
+                or not math.isfinite(unknown)
+                or unknown > unknown_threshold
+            ):
+                effective[bid] = UNKNOWN
+            else:
+                effective[bid] = DAMAGED if damage > threshold else NOT_DAMAGED
 
-    # Buildings the model considers "known" (i.e., not entirely cloud-covered).
-    total_known = sum(
-        1 for bid in damage_fractions if unknown_fractions.get(bid, 0.0) <= 0
-    )
+    total = len(effective)
+    total_known = sum(value != UNKNOWN for value in effective.values())
     total_unknown = total - total_known
-    damaged_pred = sum(
-        1
-        for bid, dmg in damage_fractions.items()
-        if dmg > threshold and unknown_fractions.get(bid, 0.0) <= 0
-    )
+    damaged_pred = sum(value == DAMAGED for value in effective.values())
 
     # Population N for the extrapolation: buildings whose area is large
     # enough that a human labeler could realistically have called them.
@@ -203,24 +249,36 @@ def compute_assessment_report(
     for lbl in labels.values():
         label_counts[lbl] = label_counts.get(lbl, 0) + 1
 
-    # Build y_true / y_score from sure-labeled buildings that are also
-    # in the prediction set. Drops Unknown labels and labels for buildings
-    # the model never assessed.
+    # Keep ground-truth sampling independent from prediction abstentions:
+    # editing a prediction to Unknown must not alter the estimated prevalence.
+    population_truth: list[int] = []
     y_true: list[int] = []
     y_score: list[float] = []
+    y_pred: list[int] = []
     missing = 0
+    labeled_unknown = 0
     for bid, lbl in labels.items():
-        if lbl == UNKNOWN:
+        if lbl not in (DAMAGED, NOT_DAMAGED):
             continue
-        if bid not in damage_fractions:
+        if bid not in effective:
             missing += 1
             continue
-        y_true.append(1 if lbl == DAMAGED else 0)
-        y_score.append(float(damage_fractions[bid]))
+        truth = int(lbl == DAMAGED)
+        population_truth.append(truth)
+        if effective[bid] == UNKNOWN:
+            labeled_unknown += 1
+            continue
+        predicted = int(effective[bid] == DAMAGED)
+        y_true.append(truth)
+        y_pred.append(predicted)
+        y_score.append(
+            float(predicted) if categorical else float(damage_fractions[bid])
+        )
 
     n = len(y_true)
     x = sum(y_true)
-    y_pred = [1 if s > threshold else 0 for s in y_score]
+    population_n = len(population_truth)
+    population_x = sum(population_truth)
 
     # Pre-compute every field the response carries. Fields that don't
     # apply (no labels matched, no labels at all) just stay None — the
@@ -234,23 +292,18 @@ def compute_assessment_report(
         accuracy = (tp + tn) / n
         recall = _safe_div(tp, tp + fn)
         precision = _safe_div(tp, tp + fp)
-        ap = _average_precision(y_true, y_score) if x > 0 else None
-
-        pr_p, pr_r, pr_t = _precision_recall_curve(y_true, y_score)
-        # Downsample for transport. Thresholds are one shorter than the
-        # precision/recall arrays — use the same step for both.
-        if len(pr_p) > pr_curve_max_points:
-            step = max(1, len(pr_p) // pr_curve_max_points)
-            pr_p = pr_p[::step] + [pr_p[-1]]
-            pr_r = pr_r[::step] + [pr_r[-1]]
-            pr_t = pr_t[::step]
-
-        # Finite-population CI on the damage rate, scaled up to a count of
-        # buildings. Matches the CLI script exactly.
-        p_hat = x / n
-        f = n / N if N > 0 else 0.0
-        var_p = (1 - f) * p_hat * (1 - p_hat) / (n - 1) if n > 1 else 0.0
-        se_p = math.sqrt(max(var_p, 0.0))
+        if categorical:
+            # A human decision has no ranking or continuous score to sweep.
+            ap = None
+            pr_p, pr_r, pr_t = [precision], [recall], []
+        else:
+            ap = _average_precision(y_true, y_score) if x > 0 else None
+            pr_p, pr_r, pr_t = _precision_recall_curve(y_true, y_score)
+            if len(pr_p) > pr_curve_max_points:
+                step = max(1, len(pr_p) // pr_curve_max_points)
+                pr_p = pr_p[::step] + [pr_p[-1]]
+                pr_r = pr_r[::step] + [pr_r[-1]]
+                pr_t = pr_t[::step]
         evaluation_sample: Optional[dict] = {
             "n": n,
             "trueDamaged": x,
@@ -274,7 +327,28 @@ def compute_assessment_report(
             "recall": [_round(v, 6) for v in pr_r],
             "thresholds": [_round(v, 6) for v in pr_t],
         }
-        population_extra: dict = {
+        if categorical:
+            pr_curve["mode"] = "operating_point"
+        error: Optional[str] = None
+    else:
+        evaluation_sample = None
+        metrics = None
+        confusion_matrix = None
+        pr_curve = None
+        error = "No sure-labeled buildings matched known predictions."
+
+    # Same finite-population formula as before, using the ground-truth
+    # cohort even when all model/analyst predictions are Unknown.
+    if population_n:
+        p_hat = population_x / population_n
+        f = population_n / N if N > 0 else 0.0
+        var_p = (
+            (1 - f) * p_hat * (1 - p_hat) / (population_n - 1)
+            if population_n > 1
+            else 0.0
+        )
+        se_p = math.sqrt(max(var_p, 0.0))
+        population_extra = {
             "pHat": _round(p_hat),
             "samplingFraction": _round(f, 6),
             "sePHat": _round(se_p, 6),
@@ -282,12 +356,7 @@ def compute_assessment_report(
             "ciLower": _round(N * (p_hat - _Z_95 * se_p), 1),
             "ciUpper": _round(N * (p_hat + _Z_95 * se_p), 1),
         }
-        error: Optional[str] = None
     else:
-        evaluation_sample = None
-        metrics = None
-        confusion_matrix = None
-        pr_curve = None
         population_extra = {
             "pHat": None,
             "samplingFraction": None,
@@ -296,7 +365,6 @@ def compute_assessment_report(
             "ciLower": None,
             "ciUpper": None,
         }
-        error = "No sure-labeled buildings matched the predictions."
 
     response = {
         "matched": n,
@@ -305,6 +373,7 @@ def compute_assessment_report(
         "sureLabels": label_counts[DAMAGED] + label_counts[NOT_DAMAGED],
         "unsureLabels": label_counts[UNKNOWN],
         "labeledMissingFromPredictions": missing,
+        "labeledUnknownPredictions": labeled_unknown,
         "predictions": {
             "total": total,
             "knownNonCloudy": total_known,
@@ -321,8 +390,8 @@ def compute_assessment_report(
         "populationEstimate": {
             "N": N,
             "minAreaM2": min_area_m2,
-            "n": n,
-            "x": x,
+            "n": population_n,
+            "x": population_x,
             "z": _Z_95,
             **population_extra,
         },
@@ -333,7 +402,7 @@ def compute_assessment_report(
     return response
 
 
-def _building_areas_m2(footprints_path: str) -> dict[str, float]:
+def _building_areas_m2(footprints_path: str) -> dict[str, float | None]:
     """Compute square-metre footprint areas keyed by Overture id.
 
     Reprojects to the GeoPackage's estimated UTM CRS before measuring if
@@ -346,11 +415,18 @@ def _building_areas_m2(footprints_path: str) -> dict[str, float]:
         raise ValueError(
             f"Footprints GeoPackage has no CRS: {footprints_path}"
         )
+    if gdf.empty:
+        return {}
+    if not any(gdf.geometry.notna() & ~gdf.geometry.is_empty):
+        return {str(value): None for value in gdf["id"]}
     if gdf.crs.is_projected:
         proj = gdf
     else:
         proj = gdf.to_crs(gdf.estimate_utm_crs())
-    areas = proj.geometry.area.tolist()
+    areas = [
+        float(value) if math.isfinite(value) else None
+        for value in proj.geometry.area.tolist()
+    ]
     ids = gdf["id"].astype(str).tolist()
     return dict(zip(ids, areas))
 
@@ -362,13 +438,18 @@ def build_assessment_inputs_from_gpkgs(
     labels: Iterable[tuple[str, str]] | None = None,
     damage_field: str = "damage_pct_0m",
     unknown_field: str = "unknown_pct",
+    edited_class_field: str = "edited_class",
+    flavor: str | None = None,
+    is_edited: bool | None = None,
 ) -> AssessmentInputs:
     """Build :class:`AssessmentInputs` from on-disk GeoPackages.
 
-    The merged predictions file uses sequential integer ``id``s in the
-    same row order as the footprints file (this is what
-    ``merge_with_building_footprints.py`` writes). We use that ordering
-    to map back to Overture string ids.
+    Validate source row IDs and explicit Overture IDs when present. Older
+    report-only GPKGs lacking the Overture column retain their positional
+    reader, but missing/renumbered rows now fail rather than misreporting.
+    Raw scores remain continuous, including binary-valued inference. An
+    edited snapshot adds a complete effective-class map instead of replacing
+    model scores with synthetic numbers that could be rethresholded.
 
     ``labels`` is the validation app's ``{overture_id: {label, ...}}``
     map flattened to ``(id, label)`` pairs (or ``None`` if computing
@@ -376,23 +457,88 @@ def build_assessment_inputs_from_gpkgs(
     """
     import fiona
 
-    with fiona.open(footprints_path) as src:
-        overture_ids = [str(feat["properties"]["id"]) for feat in src]
+    from .predictions import (
+        EMBEDDING_FLAVOR,
+        INFERENCE_FLAVOR,
+        FootprintPredictionMismatchError,
+        normalize_fraction,
+        prediction_layer,
+        read_footprint_ids,
+        source_id,
+        validate_prediction_class,
+    )
 
-    damage_fractions: dict[str, float] = {}
-    unknown_fractions: dict[str, float] = {}
-    with fiona.open(merged_predictions_path) as src:
-        for feat in src:
+    overture_ids = read_footprint_ids(footprints_path)
+
+    damage_fractions: dict[str, float | None] = {}
+    unknown_fractions: dict[str, float | None] = {}
+    edited_values: dict[str, str | None] = {}
+    layer = prediction_layer(merged_predictions_path)
+    with fiona.open(merged_predictions_path, layer=layer) as src:
+        if not src.crs:
+            raise ValueError("Prediction GeoPackage must declare a CRS.")
+        fields = src.schema["properties"]
+        if "id" not in fields or damage_field not in fields:
+            raise ValueError(
+                "Prediction GeoPackage is missing report columns."
+            )
+        schema_flavor = (
+            EMBEDDING_FLAVOR
+            if layer == "predictions" and "area" in fields
+            else INFERENCE_FLAVOR
+        )
+        if flavor is not None and flavor != schema_flavor:
+            raise ValueError("Prediction flavor disagrees with its schema.")
+        has_edit_column = edited_class_field in fields
+        for index, feat in enumerate(src):
             props = feat["properties"]
             int_id = props["id"]
-            if int_id < 0 or int_id >= len(overture_ids):
-                continue
+            if (
+                isinstance(int_id, bool)
+                or not isinstance(int_id, Integral)
+                or int_id != index
+                or index >= len(overture_ids)
+            ):
+                raise FootprintPredictionMismatchError(
+                    "Invalid report source row ID."
+                )
             oid = overture_ids[int_id]
-            dmg = props.get(damage_field)
-            if dmg is None:
-                continue
-            damage_fractions[oid] = float(dmg)
-            unknown_fractions[oid] = float(props.get(unknown_field) or 0.0)
+            if (
+                "overture_id" in fields
+                and source_id(props["overture_id"]) != oid
+            ):
+                raise FootprintPredictionMismatchError(
+                    "Report source ID mismatch."
+                )
+            damage_fractions[oid] = normalize_fraction(props[damage_field])
+            unknown_fractions[oid] = normalize_fraction(
+                props.get(unknown_field, 0.0)
+            )
+            edited_values[oid] = props.get(edited_class_field)
+    if len(damage_fractions) != len(overture_ids):
+        raise FootprintPredictionMismatchError(
+            "Report source row count mismatch."
+        )
+    # Legacy raw report fixtures sometimes have an entirely blank edit
+    # column. It is not a saved snapshot; partial/invalid edits are rejected.
+    detected_edited = has_edit_column and (
+        not edited_values
+        or any(value not in (None, "") for value in edited_values.values())
+    )
+    if is_edited is not None and (
+        not isinstance(is_edited, bool) or is_edited != detected_edited
+    ):
+        raise ValueError(
+            "Selected report source disagrees with its edit schema."
+        )
+    effective_classes = (
+        {
+            oid: validate_prediction_class(value)
+            for oid, value in edited_values.items()
+        }
+        if detected_edited
+        else None
+    )
 
     areas_m2 = _building_areas_m2(footprints_path)
 
@@ -406,4 +552,6 @@ def build_assessment_inputs_from_gpkgs(
         unknown_fractions=unknown_fractions,
         areas_m2=areas_m2,
         labels=labels_dict,
+        effective_classes=effective_classes,
+        is_edited=detected_edited,
     )

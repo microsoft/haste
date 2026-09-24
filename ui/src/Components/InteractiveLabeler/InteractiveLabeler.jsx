@@ -3,19 +3,15 @@
 //
 // Azure Maps Interactive Labeler — PMTiles edition.
 //
-// Footprints are streamed from a PMTiles archive (built by the embedding
-// workflow) via Azure Maps' addProtocol hook, so only the tiles in the
+// Footprints are streamed from the image layer's shared PMTiles archive
+// via Azure Maps' addProtocol hook, so only the tiles in the
 // current viewport are fetched, following an initial header/root range read.
 // Per-building coloring is driven by feature-state on the internal renderer;
 // feature vectors come from a separate HFTR sidecar, downloaded in full in
 // parallel with the archive header for local training and prediction.
 //
-// A separate "Predict all buildings" button downloads the full embeddings
-// GeoJSON once and batches the trained model across every footprint with
-// a progress modal, then persists the predictions so the Validation and
-// Assessment reports cover the whole layer.
-//
-// Implementation notes live in `AZURE_MAPS_INTERACTIVE_LABELER.md`.
+// "Predict all buildings" batches the trained model across the sidecar,
+// then persists predictions for layer-wide Validation and Assessment.
 import { useContext, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -40,6 +36,7 @@ import {
   getAzureMapsAuthOptions,
   isAzureMapsPlaceholder,
 } from "../../util/azureMapsAuth";
+import { isOptionalAzureBasemapAuthError } from "../../util/azureMapsErrors.js";
 import { toBrowserTitilerUrl } from "../../util/blobUrl";
 import { AppContext } from "../../AppContext.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
@@ -81,6 +78,7 @@ import {
   createLabelerWriter,
   saveBuildingPredictions,
 } from "./interactiveLabelerPersistence.js";
+import "../../assets/css/drawingToolbar.css";
 
 const writeLabelerData = createLabelerWriter(buildUrl);
 
@@ -859,7 +857,7 @@ const InteractiveLabeler = () => {
     });
     mapRef.current = map;
 
-    await waitForMapReady(map, { signal, onReady: () => {
+    await waitForMapReady(map, { signal, ignoreError: isOptionalAzureBasemapAuthError, onReady: () => {
       map.setUserInteraction({
         dragRotateInteraction: false,
         scrollZoomInteraction: true,
@@ -889,12 +887,8 @@ const InteractiveLabeler = () => {
         );
       }
 
-      // Footprints come from the PMTiles archive (tippecanoe -l buildings,
-      // with --use-attribute-for-id=id so each MVT feature carries the
-      // native integer feature id needed by setFeatureState).
-      // Footprints come from the PMTiles archive (tippecanoe -l buildings,
-      // with --use-attribute-for-id=id so each MVT feature carries the
-      // native integer feature id needed by setFeatureState).
+      // Each MVT feature carries the native integer row ID needed by
+      // setFeatureState; the source layer is "buildings".
       //
       // Deliberately do NOT pass minSourceZoom/maxSourceZoom here: the
       // pmtiles.js protocol handler advertises the archive's actual zoom
@@ -2550,6 +2544,19 @@ const InteractiveLabeler = () => {
           style={{ position: "absolute", inset: 0 }}
         />
 
+        {/* Drag coordinates are relative to the map, not the outer layout. */}
+        <div
+          ref={boxRef}
+          style={{
+            position: "absolute",
+            display: "none",
+            border: "2px dashed #3388ff",
+            background: "rgba(51,136,255,0.15)",
+            pointerEvents: "none",
+            zIndex: 900,
+          }}
+        />
+
         {/* Pane labels, shown only while swipe is on. Rendered inside this
             relative wrapper so left/right map to the map area (not the window).
             "Pre imagery" sits at the very top-left (above the Back button, which
@@ -2996,19 +3003,6 @@ const InteractiveLabeler = () => {
           </div>
         </div>
       )}
-
-      {/* Box-select rectangle (Ctrl+drag) */}
-      <div
-        ref={boxRef}
-        style={{
-          position: "absolute",
-          display: "none",
-          border: "2px dashed #3388ff",
-          background: "rgba(51,136,255,0.15)",
-          pointerEvents: "none",
-          zIndex: 900,
-        }}
-      />
 
       {/* Full-coverage Predict-all progress modal. */}
       {fullPredict && (
