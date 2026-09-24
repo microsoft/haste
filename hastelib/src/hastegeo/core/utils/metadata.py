@@ -1,10 +1,59 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import hashlib
+import json
 import random
+import re
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
+from xml.sax.saxutils import escape as _xml_escape
+
+# Azure Storage rejects a queue request body over 64 KiB. The queue client
+# sends a record's json.dumps output (ASCII, since non-ASCII is escaped) in an
+# XML envelope of about 95 bytes, escaping "&", "<" and ">".
+QUEUE_MESSAGE_LIMIT_BYTES = 64 * 1024
+_QUEUE_ENVELOPE_BYTES = 128
+
+# Job monitors re-queue their whole record, status history included, on every
+# poll. Keeping the history well under the queue limit leaves room for the
+# rest of the record.
+MAX_STATUS_MESSAGE_BYTES = 16 * 1024
+STATUS_HISTORY_TRIMMED = "Earlier status messages were trimmed"
+
+# append_status_message writes each entry as "\n<ISO-8601 timestamp>: <message>",
+# and a message may itself span several lines.
+_STATUS_ENTRY_START = re.compile(
+    r"\n(?=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?: )"
+)
+
+
+def queued_message_size(payload: str) -> int:
+    """Return the size in bytes of the queue request that carries ``payload``."""
+    return len(_xml_escape(payload)) + _QUEUE_ENVELOPE_BYTES
+
+
+def _serialized_size(text: str) -> int:
+    """Return how many bytes ``text`` adds to a queued JSON message.
+
+    Records are queued with ``json.dumps``, which escapes non-ASCII to up to
+    twelve bytes per character, and the queue request then XML-escapes
+    ``&``, ``<`` and ``>``.
+    """
+    return len(_xml_escape(json.dumps(text))) - 2
+
+
+def _longest_fit(text: str, max_bytes: int, keep_end: bool) -> str:
+    """Return the longest prefix (or suffix) of ``text`` within ``max_bytes``."""
+    low, high = 0, len(text)
+    while low < high:
+        mid = (low + high + 1) // 2
+        part = text[len(text) - mid :] if keep_end else text[:mid]
+        if _serialized_size(part) <= max_bytes:
+            low = mid
+        else:
+            high = mid - 1
+    return text[len(text) - low :] if keep_end else text[:low]
 
 
 @lru_cache(maxsize=1)
@@ -77,3 +126,101 @@ class MetadataUtils:
             status_message = ""
         timestamp = timestamp if timestamp else MetadataUtils.get_timestamp()
         return status_message + f"\n{timestamp}: {message}"
+
+    @staticmethod
+    def upsert_status_message(
+        status_message: str,
+        message: str,
+        replace_prefix: str,
+        timestamp: str = None,
+    ):
+        """Append ``message``, replacing the last entry if it starts with ``replace_prefix``.
+
+        Monitors that report the same kind of progress on every poll use this
+        so a long-running job keeps one current progress entry instead of
+        adding one per poll.
+        """
+        status_message = status_message or ""
+        entry_starts = [
+            match.start()
+            for match in _STATUS_ENTRY_START.finditer(status_message)
+        ]
+        if entry_starts:
+            last_entry = status_message[entry_starts[-1] + 1 :]
+            _, _, last_message = last_entry.partition(": ")
+            if last_message.startswith(replace_prefix):
+                status_message = status_message[: entry_starts[-1]]
+        return MetadataUtils.append_status_message(
+            status_message, message, timestamp=timestamp
+        )
+
+    @staticmethod
+    def trim_status_message(
+        status_message: str, max_bytes: int = MAX_STATUS_MESSAGE_BYTES
+    ):
+        """Keep the newest whole entries of ``status_message`` within ``max_bytes``.
+
+        The budget is measured as the history's size once serialized into a
+        queued JSON message, so escaped non-ASCII text counts at its real
+        size. Dropped history is replaced by a single entry saying so, stamped
+        with the oldest retained entry's time so the history stays in order.
+        """
+        if not status_message or (
+            _serialized_size(status_message) <= max_bytes
+        ):
+            return status_message
+        entry_starts = [
+            match.start()
+            for match in _STATUS_ENTRY_START.finditer(status_message)
+        ]
+        if not entry_starts:
+            return _longest_fit(status_message, max_bytes, keep_end=True)
+        for start in entry_starts[1:]:
+            retained = status_message[start:]
+            timestamp = retained[1:].partition(": ")[0]
+            marker = f"\n{timestamp}: {STATUS_HISTORY_TRIMMED}"
+            if _serialized_size(marker + retained) <= max_bytes:
+                return marker + retained
+        # Not even the newest entry fits on its own: keep its beginning,
+        # which carries its timestamp and the start of its message.
+        return _longest_fit(
+            status_message[entry_starts[-1] :], max_bytes, keep_end=False
+        )
+
+    @staticmethod
+    def fit_queue_payload(record: dict, histories: list) -> str:
+        """Serialize ``record`` for a queue message, trimming histories to fit.
+
+        ``histories`` lists ``(container, key)`` pairs naming status-history
+        strings inside ``record``. When the record is over the queue limit,
+        they share whatever room the rest of the record leaves, keeping
+        their newest entries.
+
+        Raises:
+            ValueError: If the record is over the limit even without its
+                status histories.
+        """
+        payload = json.dumps(record)
+        if queued_message_size(payload) <= QUEUE_MESSAGE_LIMIT_BYTES:
+            return payload
+        originals = [container[key] or "" for container, key in histories]
+        for container, key in histories:
+            container[key] = ""
+        room = QUEUE_MESSAGE_LIMIT_BYTES - queued_message_size(
+            json.dumps(record)
+        )
+        if room > 0 and histories:
+            share = room // len(histories)
+            for (container, key), history in zip(histories, originals):
+                container[key] = MetadataUtils.trim_status_message(
+                    history, share
+                )
+        payload = json.dumps(record)
+        size = queued_message_size(payload)
+        if size > QUEUE_MESSAGE_LIMIT_BYTES:
+            raise ValueError(
+                f"Queued record needs {size} bytes even without its status"
+                f" history, over the {QUEUE_MESSAGE_LIMIT_BYTES}-byte queue"
+                " message limit."
+            )
+        return payload

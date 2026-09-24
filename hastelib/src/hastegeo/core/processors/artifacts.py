@@ -16,6 +16,7 @@ from hastegeo.core.utils.queues import AzureQueueHandler
 
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 ZIP_PREFIX = "zip"
+ZIP_IN_PROGRESS_MESSAGE = "Zipping in progress"
 
 _SLUG_INVALID = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -107,9 +108,15 @@ class ArtifactProcessor:
         )
         self.model_artifacts.zipUrl = None
         self.model_artifacts.currentZipJobUid = None
+        # Earlier zip jobs keep their status and dates but not their logs.
+        # Each copy is a finished run's history that nothing reads, and the
+        # whole record is queued now and on every poll: keeping one per run
+        # would let repeated zips outgrow the 64 KiB queue message limit.
+        for previous_job in self.model_artifacts.zipJobs:
+            previous_job.logs = ""
         # Setting visibility timeout to 0 to make sure the message is processed immediately
         self.queue_client.put_message(
-            json.dumps(self.model_artifacts.dict()), visibility_timeout=0
+            self._queue_payload(), visibility_timeout=0
         )
         return self.model_artifacts
 
@@ -227,13 +234,16 @@ class ArtifactProcessor:
             else:
                 self.model_artifacts.zipStatus = task_status
                 self.model_artifacts.zipJobs[idx].status = task_status
-                self._update_zip_progress("Zipping in progress")
+                # Replace rather than append: the whole record is re-queued
+                # on every poll and a queue message cannot exceed 64 KiB.
+                self._update_zip_progress(
+                    ZIP_IN_PROGRESS_MESSAGE,
+                    replace_prefix=ZIP_IN_PROGRESS_MESSAGE,
+                )
                 self.model_artifacts.zipJobs[
                     idx
                 ].logs = self.model_artifacts.zipStatusMessage
-                self.queue_client.put_message(
-                    json.dumps(self.model_artifacts.dict())
-                )
+                self.queue_client.put_message(self._queue_payload())
         else:
             self.model_artifacts.zipStatus = (
                 self.config.get_status_types().FAILED.value
@@ -354,9 +364,7 @@ class ArtifactProcessor:
             self._update_zip_progress(
                 f"Zipping submitted with task id {task_id}"
             )
-            self.queue_client.put_message(
-                json.dumps(self.model_artifacts.dict())
-            )
+            self.queue_client.put_message(self._queue_payload())
             self.logger.info(
                 f"InProgress message to queue sent for model {self.model_artifacts.modelId}"
             )
@@ -382,11 +390,38 @@ class ArtifactProcessor:
         data = blob_client.download_blob().readall()
         return json.loads(data)
 
-    def _update_zip_progress(self, message: str, timestamp: str = None):
-        self.model_artifacts.zipStatusMessage = (
-            MetadataUtils.append_status_message(
+    def _queue_payload(self) -> str:
+        """Serialize the artifacts record for the zip queue within its limit.
+
+        Finished zip jobs' logs are left out of the queued copy, since only
+        the current job's logs are read. The status history and the current
+        job's copy of it share the room the rest of the record leaves.
+        """
+        record = self.model_artifacts.dict()
+        histories = [(record, "zipStatusMessage")]
+        for job in record["zipJobs"]:
+            if job["taskId"] == record["currentZipJobUid"]:
+                histories.append((job, "logs"))
+            else:
+                job["logs"] = ""
+        return MetadataUtils.fit_queue_payload(record, histories)
+
+    def _update_zip_progress(
+        self, message: str, timestamp: str = None, replace_prefix: str = None
+    ):
+        if replace_prefix:
+            status_message = MetadataUtils.upsert_status_message(
+                self.model_artifacts.zipStatusMessage,
+                message,
+                replace_prefix,
+                timestamp=timestamp,
+            )
+        else:
+            status_message = MetadataUtils.append_status_message(
                 self.model_artifacts.zipStatusMessage,
                 message,
                 timestamp=timestamp,
             )
+        self.model_artifacts.zipStatusMessage = (
+            MetadataUtils.trim_status_message(status_message)
         )
