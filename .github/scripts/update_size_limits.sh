@@ -129,6 +129,49 @@ apply_to() {
 apply_to "$FUNCTION_API" "${API_SETTINGS[@]}"
 apply_to "$FUNCTION_QUEUE_API" "${QUEUE_SETTINGS[@]}"
 
+# Host key and hostname are resolved *before* any restart. Neither is rotated by
+# a restart, and on Flex Consumption the key store stops answering for a few
+# seconds afterwards -- reading them post-restart returned empty and failed
+# verification outright even though the settings had been written. Retried
+# regardless, since the same store can lag just after an app-settings write.
+ENDPOINT_ATTEMPTS=${ENDPOINT_ATTEMPTS:-5}
+ENDPOINT_RETRY_DELAY=${ENDPOINT_RETRY_DELAY:-5}
+declare -A APP_HOST_KEY APP_HOSTNAME
+
+resolve_endpoint() {
+    local app_name=$1
+    local attempts=0 out
+
+    while [ "$attempts" -lt "$ENDPOINT_ATTEMPTS" ]; do
+        attempts=$((attempts + 1))
+
+        if out=$(az functionapp keys list --name "$app_name" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query "functionKeys.default" -o tsv 2>&1) && [ -n "$out" ]; then
+            if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+                echo "::add-mask::$out"
+            fi
+            APP_HOST_KEY[$app_name]=$out
+        else
+            echo "  attempt $attempts/$ENDPOINT_ATTEMPTS: no host key for $app_name${out:+ -- $out}" >&2
+            sleep "$ENDPOINT_RETRY_DELAY"
+            continue
+        fi
+
+        if out=$(az functionapp show --name "$app_name" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query "defaultHostName" -o tsv 2>&1) && [ -n "$out" ]; then
+            APP_HOSTNAME[$app_name]=$out
+            return 0
+        fi
+
+        echo "  attempt $attempts/$ENDPOINT_ATTEMPTS: no hostname for $app_name${out:+ -- $out}" >&2
+        sleep "$ENDPOINT_RETRY_DELAY"
+    done
+
+    return 1
+}
+
 # hastegeo's Config() is instantiated at module import, so workers must recycle
 # before a new value takes effect. Changing app settings normally triggers that
 # on its own; the explicit restart is belt-and-braces and is allowed to fail
@@ -167,8 +210,8 @@ verify_live() {
     echo "Sampling HTTP worker limits on $app_name..."
 
     local host_key hostname
-    host_key=$(az functionapp keys list --name "$app_name" --resource-group "$RESOURCE_GROUP" --query "functionKeys.default" -o tsv 2>/dev/null || true)
-    hostname=$(az functionapp show --name "$app_name" --resource-group "$RESOURCE_GROUP" --query "defaultHostName" -o tsv 2>/dev/null || true)
+    host_key=${APP_HOST_KEY[$app_name]:-}
+    hostname=${APP_HOSTNAME[$app_name]:-}
 
     if [ -z "$host_key" ] || [ -z "$hostname" ] || [ -z "$PY_BIN" ]; then
         echo "  ERROR: could not resolve host key, hostname or a python interpreter." >&2
@@ -176,9 +219,6 @@ verify_live() {
         return 1
     fi
 
-    if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-        echo "::add-mask::$host_key"
-    fi
     local url="https://${hostname}/api/GetEffectiveLimits"
     local attempts=0 streak=0 seen="" body instance live key expected all_match
     local required_streak=5 max_attempts=40
@@ -235,9 +275,11 @@ verify_live() {
 echo
 VERIFY_FAILED=0
 if [ ${#API_SETTINGS[@]} -gt 0 ]; then
+    resolve_endpoint "$FUNCTION_API" || true
     restart_app "$FUNCTION_API"
 fi
 if [ ${#QUEUE_SETTINGS[@]} -gt 0 ]; then
+    resolve_endpoint "$FUNCTION_QUEUE_API" || true
     restart_app "$FUNCTION_QUEUE_API"
 fi
 
