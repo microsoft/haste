@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 from azure.batch.models import BatchError, BatchErrorException, ErrorMessage
 from hastegeo.core.runners.azure_batch import (
+    AzureBatchJob,
     AzureBatchRunner,
     batch_error_code,
     is_node_unavailable_error,
@@ -274,6 +275,37 @@ class TestCleanupTask(unittest.TestCase):
         )
         runner.cleanup_task("job-1", "task-1")
         runner.batch_cluster.disable_job.assert_called_once_with("job-1")
+
+
+class TestCancelTask(unittest.TestCase):
+    def _cluster(self) -> AzureBatchJob:
+        cluster = AzureBatchJob.__new__(AzureBatchJob)
+        cluster.batch_client = MagicMock()
+        cluster.logger = MagicMock()
+        return cluster
+
+    def test_reports_whether_the_task_was_still_running(self):
+        for error, stopped in (
+            (None, True),
+            (_batch_error("TaskCompleted"), False),
+            (_batch_error("TaskNotFound", status_code=404), True),
+        ):
+            with self.subTest(error=error and error.error.code):
+                cluster = self._cluster()
+                cluster.batch_client.task.terminate.side_effect = error
+
+                self.assertIs(cluster.cancel_task("job-1", "task-1"), stopped)
+                cluster.batch_client.task.terminate.assert_called_once_with(
+                    "job-1", "task-1"
+                )
+
+    def test_propagates_unrelated_batch_errors(self):
+        cluster = self._cluster()
+        cluster.batch_client.task.terminate.side_effect = _batch_error(
+            "OperationTimedOut", status_code=408
+        )
+        with self.assertRaises(BatchErrorException):
+            cluster.cancel_task("job-1", "task-1")
 
 
 if __name__ == "__main__":

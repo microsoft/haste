@@ -4,8 +4,10 @@
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from threading import Event
+from types import SimpleNamespace
 
 import pytest
+from azure.batch.models import TaskState
 from hastegeo.core.models.projects import Model
 from hastegeo.core.processors.job_queue import JobQueueProcessor
 from hastegeo.core.processors.job_state import (
@@ -17,6 +19,7 @@ from hastegeo.core.processors.job_state import (
 from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.processors.train import TrainPostprocessor
 from hastegeo.core.runners import local
+from hastegeo.core.runners.azure_batch import AzureBatchJob, AzureBatchRunner
 from hastegeo.core.utils.metadata import MetadataUtils
 
 from hastelib.tests.core.processors.test_job_state import (
@@ -24,6 +27,9 @@ from hastelib.tests.core.processors.test_job_state import (
     load,
     output_for,
     record,
+)
+from hastelib.tests.core.runners.test_azure_batch_node_errors import (
+    _batch_error,
 )
 from hastelib.tests.core.runners.test_local_lifecycle import (
     FakeBlobs,
@@ -455,3 +461,39 @@ def test_late_cancel_records_actual_terminal_provider_state(
     assert not state.repository.needs_cancellation(
         load(state), Workload.TRAINING
     )
+
+
+def test_completed_batch_task_keeps_its_outcome_when_cancelled_late(
+    state, mocker
+) -> None:
+    message = accepted(state)
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    cluster = AzureBatchJob.__new__(AzureBatchJob)
+    cluster.batch_client = mocker.Mock()
+    cluster.logger = mocker.Mock()
+    cluster.batch_client.task.terminate.side_effect = _batch_error(
+        "TaskCompleted"
+    )
+    cluster.batch_client.task.get.return_value = SimpleNamespace(
+        state=TaskState.completed,
+        execution_info=SimpleNamespace(failure_info=None),
+    )
+    runner = AzureBatchRunner.__new__(AzureBatchRunner)
+    runner.batch_cluster = cluster
+    runner.config = state.config
+    mocker.patch.object(runner, "cleanup_task")
+    mocker.patch.object(processor, "_runner", return_value=runner)
+    mocker.patch.object(processor, "_perform_action")
+
+    processor.process(Workload.TRAINING, message)
+
+    completed = state.config.get_status_types().COMPLETED.value
+    assert load(state)["status"] == "Cancelled"
+    assert load(state)["trainingJob"]["status"] == completed
+    assert load(state)["statusMessage"].endswith(
+        f"Task already reached {completed} before cancellation"
+    )
+    runner.cleanup_task.assert_called_once()

@@ -629,13 +629,16 @@ class TrainPostprocessor(BaseTrainProcessor):
             and self.model_data.trainingJob.status
             != self.config.get_status_types().CANCELLED.value
         ):
-            message = self._cancel_training()
+            status = self._cancel_training()
             self._update_training_progress(
-                f"{message}", step=self.model_data.currentStep
+                (
+                    "Task cancelled"
+                    if status == self.config.get_status_types().CANCELLED.value
+                    else f"Task already reached {status} before cancellation"
+                ),
+                step=self.model_data.currentStep,
             )
-            self.model_data.trainingJob.status = (
-                self.config.get_status_types().CANCELLED.value
-            )
+            self.model_data.trainingJob.status = status
             self.model_data.trainingJob.completedDate = (
                 MetadataUtils.get_timestamp()
             )
@@ -644,14 +647,23 @@ class TrainPostprocessor(BaseTrainProcessor):
         )
         return self.model_data
 
-    def _cancel_training(self):
+    def _cancel_training(self) -> str:
+        """Stop the task and return the execution's resulting status."""
+        job = self.model_data.trainingJob
         try:
-            message = self.runner.cancel_task(
-                job_id=self.model_data.trainingJob.jobId,
-                task_id=self.model_data.trainingJob.taskId,
+            stopped = self.runner.cancel_task(
+                job_id=job.jobId, task_id=job.taskId
+            )
+            # A task that finished first keeps its provider outcome.
+            status = (
+                self.runner.get_task_status(
+                    job_id=job.jobId, task_id=job.taskId
+                )
+                if stopped is False
+                else self.config.get_status_types().CANCELLED.value
             )
             self.logger.info(
-                f"Training task {self.model_data.trainingJob.taskId} cancellation message: {message}"
+                f"Training task {job.taskId} cancellation result: {status}"
             )
             # Cleanup the task on the runner
             self.runner.cleanup_task(
@@ -660,7 +672,7 @@ class TrainPostprocessor(BaseTrainProcessor):
             )
             self.model_data.trainingOutputPath = f"{MetadataUtils.hash_string(self.model_data.projectId)}/{self.model_data.trainingJob.taskId}"
             # Note: Do we want to set checkpoint paths if available for cancelled model training tasks?
-            return message
+            return status
         except Exception as e:
             self.logger.error(
                 f"Error cancelling training job {self.model_data.trainingJob.jobId} for model {self.model_data.modelId}: {e}",

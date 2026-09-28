@@ -251,3 +251,43 @@ class TestTrainingMonitorQueueMessage:
         # The record the trigger saves keeps them; the next poll re-reads
         # them from the task anyway.
         assert processor.model_data.trainingJob.logs == logs
+
+
+class TestDirectTrainingCancellation:
+    def test_confirmed_stop_is_recorded_as_cancelled(self, mocker):
+        processor = _monitor(mocker)
+        processor.model_data = _submitted_model()
+        processor.runner.cancel_task.return_value = True
+
+        result = processor.cancel()
+
+        assert result.status == STATUS.CANCELLED.value
+        assert result.trainingJob.status == STATUS.CANCELLED.value
+        assert "Task cancelled" in result.statusMessage
+        processor.runner.get_task_status.assert_not_called()
+        processor.runner.cleanup_task.assert_called_once_with(
+            job_id="job-1", task_id="trn-1"
+        )
+
+    def test_task_that_finished_first_keeps_its_outcome(self, mocker):
+        processor = _monitor(mocker)
+        processor.model_data = _submitted_model()
+        processor.runner.cancel_task.return_value = False
+
+        def finished(job_id: str, task_id: str) -> str:
+            processor.runner.cleanup_task.assert_not_called()
+            return STATUS.COMPLETED.value
+
+        processor.runner.get_task_status.side_effect = finished
+
+        result = processor.cancel()
+
+        assert result.status == STATUS.CANCELLED.value
+        assert result.trainingJob.status == STATUS.COMPLETED.value
+        assert (
+            f"Task already reached {STATUS.COMPLETED.value} before "
+            "cancellation" in result.statusMessage
+        )
+        processor.runner.cleanup_task.assert_called_once_with(
+            job_id="job-1", task_id="trn-1"
+        )

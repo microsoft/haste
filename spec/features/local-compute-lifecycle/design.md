@@ -99,7 +99,9 @@ never targets an unrelated container or treats a status-file edit as a stop.
 The top-level legacy `Cancelled` status records user intent. The nested job
 status acknowledges the provider outcome only after the stop operation.
 If completion already won, the nested status and message report that fact
-instead of claiming the execution was stopped.
+instead of claiming the execution was stopped. Every runner's `cancel_task`
+returns `False` only in that case; Azure Batch maps `TaskCompleted` to it,
+and a missing task, like a missing local receipt, counts as stopped.
 
 ## Metadata and queue recovery
 

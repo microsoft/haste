@@ -324,7 +324,7 @@ class AzureBatchRunner(BaseRunner):
             )
         self.batch_cluster.disable_job(job_id)
 
-    def cancel_task(self, job_id, task_id):
+    def cancel_task(self, job_id, task_id) -> bool:
         return self.batch_cluster.cancel_task(job_id, task_id)
 
 
@@ -984,21 +984,25 @@ class AzureBatchJob:
                 f"{file_path} deleted for task {task_id} with recursive set to {recursive}."
             )
 
-    def cancel_task(self, job_id, task_id):
-        message = None
+    def cancel_task(self, job_id, task_id) -> bool:
+        """Terminate a task; ``False`` means it had already completed.
+
+        A missing task cannot run, so, like a missing local receipt, it
+        counts as stopped.
+        """
         try:
             self.batch_client.task.terminate(job_id, task_id)
-            message = f"Task {task_id} cancelled successfully."
-            self.logger.info(message)
         except BatchErrorException as e:
             if e.error.code == "TaskNotFound":
-                message = f"Task {task_id} not found. It may have already been completed or deleted."
-                self.logger.error(message)
-            elif e.error.code == "TaskCompleted":
-                message = (
+                self.logger.error(
+                    f"Task {task_id} not found. It may have already been completed or deleted."
+                )
+                return True
+            if e.error.code == "TaskCompleted":
+                self.logger.info(
                     f"Task {task_id} has already completed. No action taken."
                 )
-                self.logger.info(message)
-            else:
-                raise e
-        return message
+                return False
+            raise e
+        self.logger.info(f"Task {task_id} cancelled successfully.")
+        return True

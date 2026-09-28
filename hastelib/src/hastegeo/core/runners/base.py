@@ -29,5 +29,10 @@ class BaseRunner(ABC):
         pass
 
     @abstractmethod
-    def cancel_task(self, job_id, task_id):
+    def cancel_task(self, job_id, task_id) -> bool:
+        """Stop a task if it can still run.
+
+        Return ``False`` only when the task had already finished; callers
+        then record its terminal status instead of a cancellation.
+        """
         pass
