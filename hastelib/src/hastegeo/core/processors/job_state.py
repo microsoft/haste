@@ -735,26 +735,65 @@ class JobStateRepository:
         )
 
     def reconcile_queues(self) -> int:
+        """Re-enqueue unfinished records whose queue message may be lost.
+
+        A failing record or workload scan must not starve the others: all
+        are attempted, then any failures are raised together.
+        """
         count = 0
+        failures: list[Exception] = []
         for workload in Workload:
-            records = self.processor(workload, None).load_all()
+            try:
+                records = self.processor(workload, None).load_all()
+            except Exception as error:
+                failures.append(error)
+                self.logger.error(
+                    "Could not scan %s records for queue recovery (%s)",
+                    workload.value,
+                    type(error).__name__,
+                )
+                continue
             for data in records:
-                if workload in {Workload.TRAINING, Workload.EMBEDDING} and (
-                    data.get("modelType") == "embedding"
-                ) != (workload == Workload.EMBEDDING):
-                    continue
-                if not self.needs_processing(data, workload):
-                    continue
-                if attempt_id(data, workload):
-                    turn = self.turn(data, workload)
-                    if (
-                        turn.backend != self.config.runner_type
-                        or max(turn.lease_until, turn.next_poll) > self.clock()
-                    ):
-                        continue
-                self.enqueue(workload, data)
-                count += 1
+                try:
+                    if self._recover_queue_message(workload, data):
+                        count += 1
+                except Exception as error:
+                    failures.append(error)
+                    self.logger.error(
+                        "Could not recover the %s queue message for %s (%s)",
+                        workload.value,
+                        self._record_label(data, workload),
+                        type(error).__name__,
+                    )
+        if failures:
+            raise RuntimeError(
+                f"Queue recovery failed for {len(failures)} item(s) after "
+                f"re-enqueueing {count}"
+            ) from failures[0]
         return count
+
+    def _recover_queue_message(self, workload: Workload, data: dict) -> bool:
+        if workload in {Workload.TRAINING, Workload.EMBEDDING} and (
+            data.get("modelType") == "embedding"
+        ) != (workload == Workload.EMBEDDING):
+            return False
+        if not self.needs_processing(data, workload):
+            return False
+        if attempt_id(data, workload):
+            turn = self.turn(data, workload)
+            if (
+                turn.backend != self.config.runner_type
+                or max(turn.lease_until, turn.next_poll) > self.clock()
+            ):
+                return False
+        self.enqueue(workload, data)
+        return True
+
+    def _record_label(self, data: dict, workload: Workload) -> str:
+        try:
+            return "/".join(self._identity(data, workload))
+        except (AttributeError, ValueError):
+            return "a record without valid identifiers"
 
 
 class JobClaimRenewal:

@@ -287,6 +287,28 @@ def test_reconciliation_scans_partitioned_metadata_and_skips_active_claims(
     assert state.repository.reconcile_queues() == 1
 
 
+def test_recovery_attempts_every_record_before_reporting_failures(
+    state,
+) -> None:
+    accepted(state, Workload.IMAGERY)
+    accepted(state, Workload.TRAINING)
+    state.now.value += 301
+    state.queue.side_effect = [
+        ValueError("Queued record exceeds the queue message limit"),
+        None,
+    ]
+
+    with pytest.raises(RuntimeError, match="1 item"):
+        state.repository.reconcile_queues()
+
+    assert {call.args[0] for call in state.queue.call_args_list} == {
+        Workload.IMAGERY,
+        Workload.TRAINING,
+    }
+    state.queue.side_effect = None
+    assert state.repository.reconcile_queues() == 2
+
+
 def test_poison_delivery_does_not_fail_live_compute_or_a_newer_attempt(
     state,
 ) -> None:
