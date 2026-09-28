@@ -1,5 +1,12 @@
 # User stories: shared job progress
 
+## Contents
+
+- [US-001: observe a running job](#us-001-observe-a-running-job)
+- [US-002: observe completion without optional telemetry](#us-002-observe-completion-without-optional-telemetry)
+- [US-003: inspect live workflow output](#us-003-inspect-live-workflow-output)
+- [Agent Assignment Map](#agent-assignment-map)
+
 ## US-001: observe a running job
 
 As an analyst, I want status and available progress while work runs so I can
