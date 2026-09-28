@@ -80,6 +80,32 @@ class TestTrainingProgress(unittest.TestCase):
         self.assertIn("last recorded values", result.statusMessage)
         self.assertNotIn("Training metrics unavailable", result.statusMessage)
 
+    def test_final_event_file_without_epochs_keeps_the_recorded_metrics(
+        self,
+    ) -> None:
+        self.processor.model_data.maxEpochs = "5"
+        recorded = json.dumps(
+            [
+                {"epoch": 0, "elapsedDurationInMinutes": 2.0},
+                {"epoch": 1, "elapsedDurationInMinutes": 2.5},
+            ]
+        )
+        self.processor.model_data.trainingJob.logs = recorded
+        self.processor.runner.get_filecontent_from_task.side_effect = (
+            lambda **kwargs: (
+                [b""] if kwargs["filename"] == "events.out.tfevents" else None
+            )
+        )
+        self.processor.runner.get_task_status.return_value = (
+            self.statuses.COMPLETED.value
+        )
+
+        result = self.processor.process()
+
+        self.assertEqual(result.trainingJob.logs, recorded)
+        self.assertEqual(result.trainingJob.completedEpochs, "2")
+        self.assertIn("last recorded values", result.statusMessage)
+
     def test_running_without_metrics_does_not_crash_or_claim_completion(
         self,
     ) -> None:

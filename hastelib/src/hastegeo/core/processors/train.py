@@ -539,7 +539,12 @@ class TrainPostprocessor(BaseTrainProcessor):
                 output_path = stream.name
                 for chunk in content:
                     stream.write(chunk)
-            return parse_tb_event_logs(output_path)
+            start_time, logs = parse_tb_event_logs(output_path)
+            if logs == "[]":
+                # No completed epoch yet: this read adds no metrics, so it
+                # must not replace events that earlier polls recorded.
+                return None, None
+            return start_time, logs
         except Exception as error:
             self._telemetry_unavailable = True
             self.logger.warning(

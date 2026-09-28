@@ -51,10 +51,10 @@ Only estimate remaining time after a completed epoch provides a usable
 duration. Recorded zero elapsed time is valid, not a missing-value sentinel.
 
 Business completion sets terminal progress independently of event-file
-availability. If the final event read fails, completion keeps the metrics
-from the events earlier polls recorded and says those are the last recorded
-values. A failed or cancelled job does not become successful merely
-because its percentage or logs suggest completion.
+availability. If the final event read fails or holds no completed epoch,
+completion keeps the metrics from the events earlier polls recorded and says
+those are the last recorded values. A failed or cancelled job does not become
+successful merely because its percentage or logs suggest completion.
 
 ## Workflow logs
 

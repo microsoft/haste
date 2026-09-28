@@ -12,6 +12,7 @@
 | Keep workflow stage history stable under bounded status history | backend-dev | done |
 | Bound queue-owned training cancellation history like the monitor | backend-dev | done |
 | Keep recorded metrics when the final TensorBoard read fails at completion | backend-dev | done |
+| Keep recorded metrics when the final event file has no completed epoch | backend-dev | done |
 | Empty-message and indeterminate UI states | ui | done |
 | Regression and integration validation | backend-validation; ui-validation | complete on the lifecycle prerequisite; final AML integration remains a separate gate |
 
@@ -44,10 +45,10 @@
 ## Current evidence and baseline limitations
 
 Rebased onto the current lifecycle prerequisite and main, the full core, API
-and queue suite passed **1,296 tests** on Windows with HTTP blocked, with 34
+and queue suite passed **1,297 tests** on Windows with HTTP blocked, with 34
 skips (mostly POSIX-only descriptor cases) and the same 43 failures as the
 lifecycle prerequisite; each replayed commit showed no new failures. With the
-lifecycle plan's verification-only POSIX emulation it passed **1,336 tests**,
+lifecycle plan's verification-only POSIX emulation it passed **1,337 tests**,
 again with only the prerequisite's three failures. Workflow-streaming tests
 pass, and the prediction-workflow tests match main: 18 pass and four fail on
 this host's mismatched PROJ database. All 47 UI unit-test files (353 cases,
