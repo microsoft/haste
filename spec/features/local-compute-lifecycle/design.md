@@ -177,9 +177,11 @@ including queued work and interrupted staging/uploads. `ReconcileJobQueues`
 runs every 30 seconds for the currently configured legacy runner and
 re-enqueues current pending/running/cancelling records and unfinished
 follow-ons. This second path closes gaps before receipt creation and after
-lost queue sends, independently of queue retry counts. Slow staging does not
-block metadata polling or cancellation delivery. Neither timer owns compute
-in memory, and both resume on a new Function worker.
+lost queue sends, independently of queue retry counts. Each run reads every
+metadata type once, shared by workloads stored in the same records, and one
+failing record or scan does not stop recovery of the others. Slow staging
+does not block metadata polling or cancellation delivery. Neither timer owns
+compute in memory, and both resume on a new Function worker.
 
 ## Configuration and rollout
 

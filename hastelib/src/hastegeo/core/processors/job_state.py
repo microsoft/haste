@@ -737,23 +737,29 @@ class JobStateRepository:
     def reconcile_queues(self) -> int:
         """Re-enqueue unfinished records whose queue message may be lost.
 
-        A failing record or workload scan must not starve the others: all
+        Each metadata type is read once per run, even when several workloads
+        share it. A failing record or scan must not starve the others: all
         are attempted, then any failures are raised together.
         """
         count = 0
         failures: list[Exception] = []
+        scans: dict[str, list[dict] | None] = {}
         for workload in Workload:
-            try:
-                records = self.processor(workload, None).load_all()
-            except Exception as error:
-                failures.append(error)
-                self.logger.error(
-                    "Could not scan %s records for queue recovery (%s)",
-                    workload.value,
-                    type(error).__name__,
-                )
-                continue
-            for data in records:
+            metadata_type = WORKFLOWS[workload].metadata_type
+            if metadata_type not in scans:
+                try:
+                    scans[metadata_type] = self.processor(
+                        workload, None
+                    ).load_all()
+                except Exception as error:
+                    scans[metadata_type] = None
+                    failures.append(error)
+                    self.logger.error(
+                        "Could not scan %s records for queue recovery (%s)",
+                        metadata_type.lower(),
+                        type(error).__name__,
+                    )
+            for data in scans[metadata_type] or []:
                 try:
                     if self._recover_queue_message(workload, data):
                         count += 1

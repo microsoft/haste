@@ -16,6 +16,7 @@ from hastegeo.core.processors.job_state import (
     current_job,
     persist_and_enqueue,
 )
+from hastegeo.core.processors.metadata import MetadataProcessor
 
 
 def record(workload: Workload):
@@ -307,6 +308,55 @@ def test_recovery_attempts_every_record_before_reporting_failures(
     }
     state.queue.side_effect = None
     assert state.repository.reconcile_queues() == 2
+
+
+def test_recovery_reads_each_metadata_type_once_per_run(state, mocker) -> None:
+    accepted(state, Workload.IMAGERY)
+    accepted(state, Workload.TRAINING)
+    state.now.value += 301
+    original = MetadataProcessor.load_all
+    load_all = mocker.patch.object(
+        MetadataProcessor, "load_all", autospec=True, side_effect=original
+    )
+
+    assert state.repository.reconcile_queues() == 2
+
+    scanned = [call.args[0].data_type for call in load_all.call_args_list]
+    metadata_types = state.config.get_metadata_types()
+    assert sorted(scanned) == sorted(
+        {
+            getattr(metadata_types, workflow.metadata_type).value
+            for workflow in WORKFLOWS.values()
+        }
+    )
+    assert {call.args[0] for call in state.queue.call_args_list} == {
+        Workload.IMAGERY,
+        Workload.TRAINING,
+    }
+
+
+def test_failed_metadata_scan_is_reported_once_for_its_workloads(
+    state, mocker
+) -> None:
+    accepted(state, Workload.IMAGERY)
+    state.now.value += 301
+    model_type = state.config.get_metadata_types().MODEL.value
+    original = MetadataProcessor.load_all
+
+    def load_all(processor: MetadataProcessor, *args, **kwargs):
+        if processor.data_type == model_type:
+            raise OSError("metadata store unavailable")
+        return original(processor, *args, **kwargs)
+
+    mocker.patch.object(
+        MetadataProcessor, "load_all", autospec=True, side_effect=load_all
+    )
+
+    with pytest.raises(RuntimeError, match="1 item"):
+        state.repository.reconcile_queues()
+
+    state.queue.assert_called_once()
+    assert state.queue.call_args.args[0] == Workload.IMAGERY
 
 
 def test_poison_delivery_does_not_fail_live_compute_or_a_newer_attempt(
