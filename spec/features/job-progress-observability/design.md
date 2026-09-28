@@ -70,7 +70,10 @@ before their first poll. Direct and queue-owned training cancellation read
 the final history after stopping the task and before cleanup, using the same
 optional-telemetry reader and history parser as terminal polling.
 Deduplicate by the complete timestamped record, not message substrings, so
-repeated stages at different times remain visible. Preserve terminal
+repeated stages at different times remain visible. Stored status history is
+bounded: once trimming replaces older entries with its marker, records at or
+before the marker's time count as seen, so later polls never re-append
+dropped stages or evict newer entries. Preserve terminal
 execution status, existing user-safe error details, and deferred, fenced
 cleanup. Unavailable history cannot prevent committing a provider-confirmed
 cancellation; a too-late cancellation retains the provider's actual

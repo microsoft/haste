@@ -9,6 +9,7 @@
 | Shared running/terminal progress updates | backend-dev | done |
 | Live subprocess streams and stage messages | backend-dev | done |
 | Review: descriptor-anchored output reads, unbuffered children, terminal stage history | backend-dev | implemented; Linux descriptor/race validation passed |
+| Keep workflow stage history stable under bounded status history | backend-dev | done |
 | Empty-message and indeterminate UI states | ui | done |
 | Regression and integration validation | backend-validation; ui-validation | complete on the lifecycle prerequisite; final AML integration remains a separate gate |
 
@@ -27,6 +28,8 @@
   detail privacy, and cleanup after telemetry collection. Direct and
   queue-owned cancellation must retain history, tolerate unavailable
   telemetry, and preserve actual provider state when cancellation is too late.
+  Trimmed histories must not re-append dropped stages: repeated polls leave
+  the history unchanged, and newer stages still appear.
 - Subprocess tests that observe ordinary, non-flushing Python stdout/stderr
   before child completion, with inherited unbuffered mode explicitly unset
   in the test parent.

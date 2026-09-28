@@ -4,11 +4,13 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from hastegeo.core.config import Config
 from hastegeo.core.models.projects import Model, TrainingJob
 from hastegeo.core.processors.train import TrainPostprocessor
+from hastegeo.core.utils.metadata import STATUS_HISTORY_TRIMMED
 
 
 class TestTrainingProgress(unittest.TestCase):
@@ -258,6 +260,31 @@ class TestTrainingProgress(unittest.TestCase):
         self.assertEqual(history.count("Starting fine_tune.py"), 2)
         self.assertTrue(self.processor._append_workflow_progress())
         self.assertEqual(self.processor.model_data.statusMessage, history)
+
+    def test_trimmed_workflow_history_stays_stable_across_polls(self) -> None:
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        records = "".join(
+            f"{(start + timedelta(seconds=index)).isoformat()}|"
+            f"Completed workflow stage {index:04d}\n"
+            for index in range(400)
+        )
+        outputs = {"workflow_progress.log": records}
+        self.processor.runner.get_filecontent_from_task.side_effect = (
+            lambda **kwargs: outputs.get(kwargs["filename"])
+        )
+
+        history = self.processor.process().statusMessage
+        self.assertIn(STATUS_HISTORY_TRIMMED, history)
+        self.assertIn("Completed workflow stage 0399", history)
+        self.assertNotIn("Completed workflow stage 0000", history)
+
+        self.assertEqual(self.processor.process().statusMessage, history)
+
+        newer = (start + timedelta(seconds=400)).isoformat()
+        outputs["workflow_progress.log"] += f"{newer}|Starting fine_tune.py\n"
+        history = self.processor.process().statusMessage
+        self.assertTrue(history.endswith(f"{newer}: Starting fine_tune.py"))
+        self.assertNotIn("Completed workflow stage 0000", history)
 
     def test_unavailable_terminal_history_does_not_prevent_cleanup(
         self,
