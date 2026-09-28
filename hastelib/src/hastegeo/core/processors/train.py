@@ -179,15 +179,16 @@ class TrainPostprocessor(BaseTrainProcessor):
 
                 train_start_time, logs = self._get_training_logs()
                 self._append_workflow_progress()
-                have_metrics = False
                 if logs:
                     self.model_data.trainingJob.logs = logs
-                    have_metrics = self._calculate_upsert_training_metrics(
-                        job_completed=True
-                    )
                     self.model_data.trainingJob.trainStartTime = (
                         train_start_time
                     )
+                # A finished node may no longer serve the event file; events
+                # recorded by earlier polls still describe the finished run.
+                have_metrics = self._calculate_upsert_training_metrics(
+                    job_completed=True
+                )
                 if not have_metrics:
                     self.model_data.trainingJob.completedEpochs = None
                     self.model_data.trainingJob.totalElapsedTime = None
@@ -202,6 +203,11 @@ class TrainPostprocessor(BaseTrainProcessor):
                 )
                 if not have_metrics:
                     message += "\nTraining metrics unavailable."
+                elif not logs:
+                    message += (
+                        "\nFinal training metrics unavailable; showing the "
+                        "last recorded values."
+                    )
                 self.model_data.totalSteps = max(
                     1, self.model_data.totalSteps or 0
                 )

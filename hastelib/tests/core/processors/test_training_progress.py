@@ -58,6 +58,28 @@ class TestTrainingProgress(unittest.TestCase):
         self.processor.runner.cleanup_task.assert_called_once()
         self.processor.queue_client.put_message.assert_not_called()
 
+    def test_missing_final_events_keep_the_recorded_metrics(self) -> None:
+        self.processor.model_data.maxEpochs = "5"
+        self.processor.model_data.trainingJob.logs = json.dumps(
+            [
+                {"epoch": 0, "elapsedDurationInMinutes": 2.0},
+                {"epoch": 1, "elapsedDurationInMinutes": 2.5},
+            ]
+        )
+        self.processor.model_data.trainingJob.completedEpochs = "1"
+        self.processor.runner.get_task_status.return_value = (
+            self.statuses.COMPLETED.value
+        )
+
+        result = self.processor.process()
+
+        self.assertEqual(result.status, self.statuses.COMPLETED.value)
+        self.assertEqual(result.trainingJob.completedEpochs, "2")
+        self.assertEqual(result.trainingJob.totalElapsedTime, "4.5")
+        self.assertIn("epoch: 2", result.statusMessage)
+        self.assertIn("last recorded values", result.statusMessage)
+        self.assertNotIn("Training metrics unavailable", result.statusMessage)
+
     def test_running_without_metrics_does_not_crash_or_claim_completion(
         self,
     ) -> None:
