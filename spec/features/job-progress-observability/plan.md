@@ -10,6 +10,7 @@
 | Live subprocess streams and stage messages | backend-dev | done |
 | Review: descriptor-anchored output reads, unbuffered children, terminal stage history | backend-dev | implemented; Linux descriptor/race validation passed |
 | Keep workflow stage history stable under bounded status history | backend-dev | done |
+| Bound queue-owned training cancellation history like the monitor | backend-dev | done |
 | Empty-message and indeterminate UI states | ui | done |
 | Regression and integration validation | backend-validation; ui-validation | complete on the lifecycle prerequisite; final AML integration remains a separate gate |
 
@@ -29,7 +30,9 @@
   queue-owned cancellation must retain history, tolerate unavailable
   telemetry, and preserve actual provider state when cancellation is too late.
   Trimmed histories must not re-append dropped stages: repeated polls leave
-  the history unchanged, and newer stages still appear.
+  the history unchanged, and newer stages still appear. Queue-owned
+  cancellation keeps the newest records and its summary within the same
+  status-history budget.
 - Subprocess tests that observe ordinary, non-flushing Python stdout/stderr
   before child completion, with inherited unbuffered mode explicitly unset
   in the test parent.
@@ -40,10 +43,10 @@
 ## Current evidence and baseline limitations
 
 Rebased onto the current lifecycle prerequisite and main, the full core, API
-and queue suite passed **1,283 tests** on Windows with HTTP blocked, with 34
+and queue suite passed **1,284 tests** on Windows with HTTP blocked, with 34
 skips (mostly POSIX-only descriptor cases) and the same 43 failures as the
 lifecycle prerequisite; each replayed commit showed no new failures. With the
-lifecycle plan's verification-only POSIX emulation it passed **1,323 tests**,
+lifecycle plan's verification-only POSIX emulation it passed **1,324 tests**,
 again with only the prerequisite's three failures. Workflow-streaming tests
 pass, and the prediction-workflow tests match main: 18 pass and four fail on
 this host's mismatched PROJ database. All 47 UI unit-test files (353 cases,

@@ -368,6 +368,12 @@ class JobQueueProcessor:
                 else "Task cancelled"
             ),
         )
+        if workload == Workload.TRAINING:
+            # The final workflow records are unbounded; keep the newest
+            # entries within the budget the training monitor uses.
+            values[workflow.message] = MetadataUtils.trim_status_message(
+                values[workflow.message]
+            )
         return workflow.model.model_validate(values), [identity]
 
     def _training_cancellation_history(

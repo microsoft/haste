@@ -3,6 +3,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from threading import Event
 from types import SimpleNamespace
 
@@ -21,7 +22,11 @@ from hastegeo.core.processors.train import TrainPostprocessor
 from hastegeo.core.runners import local
 from hastegeo.core.runners.azure_batch import AzureBatchJob, AzureBatchRunner
 from hastegeo.core.runners.base import TaskMissingError
-from hastegeo.core.utils.metadata import MetadataUtils
+from hastegeo.core.utils.metadata import (
+    MAX_STATUS_MESSAGE_BYTES,
+    STATUS_HISTORY_TRIMMED,
+    MetadataUtils,
+)
 
 from hastelib.tests.core.processors.test_job_state import (
     accepted,
@@ -483,6 +488,38 @@ def test_training_cancellation_commits_history_before_summary_and_cleanup(
         message["trainingJob"]["jobId"], message["trainingJob"]["taskId"]
     )
     assert state.repository.turn(load(state), Workload.TRAINING).cleanup == []
+
+
+def test_training_cancellation_history_stays_within_the_status_budget(
+    state, mocker
+) -> None:
+    message = accepted(state)
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    runner = mocker.Mock()
+    runner.cancel_task.return_value = True
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    runner.get_filecontent_from_task.return_value = "".join(
+        f"{(start + timedelta(seconds=index)).isoformat()}|"
+        f"Completed workflow stage {index:04d}\n"
+        for index in range(400)
+    )
+    mocker.patch.object(processor, "_runner", return_value=runner)
+    mocker.patch.object(processor, "_perform_action")
+
+    processor.process(Workload.TRAINING, message)
+
+    history = load(state)["statusMessage"]
+    assert len(history.encode("utf-8")) <= MAX_STATUS_MESSAGE_BYTES
+    assert MetadataUtils.trim_status_message(history) == history
+    assert STATUS_HISTORY_TRIMMED in history
+    assert "Completed workflow stage 0000" not in history
+    assert history.index("Completed workflow stage 0399") < history.index(
+        "Task cancelled"
+    )
+    assert history.endswith("Task cancelled")
 
 
 @pytest.mark.parametrize(
