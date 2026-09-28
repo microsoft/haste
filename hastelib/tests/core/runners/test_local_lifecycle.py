@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
+import ast
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -15,6 +16,7 @@ from hastegeo.core.runners import local
 from hastegeo.core.runners.local_lifecycle import (
     OWNER_LABEL,
     POLICY_LABEL,
+    SAFE_ENVIRONMENT,
     SLOT_LABEL,
     blob_descriptor,
     execution_key,
@@ -310,6 +312,47 @@ def test_unsafe_receipt_inputs_are_rejected(setup, kwargs: dict) -> None:
         submit(setup.runner, **kwargs)
     assert setup.engine.created == []
     assert list(setup.runner.receipts.root.glob("*.json")) == []
+
+
+@pytest.mark.parametrize(
+    "env_vars",
+    [
+        {"HASTE_MAX_IMAGERY_DOWNLOAD_BYTES": "32212254720"},
+        {"TIPPECANOE_MAX_THREADS": "8"},
+    ],
+    ids=["imagery-download-cap", "footprint-tile-threads"],
+)
+def test_workload_tuning_variables_reach_the_local_container(
+    setup, env_vars: dict[str, str]
+) -> None:
+    identity = submit(setup.runner, env_vars=env_vars)
+    setup.runner.reconcile_task(*identity)
+
+    environment = setup.engine.executions()[0].options["environment"]
+    assert environment.items() >= env_vars.items()
+
+
+def test_receipts_accept_every_processor_task_variable() -> None:
+    processors = Path(local.__file__).resolve().parents[1] / "processors"
+    keys: set[str] = set()
+    for source in processors.glob("*.py"):
+        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.keyword)
+                and node.arg == "env_vars"
+                and isinstance(node.value, ast.Dict)
+            ):
+                keys.update(
+                    key.value
+                    for key in node.value.keys
+                    if isinstance(key, ast.Constant)
+                )
+
+    assert {
+        "HASTE_MAX_IMAGERY_DOWNLOAD_BYTES",
+        "TIPPECANOE_MAX_THREADS",
+    } <= keys
+    assert keys <= SAFE_ENVIRONMENT
 
 
 def test_preparation_is_visible_without_blocking_duplicate_acceptance(
