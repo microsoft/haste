@@ -39,16 +39,27 @@
 
 ## Current evidence and baseline limitations
 
+Rebased onto the current lifecycle prerequisite and main, the full core, API
+and queue suite passed **1,283 tests** on Windows with HTTP blocked, with 34
+skips (mostly POSIX-only descriptor cases) and the same 43 failures as the
+lifecycle prerequisite; each replayed commit showed no new failures. With the
+lifecycle plan's verification-only POSIX emulation it passed **1,323 tests**,
+again with only the prerequisite's three failures. Workflow-streaming tests
+pass, and the prediction-workflow tests match main: 18 pass and four fail on
+this host's mismatched PROJ database. All 47 UI unit-test files (353 cases,
+including the active-jobs and job-progress commands), the production build
+and targeted lint pass. The installed UI dependencies predate main's
+lockfile patch updates to build tooling, so an exact-lockfile build was not
+rerun locally.
+
 Focused backend tests and the UI status helper cases pass. Browser checks
 exercise queued, unknown-progress, determinate, terminal, empty-message,
-legacy-record, and reduced-motion behavior. The production UI build passes
-with the exact locked dependencies.
+legacy-record, and reduced-motion behavior. The production UI build passed
+with the exact locked dependencies before the rebase.
 
-The full library run has one unchanged baseline failure:
-`test_artifacts.py::test_zip` calls the nonexistent `ArtifactProcessor.zip`
-method. Full UI lint also reports findings in unchanged files; all changed
-UI files pass targeted lint. These baseline issues are not silently fixed,
-suppressed, or represented as a green full-suite result by this prerequisite.
+Full UI lint reports findings in unchanged files; all changed UI files pass
+targeted lint. These baseline issues are not silently fixed, suppressed, or
+represented as a green full-suite result by this prerequisite.
 
 The review follow-up uses the existing Python 3.11 test interpreter directly,
 with explicit `PYTHONPATH` and HTTP blocked; it does not synchronize or install
