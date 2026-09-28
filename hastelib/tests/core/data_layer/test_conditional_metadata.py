@@ -330,6 +330,42 @@ def test_metadata_merge_retries_conflicts_against_fresh_data(
     assert calls == 2
 
 
+def test_status_notice_is_appended_only_while_the_record_is_unchanged(
+    tmp_path: Path, mocker
+) -> None:
+    mocker.patch.dict(
+        "os.environ",
+        {
+            "METADATA_STORAGE_TYPE": "local",
+            "DATA_PATH": str(tmp_path),
+        },
+    )
+    processor = MetadataProcessor("model", config=Config())
+    processor.save("key", {"status": "Failed", "name": "old"})
+
+    stored = processor.append_status_message(
+        "key", "statusMessage", "Cancel had no effect", {"status": "Failed"}
+    )
+
+    assert stored == processor.load("key")
+    assert stored["name"] == "old"
+    assert stored["statusMessage"].endswith(": Cancel had no effect")
+
+    processor.save("key", {"status": "Pending"})
+    changed = processor.load("key")
+    assert (
+        processor.append_status_message(
+            "key", "statusMessage", "Stale notice", {"status": "Failed"}
+        )
+        == changed
+    )
+    assert processor.load("key") == changed
+    assert (
+        processor.append_status_message("missing", "statusMessage", "x", {})
+        is None
+    )
+
+
 def test_local_all_records_scan_stays_within_metadata_layout(
     tmp_path: Path,
 ) -> None:

@@ -3065,6 +3065,7 @@ async def PutCancelModelQueueMessage(
             return func.HttpResponse(json.dumps({}), status_code=200)
         existing_model_data = Model(**existing_model_data)
 
+        no_effect = None
         if (
             existing_model_data.status
             == config.get_status_types().COMPLETED.value
@@ -3097,9 +3098,9 @@ async def PutCancelModelQueueMessage(
             logger.info(
                 f"Training for model {model_cancel_req['modelId']} already failed, no action taken"
             )
-            output = existing_model_data
-            output.statusMessage = MetadataUtils.append_status_message(
-                output.statusMessage,
+            no_effect = (
+                {"status": config.get_status_types().FAILED.value},
+                "statusMessage",
                 "Training already failed, Cancel action has no effect",
             )
         elif (
@@ -3109,12 +3110,10 @@ async def PutCancelModelQueueMessage(
             logger.info(
                 f"Inference for model {model_cancel_req['modelId']} already completed, no action taken"
             )
-            output = existing_model_data
-            output.inferenceStatusMessage = (
-                MetadataUtils.append_status_message(
-                    output.inferenceStatusMessage,
-                    "Inference already completed, Cancel action has no effect",
-                )
+            no_effect = (
+                {"inferenceStatus": config.get_status_types().COMPLETED.value},
+                "inferenceStatusMessage",
+                "Inference already completed, Cancel action has no effect",
             )
         elif (
             existing_model_data.inferenceStatus
@@ -3123,12 +3122,10 @@ async def PutCancelModelQueueMessage(
             logger.info(
                 f"Inference for model {model_cancel_req['modelId']} already failed, no action taken"
             )
-            output = existing_model_data
-            output.inferenceStatusMessage = (
-                MetadataUtils.append_status_message(
-                    output.inferenceStatusMessage,
-                    "Inference already failed, Cancel action has no effect",
-                )
+            no_effect = (
+                {"inferenceStatus": config.get_status_types().FAILED.value},
+                "inferenceStatusMessage",
+                "Inference already failed, Cancel action has no effect",
             )
         else:
             output = await asyncio.to_thread(
@@ -3136,6 +3133,25 @@ async def PutCancelModelQueueMessage(
                     existing_model_data, config=config
                 ).send_to_queue,
                 status=config.get_status_types().CANCELLED.value,
+            )
+
+        if no_effect is not None:
+            # Record the notice without re-saving the loaded snapshot, which
+            # could undo a concurrent update; the queue producers above
+            # persist their own state.
+            expected, field, message = no_effect
+            stored = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().MODEL.value,
+                    partition_key=existing_model_data.projectId,
+                ).append_status_message,
+                existing_model_data.modelId,
+                field,
+                message,
+                expected,
+            )
+            output = (
+                Model(**stored) if stored is not None else existing_model_data
             )
 
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)

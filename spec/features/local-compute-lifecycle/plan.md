@@ -15,6 +15,7 @@
 | Integrate upstream optimized reads without losing conditional writes, scan boundaries or configured ports | `backend-dev` | Current main data-layer changes | US-006, US-007 | complete |
 | Integrate current main's footprint tiling, prediction editing, imagery cap and bounded monitor history through fenced job state | `backend-dev` | Current main workflow changes | US-005 through US-007 | complete |
 | Accept the upstream imagery download cap and footprint tile thread count in local receipts | `backend-dev` | Balanced review of #217 | US-001, US-005 | complete |
+| Persist no-effect cancellation notices without re-saving the loaded model | `backend-dev` | Balanced review of #217 | US-004, US-006 | complete |
 
 ## Integration gates
 

@@ -2,12 +2,13 @@
 # Licensed under the MIT License.
 import json
 from copy import deepcopy
-from typing import Callable
+from typing import Any, Callable
 
 from hastegeo.core.config import Config
 
 from ..data_layer.conditional import JsonDocument, RevisionConflictError
 from ..data_layer.unified import UnifiedDataLayer
+from ..utils.metadata import MetadataUtils
 from ..utils.parallel import (
     configured_worker_count,
     parallel_map,
@@ -140,6 +141,32 @@ class MetadataProcessor:
         raise RevisionConflictError(
             "Metadata update exceeded its conflict budget"
         )
+
+    def append_status_message(
+        self,
+        key: str,
+        field: str,
+        message: str,
+        expected: dict[str, Any],
+    ) -> JsonDocument | None:
+        """Append one status entry while the ``expected`` fields still hold.
+
+        Unlike ``save``, this never writes back a caller's snapshot, so it
+        cannot undo or mislabel a concurrent update. Returns the stored
+        document, or ``None`` if it does not exist.
+        """
+
+        def append(current: JsonDocument | None) -> JsonDocument | None:
+            if not isinstance(current, dict) or any(
+                current.get(name) != value for name, value in expected.items()
+            ):
+                return None
+            current[field] = MetadataUtils.append_status_message(
+                current.get(field), message
+            )
+            return current
+
+        return self.mutate(key, append)
 
     def load(self, key, data_format="json"):
         """
