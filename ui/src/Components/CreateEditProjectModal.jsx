@@ -44,6 +44,12 @@ import {
 } from "../util/validation";
 import { AppContext } from "../AppContext";
 import { useNavigate } from "react-router-dom";
+import {
+  initGuidedTourState,
+  setGuidedTourState,
+} from "./GuidedTourHelper";
+
+const CREATE_PROJECT_TOUR = "createProjectGuide";
 
 function getInvalidPrimaryClassIndexes(primaryClasses) {
   const nameCounts = primaryClasses.reduce((counts, primaryClass) => {
@@ -75,7 +81,8 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
   const [selectedEventType, setSelectedEventType] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [validationFocusRequest, setValidationFocusRequest] = useState(null);
-  const { setDialog, appParams, setIsLoading } = useContext(AppContext);
+  const { setDialog, appParams, setIsLoading, initCurrentTour } =
+    useContext(AppContext);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -83,9 +90,21 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
       setIsLoading(true);
       setComponentState(await createComponentDefaultState(projectId));
       setIsLoading(false);
+      if (projectId === undefined) {
+        initGuidedTourState(
+          CREATE_PROJECT_TOUR,
+          appParams.guidedTourProperties
+        );
+        initCurrentTour(CREATE_PROJECT_TOUR);
+      }
     }
 
     initComponent();
+    return () => {
+      if (projectId === undefined) {
+        initCurrentTour(null);
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -287,12 +306,29 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
       <DrawerHeader className="pt-3">
         <DrawerHeaderTitle
           action={
-            <Button
-              appearance="subtle"
-              icon={<FluentIcon name="Cancel" />}
-              aria-label="Close panel"
-              onClick={requestClose}
-            />
+            <div className="d-flex align-items-center">
+              {projectId === undefined && (
+                <Button
+                  appearance="subtle"
+                  icon={<FluentIcon name="Help" />}
+                  aria-label="Project form help"
+                  onClick={() =>
+                    setGuidedTourState(
+                      false,
+                      initCurrentTour,
+                      CREATE_PROJECT_TOUR,
+                      appParams.guidedTourProperties
+                    )
+                  }
+                />
+              )}
+              <Button
+                appearance="subtle"
+                icon={<FluentIcon name="Cancel" />}
+                aria-label="Close panel"
+                onClick={requestClose}
+              />
+            </div>
           }
         >
           <span className="d-flex align-items-center">
@@ -306,11 +342,13 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
       </DrawerHeader>
       <DrawerBody>
         <div className="p-3" style={{ width: "100%" }}>
+          <div id="createEditProjectIdentity">
           <div className="row mb-2">
             <div className="col-12 p-0">
               <Field
                 label="Name"
                 required
+                hint="Use a recognizable event and location, such as Maui Wildfires 2023."
                 validationState={componentState.nameError ? "error" : "none"}
                 validationMessage={componentState.nameError}
               >
@@ -328,7 +366,9 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
               <Field
                 label="Description"
                 hint={
-                  componentState.description.length + "/2000 " + "characters"
+                  "Summarize the event and assessment goal. " +
+                  componentState.description.length +
+                  "/2000 characters"
                 }
               >
                 <Textarea
@@ -348,12 +388,15 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
               </Field>
             </div>
           </div>
+          </div>
 
+          <div id="createEditProjectEventDetails">
           <div className="row mb-1 mt-4">
             <div className="col-12 p-0">
               <Field
                 label="Event Date"
                 required
+                hint="Choose the date the disaster or event occurred."
                 validationState={componentState.eventDateError ? "error" : "none"}
                 validationMessage={componentState.eventDateError}
                 className="mb-3"
@@ -393,12 +436,13 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
               <div className="col-12 d-flex">
                 <Field
                   className="flex-grow-1"
+                  hint="Add every country covered by this assessment."
                   validationState={componentState.affectedCountriesError ? "error" : "none"}
                   validationMessage={componentState.affectedCountriesError}
                 >
                   <Combobox
                     id="createEditProjectAffectedCountries"
-                    aria-label="ExpandCountries"
+                    aria-label="Add an affected country"
                     placeholder="Select country"
                     freeform
                     autoComplete="on"
@@ -470,12 +514,13 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
               <div className="col-12 d-flex">
                 <Field
                   className="flex-grow-1"
+                  hint="Select all event categories that apply."
                   validationState={componentState.eventTypesError ? "error" : "none"}
                   validationMessage={componentState.eventTypesError}
                 >
                   <Combobox
                     id="createEditProjectEventTypes"
-                    aria-label="ExpandEventTypes"
+                    aria-label="Add an event type"
                     placeholder="Select event types"
                     freeform
                     autoComplete="on"
@@ -535,8 +580,9 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
               </div>
             </div>
           ))}
+          </div>
 
-          <div className="row mt-4 mb-4">
+          <div id="createEditProjectClassSection" className="row mt-4 mb-4">
             <div className="col-12 d-flex flex-column box-highlight p-4 pb-2">
               <div className="col-12 pb-2">
                 <h6 className="m-0 pb-2">
