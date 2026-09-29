@@ -54,12 +54,17 @@ const StatusIndicator = ({ currentStep, totalSteps, progressPct, status, statusM
   return (
     <React.Fragment>
         <div className="d-flex flex-row align-items-center">
-          {!presentation.active ? (
-            <div className={`modelStatus modelStatus-${presentation.label}`}>
-              <span className="fw-semibold"></span>
-              {`${prefix}: ${presentation.label}`}
-            </div>
-          ) : (
+          {/* Stays mounted so a job reaching a terminal state is announced once,
+              without announcing every progress update. */}
+          <div role="status">
+            {!presentation.active && (
+              <div className={`modelStatus modelStatus-${presentation.tone}`}>
+                <span className="fw-semibold"></span>
+                {`${prefix}: ${presentation.label}`}
+              </div>
+            )}
+          </div>
+          {presentation.active && (
             <MessageProgressBar
               progress={presentation.progress?.toString()}
               indeterminate={presentation.indeterminate}

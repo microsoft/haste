@@ -2,6 +2,7 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Button, FluentProvider, webLightTheme } from "@fluentui/react-components";
 import StatusIndicator from "../../src/Components/OtherComponents/StatusIndicator";
+import "../../src/assets/css/style.css";
 
 const cases = {
   Queued: { status: "Queued", currentStep: 0, totalSteps: 2, progressPct: 0, statusMessage: "" },
@@ -15,6 +16,7 @@ const cases = {
   Failed: { status: "Failed", statusMessage: "" },
   Cancelled: { status: "Cancelled", statusMessage: "" },
   Legacy: { status: "InProgress" },
+  Unknown: { statusMessage: "" },
 };
 
 export function Fixture() {

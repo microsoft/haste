@@ -14,6 +14,7 @@
 | Keep recorded metrics when the final TensorBoard read fails at completion | backend-dev | done |
 | Keep recorded metrics when the final event file has no completed epoch | backend-dev | done |
 | Empty-message and indeterminate UI states | ui | done |
+| Readable unknown-status badges and announced terminal states | ui | done |
 | Regression and integration validation | backend-validation; ui-validation | complete on the lifecycle prerequisite; final AML integration remains a separate gate |
 
 ## Validation
@@ -51,16 +52,18 @@ lifecycle prerequisite; each replayed commit showed no new failures. With the
 lifecycle plan's verification-only POSIX emulation it passed **1,337 tests**,
 again with only the prerequisite's three failures. Workflow-streaming tests
 pass, and the prediction-workflow tests match main: 18 pass and four fail on
-this host's mismatched PROJ database. All 47 UI unit-test files (353 cases,
+this host's mismatched PROJ database. All 47 UI unit-test files (354 cases,
 including the active-jobs and job-progress commands), the production build
 and targeted lint pass. The installed UI dependencies predate main's
 lockfile patch updates to build tooling, so an exact-lockfile build was not
 rerun locally.
 
 Focused backend tests and the UI status helper cases pass. Browser checks
-exercise queued, unknown-progress, determinate, terminal, empty-message,
-legacy-record, and reduced-motion behavior. The production UI build passed
-with the exact locked dependencies before the rebase.
+exercise queued, unknown-progress, determinate, terminal, unknown-status,
+empty-message, legacy-record, and reduced-motion behavior. They also check
+terminal badge colors and that the status region stays mounted while
+excluding active progress. The production UI build passed with the exact
+locked dependencies before the rebase.
 
 Full UI lint reports findings in unchanged files; all changed UI files pass
 targeted lint. These baseline issues are not silently fixed, suppressed, or

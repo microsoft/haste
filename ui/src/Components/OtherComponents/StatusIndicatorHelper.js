@@ -2,6 +2,9 @@
 // Licensed under the MIT License.
 
 const activeStates = new Set(["Queued", "InProgress"]);
+// Statuses with a .modelStatus-* color in style.css; any other label uses the
+// neutral "Unknown" color so white badge text never lacks a background.
+const styledStates = new Set([...activeStates, "Processed", "Completed", "Failed", "Cancelled"]);
 
 export function statusPresentation({ status, currentStep, totalSteps, progressPct }) {
   const label = typeof status === "string" && status ? status : "Unknown";
@@ -15,6 +18,7 @@ export function statusPresentation({ status, currentStep, totalSteps, progressPc
 
   return {
     label,
+    tone: styledStates.has(label) ? label : "Unknown",
     active,
     indeterminate: active && !hasProgress,
     progress: hasProgress ? Math.min(100, Math.max(0, progressPct)) : null,

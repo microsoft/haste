@@ -88,6 +88,12 @@ message list is empty. Render unknown progress as indeterminate rather than
 inventing a percentage; show terminal status regardless of missing counters.
 Keep FluentUI, current styling, and old-record compatibility.
 
+Every terminal badge has a background color. A missing or unrecognized
+status keeps its label but uses a neutral color, and badge text keeps at
+least 4.5:1 contrast. Terminal badges render inside a status region that
+stays mounted, so screen readers announce a job reaching a terminal state
+once and do not announce each progress update.
+
 ## Compatibility
 
 The prerequisite uses existing `BaseRunner` and job-model interfaces and has
