@@ -126,7 +126,10 @@ wrappers are classified by their underlying error, not assumed transient.
 Identity mismatches, invalid configuration, authentication/authorization
 rejections, and other deterministic provider failures fail the workload
 through its fenced metadata commit; recovery does not resubmit terminal
-workloads. This applies to all five workloads, including imagery.
+workloads. This applies to all five workloads, including imagery. That
+commit also closes the pending execution record as failed, with a
+completion time, so job history matches the workload and a retry receives
+a new identity.
 Local filesystem errors with confirmed receipt absence remain explicit failures.
 An interrupted receipt write or acknowledgement with a persisted or
 unverifiable receipt retains the same identity for reconciliation.

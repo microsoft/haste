@@ -634,6 +634,15 @@ class JobStateRepository:
             turn.cleanup = cleanup
             turn.error = None
             status = data.get(workflow.status)
+            job = current_job(data, workload)
+            if (
+                status == self.statuses.FAILED.value
+                and job.get("status") == self.statuses.PENDING.value
+            ):
+                # The task was never accepted, so close the execution record
+                # begin() created; a retry then gets a new identity.
+                job["status"] = status
+                job["completedDate"] = MetadataUtils.get_timestamp()
             if workload == Workload.TRAINING:
                 if status == self.statuses.COMPLETED.value and data.get(
                     "autoRunInference"

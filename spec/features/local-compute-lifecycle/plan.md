@@ -19,6 +19,7 @@
 | Keep queue recovery scanning past a failing record, then report failures together | `backend-dev` | Balanced review of #217 | US-007 | complete |
 | Read each metadata type once per queue recovery run | `backend-dev` | Balanced review of #217 | US-007 | complete |
 | Report too-late Azure Batch cancellation so the provider outcome is kept | `backend-dev` | Balanced review of #218 | US-004 | complete |
+| Close the pending execution record when a submission is definitely rejected | `backend-dev` | Balanced review of #217 | US-006, US-007 | complete |
 
 ## Integration gates
 
@@ -35,7 +36,7 @@ resources or compute configuration are changed by this prerequisite.
 ## Validation evidence
 
 Rebased onto current main, the full core, API and queue suite passed
-**1,248 tests** with four platform skips on Windows, with HTTP blocked. All
+**1,253 tests** with four platform skips on Windows, with HTTP blocked. All
 43 failures also fail on unchanged main there: 41 reach main's POSIX-only
 `fcntl` lock or its Windows artifact-URL resolution, and two are the
 request-guard API cases described below. Ten of main's Windows failures pass
@@ -43,7 +44,7 @@ here. Each replayed commit showed no new failures in the same comparison.
 
 A verification-only plugin, applied identically to both trees, emulated
 `fcntl` and resolved Windows artifact URLs. This branch then passed
-**1,288 tests**; its three failures (both request-guard cases and one Windows
+**1,293 tests**; its three failures (both request-guard cases and one Windows
 path-separator assertion) also fail on main. Main's other 35 failures there
 come from its local merge replacing an open temporary file, which Windows
 forbids; they pass here. New regressions cover PostgreSQL batch, list and
@@ -51,8 +52,9 @@ merge connection settings, local/Data Lake scan boundaries and metadata-type
 prefix collisions. Local receipts must accept every processor's task
 variables, and the tuning variables must reach the container. Review
 follow-ups also cover persisted no-effect cancellation notices, queue
-recovery past a failing record with one scan per metadata type, and
-too-late Azure Batch cancellation. No
+recovery past a failing record with one scan per metadata type,
+too-late Azure Batch cancellation, and closing the pending execution record
+when a submission is definitely rejected. No
 live service or compute job was used.
 
 The #217 review follow-up passed **302 tests** with one Windows

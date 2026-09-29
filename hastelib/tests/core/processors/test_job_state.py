@@ -183,6 +183,34 @@ def test_cancel_claim_cannot_publish_success(state) -> None:
         )
 
 
+@pytest.mark.parametrize("workload", list(Workload))
+def test_rejected_submission_closes_its_pending_execution_record(
+    state, workload: Workload
+) -> None:
+    message = accepted(state, workload)
+    baseline = state.repository.claim(workload, message)
+    assert current_job(baseline, workload)["status"] == "Queued"
+    # Processors report a definite rejection through the aggregate status
+    # only; the execution record begin() created is still pending.
+    rejected = deepcopy(baseline)
+    rejected[WORKFLOWS[workload].status] = "Failed"
+
+    committed = state.repository.commit(
+        workload,
+        baseline,
+        WORKFLOWS[workload].model.model_validate(rejected),
+        [],
+    )
+
+    job = current_job(committed, workload)
+    assert job["status"] == "Failed"
+    assert job["completedDate"]
+    retry = state.repository.begin(workload, record(workload))
+    assert attempt_id(retry.model_dump(mode="json"), workload) != attempt_id(
+        message, workload
+    )
+
+
 def test_old_attempt_and_old_cancel_cannot_touch_a_new_attempt(state) -> None:
     message = accepted(state)
     baseline = state.repository.claim(Workload.TRAINING, message)
