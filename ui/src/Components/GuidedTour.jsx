@@ -39,6 +39,7 @@ const GuidedTour = () => {
   // Bounding rect of the currently highlighted target (spotlight).
   const [spot, setSpot] = useState(null);
   const cardRef = useRef(null);
+  const focusedStepRef = useRef(null);
 
   
 
@@ -74,6 +75,7 @@ const GuidedTour = () => {
   };
 
   const closeTour = () => {
+    focusedStepRef.current = null;
     initCurrentTour(null);
     setFilteredTourSteps([]);
     setSpot(null);
@@ -105,14 +107,25 @@ const GuidedTour = () => {
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appParams.currentTourStep, filteedTourSteps, isVisible]);
 
   useEffect(() => {
-    if (spot && isVisible) {
-      cardRef.current?.focus();
+    if (!isVisible || !appParams.currentTour) {
+      focusedStepRef.current = null;
+      return;
     }
-  }, [appParams.currentTourStep, isVisible, spot]);
+
+    const focusKey = `${appParams.currentTour.name}:${appParams.currentTourStep}`;
+    if (spot && focusedStepRef.current !== focusKey) {
+      cardRef.current?.focus();
+      focusedStepRef.current = focusKey;
+    }
+  }, [
+    appParams.currentTour,
+    appParams.currentTourStep,
+    isVisible,
+    spot,
+  ]);
 
   const renderTeachingBubble = () => {
     const step = filteedTourSteps[appParams.currentTourStep - 1];

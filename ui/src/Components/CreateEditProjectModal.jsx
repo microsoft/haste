@@ -86,9 +86,17 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
   const navigate = useNavigate();
 
   useEffect(() => {
+    let isActive = true;
+
     async function initComponent() {
       setIsLoading(true);
-      setComponentState(await createComponentDefaultState(projectId));
+      const defaultState = await createComponentDefaultState(projectId);
+
+      if (!isActive) {
+        return;
+      }
+
+      setComponentState(defaultState);
       setIsLoading(false);
       if (projectId === undefined) {
         initGuidedTourState(
@@ -101,6 +109,8 @@ const CreateEditProjectModal = ({ onClose, projectId }) => {
 
     initComponent();
     return () => {
+      isActive = false;
+      setIsLoading(false);
       if (projectId === undefined) {
         initCurrentTour(null);
       }
