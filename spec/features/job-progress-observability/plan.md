@@ -17,6 +17,7 @@
 | Readable unknown-status badges and announced terminal states | ui | done |
 | Expose determinate progress as a percentage to screen readers | ui | done |
 | Keep dashboard progress polls out of live regions; announce refresh warnings | ui | done |
+| State why single-event epochs do not set the remaining-time estimate | backend-dev | done |
 | Regression and integration validation | backend-validation; ui-validation | complete on the lifecycle prerequisite; final AML integration remains a separate gate |
 
 ## Validation
@@ -48,13 +49,15 @@
 ## Current evidence and baseline limitations
 
 Rebased onto the current lifecycle prerequisite and main, the full core, API
-and queue suite passed **1,297 tests** on Windows with HTTP blocked, with 34
+and queue suite passed **1,305 tests** on Windows with HTTP blocked, with 34
 skips (mostly POSIX-only descriptor cases) and the same 43 failures as the
-lifecycle prerequisite; each replayed commit showed no new failures. With the
-lifecycle plan's verification-only POSIX emulation it passed **1,337 tests**,
+lifecycle prerequisite. Each replayed commit showed no new failures when the
+branch was first rebased; later rebases onto the prerequisite's review fixes
+replayed the same patches unchanged. With the
+lifecycle plan's verification-only POSIX emulation it passed **1,345 tests**,
 again with only the prerequisite's three failures. Workflow-streaming tests
 pass, and the prediction-workflow tests match main: 18 pass and four fail on
-this host's mismatched PROJ database. All 47 UI unit-test files (354 cases,
+this host's mismatched PROJ database. All 47 UI unit-test files (356 cases,
 including the active-jobs and job-progress commands), the production build
 and targeted lint pass. The installed UI dependencies predate main's
 lockfile patch updates to build tooling, so an exact-lockfile build was not
@@ -63,9 +66,12 @@ rerun locally.
 Focused backend tests and the UI status helper cases pass. Browser checks
 exercise queued, unknown-progress, determinate, terminal, unknown-status,
 empty-message, legacy-record, and reduced-motion behavior. They also check
-terminal badge colors and that the status region stays mounted while
-excluding active progress. The production UI build passed with the exact
-locked dependencies before the rebase.
+terminal badge colors, that the status region stays mounted while excluding
+active progress, and that a progress bar exposes its percentage under a name
+made of its message and step. A separate check mounts the real dashboard
+list against a routed API with fake timers: no live region wraps its
+progress bars, and a failed refresh raises an alert. The production UI build
+passed with the exact locked dependencies before the rebase.
 
 Full UI lint reports findings in unchanged files; all changed UI files pass
 targeted lint. These baseline issues are not silently fixed, suppressed, or

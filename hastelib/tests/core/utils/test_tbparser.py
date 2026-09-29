@@ -115,6 +115,20 @@ class TestCalculateMetrics(unittest.TestCase):
         self.assertEqual(metrics["total_elapsed_time"], 0)
         self.assertIsNone(metrics["time_per_epoch"])
 
+    def test_single_event_first_epoch_does_not_set_the_estimate(
+        self,
+    ) -> None:
+        # A first epoch that wrote one event is timed from itself: zero.
+        metrics = calculate_metrics(self.records(0, 2), "10")
+        self.assertEqual(metrics["completed_epochs"], 1)
+        self.assertEqual(metrics["total_elapsed_time"], 2)
+        self.assertIsNone(metrics["time_per_epoch"])
+        self.assertIsNone(metrics["approx_time_to_complete"])
+        metrics = calculate_metrics(self.records(0, 4, 2), "4")
+        self.assertEqual(metrics["completed_epochs"], 2)
+        self.assertEqual(metrics["time_per_epoch"], 4)
+        self.assertEqual(metrics["approx_time_to_complete"], 6)
+
     def test_eta_uses_completed_not_partial_epoch_duration(self) -> None:
         metrics = calculate_metrics(self.records(10, 2), "3")
         self.assertEqual(metrics["completed_epochs"], 1)

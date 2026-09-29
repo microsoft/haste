@@ -48,7 +48,12 @@ cause integer conversion of unset counters.
 Keep non-finite metric values unavailable in the API representation and log
 the condition; never substitute zero or modify the original event file.
 Only estimate remaining time after a completed epoch provides a usable
-duration. Recorded zero elapsed time is valid, not a missing-value sentinel.
+duration. Recorded zero elapsed time is valid, not a missing-value sentinel:
+it counts toward elapsed time and completed epochs. It is not a usable
+duration, though. The first epoch is timed from the earliest event, so an
+epoch that wrote a single event (for example, a short epoch that logs only
+at its end) records zero; averaging that in would report a near-zero
+estimate after the first epoch.
 
 Business completion sets terminal progress independently of event-file
 availability. If the final event read fails or holds no completed epoch,

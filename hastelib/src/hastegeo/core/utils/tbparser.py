@@ -216,6 +216,10 @@ def calculate_metrics(
     completed_epochs = current_epoch + (1 if job_completed else 0)
     if target is not None:
         completed_epochs = min(completed_epochs, target)
+    # The first epoch is timed from the earliest event, so an epoch that wrote
+    # a single event records zero minutes. Zero still counts as elapsed time
+    # and a completed epoch, but it measures no epoch length, so the average
+    # behind the estimate leaves it out.
     completed_durations = [
         duration
         for epoch, duration in durations.items()
