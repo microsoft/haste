@@ -13,8 +13,15 @@
 | Rename transformer inference image and deployment settings | `backend-dev` | PCI-4 | complete; local image/settings updated, DINOv3 model identity and existing run snapshots preserved |
 | Rebase onto merged results/editor and loading contracts | `backend-dev`, `ui` | PCI-3, PCI-6 | complete locally; modern attributes/revisions, authorization, task recovery and shared viewer/report contracts retained |
 | Add six pinned DINOv2 follow-up choices | `gis`, `backend-dev`, `ui` | PCI-8 | complete locally; six strict-load/reference checks and repeated real-asset import passed; live registration/deployment not performed |
+| Repair clean-CI release-policy test imports | `backend-dev` | PCI-4, PCI-8 | fixed; all 118 release-policy tests pass in a fresh environment containing only `build==1.3.0` and its dependencies, with PyYAML absent |
 
 The branch starts at main `72436853e36da50ea0871d56b6e02ad85872cc3f`.
 The September 29 rebase targets main `d16f93ed0008d56cf9f3c54687273d02e6c54670`.
 The user authorized committing and pushing the rebase and DINOv2 additions.
 Cloud deployment remains a separate action requiring authorization.
+
+The trusted `workflow_run` publisher executes from main. Until its transformer
+matrix change lands there, automatic RC publishing builds only training and
+imageryprep images. A branch deployment additionally needs a separately built
+transformer image at the matching RC tag; a green standalone Docker gate is not
+evidence that those image builds ran.
