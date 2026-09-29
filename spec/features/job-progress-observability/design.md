@@ -92,9 +92,11 @@ Every terminal badge has a background color. A missing or unrecognized
 status keeps its label but uses a neutral color, and badge text keeps at
 least 4.5:1 contrast. Terminal badges render inside a status region that
 stays mounted, so screen readers announce a job reaching a terminal state
-once and do not announce each progress update. Progress bars are named by
-their message and step and expose the percentage as their value, with no
-replacement value text.
+once. Progress bars are named by their message and step and expose the
+percentage as their value, with no replacement value text. No ancestor live
+region wraps an indicator: the dashboard's job list is not one, so polling
+does not announce each progress update, and its refresh warning is an
+alert.
 
 ## Compatibility
 

@@ -111,9 +111,13 @@ const OngoingJobs = () => {
   }
 
   return (
-    <div className="dash-jobs-list" aria-live="polite">
+    // Not a live region: every poll would announce each job's progress.
+    // StatusIndicator announces a job reaching a terminal state itself.
+    <div className="dash-jobs-list">
       {loadError && (
-        <MessageBar intent="warning">
+        // MessageBar's own announcement needs an announcer provider that the
+        // app does not install, so the alert role announces the failure.
+        <MessageBar intent="warning" role="alert">
           <MessageBarBody>{loadError}</MessageBarBody>
           <Button size="small" onClick={() => setRefreshToken((value) => value + 1)}>
             Retry
