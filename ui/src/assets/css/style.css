@@ -702,7 +702,7 @@ body {
 .tour-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100000;
+  z-index: 1000001;
   pointer-events: none;
 }
 
@@ -733,7 +733,7 @@ body {
   border-radius: 10px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
   padding: 16px;
-  z-index: 100001;
+  z-index: 1000002;
   overflow-y: auto;
 }
 
