@@ -15,6 +15,7 @@
 | Keep recorded metrics when the final event file has no completed epoch | backend-dev | done |
 | Empty-message and indeterminate UI states | ui | done |
 | Readable unknown-status badges and announced terminal states | ui | done |
+| Expose determinate progress as a percentage to screen readers | ui | done |
 | Regression and integration validation | backend-validation; ui-validation | complete on the lifecycle prerequisite; final AML integration remains a separate gate |
 
 ## Validation

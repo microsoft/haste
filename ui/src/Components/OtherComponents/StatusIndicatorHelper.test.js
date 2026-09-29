@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { statusPresentation } from "./StatusIndicatorHelper.js";
+import { statusPresentation, progressBarPresentation } from "./StatusIndicatorHelper.js";
 
 const styles = readFileSync(new URL("../../assets/css/style.css", import.meta.url), "utf8");
 
@@ -89,4 +89,28 @@ test("recorded percentage is not hidden when legacy step counters are missing", 
   assert.equal(view.progress, 25);
   assert.equal(view.indeterminate, false);
   assert.equal(view.stepText, "");
+});
+
+test("a determinate progress bar exposes its percentage, not replacement text", () => {
+  assert.deepEqual(
+    progressBarPresentation({ progress: "25", message: "Training in progress", stepText: "1/4" }).attributes,
+    {
+      role: "progressbar",
+      "aria-label": "Training in progress : 1/4",
+      "aria-valuemin": 0,
+      "aria-valuemax": 100,
+      "aria-valuenow": 25,
+    },
+  );
+  const withoutCounters = progressBarPresentation({ progress: "25", message: "InProgress" }).attributes;
+  assert.equal(withoutCounters["aria-valuenow"], 25);
+  assert.equal(withoutCounters["aria-label"], "InProgress");
+});
+
+test("an indeterminate progress bar is named but reports no value", () => {
+  const view = progressBarPresentation({ message: "Queued", indeterminate: true });
+  assert.equal(view.value, undefined);
+  assert.equal(view.attributes["aria-valuenow"], undefined);
+  assert.equal(view.attributes["aria-label"], "Queued");
+  assert.equal(progressBarPresentation({ indeterminate: true }).attributes["aria-label"], "Job progress");
 });

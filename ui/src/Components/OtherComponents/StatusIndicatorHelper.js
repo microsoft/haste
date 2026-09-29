@@ -25,3 +25,25 @@ export function statusPresentation({ status, currentStep, totalSteps, progressPc
     stepText: hasProgress && hasCounters ? `${currentStep}/${totalSteps}` : "",
   };
 }
+
+// The accessible name carries the message; without aria-valuetext, assistive
+// technology announces the percentage from aria-valuenow.
+export function progressBarPresentation({ progress, message = "", stepText = "", indeterminate = false }) {
+  const numeric = typeof progress === "string" && progress.trim() !== "" && Number.isFinite(Number(progress));
+  const value = !indeterminate && numeric ? Math.min(100, Math.max(0, Number(progress))) : undefined;
+  const label = !indeterminate && !numeric && progress
+    ? progress
+    : [message, stepText].filter(Boolean).join(" : ");
+
+  return {
+    value,
+    label,
+    attributes: {
+      role: "progressbar",
+      "aria-label": label || "Job progress",
+      "aria-valuemin": 0,
+      "aria-valuemax": 100,
+      "aria-valuenow": value,
+    },
+  };
+}

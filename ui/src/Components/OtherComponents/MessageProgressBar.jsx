@@ -5,25 +5,17 @@ import { Text } from "@fluentui/react-components";
 import React from "react";
 import PropTypes from "prop-types";
 import "../../assets/css/progress-bar.css";
+import { progressBarPresentation } from "./StatusIndicatorHelper";
 
 const MessageProgressBar = ({ progress, message = "", stepText = "", indeterminate = false }) => {
-  const numeric = typeof progress === "string" && progress.trim() !== "" && Number.isFinite(Number(progress));
-  const value = numeric ? Math.min(100, Math.max(0, Number(progress))) : undefined;
-  const label = !indeterminate && !numeric && progress
-    ? progress
-    : [message, stepText].filter(Boolean).join(" : ");
+  const { value, label, attributes } = progressBarPresentation({ progress, message, stepText, indeterminate });
 
   return (
     <React.Fragment>
       <div className="message-progress">
         <div
           className={`meter p-0 message-progress-meter${indeterminate ? " message-progress-indeterminate" : ""}`}
-          role="progressbar"
-          aria-label={message || "Job progress"}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={indeterminate ? undefined : value}
-          aria-valuetext={label}
+          {...attributes}
         >
           <span
             style={indeterminate ? undefined : { width: `${value ?? 0}%` }}
