@@ -245,6 +245,46 @@ class TestDataLakeReadContract(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "only json"):
                     method(*args, data_format="yaml")
 
+    def test_global_and_partition_scans_exclude_other_types_and_outputs(
+        self,
+    ) -> None:
+        self.layer.file_system_client.get_paths.return_value = [
+            SimpleNamespace(name="model_root.json"),
+            SimpleNamespace(name="partition/model_a.json"),
+            SimpleNamespace(name="partition/model_catalog_index.json"),
+            SimpleNamespace(name="partition/task/model_output.json"),
+            SimpleNamespace(name="partition/model_a.json.lock"),
+            SimpleNamespace(name="other/model_b.json"),
+        ]
+        file_client = (
+            self.layer.file_system_client.get_file_client.return_value
+        )
+        file_client.download_file.return_value.readall.return_value = (
+            b'{"value": 1}'
+        )
+        for partition, expected in (
+            ("partition", ["partition/model_a.json"]),
+            (
+                None,
+                [
+                    "model_root.json",
+                    "partition/model_a.json",
+                    "other/model_b.json",
+                ],
+            ),
+        ):
+            with self.subTest(partition=partition):
+                self.layer.partition_key = partition
+                client = self.layer.file_system_client.get_file_client
+                client.reset_mock()
+
+                result = self.layer.load_all("model")
+
+                self.assertEqual(result, [{"value": 1}] * len(expected))
+                self.assertEqual(
+                    [call.args[0] for call in client.call_args_list], expected
+                )
+
     def test_bounded_load_skips_deep_and_other_type_paths(self) -> None:
         self.layer.file_system_client.get_paths.return_value = [
             SimpleNamespace(name="partition/nested/model_a.json"),
@@ -273,6 +313,7 @@ class TestPostgreSQLReadContract(unittest.TestCase):
         self.layer.server_name = "server"
         self.layer.database_name = "database"
         self.layer.postgres_user = "user"
+        self.layer.port = 6432
         self.layer.token = "token"
         self.layer._qualified_table_identifier = sql.Identifier("metadata")
 

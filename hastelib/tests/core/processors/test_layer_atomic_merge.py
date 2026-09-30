@@ -121,6 +121,7 @@ class TestLayerAtomicMerge(unittest.TestCase):
         layer.database_name = "database"
         layer.postgres_user = "user"
         layer.token = "test-token"
+        layer.port = 5433
         layer.partition_key = "project"
         layer._qualified_table_identifier = layer._build_table_identifier(
             "metadata"
@@ -142,6 +143,7 @@ class TestLayerAtomicMerge(unittest.TestCase):
         self.assertEqual(
             cursor.execute.call_args.args[1][-1], '{"name": "new"}'
         )
+        self.assertEqual(connect.call_args.kwargs["port"], 5433)
 
     def test_datalake_uses_the_same_atomic_blob_merge(self) -> None:
         from hastegeo.core.data_layer.azure_data_lake_data_layer import (

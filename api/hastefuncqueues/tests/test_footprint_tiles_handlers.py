@@ -5,6 +5,7 @@ import json
 import os
 import traceback
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -21,7 +22,16 @@ os.environ.setdefault("TEMP_DATA_PATH", "/tmp/haste-footprint-queue-tests")
 from hastegeo.core.models.footprint_tiles import (  # noqa: E402
     FootprintTilesRequest,
 )
+from hastegeo.core.models.projects import (  # noqa: E402
+    ImageryPreprocessJob,
+    LabelProject,
+)
 from hastegeo.core.processors import footprint_tiles  # noqa: E402
+from hastegeo.core.processors import job_queue  # noqa: E402
+from hastegeo.core.processors.job_state import (  # noqa: E402
+    JobStateRepository,
+    Workload,
+)
 from hastegeo.core.utils.blob import fetch_url_text  # noqa: E402
 
 from api.hastefuncqueues import function_app  # noqa: E402
@@ -32,6 +42,21 @@ from hastelib.tests.core.processors.test_footprint_tiles import (  # noqa: E402
     _job,
     _layer,
 )
+
+
+class _MemoryMetadata:
+    def __init__(self, test_case: Any) -> None:
+        self.test_case = test_case
+
+    def load(self, key: str, data_format: str = "json") -> dict:
+        return deepcopy(self.test_case.record)
+
+    def mutate(self, key: str, mutation: Any) -> dict | None:
+        updated = mutation(deepcopy(self.test_case.record))
+        if updated is not None:
+            self.test_case.record = deepcopy(updated)
+            return deepcopy(self.test_case.record)
+        return deepcopy(self.test_case.record)
 
 
 class TestFootprintQueueHandler(unittest.IsolatedAsyncioTestCase):
@@ -141,42 +166,75 @@ class TestImageryQueueHandoff(
     def setUp(self) -> None:
         super().setUp()
         self.enterContext(patch.object(function_app, "logger"))
-        self.enterContext(patch.object(function_app, "config", self.config))
-        # The wrapper's direct metadata calls are the deletion check and
-        # LabelProject save. ImageLayer saves use the real core helper.
-        self.metadata = self.enterContext(
-            patch.object(function_app, "MetadataProcessor")
-        ).return_value
-        self.metadata.load.return_value = self.record
-        self.imagery = self.enterContext(
-            patch.object(function_app, "ImageryPostProcessor")
-        ).return_value
-        self.imagery.process.return_value = _layer(
-            status=STATUSES.COMPLETED.value
+        preprocess_job = ImageryPreprocessJob(
+            jobId="img-job",
+            taskId="img-task",
+            projectId=self.record["projectId"],
+            imageLayerId=self.record["imageLayerId"],
+            status=STATUSES.IN_PROGRESS.value,
         )
-        self.labels = self.enterContext(
-            patch.object(function_app, "LabelTaskGenerator")
+        self.record.update(
+            {
+                "status": STATUSES.IN_PROGRESS.value,
+                "preprocessJob": preprocess_job.model_dump(mode="json"),
+            }
+        )
+        self.repository = JobStateRepository(
+            self.config,
+            processor_factory=lambda **kwargs: _MemoryMetadata(self),
+            renewal_interval_seconds=3600,
+        )
+        self.imagery = self.enterContext(
+            patch.object(job_queue, "ImageryPostProcessor")
         ).return_value
-        label_project = MagicMock()
-        label_project.labelprojectId = "label-project-1"
+        self.output = _layer(
+            status=STATUSES.COMPLETED.value,
+            preprocessJob=preprocess_job,
+        )
+        self.output.preprocessJob.status = STATUSES.COMPLETED.value
+        self.imagery.process.return_value = self.output
+        self.imagery.runner = MagicMock()
+        self.labels = self.enterContext(
+            patch.object(job_queue, "LabelTaskGenerator")
+        ).return_value
+        label_project = LabelProject(
+            projectId=self.record["projectId"],
+            imageLayerId=self.record["imageLayerId"],
+            labelprojectId="label-project-1",
+        )
         self.labels.generate_task_files.return_value = label_project
         self.enterContext(
-            patch.object(function_app, "convert_json_to_geojson")
+            patch.object(job_queue, "convert_json_to_geojson", return_value={})
         )
         self.artifact_processor = self.enterContext(
-            patch.object(function_app, "ArtifactProcessor")
+            patch.object(job_queue, "ArtifactProcessor")
         ).return_value
+        self.label_metadata = self.enterContext(
+            patch.object(job_queue, "MetadataProcessor")
+        ).return_value
+        self.label_metadata.load.side_effect = FileNotFoundError()
+
+        def save_label(key: str, mutation: Any) -> dict:
+            return mutation(None) or label_project.model_dump(mode="json")
+
+        self.label_metadata.mutate.side_effect = save_label
         self.artifact_processor.get_download_url.return_value = (
             "https://acct/labels"
         )
 
+    def _process_imagery_turn(self) -> None:
+        processor = job_queue.JobQueueProcessor(
+            self.config, repository=self.repository
+        )
+        processor.process(Workload.IMAGERY, deepcopy(self.record))
+
     async def test_full_handler_saves_labels_before_fast_footprint_consumer(
         self,
     ) -> None:
-        self.record["buildingFootprintsUrl"] = None
-
         def consume(message: str, **kwargs: Any) -> None:
-            self.assertEqual(self.record["labelProjectId"], "label-project-1")
+            self.assertEqual(
+                self.record["labelProjectId"], self.output.labelProjectId
+            )
             self.assertEqual(self.record["labelsUrl"], "https://acct/labels")
             self.assertEqual(self.record["buildingFootprintsUrl"], SECRET_URL)
             request = FootprintTilesRequest.model_validate_json(message)
@@ -185,13 +243,7 @@ class TestImageryQueueHandoff(
             footprint_tiles.process_tiles_request(request, config=self.config)
 
         self.queue.put_message.side_effect = consume
-        await function_app.GetProcessImageLayerQueueMessage(
-            func.QueueMessage(
-                id="imagery-message-1",
-                body=_layer(buildingFootprintsUrl=None).model_dump_json(),
-            )
-        )
-        self.runner.add_task.assert_called_once()
+        self._process_imagery_turn()
         self.assertEqual(
             self.record["footprintTilesStatus"], STATUSES.COMPLETED.value
         )
@@ -199,6 +251,7 @@ class TestImageryQueueHandoff(
             self.record["footprintPmtilesUrl"], "https://acct/tiles.pmtiles"
         )
         self.assertEqual(self.record["labelsUrl"], "https://acct/labels")
+        self.runner.add_task.assert_called_once()
 
     async def test_label_failure_does_not_publish_or_clobber_footprint_state(
         self,
@@ -208,10 +261,11 @@ class TestImageryQueueHandoff(
         self.labels.generate_task_files.side_effect = RuntimeError(
             "label generation failed"
         )
-        await function_app.GetProcessImageLayerQueueMessage(
-            func.QueueMessage(
-                id="imagery-message-1", body=_layer().model_dump_json()
-            )
+        # The failed turn is recorded for a retry after its backoff.
+        self._process_imagery_turn()
+        self.assertIn(
+            "Job processing interrupted (RuntimeError)",
+            self.record["statusMessage"],
         )
         self.queue.put_message.assert_not_called()
         self.assertEqual(
@@ -220,7 +274,6 @@ class TestImageryQueueHandoff(
         self.assertEqual(
             self.record["footprintTilesRequestId"], "existing-request"
         )
-        self.assertEqual(self.record["status"], STATUSES.FAILED.value)
 
 
 class TestRequiredManifestQueueRetry(

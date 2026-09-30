@@ -8,11 +8,27 @@ from hastegeo.core.processors.artifacts import (
     ZIP_IN_PROGRESS_MESSAGE,
     ArtifactProcessor,
 )
+from hastegeo.core.processors.job_state import (
+    JobStateRepository,
+    Workload,
+    queue_payload,
+)
 from hastegeo.core.utils.metadata import MetadataUtils, queued_message_size
 
 STATUS = Config.get_status_types()
 # Azure Storage rejects larger queue messages with RequestBodyTooLarge.
 QUEUE_MESSAGE_LIMIT_BYTES = 64 * 1024
+
+
+class _MutableMetadata:
+    def __init__(self):
+        self.data = None
+
+    def mutate(self, identifier, change):
+        result = change(json.loads(json.dumps(self.data)))
+        if result is not None:
+            self.data = result
+        return self.data
 
 
 class TestArtifactProcessor:
@@ -25,36 +41,29 @@ class TestArtifactProcessor:
         processor.runner.get_task_status.return_value = (
             STATUS.IN_PROGRESS.value
         )
-        processor.queue_client = mocker.Mock()
-        payload = json.dumps(
-            ModelArtifacts(
-                modelId="6283",
-                projectId="project-1",
-                zipStatus=STATUS.IN_PROGRESS.value,
-                currentZipJobUid="zip-1",
-                zipJobs=[ZipJob(jobId="job-1", taskId="zip-1")],
-                zipStatusMessage=MetadataUtils.append_status_message(
-                    "", "Submitting zip task"
-                ),
-            ).dict()
+        processor.model_artifacts = ModelArtifacts(
+            modelId="6283",
+            projectId="project-1",
+            zipStatus=STATUS.IN_PROGRESS.value,
+            currentZipJobUid="zip-1",
+            zipJobs=[ZipJob(jobId="job-1", taskId="zip-1")],
+            zipStatusMessage=MetadataUtils.append_status_message(
+                "", "Submitting zip task"
+            ),
         )
 
         for _ in range(1000):
-            # Each poll starts from the message the previous one queued.
-            processor.model_artifacts = ModelArtifacts(**json.loads(payload))
             processor.process_zip()
-            payload = processor.queue_client.put_message.call_args.args[0]
 
-        queued = json.loads(payload)
-        assert queued["zipStatusMessage"].count(ZIP_IN_PROGRESS_MESSAGE) == 1
-        assert queued["zipJobs"][0]["logs"] == queued["zipStatusMessage"]
-        assert "Submitting zip task" in queued["zipStatusMessage"]
+        artifacts = processor.model_artifacts
+        assert artifacts.zipStatusMessage.count(ZIP_IN_PROGRESS_MESSAGE) == 1
+        assert artifacts.zipJobs[0].logs == artifacts.zipStatusMessage
+        assert "Submitting zip task" in artifacts.zipStatusMessage
 
     def test_queueing_a_new_zip_drops_earlier_jobs_logs(self, mocker):
         processor = ArtifactProcessor.__new__(ArtifactProcessor)
-        processor.config = mocker.Mock()
-        processor.config.get_status_types.return_value = STATUS
-        processor.queue_client = mocker.Mock()
+        processor.config = Config()
+        processor._queue_client = mocker.Mock()
         finished_run = MetadataUtils.append_status_message("", "x" * 16_400)
         processor.model_artifacts = ModelArtifacts(
             modelId="6283",
@@ -72,22 +81,38 @@ class TestArtifactProcessor:
         stored = json.dumps(processor.model_artifacts.dict())
         assert len(stored.encode("utf-8")) > QUEUE_MESSAGE_LIMIT_BYTES
 
+        metadata = _MutableMetadata()
+        repository = JobStateRepository(
+            processor.config,
+            processor_factory=lambda **kwargs: metadata,
+        )
+        mocker.patch(
+            "hastegeo.core.processors.job_state.JobStateRepository",
+            return_value=repository,
+        )
         processor.send_to_zip_queue()
 
-        payload = processor.queue_client.put_message.call_args.args[0]
-        assert len(payload.encode("utf-8")) < QUEUE_MESSAGE_LIMIT_BYTES
+        payload = processor._queue_client.put_message.call_args.args[0]
+        assert queued_message_size(payload) <= QUEUE_MESSAGE_LIMIT_BYTES
         queued = json.loads(payload)
         assert queued["zipStatus"] == STATUS.PENDING.value
-        assert [job["taskId"] for job in queued["zipJobs"]] == [
+        assert [job["taskId"] for job in queued["zipJobs"][:4]] == [
             "zip-1",
             "zip-2",
             "zip-3",
             "zip-4",
         ]
-        assert [job["status"] for job in queued["zipJobs"]] == [
+        assert [job["status"] for job in queued["zipJobs"][:4]] == [
             "Completed"
         ] * 4
-        assert [job["logs"] for job in queued["zipJobs"]] == [""] * 4
+        assert [job["logs"] for job in queued["zipJobs"][:4]] == [""] * 4
+        assert queued["zipJobs"][4]["taskId"] == queued["currentZipJobUid"]
+        assert processor.model_artifacts.zipJobs[4].taskId == (
+            processor.model_artifacts.currentZipJobUid
+        )
+        assert [job.logs for job in processor.model_artifacts.zipJobs[:4]] == [
+            ""
+        ] * 4
 
     def test_in_progress_polls_leave_finished_logs_out_of_the_queue(
         self, mocker
@@ -100,7 +125,6 @@ class TestArtifactProcessor:
         processor.runner.get_task_status.return_value = (
             STATUS.IN_PROGRESS.value
         )
-        processor.queue_client = mocker.Mock()
         finished_run = MetadataUtils.append_status_message("", "x" * 16_400)
         # A legacy record already in flight: finished runs still carry logs.
         processor.model_artifacts = ModelArtifacts(
@@ -122,7 +146,7 @@ class TestArtifactProcessor:
 
         processor.process_zip()
 
-        payload = processor.queue_client.put_message.call_args.args[0]
+        payload = queue_payload(Workload.ZIP, processor.model_artifacts.dict())
         assert queued_message_size(payload) <= QUEUE_MESSAGE_LIMIT_BYTES
         queued = json.loads(payload)
         assert [job["logs"] for job in queued["zipJobs"][:4]] == [""] * 4
