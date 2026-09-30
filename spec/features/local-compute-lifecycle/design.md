@@ -195,16 +195,20 @@ keeps its existing connection/cursor transaction boundary.
 Two independent Function timers drive recovery. `ReconcileLocalTasks`
 runs every 15 seconds, acts only for `local`, and reconciles receipts,
 including queued work and interrupted staging/uploads. `ReconcileJobQueues`
-runs every 30 seconds for the currently configured legacy runner and
+runs every 5 minutes for the currently configured legacy runner and
 re-enqueues current pending/running/cancelling records and unfinished
 follow-ons. This second path closes gaps before receipt creation and after
-lost queue sends, independently of queue retry counts. It only acts on
+lost queue sends, independently of queue retry counts. It is a safety net,
+not the polling path: monitors re-enqueue their own wake-ups with a
+30-second delay, and a job whose worker is lost is picked up within its
+5-minute claim plus one timer interval. Each run reads every job record in
+the environment, once per metadata type shared by the workloads stored in
+the same records, which is why it stays infrequent. It only acts on
 records the job-state pipeline has written. Records from before an upgrade
 continue through their own queue messages, and poison messages for them are
 ignored, except that a poisoned image layer fails as it did before, so
-upgrading never revives old stuck work. Each run reads every
-metadata type once, shared by workloads stored in the same records, and one
-failing record or scan does not stop recovery of the others. Slow staging
+upgrading never revives old stuck work. One failing record or scan does not
+stop recovery of the others. Slow staging
 does not block metadata polling or cancellation delivery. Neither timer owns
 compute in memory, and both resume on a new Function worker.
 

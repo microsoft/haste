@@ -264,7 +264,9 @@ async def ReconcileLocalTasks(timer: func.TimerRequest) -> None:
 @app.function_name(name="ReconcileJobQueues")
 @app.timer_trigger(
     arg_name="timer",
-    schedule="*/30 * * * * *",
+    # A safety net for lost messages, not the polling path: each run reads
+    # every job record, so it stays infrequent.
+    schedule="0 */5 * * * *",
     run_on_startup=False,
     use_monitor=True,
 )

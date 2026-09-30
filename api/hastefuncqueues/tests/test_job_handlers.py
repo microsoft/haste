@@ -60,6 +60,21 @@ def test_queue_timer_runs_independently_of_local_staging(mocker) -> None:
     repository.reconcile_queues.assert_called_once_with()
 
 
+def _timer_schedule(name: str) -> str:
+    function = next(
+        item
+        for item in function_app.app.get_functions()
+        if item.get_function_name() == name
+    )
+    return function.get_trigger().schedule
+
+
+def test_lost_message_recovery_scans_every_five_minutes() -> None:
+    # Monitors re-enqueue their own polls; this scan only backs up lost
+    # messages, and each run reads every job record in the environment.
+    assert _timer_schedule("ReconcileJobQueues") == "0 */5 * * * *"
+
+
 def test_batch_runtime_never_constructs_local_docker_controller(
     mocker,
 ) -> None:
