@@ -61,6 +61,7 @@
 | UI-005 | `PublishedDatasets` | Empty / loading / no-results | mount/search | empty state; overlay spinner; `NoResultsMessage` | US-002 |
 | UI-006 | `PublishedDatasetRow` | Status chips + polling + actions | render | in-progress polls; success enables retrieve; failed shows message/Retry | US-002/005 |
 | UI-007 | `PublishDatasetModal` | Asset checklist: available prechecked, absent grayed, zero-selected blocks Publish | toggle checkboxes | correct list; Publish disabled at zero selected | US-007 |
+| UI-008 | `PublishedDatasets` | Rows-per-page preference | select a page size, then revisit the page | setting is persisted for the user and restored | US-002 |
 
 ### End-to-End Tests (Docker Compose)
 

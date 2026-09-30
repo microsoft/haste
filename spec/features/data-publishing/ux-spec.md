@@ -120,7 +120,8 @@ Fluent UI **Dialog** (small form → `Dialog`/`DialogSurface`/`DialogBody`, as i
 Catalog-style page modeled on `ModelCatalog.jsx` — `pgrid-page` container,
 `pgrid-header` (title + subtitle + info tooltip), `pgrid-toolbar` (`SearchBox` +
 optional target/status filters), sortable table, `pgrid-footer` pagination with
-`PAGE_SIZE_OPTIONS`.
+`PAGE_SIZE_OPTIONS`. The rows-per-page selection is stored in the authenticated
+user's `itemsPerPagePublishedDatasets` setting and restored on later visits.
 
 ```
 ┌─ Published Datasets ─────────────────────────────────── ⓘ ┐
