@@ -194,11 +194,6 @@ const PublishedDatasets = () => {
   async function handlePageSizeChange(newSize) {
     setPageSize(newSize);
     setCurrentPage(1);
-    setIsLoading(true, "Updating Items Per Page...");
-    const response = await apiGet("GetUserById?userId=" + appParams.userId);
-    await updateUserSettings(response, [
-      { itemsPerPagePublishedDatasets: newSize },
-    ]);
     setAppParams((previousParams) => ({
       ...previousParams,
       userSettings: {
@@ -206,7 +201,20 @@ const PublishedDatasets = () => {
         itemsPerPagePublishedDatasets: newSize,
       },
     }));
-    setIsLoading(false);
+    setIsLoading(true, "Updating Items Per Page...");
+    try {
+      const response = await apiGet("GetUserById?userId=" + appParams.userId);
+      await updateUserSettings(response, [
+        { itemsPerPagePublishedDatasets: newSize },
+      ]);
+    } catch (saveError) {
+      console.error(
+        "Error saving published datasets page size preference:",
+        saveError,
+      );
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   function sortHeader(key, label) {
