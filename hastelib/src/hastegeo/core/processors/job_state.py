@@ -246,6 +246,16 @@ def attempt_id(data: dict, workload: Workload) -> str | None:
     return current_job(data, workload).get("taskId")
 
 
+def has_runtime(data: dict, workload: Workload) -> bool:
+    """Whether the job-state pipeline has written this workload's turn.
+
+    Records written before it have none; only their own queue messages
+    drive them, as before.
+    """
+    runtime = data.get(RUNTIME_KEY)
+    return isinstance(runtime, dict) and bool(runtime.get(workload.value))
+
+
 def ensure_pending_identity(
     data: dict, workload: Workload, config: Config
 ) -> None:
@@ -741,14 +751,25 @@ class JobStateRepository:
         self, workload: Workload, message: dict
     ) -> None:
         project_id, record_id = self._identity(message, workload)
+        outcome = "ignored"
 
         def change(raw: JsonDocument | None) -> dict | None:
+            nonlocal outcome
+            outcome = "ignored"
             if not isinstance(raw, dict) or attempt_id(
                 raw, workload
             ) != attempt_id(message, workload):
                 return None
             if not self.needs_processing(raw, workload):
                 return None
+            if not has_runtime(raw, workload):
+                if workload != Workload.IMAGERY:
+                    return None
+                # Before job state, a poisoned image layer was failed; keep
+                # that for layers from then instead of reviving them.
+                self._fail_legacy_delivery(raw, workload)
+                outcome = "failed"
+                return raw
             ensure_pending_identity(raw, workload, self.config)
             turn = self.turn(raw, workload)
             turn.error = "Queue delivery interrupted; reconciliation pending"
@@ -756,13 +777,37 @@ class JobStateRepository:
                 # Recover now, unless a failing turn already set a backoff.
                 turn.next_poll = 0
             self._set_turn(raw, workload, turn)
+            outcome = "recorded"
             return raw
 
         self.processor(workload, project_id).mutate(record_id, change)
         self.logger.warning(
-            "Recorded interrupted %s queue delivery for %s",
+            {
+                "recorded": "Recorded interrupted %s queue delivery for %s",
+                "failed": "Failed %s record %s after repeated delivery "
+                "failures",
+                "ignored": "Ignored %s queue delivery for %s: finished, "
+                "superseded or written before job state",
+            }[outcome],
             workload.value,
             record_id,
+        )
+
+    def _fail_legacy_delivery(self, data: dict, workload: Workload) -> None:
+        workflow = WORKFLOWS[workload]
+        failed = self.statuses.FAILED.value
+        data[workflow.status] = failed
+        job = current_job(data, workload)
+        if job and job.get("status") not in {
+            self.statuses.COMPLETED.value,
+            failed,
+            self.statuses.CANCELLED.value,
+        }:
+            job["status"] = failed
+            job["completedDate"] = MetadataUtils.get_timestamp()
+        data[workflow.message] = MetadataUtils.append_status_message(
+            data.get(workflow.message),
+            "Processing failed after repeated delivery failures",
         )
 
     def reconcile_queues(self) -> int:
@@ -816,13 +861,16 @@ class JobStateRepository:
             return False
         if not self.needs_processing(data, workload):
             return False
-        if attempt_id(data, workload):
-            turn = self.turn(data, workload)
-            if (
-                turn.backend != self.config.runner_type
-                or max(turn.lease_until, turn.next_poll) > self.clock()
-            ):
-                return False
+        if not has_runtime(data, workload):
+            # Written before job state: its own queue message still drives
+            # it, and recovery must not revive old stuck work on upgrade.
+            return False
+        turn = self.turn(data, workload)
+        if (
+            turn.backend != self.config.runner_type
+            or max(turn.lease_until, turn.next_poll) > self.clock()
+        ):
+            return False
         self.enqueue(workload, data)
         return True
 

@@ -14,6 +14,7 @@ from hastegeo.core.processors.job_state import (
     Workload,
     attempt_id,
     current_job,
+    ensure_pending_identity,
     persist_and_enqueue,
 )
 from hastegeo.core.processors.metadata import MetadataProcessor
@@ -59,6 +60,18 @@ def output_for(baseline: dict, workload: Workload, status: str):
     values[WORKFLOWS[workload].status] = status
     current_job(values, workload)["status"] = status
     return WORKFLOWS[workload].model.model_validate(values)
+
+
+def legacy(state, workload: Workload, status: str, job_status: str) -> dict:
+    """Store a record as the code before job state left it: no runtime."""
+    values = record(workload).model_dump(mode="json")
+    values[WORKFLOWS[workload].status] = status
+    ensure_pending_identity(values, workload, state.config)
+    current_job(values, workload)["status"] = job_status
+    state.repository.processor(workload, "project").save(
+        values[WORKFLOWS[workload].key], values
+    )
+    return values
 
 
 @pytest.mark.parametrize("workload", list(Workload))
@@ -498,6 +511,62 @@ def test_batch_queue_recovery_respects_the_persisted_backend(state) -> None:
     accepted(state)
     assert state.repository.reconcile_queues() == 1
     state.config.runner_type = "local"
+    assert state.repository.reconcile_queues() == 0
+
+
+@pytest.mark.parametrize("workload", list(Workload))
+@pytest.mark.parametrize(
+    "status, job_status",
+    [
+        ("Queued", "Queued"),
+        ("InProgress", "InProgress"),
+        ("Cancelled", "InProgress"),
+    ],
+)
+def test_recovery_leaves_records_written_before_the_upgrade(
+    state, workload: Workload, status: str, job_status: str
+) -> None:
+    values = legacy(state, workload, status, job_status)
+    assert state.repository.needs_processing(values, workload)
+    state.now.value += 3600
+    assert state.repository.reconcile_queues() == 0
+    state.queue.assert_not_called()
+
+
+def test_legacy_record_is_recoverable_once_its_message_is_claimed(
+    state,
+) -> None:
+    values = legacy(state, Workload.TRAINING, "InProgress", "InProgress")
+    assert state.repository.claim(Workload.TRAINING, values) is not None
+    # The worker is lost; its expired claim is recovered like any other.
+    state.now.value += 301
+    assert state.repository.reconcile_queues() == 1
+
+
+@pytest.mark.parametrize(
+    "workload", [item for item in Workload if item != Workload.IMAGERY]
+)
+def test_legacy_poison_messages_do_not_revive_the_record(
+    state, workload: Workload
+) -> None:
+    values = legacy(state, workload, "InProgress", "InProgress")
+    before = load(state, workload)
+    state.repository.mark_delivery_interrupted(workload, values)
+    assert load(state, workload) == before
+    state.now.value += 3600
+    assert state.repository.reconcile_queues() == 0
+
+
+def test_legacy_poisoned_image_layer_fails_as_it_did_before(state) -> None:
+    values = legacy(state, Workload.IMAGERY, "InProgress", "InProgress")
+    state.repository.mark_delivery_interrupted(Workload.IMAGERY, values)
+    current = load(state, Workload.IMAGERY)
+    assert current["status"] == "Failed"
+    assert current["preprocessJob"]["status"] == "Failed"
+    assert current["preprocessJob"]["completedDate"]
+    assert "repeated delivery failures" in current["statusMessage"]
+    assert RUNTIME_KEY not in current
+    state.now.value += 3600
     assert state.repository.reconcile_queues() == 0
 
 
