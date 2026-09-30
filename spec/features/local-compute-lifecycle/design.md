@@ -228,6 +228,12 @@ prove success. Keep the shared volume and deterministic container identities
 across worker restarts. Do not remove reservation containers or receipts
 while work is active. Roll back only after draining the new lifecycle.
 
+A record saved by an older build keeps this build's runtime field. If that
+build started a newer execution meanwhile, the stored turn still names the
+execution it replaced. It is ignored for the current execution, except for
+cleanup it still owes, so a rollback followed by a redeploy cannot fence a
+running job or replay another execution's follow-ons.
+
 Workers consuming one local deployment's queues must address the same Docker
 daemon and mount the same task volume at `/shared/azurite`. Independent local
 hosts need isolated deployment queues/metadata; this is not a multi-host local

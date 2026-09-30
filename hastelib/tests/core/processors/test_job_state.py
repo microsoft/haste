@@ -570,6 +570,71 @@ def test_legacy_poisoned_image_layer_fails_as_it_did_before(state) -> None:
     assert state.repository.reconcile_queues() == 0
 
 
+def older_build_attempt(state, status: str) -> dict:
+    """Store a newer execution started by an older build over our runtime.
+
+    The older build keeps the unknown runtime field when it saves, so the
+    stored turn still names the execution it replaced.
+    """
+    message = accepted(state)
+    state.repository.release(
+        Workload.TRAINING, state.repository.claim(Workload.TRAINING, message)
+    )
+    stored = load(state)
+    runtime = stored[RUNTIME_KEY]["training"]
+    runtime["actions"] = {"zip": f"training:{runtime['attempt']}:zip"}
+    runtime["cleanup"] = [{"job_id": "job", "task_id": runtime["attempt"]}]
+    stored["status"] = status
+    stored["trainingJob"]["taskId"] = "older-build-task"
+    stored["trainingJob"]["status"] = status
+    state.repository.processor(Workload.TRAINING, "project").save(
+        "model", stored
+    )
+    return stored
+
+
+def test_runtime_left_for_an_older_attempt_does_not_fence_the_current(
+    state,
+) -> None:
+    stored = older_build_attempt(state, "InProgress")
+    replaced = stored[RUNTIME_KEY]["training"]["attempt"]
+
+    claimed = state.repository.claim(Workload.TRAINING, stored)
+
+    assert claimed is not None
+    turn = state.repository.turn(claimed, Workload.TRAINING)
+    assert turn.attempt == "older-build-task"
+    assert turn.actions == {}
+    assert [item.task_id for item in turn.cleanup] == [replaced]
+    committed = state.repository.commit(
+        Workload.TRAINING,
+        claimed,
+        output_for(claimed, Workload.TRAINING, "Processed"),
+        [],
+    )
+    assert committed is not None
+    assert committed["status"] == "Processed"
+
+
+def test_follow_ons_left_for_an_older_attempt_are_not_replayed(state) -> None:
+    older_build_attempt(state, "Processed")
+    current = load(state)
+    turn = state.repository.turn(current, Workload.TRAINING)
+    assert turn.actions == {}
+    # Only the cleanup owed for the replaced execution is still pending.
+    assert state.repository.needs_processing(current, Workload.TRAINING)
+    stored = load(state)
+    stored[RUNTIME_KEY]["training"]["cleanup"] = []
+    state.repository.processor(Workload.TRAINING, "project").save(
+        "model", stored
+    )
+    assert not state.repository.needs_processing(
+        load(state), Workload.TRAINING
+    )
+    state.now.value += 3600
+    assert state.repository.reconcile_queues() == 0
+
+
 def test_distinct_follow_on_request_waits_for_existing_execution(
     state,
 ) -> None:

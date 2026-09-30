@@ -23,6 +23,7 @@
 | End an execution whose Batch task or job no longer exists | `backend-dev` | Cloud deployment review | US-004, US-006, US-007 | complete |
 | Back off repeated processing failures, with one status line and no poison churn | `backend-dev` | Cloud deployment review | US-006, US-007 | complete |
 | Leave records written before the upgrade to their own queue messages | `backend-dev` | Cloud deployment review | US-007 | complete |
+| Ignore a runtime turn left for an execution an older build replaced | `backend-dev` | Cloud deployment review | US-006, US-007 | complete |
 
 ## Integration gates
 

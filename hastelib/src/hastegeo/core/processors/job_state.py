@@ -345,9 +345,19 @@ class JobStateRepository:
 
     def turn(self, data: dict, workload: Workload) -> RuntimeTurn:
         raw = data.get(RUNTIME_KEY, {}).get(workload.value)
-        if raw:
-            return RuntimeTurn.model_validate(raw)
         attempt = attempt_id(data, workload)
+        if raw:
+            stored = RuntimeTurn.model_validate(raw)
+            if not attempt or stored.attempt == attempt:
+                return stored
+            # An older build started this execution and kept the turn of the
+            # one it replaced. That turn's claim, backoff and follow-ons are
+            # stale; only the cleanup it still owes carries over.
+            return RuntimeTurn(
+                attempt=attempt,
+                backend=self.config.runner_type,
+                cleanup=stored.cleanup,
+            )
         if not attempt:
             raise ValueError("Job record has no pending execution identity")
         return RuntimeTurn(attempt=attempt, backend=self.config.runner_type)
@@ -368,8 +378,10 @@ class JobStateRepository:
             return True
         if self.needs_cancellation(data, workload):
             return True
-        raw = data.get(RUNTIME_KEY, {}).get(workload.value)
-        return bool(raw and (raw.get("actions") or raw.get("cleanup")))
+        if not has_runtime(data, workload):
+            return False
+        turn = self.turn(data, workload)
+        return bool(turn.actions or turn.cleanup)
 
     def needs_cancellation(self, data: dict, workload: Workload) -> bool:
         return data.get(
