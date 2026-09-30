@@ -249,8 +249,8 @@ def test_queue_recovers_ambiguous_submission_with_the_same_pending_identity(
         ("routed-job", submission.pending["taskId"]),
     ]
 
-    with pytest.raises(TaskSubmissionPendingError):
-        submission_queue.process(workload, submission.message)
+    # Recorded with a backoff, so the delivery itself does not fail.
+    submission_queue.process(workload, submission.message)
 
     current = load(state, workload)
     assert current[WORKFLOWS[workload].status] == "Queued"

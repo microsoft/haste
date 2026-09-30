@@ -30,6 +30,11 @@ JobRecord = ImageLayer | Model | ModelArtifacts
 RUNTIME_KEY = "_jobRuntime"
 # Fields another workflow owns; job submissions never restore their snapshot.
 FOREIGN_FIELDS = {"IMAGELAYER": frozenset(FOOTPRINT_TILE_FIELDS)}
+# A failing turn is retried after 30 s, doubling up to an hour; each retry
+# replaces the previous interruption line rather than adding one.
+RETRY_DELAY_SECONDS = 30
+MAX_RETRY_DELAY_SECONDS = 3600
+INTERRUPTED_PREFIX = "Job processing interrupted"
 
 
 class Workload(str, Enum):
@@ -216,6 +221,8 @@ class RuntimeTurn(BaseModel):
     next_poll: float = 0
     request_id: str | None = None
     error: str | None = None
+    # Consecutive failed turns; sets the retry backoff, reset by progress.
+    failures: int = 0
     cleanup: list[TaskIdentity] = Field(default_factory=list)
     actions: dict[str, str] = Field(default_factory=dict)
 
@@ -504,6 +511,8 @@ class JobStateRepository:
             turn.claim = None
             turn.lease_until = 0
             turn.next_poll = self.clock()
+            # A new request starts a fresh retry budget.
+            turn.failures = 0
             self._set_turn(data, workload, turn)
             return data
 
@@ -537,6 +546,9 @@ class JobStateRepository:
                     "Job backend differs from the configured runner"
                 )
             if turn.claim and turn.lease_until > self.clock():
+                return None
+            if turn.failures and turn.next_poll > self.clock():
+                # Backing off after a failed turn; recovery re-enqueues it.
                 return None
             turn.revision += 1
             turn.claim = claim
@@ -633,6 +645,7 @@ class JobStateRepository:
             )
             turn.cleanup = cleanup
             turn.error = None
+            turn.failures = 0
             status = data.get(workflow.status)
             job = current_job(data, workload)
             if (
@@ -677,6 +690,7 @@ class JobStateRepository:
                 turn.cleanup = []
             else:
                 turn.actions.pop(action, None)
+            turn.failures = 0
             if turn.error:
                 field = WORKFLOWS[workload].message
                 data[field] = MetadataUtils.append_status_message(
@@ -695,16 +709,22 @@ class JobStateRepository:
         def update(data: dict, turn: RuntimeTurn) -> None:
             turn.claim = None
             turn.lease_until = 0
-            turn.next_poll = self.clock() + 30
-            if error is not None:
-                turn.error = (
-                    f"Job processing interrupted ({type(error).__name__}); "
-                    "reconciliation pending"
-                )
-                field = WORKFLOWS[workload].message
-                data[field] = MetadataUtils.append_status_message(
-                    data.get(field), turn.error
-                )
+            if error is None:
+                turn.next_poll = self.clock() + RETRY_DELAY_SECONDS
+                return
+            turn.failures += 1
+            turn.next_poll = self.clock() + min(
+                RETRY_DELAY_SECONDS * 2 ** (turn.failures - 1),
+                MAX_RETRY_DELAY_SECONDS,
+            )
+            turn.error = (
+                f"{INTERRUPTED_PREFIX} ({type(error).__name__}); "
+                "reconciliation pending"
+            )
+            field = WORKFLOWS[workload].message
+            data[field] = MetadataUtils.upsert_status_message(
+                data.get(field), turn.error, INTERRUPTED_PREFIX
+            )
 
         return self._update_claim(workload, baseline, update)
 
@@ -732,7 +752,9 @@ class JobStateRepository:
             ensure_pending_identity(raw, workload, self.config)
             turn = self.turn(raw, workload)
             turn.error = "Queue delivery interrupted; reconciliation pending"
-            turn.next_poll = 0
+            if not turn.failures:
+                # Recover now, unless a failing turn already set a backoff.
+                turn.next_poll = 0
             self._set_turn(raw, workload, turn)
             return raw
 

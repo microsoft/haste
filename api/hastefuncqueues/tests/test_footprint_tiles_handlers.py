@@ -261,8 +261,12 @@ class TestImageryQueueHandoff(
         self.labels.generate_task_files.side_effect = RuntimeError(
             "label generation failed"
         )
-        with self.assertRaises(RuntimeError):
-            self._process_imagery_turn()
+        # The failed turn is recorded for a retry after its backoff.
+        self._process_imagery_turn()
+        self.assertIn(
+            "Job processing interrupted (RuntimeError)",
+            self.record["statusMessage"],
+        )
         self.queue.put_message.assert_not_called()
         self.assertEqual(
             self.record["footprintTilesStatus"], STATUSES.IN_PROGRESS.value

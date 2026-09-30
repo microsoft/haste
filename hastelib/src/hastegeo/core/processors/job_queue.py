@@ -138,7 +138,10 @@ class JobQueueProcessor:
             )
             if baseline is not None:
                 if self.repository.turn(baseline, workload).claim:
-                    self.repository.release(workload, baseline, error)
+                    if self.repository.release(workload, baseline, error):
+                        # Recorded with a backoff; recovery retries it, so the
+                        # delivery must not be retried or poisoned as well.
+                        return
                 else:
                     self.repository.mark_delivery_interrupted(
                         workload, baseline

@@ -410,6 +410,29 @@ def test_poison_delivery_does_not_fail_live_compute_or_a_newer_attempt(
     assert load(state) == before
 
 
+def test_poison_delivery_keeps_an_error_backoff(state) -> None:
+    message = accepted(state)
+    baseline = state.repository.claim(Workload.TRAINING, message)
+    released = state.repository.release(Workload.TRAINING, baseline)
+    # A lost delivery after a healthy turn is recovered right away...
+    state.repository.mark_delivery_interrupted(Workload.TRAINING, released)
+    assert state.repository.reconcile_queues() == 1
+
+    baseline = state.repository.claim(Workload.TRAINING, message)
+    state.repository.release(
+        Workload.TRAINING, baseline, OSError("storage unavailable")
+    )
+    backoff = state.repository.turn(load(state), Workload.TRAINING).next_poll
+    assert backoff > state.now.value
+    # ...but not ahead of the backoff that a failing turn recorded.
+    state.repository.mark_delivery_interrupted(Workload.TRAINING, message)
+    turn = state.repository.turn(load(state), Workload.TRAINING)
+    assert turn.next_poll == backoff
+    assert state.repository.reconcile_queues() == 0
+    state.now.value = backoff
+    assert state.repository.reconcile_queues() == 1
+
+
 def test_deleted_record_is_not_recreated_by_a_late_queue_write(state) -> None:
     message = accepted(state)
     baseline = state.repository.claim(Workload.TRAINING, message)

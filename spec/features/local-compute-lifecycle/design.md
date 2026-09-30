@@ -120,6 +120,15 @@ Five-minute claims renew every minute during a processing turn. This small
 coordination heartbeat neither runs nor schedules compute; losing it fences
 the writer, and the persisted claim expires for independent timer recovery.
 
+A failed turn is recorded on the record and retried after a backoff: 30 s,
+doubling to at most an hour, reset once a turn makes progress. The failure
+replaces the previous interruption line in the status history instead of
+adding one. The delivery then completes, so the Functions host neither
+retries it nor moves it to a poison queue. Deliveries that arrive during the
+backoff are ignored; queue recovery re-enqueues the record once it expires.
+A new request, such as a cancellation, starts a fresh retry budget. A poison
+message recovers its record at once unless a backoff is already running.
+
 Transport interruptions and ambiguous submission responses retain the pending
 IDs instead of marking possibly accepted compute failed. SDK request/retry
 wrappers are classified by their underlying error, not assumed transient.

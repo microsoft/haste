@@ -405,10 +405,12 @@ class TestInferenceResults(ResultsTestCase):
         self.runner.cancel_task.side_effect = OSError("unavailable")
         body = self.queue.put_message.call_args.args[0].encode()
         self.now += 31
-        with self.assertRaisesRegex(
-            RuntimeError, "Job queue dispatch failed: OSError"
-        ):
-            self.processor.process_message(Workload.INFERENCE, body)
+        # Recorded for a retry after its backoff instead of failing delivery.
+        self.processor.process_message(Workload.INFERENCE, body)
         self.assertEqual(
             self.record["inferenceJobs"][-1]["status"], "InProgress"
+        )
+        self.assertEqual(self.record["inferenceStatus"], "Cancelled")
+        self.assertEqual(
+            self.repository.turn(self.record, Workload.INFERENCE).failures, 1
         )

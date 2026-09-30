@@ -247,13 +247,83 @@ def test_worker_error_is_durable_and_does_not_claim_compute_failed(
         "_process_current",
         side_effect=ConnectionError("provider temporarily unavailable"),
     )
-    with pytest.raises(ConnectionError):
-        processor.process(Workload.TRAINING, message)
+    # The failure is recorded with a backoff, so the delivery is not retried
+    # by the Functions host or sent to the poison queue.
+    processor.process(Workload.TRAINING, message)
     current = load(state)
     assert current["status"] == "Queued"
     assert "reconciliation pending" in current["statusMessage"]
     state.now.value += 31
     assert state.repository.reconcile_queues() == 1
+
+
+def test_repeated_processing_errors_back_off_with_one_status_line(
+    state, mocker
+) -> None:
+    message = in_progress(state, Workload.TRAINING)
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    work = mocker.patch.object(
+        processor,
+        "_process_current",
+        side_effect=FileNotFoundError("Training label project is missing"),
+    )
+    delays = []
+    for attempt in range(1, 10):
+        processor.process(Workload.TRAINING, message)
+        assert work.call_count == attempt
+        turn = state.repository.turn(load(state), Workload.TRAINING)
+        delays.append(turn.next_poll - state.now.value)
+        # A duplicate delivery during the backoff does not run the job again.
+        processor.process(Workload.TRAINING, message)
+        assert work.call_count == attempt
+        assert state.repository.reconcile_queues() == 0
+        state.now.value = turn.next_poll
+        assert state.repository.reconcile_queues() == 1
+    assert delays == [30, 60, 120, 240, 480, 960, 1920, 3600, 3600]
+    current = load(state)
+    assert current["status"] == "InProgress"
+    assert current["statusMessage"].count("Job processing interrupted") == 1
+
+    work.side_effect = lambda workload, data: (
+        output_for(data, workload, "InProgress"),
+        [],
+    )
+    processor.process(Workload.TRAINING, message)
+    turn = state.repository.turn(load(state), Workload.TRAINING)
+    assert (turn.failures, turn.error) == (0, None)
+    # Normal polling resumes on its usual 30-second visibility delay.
+    state.now.value += 30
+    processor.process(Workload.TRAINING, message)
+    assert work.call_count == 11
+
+
+def test_cancellation_is_not_delayed_by_an_error_backoff(
+    state, mocker
+) -> None:
+    message = in_progress(state, Workload.TRAINING)
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    real = processor._process_current
+
+    def flaky(workload: Workload, baseline: dict):
+        if baseline["status"] != "Cancelled":
+            raise OSError("storage unavailable")
+        return real(workload, baseline)
+
+    mocker.patch.object(processor, "_process_current", side_effect=flaky)
+    runner = mocker.Mock()
+    runner.cancel_task.return_value = True
+    mocker.patch.object(processor, "_runner", return_value=runner)
+    mocker.patch.object(processor, "_perform_action")
+    processor.process(Workload.TRAINING, message)
+    assert state.repository.turn(load(state), Workload.TRAINING).failures == 1
+
+    cancelled = state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor.process(Workload.TRAINING, cancelled.model_dump(mode="json"))
+
+    runner.cancel_task.assert_called_once()
+    assert load(state)["trainingJob"]["status"] == "Cancelled"
 
 
 def test_failed_follow_on_delivery_retries_without_repeating_compute(
@@ -276,11 +346,11 @@ def test_failed_follow_on_delivery_retries_without_repeating_compute(
     action = mocker.patch.object(
         processor, "_perform_action", side_effect=OSError("queue failed")
     )
-    with pytest.raises(OSError):
-        processor.process(Workload.TRAINING, message)
+    processor.process(Workload.TRAINING, message)
     assert load(state)["status"] == "Processed"
     assert state.repository.turn(load(state), Workload.TRAINING).actions
     action.side_effect = None
+    state.now.value += 31
     processor.process(Workload.TRAINING, message)
     assert compute.call_count == 1
     assert action.call_count == 2
@@ -344,8 +414,7 @@ def test_cancel_failure_keeps_the_intent_and_retries_actual_stop(
     runner = mocker.Mock()
     runner.cancel_task.side_effect = OSError("Docker unavailable")
     mocker.patch.object(processor, "_runner", return_value=runner)
-    with pytest.raises(OSError):
-        processor.process(Workload.TRAINING, message)
+    processor.process(Workload.TRAINING, message)
     assert load(state)["status"] == "Cancelled"
     assert load(state)["trainingJob"]["status"] != "Cancelled"
     state.now.value += 31
