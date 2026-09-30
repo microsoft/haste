@@ -57,6 +57,23 @@ test("binary scores do not change a standard model's flavor", () => {
   assert.equal(normalizeAttrs(attrs, sampleResults({ flavor: "embedding", supportsThreshold: false })).flavor, "embedding");
 });
 
+test("pretrained raw results use the same sidecar identity, Unknown classes, and raster controls", () => {
+  const results = sampleResults({
+    modelType: "pretrained", predictionVersion: 0, status: null,
+    predictionsLayer: { url: "/tiles/{z}/{x}/{y}.png?kind=raw" },
+    predictedDamageLayer: { url: "/tiles/{z}/{x}/{y}.png?kind=damage" },
+  });
+  const attrs = normalizeAttrs(sampleAttrs(), results);
+  assert.equal(attrs.flavor, "inference");
+  assert.equal(attrs.isEdited, undefined);
+  assert.equal(attrs.classes[2], "Unknown");
+  assert.equal(canViewResults(results), true);
+  assert.deepEqual(visualizerLayerOptions({
+    results, footprintStatus: resolveFootprintStatus({ results, loaded: true, layersReady: true }),
+  }).map((option) => option.key), ["predictedDamageLayer", "predictionsLayer", "footprints"]);
+  assert.throws(() => normalizeAttrs(sampleAttrs({ predictionRevision: "wrong" }), results), /revisions differ/);
+});
+
 test("empty sidecars preserve zero without inventing rows", () => {
   const attrs = sampleAttrs({
     n: 0, ids: [], overtureIds: [], damage: [], unknown: [], damaged: [], classes: [],

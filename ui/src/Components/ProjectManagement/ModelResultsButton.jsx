@@ -6,6 +6,7 @@ import { fileDownload } from "../../util/file";
 import { AppContext } from "../../AppContext";
 import ModelResultsStatusIndicator from "../OtherComponents/ModelResultsStatusIndicator";
 import ModelResultsMenu from "./ModelResultsMenu";
+import { isInferenceOnlyModel } from "../CatalogInferenceHelper";
 
 function formatFileSize(bytes) {
   if (bytes == null) return "";
@@ -56,7 +57,7 @@ const ModelResultsButton = ({ model, projectId, imageLayerId, index, validationL
       onClick: () => handleDownload(model.artifacts.inferenceZipUrl),
       disabled: !model.artifacts?.inferenceZipUrl,
     },
-  ];
+  ].filter((action) => !isInferenceOnlyModel(model) || action.key !== "downloadTrainingArtifacts");
 
   return (
     <div className="d-flex align-items-center pt-1 pb-1">

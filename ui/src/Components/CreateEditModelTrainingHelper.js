@@ -1,33 +1,21 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-import { apiGet } from "../util/api";
 import {
   buildBaseModelOptionKey,
   buildModelCatalogEndpoint,
-} from "./BaseModelDropdownHelper";
+} from "./BaseModelDropdownHelper.js";
+import { hasCatalogCapability, readModelCatalog } from "./ModelCatalogHelper.js";
 
-export async function fetchModelCatalog(imageLayer, eventTypes) {
-  const cataloguedModels = [];
-  try {
-    await apiGet(buildModelCatalogEndpoint(imageLayer, eventTypes))
-      .then((response) => {
-        cataloguedModels.push(
-          ...response.modelCatalog.map((model) => ({
-            key: buildBaseModelOptionKey(model),
-            text: model.baseModelName,
-            value: model,
-          }))
-        );
-      })
-      .catch((error) => {
-        console.error("Error fetching model catalog:", error);
-      });
-  } catch (error) {
-    console.error("Error fetching model catalog:", error);
-  }
-
-  return cataloguedModels;
+export async function fetchModelCatalog(imageLayer, eventTypes, get) {
+  const response = await get(buildModelCatalogEndpoint(imageLayer, eventTypes));
+  return readModelCatalog(response)
+    .filter((model) => hasCatalogCapability(model, "training"))
+    .map((model) => ({
+      key: buildBaseModelOptionKey(model),
+      text: model.baseModelName,
+      value: model,
+    }));
 }
 
 export function createComponentDefaultState(modelToEdit, imageLayer, projectId) {

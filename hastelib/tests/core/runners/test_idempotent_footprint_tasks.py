@@ -64,6 +64,7 @@ class TestIdempotentFootprintTasks(unittest.TestCase):
 
     def test_local_reuses_named_running_or_exited_container(self) -> None:
         runner = LocalRunner.__new__(LocalRunner)
+        runner.work_dir = Path(self.enterContext(TemporaryDirectory()))
         runner.docker_client = MagicMock()
         for status in ("running", "exited", "created"):
             container = MagicMock(status=status)
@@ -82,6 +83,7 @@ class TestIdempotentFootprintTasks(unittest.TestCase):
         self,
     ) -> None:
         runner = LocalRunner.__new__(LocalRunner)
+        runner.work_dir = Path(self.enterContext(TemporaryDirectory()))
         runner.docker_client = MagicMock()
         runner.docker_client.containers.get.side_effect = (
             docker.errors.NotFound("missing")

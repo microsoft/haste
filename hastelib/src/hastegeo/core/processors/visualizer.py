@@ -8,8 +8,9 @@ from urllib.parse import quote
 
 from ..models.prediction_edits import PredictionSelectionRequest
 from ..models.prediction_results import ResultsRequest
-from ..models.projects import ImageLayer, LabelProject, Model, Project
+from ..models.projects import Feature, ImageLayer, LabelProject, Model, Project
 from ..models.visualizer import Imagery, Visualizer
+from ..utils.aoi import raster_extent_feature
 from ..utils.prediction_readiness import artifact_api_url
 from .metadata import MetadataProcessor
 from .prediction_results import PredictionResultsProcessor
@@ -34,9 +35,12 @@ def build_visualizer(
 ) -> Visualizer:
     bounds = labels.features[0].bbox or [] if labels.features else []
 
-    def raster(url: str | None, colormap: str = "") -> Imagery:
+    def raster(
+        url: str | None, colormap: str = "", *, png: bool = False
+    ) -> Imagery:
         tile_url = (
             f"{titiler_endpoint}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}"
+            f"{'.png' if png else ''}"
             f"?scale=1&url={quote(url, safe='')}{colormap}"
             if url
             else ""
@@ -87,8 +91,10 @@ def build_visualizer(
         studyArea=labels.features or [],
         preDisasterImagery=raster(layer.preEventProcessedImageryUrl),
         postDisasterImagery=raster(layer.postEventProcessedImageryUrl),
-        predictedDamageLayer=raster(predicted_url) if predicted_url else None,
-        predictionsLayer=raster(classified_url, colormap)
+        predictedDamageLayer=raster(predicted_url, png=True)
+        if predicted_url
+        else None,
+        predictionsLayer=raster(classified_url, colormap, png=True)
         if classified_url
         else None,
         footprintTilesUrl=artifact_api_url(model, "footprint_pmtiles")
@@ -147,6 +153,18 @@ class VisualizerProcessor(PredictionResultsProcessor):
             ),
             LabelProject(),
         )
+        if model.modelType == "pretrained" and model.predictedDamageLayerUrl:
+            labels = labels.model_copy(
+                update={
+                    "features": [
+                        Feature.model_validate(
+                            raster_extent_feature(
+                                model.predictedDamageLayerUrl
+                            )
+                        )
+                    ]
+                }
+            )
         return build_visualizer(
             model,
             layer,

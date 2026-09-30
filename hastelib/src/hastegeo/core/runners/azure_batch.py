@@ -189,6 +189,10 @@ class AzureBatchRunner(BaseRunner):
         # job to it.
         existing_job = None
         if idempotent:
+            if not job_id or not task_id:
+                raise ValueError(
+                    "Idempotent tasks require explicit job and task IDs"
+                )
             try:
                 self.batch_cluster.batch_client.task.get(job_id, task_id)
                 return job_id, task_id
@@ -237,6 +241,7 @@ class AzureBatchRunner(BaseRunner):
             for candidate in (
                 self.batch_config["registry_image"],
                 self.batch_config["imageprep_docker_image"],
+                self.batch_config.get("transformer_inference_docker_image"),
             ):
                 if candidate and candidate not in registry_images:
                     registry_images.append(candidate)

@@ -11,17 +11,14 @@ import {
 import { FluentIcon } from "../../util/icons";
 import { useDrawerAnimation } from "../../util/useDrawerAnimation";
 import proptypes from "prop-types";
+import { catalogMetadataEntries } from "../ModelCatalogHelper";
 
 const ModelCatalogAdditionalInfoModal = ({
     onClose,
     additionalInfo
 }) => {
     const { open, requestClose } = useDrawerAnimation(onClose);
-
-    ModelCatalogAdditionalInfoModal.propTypes = {
-        onClose: proptypes.func.isRequired,
-        additionalInfo: proptypes.object.isRequired,
-    };
+    const entries = catalogMetadataEntries(additionalInfo);
 
     return (
         <OverlayDrawer
@@ -52,15 +49,15 @@ const ModelCatalogAdditionalInfoModal = ({
             </DrawerHeader>
             <DrawerBody>
                 <div className="modal-container p-1">
-                    {Object.entries(additionalInfo).map(([key, value], idx) => (
+                    {entries.map(([key, value], idx) => (
                         <div key={key}>
                             <div className="row mb-1">
                                 <div className="col-12 fw-semibold">{key}</div>
                             </div>
                             <div className="row mb-2">
-                                <div className="col-12">{String(value)}</div>
+                                <div className="col-12">{value == null ? "--" : typeof value === "object" ? JSON.stringify(value) : String(value)}</div>
                             </div>
-                            {idx < Object.entries(additionalInfo).length - 1 && (
+                            {idx < entries.length - 1 && (
                                 <hr style={{ borderColor: tokens.colorNeutralStroke2 }} />
                             )}
                         </div>
@@ -69,6 +66,11 @@ const ModelCatalogAdditionalInfoModal = ({
             </DrawerBody>
         </OverlayDrawer>
     );
+};
+
+ModelCatalogAdditionalInfoModal.propTypes = {
+    onClose: proptypes.func.isRequired,
+    additionalInfo: proptypes.any,
 };
 
 export default ModelCatalogAdditionalInfoModal;

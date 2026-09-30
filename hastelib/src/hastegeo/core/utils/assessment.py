@@ -28,6 +28,7 @@ from numbers import Integral, Real
 from typing import Iterable, Optional
 
 from .gdal_security import harden_gdal
+from .prediction_results import source_building_ids
 
 # Harden GDAL/OGR drivers before any geopandas/fiona read of the
 # predictions/footprints GeoPackages (GDAL CVE compensating control —
@@ -58,6 +59,8 @@ class AssessmentInputs:
             source; None keeps raw score-based reporting and its defaults.
         is_edited: Explicit selected-source marker. Edited sources must
             provide effective_classes, even when the snapshot has zero rows.
+        unscored_ids: result rows with no observed pixels; excluded from
+            damage classification and accuracy, but retained in result totals.
     """
 
     damage_fractions: dict[str, float | None]
@@ -68,6 +71,7 @@ class AssessmentInputs:
     # A saved snapshot supplies a complete categorical map instead.
     effective_classes: dict[str, str] | None = None
     is_edited: bool = False
+    unscored_ids: set[str] = field(default_factory=set)
 
 
 # Critical z value for a two-sided 95% CI (norm.ppf(1 - 0.05/2)). Hard-coded
@@ -230,11 +234,19 @@ def compute_assessment_report(
                 effective[bid] = UNKNOWN
             else:
                 effective[bid] = DAMAGED if damage > threshold else NOT_DAMAGED
+        for bid in inputs.unscored_ids:
+            effective[bid] = UNKNOWN
 
     total = len(effective)
     total_known = sum(value != UNKNOWN for value in effective.values())
     total_unknown = total - total_known
     damaged_pred = sum(value == DAMAGED for value in effective.values())
+    unscored = {
+        bid
+        for bid, classification in effective.items()
+        if classification == UNKNOWN
+        and (bid in inputs.unscored_ids or damage_fractions.get(bid) is None)
+    }
 
     # Population N for the extrapolation: buildings whose area is large
     # enough that a human labeler could realistically have called them.
@@ -378,6 +390,7 @@ def compute_assessment_report(
             "total": total,
             "knownNonCloudy": total_known,
             "cloudy": total_unknown,
+            "unscored": len(unscored),
             "predictedDamaged": damaged_pred,
             "predictedDamagedPctOfKnown": _round(
                 _safe_div(damaged_pred, total_known) * 100, 2
@@ -427,7 +440,7 @@ def _building_areas_m2(footprints_path: str) -> dict[str, float | None]:
         float(value) if math.isfinite(value) else None
         for value in proj.geometry.area.tolist()
     ]
-    ids = gdf["id"].astype(str).tolist()
+    ids = source_building_ids(footprints_path)
     return dict(zip(ids, areas))
 
 
@@ -450,6 +463,8 @@ def build_assessment_inputs_from_gpkgs(
     Raw scores remain continuous, including binary-valued inference. An
     edited snapshot adds a complete effective-class map instead of replacing
     model scores with synthetic numbers that could be rethresholded.
+    Legacy catalog outputs may identify their rows with ``source_building_id``;
+    validate those explicit identities rather than assuming their order.
 
     ``labels`` is the validation app's ``{overture_id: {label, ...}}``
     map flattened to ``(id, label)`` pairs (or ``None`` if computing
@@ -468,8 +483,6 @@ def build_assessment_inputs_from_gpkgs(
         validate_prediction_class,
     )
 
-    overture_ids = read_footprint_ids(footprints_path)
-
     damage_fractions: dict[str, float | None] = {}
     unknown_fractions: dict[str, float | None] = {}
     edited_values: dict[str, str | None] = {}
@@ -478,6 +491,13 @@ def build_assessment_inputs_from_gpkgs(
         if not src.crs:
             raise ValueError("Prediction GeoPackage must declare a CRS.")
         fields = src.schema["properties"]
+        explicit_identity = "source_building_id" in fields
+        overture_ids = (
+            source_building_ids(footprints_path)
+            if explicit_identity
+            else read_footprint_ids(footprints_path)
+        )
+        known_ids = set(overture_ids)
         if "id" not in fields or damage_field not in fields:
             raise ValueError(
                 "Prediction GeoPackage is missing report columns."
@@ -503,8 +523,15 @@ def build_assessment_inputs_from_gpkgs(
                     "Invalid report source row ID."
                 )
             oid = overture_ids[int_id]
+            if explicit_identity:
+                oid = source_id(props["source_building_id"])
+                if oid not in known_ids or oid in damage_fractions:
+                    raise FootprintPredictionMismatchError(
+                        "Report source building identity is invalid."
+                    )
             if (
                 "overture_id" in fields
+                and (not explicit_identity or props["overture_id"] is not None)
                 and source_id(props["overture_id"]) != oid
             ):
                 raise FootprintPredictionMismatchError(
