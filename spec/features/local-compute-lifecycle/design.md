@@ -138,6 +138,15 @@ Batch replay checks existing tasks across the configured candidate jobs
 before capacity routing and accepts a same-job `TaskExists` race without
 changing the legacy return shape.
 
+An accepted Batch task that no longer exists, because it or its job was
+deleted, can never report an outcome. Reading its status raises a typed
+"task missing" error, and the queue turn ends the execution in one step. The
+workload and its execution record become Failed, with a completion time and
+one status line; a requested cancellation stays Cancelled. There is no
+retry, and no cleanup targets the missing task. Batch file reads and cleanup
+treat a missing task like a lost node, and cancelling one counts as stopped.
+The local runner already reports a missing receipt as a failure.
+
 Only workload-owned runtime fields are merged back. New attempts,
 cancellation intent, terminal outcomes, other workloads, and user edits
 survive stale messages and racing callbacks. Follow-on work is recorded

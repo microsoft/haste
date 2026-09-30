@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 import json
+from copy import deepcopy
 
 from ..config import Config
 from ..models.projects import (
@@ -12,6 +13,7 @@ from ..models.projects import (
     Project,
 )
 from ..models.training import ExperimentConfig
+from ..runners.base import TaskMissingError
 from ..runners.deferred_cleanup import DeferredCleanupRunner
 from ..runners.unified_runner import UnifiedRunner
 from ..utils.data import convert_json_to_geojson
@@ -90,7 +92,12 @@ class JobQueueProcessor:
                 self.config.get_status_types().PENDING.value,
                 self.config.get_status_types().IN_PROGRESS.value,
             } or self.repository.needs_cancellation(baseline, workload):
-                output, cleanup = self._process_current(workload, baseline)
+                try:
+                    output, cleanup = self._process_current(workload, baseline)
+                except TaskMissingError as error:
+                    output, cleanup = self._task_missing(
+                        workload, baseline, error
+                    )
                 renewal.check()
                 baseline = self._commit(workload, baseline, output, cleanup)
                 if baseline is None:
@@ -287,6 +294,42 @@ class JobQueueProcessor:
             TaskIdentity(job_id=job_id, task_id=task_id)
             for job_id, task_id in deferred.cleanup
         ]
+
+    def _task_missing(
+        self, workload: Workload, baseline: dict, error: TaskMissingError
+    ) -> tuple[JobRecord, list[TaskIdentity]]:
+        """End an execution whose compute task no longer exists.
+
+        Nothing can report its outcome any more, so retrying would never
+        finish. A requested cancellation stays cancelled; nothing is left to
+        clean up.
+        """
+        workflow = WORKFLOWS[workload]
+        statuses = self.config.get_status_types()
+        values = deepcopy(baseline)
+        status = (
+            statuses.CANCELLED.value
+            if values.get(workflow.status) == statuses.CANCELLED.value
+            else statuses.FAILED.value
+        )
+        values[workflow.status] = status
+        job = current_job(values, workload)
+        if job:
+            job["status"] = status
+            job["completedDate"] = MetadataUtils.get_timestamp()
+        values[workflow.message] = MetadataUtils.append_status_message(
+            values.get(workflow.message),
+            f"Compute task {job.get('taskId')} no longer exists; "
+            f"marked {status}",
+        )
+        self.logger.error(
+            "Compute task for %s %s no longer exists (%s); marking it %s",
+            workload.value,
+            values.get(workflow.key),
+            error,
+            status,
+        )
+        return workflow.model.model_validate(values), []
 
     def _cancel(
         self, workload: Workload, record: JobRecord

@@ -20,6 +20,7 @@ from hastegeo.core.processors.metadata import MetadataProcessor
 from hastegeo.core.processors.train import TrainPostprocessor
 from hastegeo.core.runners import local
 from hastegeo.core.runners.azure_batch import AzureBatchJob, AzureBatchRunner
+from hastegeo.core.runners.base import TaskMissingError
 from hastegeo.core.utils.metadata import MetadataUtils
 
 from hastelib.tests.core.processors.test_job_state import (
@@ -80,6 +81,51 @@ def prediction_locks(mocker) -> list[tuple[str, str, str]]:
         new=lock("commit"),
     )
     return calls
+
+
+def in_progress(state, workload: Workload) -> dict:
+    """Persist an accepted execution whose compute task is running."""
+    message = accepted(state, workload)
+    if workload == Workload.ZIP:
+        state.repository.processor(Workload.TRAINING, "project").save(
+            "model", {"projectId": "project", "modelId": "model"}
+        )
+    baseline = state.repository.claim(workload, message)
+    committed = state.repository.commit(
+        workload, baseline, output_for(baseline, workload, "InProgress"), []
+    )
+    state.repository.release(workload, committed)
+    return load(state, workload)
+
+
+def save_training_inputs(state) -> None:
+    for data_type, identifier, contents in [
+        (
+            state.config.get_metadata_types().IMAGELAYER.value,
+            "layer",
+            {
+                "projectId": "project",
+                "imageLayerId": "layer",
+            },
+        ),
+        (
+            state.config.get_metadata_types().LABELS.value,
+            "labels",
+            {
+                "projectId": "project",
+                "imageLayerId": "layer",
+                "labelprojectId": "labels",
+            },
+        ),
+        (
+            state.config.get_metadata_types().PROJECT.value,
+            "project",
+            {"projectId": "project"},
+        ),
+    ]:
+        MetadataProcessor(data_type, "project", config=state.config).save(
+            identifier, contents
+        )
 
 
 @pytest.mark.parametrize("workload", list(Workload))
@@ -350,33 +396,7 @@ def test_training_queue_and_local_lifecycle_publish_inflight_then_persisted_term
     mocker.patch.object(
         TrainPostprocessor, "_get_training_logs", return_value=(None, None)
     )
-    for data_type, identifier, contents in [
-        (
-            state.config.get_metadata_types().IMAGELAYER.value,
-            "layer",
-            {
-                "projectId": "project",
-                "imageLayerId": "layer",
-            },
-        ),
-        (
-            state.config.get_metadata_types().LABELS.value,
-            "labels",
-            {
-                "projectId": "project",
-                "imageLayerId": "layer",
-                "labelprojectId": "labels",
-            },
-        ),
-        (
-            state.config.get_metadata_types().PROJECT.value,
-            "project",
-            {"projectId": "project"},
-        ),
-    ]:
-        MetadataProcessor(data_type, "project", config=state.config).save(
-            identifier, contents
-        )
+    save_training_inputs(state)
     message = accepted(state)
     processor = JobQueueProcessor(state.config, repository=state.repository)
     mocker.patch.object(processor, "_runner", return_value=runner)
@@ -497,3 +517,85 @@ def test_completed_batch_task_keeps_its_outcome_when_cancelled_late(
         f"Task already reached {completed} before cancellation"
     )
     runner.cleanup_task.assert_called_once()
+
+
+@pytest.mark.parametrize("workload", list(Workload))
+def test_missing_compute_task_fails_the_job_in_one_turn(
+    state, mocker, workload: Workload
+) -> None:
+    message = in_progress(state, workload)
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    mocker.patch.object(
+        processor,
+        "_process_current",
+        side_effect=TaskMissingError("Batch task no longer exists"),
+    )
+    runner = mocker.patch.object(processor, "_runner")
+
+    processor.process(workload, message)
+
+    current = load(state, workload)
+    workflow = WORKFLOWS[workload]
+    job = current_job(current, workload)
+    assert current[workflow.status] == "Failed"
+    assert job["status"] == "Failed"
+    assert job["completedDate"]
+    assert "no longer exists" in current[workflow.message]
+    assert not state.repository.needs_processing(current, workload)
+    runner.assert_not_called()
+    state.queue.assert_not_called()
+
+
+def test_task_missing_during_a_late_cancellation_stays_cancelled(
+    state, mocker
+) -> None:
+    message = in_progress(state, Workload.TRAINING)
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    runner = mocker.Mock()
+    runner.cancel_task.return_value = False
+    runner.get_task_status.side_effect = TaskMissingError("gone")
+    mocker.patch.object(processor, "_runner", return_value=runner)
+    mocker.patch.object(processor, "_perform_action")
+
+    processor.process(Workload.TRAINING, message)
+
+    current = load(state)
+    assert current["status"] == "Cancelled"
+    assert current["trainingJob"]["status"] == "Cancelled"
+    assert current["trainingJob"]["completedDate"]
+    assert not state.repository.needs_processing(current, Workload.TRAINING)
+    runner.cleanup_task.assert_not_called()
+
+
+def test_training_whose_batch_task_was_deleted_fails_instead_of_retrying(
+    state, mocker
+) -> None:
+    cluster = mocker.Mock()
+    cluster.is_task_succeeded.side_effect = _batch_error(
+        "TaskNotFound", status_code=404
+    )
+    batch = AzureBatchRunner.__new__(AzureBatchRunner)
+    batch.batch_cluster = cluster
+    batch.config = state.config
+    batch.logger = mocker.Mock()
+    mocker.patch(
+        "hastegeo.core.processors.train.UnifiedRunner", return_value=batch
+    )
+    save_training_inputs(state)
+    message = in_progress(state, Workload.TRAINING)
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    cleanup = mocker.patch.object(processor, "_runner")
+
+    processor.process(Workload.TRAINING, message)
+
+    current = load(state)
+    assert current["status"] == "Failed"
+    assert current["trainingJob"]["status"] == "Failed"
+    assert current["trainingJob"]["completedDate"]
+    assert current["statusMessage"].count("no longer exists") == 1
+    assert not state.repository.needs_processing(current, Workload.TRAINING)
+    cleanup.assert_not_called()
+    state.queue.assert_not_called()

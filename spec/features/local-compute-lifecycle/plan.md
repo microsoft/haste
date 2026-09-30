@@ -20,6 +20,7 @@
 | Read each metadata type once per queue recovery run | `backend-dev` | Balanced review of #217 | US-007 | complete |
 | Report too-late Azure Batch cancellation so the provider outcome is kept | `backend-dev` | Balanced review of #218 | US-004 | complete |
 | Close the pending execution record when a submission is definitely rejected | `backend-dev` | Balanced review of #217 | US-006, US-007 | complete |
+| End an execution whose Batch task or job no longer exists | `backend-dev` | Cloud deployment review | US-004, US-006, US-007 | complete |
 
 ## Integration gates
 

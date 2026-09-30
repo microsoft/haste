@@ -61,7 +61,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from .base import BaseRunner
+from .base import BaseRunner, TaskMissingError
 
 # Node-scoped Batch file APIs (list/get/delete_from_task) are answered by the
 # compute node that ran the task, so they fail once that node goes away. On
@@ -74,6 +74,8 @@ from .base import BaseRunner
 # that is gone never will, so those are surfaced as a non-fatal "unavailable".
 TRANSIENT_NODE_ERROR_CODES = frozenset({"NodeNotReady", "NodeStateInvalid"})
 TERMINAL_NODE_ERROR_CODES = frozenset({"NodeNotFound"})
+# A deleted task, or a deleted job holding it, will never report an outcome.
+MISSING_TASK_ERROR_CODES = frozenset({"TaskNotFound", "JobNotFound"})
 
 
 class AzureBatchRunner(BaseRunner):
@@ -121,6 +123,16 @@ class AzureBatchRunner(BaseRunner):
             # already uploaded to blob on completion, so callers can recover
             # from there.
             cause = unwrap_retry_error(e)
+            if is_missing_task_error(cause):
+                # get_task_status reports the missing task itself.
+                self.logger.warning(
+                    "Task %s (job %s) no longer exists (%s); cannot read %s.",
+                    task_id,
+                    job_id,
+                    batch_error_code(cause),
+                    filename,
+                )
+                return None
             if not is_node_unavailable_error(cause):
                 raise
             self.logger.warning(
@@ -143,13 +155,21 @@ class AzureBatchRunner(BaseRunner):
         return content
 
     def get_task_status(self, job_id, task_id):
-        if self.batch_cluster.is_task_succeeded(job_id, task_id):
-            return self.config.get_status_types().COMPLETED.value
-        elif self.batch_cluster.is_task_failed(job_id, task_id):
-            return self.config.get_status_types().FAILED.value
-        else:
-            # Task state is `preparing` or `running`
-            return self.config.get_status_types().IN_PROGRESS.value
+        try:
+            if self.batch_cluster.is_task_succeeded(job_id, task_id):
+                return self.config.get_status_types().COMPLETED.value
+            if self.batch_cluster.is_task_failed(job_id, task_id):
+                return self.config.get_status_types().FAILED.value
+        except (BatchErrorException, RetryError) as error:
+            cause = unwrap_retry_error(error)
+            if is_missing_task_error(cause):
+                raise TaskMissingError(
+                    f"Batch task {task_id} in job {job_id} no longer exists "
+                    f"({batch_error_code(cause)})"
+                ) from cause
+            raise
+        # Task state is `preparing` or `running`
+        return self.config.get_status_types().IN_PROGRESS.value
 
     def add_task(
         self,
@@ -311,17 +331,27 @@ class AzureBatchRunner(BaseRunner):
         except (BatchErrorException, RetryError) as e:
             # Deleting the working directory of a node that no longer exists is
             # already a no-op, and the task's `retention_time` reclaims the disk
-            # anyway — never fail the workload over it.
+            # anyway — never fail the workload over it. A deleted task left no
+            # working directory to delete.
             cause = unwrap_retry_error(e)
-            if not is_node_unavailable_error(cause):
+            if is_missing_task_error(cause):
+                self.logger.warning(
+                    "Task %s (job %s) no longer exists (%s); "
+                    "nothing to clean up.",
+                    task_id,
+                    job_id,
+                    batch_error_code(cause),
+                )
+            elif not is_node_unavailable_error(cause):
                 raise
-            self.logger.warning(
-                "Node serving task %s (job %s) is unavailable (%s); "
-                "skipping working-directory cleanup.",
-                task_id,
-                job_id,
-                batch_error_code(cause),
-            )
+            else:
+                self.logger.warning(
+                    "Node serving task %s (job %s) is unavailable (%s); "
+                    "skipping working-directory cleanup.",
+                    task_id,
+                    job_id,
+                    batch_error_code(cause),
+                )
         self.batch_cluster.disable_job(job_id)
 
     def cancel_task(self, job_id, task_id) -> bool:
@@ -363,6 +393,11 @@ def is_node_unavailable_error(exception):
     return is_transient_node_error(exception) or is_terminal_node_error(
         exception
     )
+
+
+def is_missing_task_error(exception):
+    """True when the task, or the job holding it, has been deleted."""
+    return batch_error_code(exception) in MISSING_TASK_ERROR_CODES
 
 
 def unwrap_retry_error(exception):
@@ -993,9 +1028,10 @@ class AzureBatchJob:
         try:
             self.batch_client.task.terminate(job_id, task_id)
         except BatchErrorException as e:
-            if e.error.code == "TaskNotFound":
+            if e.error.code in MISSING_TASK_ERROR_CODES:
                 self.logger.error(
-                    f"Task {task_id} not found. It may have already been completed or deleted."
+                    f"Task {task_id} or its job {job_id} not found. It may "
+                    "have already been completed or deleted."
                 )
                 return True
             if e.error.code == "TaskCompleted":

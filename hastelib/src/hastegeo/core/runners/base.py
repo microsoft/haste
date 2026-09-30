@@ -6,6 +6,14 @@ from abc import ABC, abstractmethod
 from hastegeo.core.config import Config
 
 
+class TaskMissingError(LookupError):
+    """An accepted task, or the job holding it, no longer exists.
+
+    Nothing can report the task's outcome any more, so the workload ends
+    instead of being retried.
+    """
+
+
 class BaseRunner(ABC):
     def __init__(self, config: Config = None):
         self.config = config or Config()
@@ -18,6 +26,11 @@ class BaseRunner(ABC):
 
     @abstractmethod
     def get_task_status(self, job_id, task_id):
+        """Return the task's status.
+
+        Raise ``TaskMissingError`` when an accepted task, or its job, no
+        longer exists.
+        """
         pass
 
     @abstractmethod
