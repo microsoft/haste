@@ -3,6 +3,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from threading import Event
 from types import SimpleNamespace
 
@@ -21,7 +22,11 @@ from hastegeo.core.processors.train import TrainPostprocessor
 from hastegeo.core.runners import local
 from hastegeo.core.runners.azure_batch import AzureBatchJob, AzureBatchRunner
 from hastegeo.core.runners.base import TaskMissingError
-from hastegeo.core.utils.metadata import MetadataUtils
+from hastegeo.core.utils.metadata import (
+    MAX_STATUS_MESSAGE_BYTES,
+    STATUS_HISTORY_TRIMMED,
+    MetadataUtils,
+)
 
 from hastelib.tests.core.processors.test_job_state import (
     accepted,
@@ -419,6 +424,133 @@ def test_cancel_failure_keeps_the_intent_and_retries_actual_stop(
     assert load(state)["trainingJob"]["status"] != "Cancelled"
     state.now.value += 31
     assert state.repository.reconcile_queues() == 1
+
+
+@pytest.mark.parametrize("stopped", [True, False])
+def test_training_cancellation_commits_history_before_summary_and_cleanup(
+    state, mocker, stopped: bool
+) -> None:
+    message = accepted(state)
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    runner = mocker.Mock()
+    runner.cancel_task.return_value = stopped
+    runner.get_task_status.return_value = "Processed"
+    mocker.patch.object(processor, "_runner", return_value=runner)
+    mocker.patch.object(processor, "_perform_action")
+    summary = (
+        "Task cancelled"
+        if stopped
+        else "Task already reached Processed before cancellation"
+    )
+
+    def read_output(
+        job_id: str,
+        task_id: str,
+        filename: str,
+        as_chunk: bool = False,
+    ) -> str:
+        runner.cancel_task.assert_called_once()
+        runner.cleanup_task.assert_not_called()
+        assert filename == "workflow_progress.log"
+        return (
+            "2026-01-01T00:00:00+00:00|Starting create_masks.py\n"
+            "2026-01-01T00:01:00+00:00|Completed create_masks.py\n"
+        )
+
+    def cleanup(job_id: str, task_id: str) -> None:
+        persisted = load(state)
+        assert persisted["status"] == "Cancelled"
+        assert persisted["trainingJob"]["status"] == (
+            "Cancelled" if stopped else "Processed"
+        )
+        history = persisted["statusMessage"]
+        assert (
+            history.index("Starting create_masks.py")
+            < history.index("Completed create_masks.py")
+            < history.index(summary)
+        )
+
+    runner.get_filecontent_from_task.side_effect = read_output
+    runner.cleanup_task.side_effect = cleanup
+
+    processor.process(Workload.TRAINING, message)
+
+    runner.get_filecontent_from_task.assert_called_once_with(
+        job_id=message["trainingJob"]["jobId"],
+        task_id=message["trainingJob"]["taskId"],
+        filename="workflow_progress.log",
+        as_chunk=False,
+    )
+    runner.cleanup_task.assert_called_once_with(
+        message["trainingJob"]["jobId"], message["trainingJob"]["taskId"]
+    )
+    assert state.repository.turn(load(state), Workload.TRAINING).cleanup == []
+
+
+def test_training_cancellation_history_stays_within_the_status_budget(
+    state, mocker
+) -> None:
+    message = accepted(state)
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    runner = mocker.Mock()
+    runner.cancel_task.return_value = True
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    runner.get_filecontent_from_task.return_value = "".join(
+        f"{(start + timedelta(seconds=index)).isoformat()}|"
+        f"Completed workflow stage {index:04d}\n"
+        for index in range(400)
+    )
+    mocker.patch.object(processor, "_runner", return_value=runner)
+    mocker.patch.object(processor, "_perform_action")
+
+    processor.process(Workload.TRAINING, message)
+
+    history = load(state)["statusMessage"]
+    assert len(history.encode("utf-8")) <= MAX_STATUS_MESSAGE_BYTES
+    assert MetadataUtils.trim_status_message(history) == history
+    assert STATUS_HISTORY_TRIMMED in history
+    assert "Completed workflow stage 0000" not in history
+    assert history.index("Completed workflow stage 0399") < history.index(
+        "Task cancelled"
+    )
+    assert history.endswith("Task cancelled")
+
+
+@pytest.mark.parametrize(
+    "output", [RuntimeError("private provider detail"), b"not text"]
+)
+def test_unavailable_cancellation_history_preserves_terminal_commit(
+    state, mocker, output: RuntimeError | bytes
+) -> None:
+    message = accepted(state)
+    state.repository.begin(
+        Workload.TRAINING, Model.model_validate(message), cancel=True
+    )
+    processor = JobQueueProcessor(state.config, repository=state.repository)
+    processor.logger = mocker.Mock()
+    runner = mocker.Mock()
+    if isinstance(output, Exception):
+        runner.get_filecontent_from_task.side_effect = output
+    else:
+        runner.get_filecontent_from_task.return_value = output
+    mocker.patch.object(processor, "_runner", return_value=runner)
+    mocker.patch.object(processor, "_perform_action")
+
+    processor.process(Workload.TRAINING, message)
+
+    persisted = load(state)
+    assert persisted["status"] == "Cancelled"
+    assert persisted["trainingJob"]["status"] == "Cancelled"
+    assert "Task cancelled" in persisted["statusMessage"]
+    assert "private provider detail" not in persisted["statusMessage"]
+    processor.logger.warning.assert_called_once()
+    runner.cleanup_task.assert_called_once()
 
 
 def test_training_queue_and_local_lifecycle_publish_inflight_then_persisted_terminal_state(
