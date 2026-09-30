@@ -250,15 +250,19 @@ async def ArtifactsZipPoisonQueueHandler(msg: func.QueueMessage) -> None:
     )
 
 
-@app.function_name(name="ReconcileLocalTasks")
-@app.timer_trigger(
-    arg_name="timer",
-    schedule="*/15 * * * * *",
-    run_on_startup=False,
-    use_monitor=True,
-)
-async def ReconcileLocalTasks(timer: func.TimerRequest) -> None:
-    await asyncio.to_thread(reconcile_local_tasks, config)
+if config.runner_type == "local":
+    # Only local runs have receipts to reconcile; Batch environments get no
+    # timer that fires every 15 seconds to do nothing.
+
+    @app.function_name(name="ReconcileLocalTasks")
+    @app.timer_trigger(
+        arg_name="timer",
+        schedule="*/15 * * * * *",
+        run_on_startup=False,
+        use_monitor=True,
+    )
+    async def ReconcileLocalTasks(timer: func.TimerRequest) -> None:
+        await asyncio.to_thread(reconcile_local_tasks, config)
 
 
 @app.function_name(name="ReconcileJobQueues")

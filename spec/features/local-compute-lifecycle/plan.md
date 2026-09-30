@@ -25,6 +25,7 @@
 | Leave records written before the upgrade to their own queue messages | `backend-dev` | Cloud deployment review | US-007 | complete |
 | Ignore a runtime turn left for an execution an older build replaced | `backend-dev` | Cloud deployment review | US-006, US-007 | complete |
 | Scan for lost queue messages every 5 minutes instead of every 30 seconds | `backend-dev` | Cloud deployment review | US-007 | complete |
+| Register the local receipt timer only for local runs | `backend-dev` | Cloud deployment review | US-007 | complete |
 
 ## Integration gates
 

@@ -193,8 +193,10 @@ configured `POSTGRES_PORT`, credentials, and required SSL. Each operation
 keeps its existing connection/cursor transaction boundary.
 
 Two independent Function timers drive recovery. `ReconcileLocalTasks`
-runs every 15 seconds, acts only for `local`, and reconciles receipts,
-including queued work and interrupted staging/uploads. `ReconcileJobQueues`
+runs every 15 seconds and reconciles receipts, including queued work and
+interrupted staging/uploads. It is registered only when `RUNNER_TYPE` is
+`local`, so Batch environments get no timer that fires to do nothing.
+`ReconcileJobQueues`
 runs every 5 minutes for the currently configured legacy runner and
 re-enqueues current pending/running/cancelling records and unfinished
 follow-ons. This second path closes gaps before receipt creation and after
