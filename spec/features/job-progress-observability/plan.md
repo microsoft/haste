@@ -49,12 +49,12 @@
 ## Current evidence and baseline limitations
 
 Rebased onto the current lifecycle prerequisite and main, the full core, API
-and queue suite passed **1,305 tests** on Windows with HTTP blocked, with 34
+and queue suite passed **1,344 tests** on Windows with HTTP blocked, with 34
 skips (mostly POSIX-only descriptor cases) and the same 43 failures as the
 lifecycle prerequisite. Each replayed commit showed no new failures when the
 branch was first rebased; later rebases onto the prerequisite's review fixes
 replayed the same patches unchanged. With the
-lifecycle plan's verification-only POSIX emulation it passed **1,345 tests**,
+lifecycle plan's verification-only POSIX emulation it passed **1,384 tests**,
 again with only the prerequisite's three failures. Workflow-streaming tests
 pass, and the prediction-workflow tests match main: 18 pass and four fail on
 this host's mismatched PROJ database. All 47 UI unit-test files (356 cases,
