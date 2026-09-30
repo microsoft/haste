@@ -7,6 +7,7 @@
 - [Persistence and cancellation](#persistence-and-cancellation)
 - [Metadata and queue recovery](#metadata-and-queue-recovery)
 - [Configuration and rollout](#configuration-and-rollout)
+- [Effect on cloud (Batch) environments](#effect-on-cloud-batch-environments)
 - [Validation and integration seams](#validation-and-integration-seams)
 
 ## Contract and authority
@@ -250,6 +251,39 @@ To change the host limit, drain **all** local work, stop its controllers,
 remove only the unstarted `haste-local-capacity` policy container, and restart
 every controller with the same `HASTE_LOCAL_MAX_ACTIVE_TASKS` value.
 Do not remove the policy while any controller can admit work.
+
+## Effect on cloud (Batch) environments
+
+Queue processing is shared by local and Batch runs, so this change also
+applies to Batch deployments. It adds no Azure resources, app settings or
+pipeline changes, and it doesn't change Batch pools, images, task commands
+or output paths.
+
+- **Submission:** the API saves each submission, with its execution
+  identity, before queueing it. A retried submission reuses that identity,
+  and Batch replay finds an existing task instead of adding a duplicate.
+- **Processing:** a queue message only wakes a consumer, which reloads the
+  stored record and claims a fenced turn. Updates from an older attempt, a
+  late poll or a finished job are discarded. Task files are cleaned only
+  after the result is saved, and follow-on inference and zip requests
+  survive failed sends. Footprint tiling, prediction editing, the imagery
+  download cap and bounded status history run through the same path.
+- **Recovery:** the queue app gains poison consumers for the training,
+  embedding, inference and zip queues, and `ReconcileJobQueues`, which runs
+  every 5 minutes and reads every job record in the environment.
+  `ReconcileLocalTasks` isn't registered for Batch.
+- **Failure handling:**
+  - A job whose Batch task or job was deleted ends Failed.
+  - A turn that keeps failing backs off to at most an hour, with one status
+    line.
+  - Cancelling a task that had already finished keeps its outcome.
+- **Existing records:** records written before the deploy are driven only by
+  their own queue messages, as before. Stuck records are not revived; old
+  poison messages are ignored, and a poisoned image layer fails as before.
+- **Rollout:** deploying restarts the function apps. In-flight Batch jobs
+  started by the old build are adopted through their next queue message.
+  Roll back only after the queues drain. A redeploy after a rollback does
+  not fence jobs the older build started.
 
 ## Validation and integration seams
 

@@ -18,6 +18,11 @@ This is an independent runtime change based on `main`. CI and publishing
 maintenance are not implementation dependencies; they can be reviewed and
 merged separately from the job-state fixes.
 
+The job-state and queue changes are shared with Azure Batch deployments,
+which get the same fencing, recovery and failure handling without new
+resources or settings. See
+[Effect on cloud (Batch) environments](design.md#effect-on-cloud-batch-environments).
+
 Local output permission preparation is included: different queue/worker UIDs
 must not prevent persistence-gated cleanup. Existing Batch method shapes
 are retained; no AML SDK or backend-neutral compute types are required.
