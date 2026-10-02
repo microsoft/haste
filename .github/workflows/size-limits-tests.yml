@@ -6,6 +6,8 @@ on:
       - ".github/scripts/resolve_size_limits.py"
       - ".github/scripts/update_size_limits.sh"
       - ".github/scripts/deploy_apps.sh"
+      # Decides the TiTiler network baseline that deploy_apps.sh enforces.
+      - ".github/scripts/function_network_baseline.py"
       - ".github/scripts/tests/**"
       - ".github/workflows/*size-limit*.yml"
       - ".github/workflows/deploy-apps.yml"

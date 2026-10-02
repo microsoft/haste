@@ -24,8 +24,8 @@ STATIC_APP_DOMAIN=${13:-FIXME}
 EMAIL_CONNECTION_STRING=${14}
 COMPONENT=${15:-all}
 
+PY_BIN=${PYTHON:-$(command -v python3 || command -v python)}
 if [[ "$COMPONENT" == "all" || "$COMPONENT" == "funcapi" || "$COMPONENT" == "funcqueue" ]]; then
-    PY_BIN=${PYTHON:-$(command -v python3 || command -v python)}
     RESOLVED_LIMITS=$("$PY_BIN" "$(dirname "$0")/resolve_size_limits.py")
     while IFS='=' read -r key value; do
         export "$key=$value"
@@ -83,6 +83,13 @@ PUBLISH_BLOB_CONTAINER="${PUBLISH_BLOB_CONTAINER:-}"
 PUBLISH_EXPLORER_RENDER_ENABLED="${PUBLISH_EXPLORER_RENDER_ENABLED:-true}"
 MAPS_ACCOUNT="${RESOURCE_PREFIX}haste${RANDOM_SUFFIX}maps"
 API_MANAGEMENT="${RESOURCE_PREFIX}-haste-${RANDOM_SUFFIX}-apim"
+# A function app whose main or SCM site denies traffic by default gets a
+# temporary allow rule for this runner while `func` publishes it, removed right
+# after. The shared prefix also marks rules that a failed run left behind.
+DEPLOY_RULE_PREFIX="haste-ci-"
+DEPLOY_RULE_NAME="${DEPLOY_RULE_PREFIX}${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}"
+DEPLOY_RUNNER_IP=""
+DEPLOY_ACCESS_APPS=()
 FIXED_TAGS="project=haste created_by=deploy_apps"
 DYNAMIC_TAGS="env=${ENVIRONMENT} deployed_version=${APP_TAG}"
 EMAIL_SENDER="DoNotReply@notifications.${STATIC_APP_DOMAIN}"
@@ -95,14 +102,145 @@ AZ_FUNCTIONAPP_TAGS=$(for tag in $FIXED_TAGS $DYNAMIC_TAGS; do echo -n "tags.${t
 AZ_RESOURCE_TAGS="${FIXED_TAGS} ${DYNAMIC_TAGS}"
 
 
+network_baseline() {
+    "$PY_BIN" "$(dirname "$0")/function_network_baseline.py" "$@"
+}
+
+function_config() {
+    az functionapp config show --name "$1" --resource-group "$RESOURCE_GROUP" --output json
+}
+
+scm_site_flag() {
+    if [ "$1" = "scm" ]; then echo true; else echo false; fi
+}
+
+# Remove every temporary deploy rule from both sites of an app: this run's own
+# rule once publishing finishes, and any rule a failed run left behind.
+remove_deploy_access() {
+    local FUNCTION_NAME=$1
+    local RULES SITE RULE FAILED=0
+    RULES=$(function_config "$FUNCTION_NAME" | network_baseline rules --prefix "$DEPLOY_RULE_PREFIX") || return 1
+    while IFS=$'\t' read -r SITE RULE; do
+        [ -n "$RULE" ] || continue
+        az functionapp config access-restriction remove \
+            --name "$FUNCTION_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --rule-name "$RULE" \
+            --scm-site "$(scm_site_flag "$SITE")" \
+            --output none || FAILED=1
+    done <<< "$RULES"
+    return "$FAILED"
+}
+
+# Sites that allow by default are left alone: adding an allow rule there would
+# switch them to deny-by-default.
+open_deploy_access() {
+    local FUNCTION_NAME=$1
+    local SITES SITE
+    SITES=$(function_config "$FUNCTION_NAME" | network_baseline deny-sites)
+    if [ -z "$SITES" ]; then
+        return 0
+    fi
+    if [ -z "$DEPLOY_RUNNER_IP" ]; then
+        DEPLOY_RUNNER_IP=$(curl --fail --silent --show-error --max-time 30 https://api.ipify.org)
+        network_baseline public-ipv4 "$DEPLOY_RUNNER_IP" || {
+            echo "ERROR: Could not resolve this runner's public IPv4 address." >&2
+            return 1
+        }
+    fi
+    DEPLOY_ACCESS_APPS+=("$FUNCTION_NAME")
+    remove_deploy_access "$FUNCTION_NAME"
+    for SITE in $SITES; do
+        echo "Allowing this runner on the $SITE site of $FUNCTION_NAME while it publishes..."
+        az functionapp config access-restriction add \
+            --name "$FUNCTION_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --rule-name "$DEPLOY_RULE_NAME" \
+            --action Allow \
+            --ip-address "${DEPLOY_RUNNER_IP}/32" \
+            --priority 90 \
+            --scm-site "$(scm_site_flag "$SITE")" \
+            --output none
+    done
+}
+
+close_deploy_access() {
+    if [ "${#DEPLOY_ACCESS_APPS[@]}" -eq 0 ]; then
+        return 0
+    fi
+    remove_deploy_access "$1"
+    DEPLOY_ACCESS_APPS=()
+}
+
+# Runs on every exit, so a failed publish never leaves its runner rule behind.
+cleanup_deploy_access() {
+    local FUNCTION_NAME
+    for FUNCTION_NAME in "${DEPLOY_ACCESS_APPS[@]}"; do
+        remove_deploy_access "$FUNCTION_NAME" || \
+            echo "ERROR: Could not remove the temporary deploy rules from '$FUNCTION_NAME'. Remove its access rules named ${DEPLOY_RULE_PREFIX}* by hand." >&2
+    done
+}
+
+# Keep an app reachable only from the APIM subnet: both sites deny by default,
+# the main site allows only that subnet, and SCM never inherits main-site rules.
+# Any other allow rule fails the deployment instead of being deleted, so a
+# person decides what it was for.
+ensure_network_baseline() {
+    local FUNCTION_NAME=$1
+    local SUBNET_ID CONFIG SITE
+    echo "Enforcing the inbound network baseline on $FUNCTION_NAME..."
+    SUBNET_ID=$(az apim show \
+        --name "$API_MANAGEMENT" \
+        --resource-group "$RESOURCE_GROUP" \
+        --query "virtualNetworkConfiguration.subnetResourceId" \
+        --output tsv)
+    if [ -z "$SUBNET_ID" ]; then
+        echo "ERROR: APIM '$API_MANAGEMENT' has no VNet integration subnet, so '$FUNCTION_NAME' cannot be limited to it." >&2
+        return 1
+    fi
+    remove_deploy_access "$FUNCTION_NAME"
+    CONFIG=$(function_config "$FUNCTION_NAME")
+    if ! printf '%s' "$CONFIG" | network_baseline has-subnet-rule --subnet "$SUBNET_ID"; then
+        az functionapp config access-restriction add \
+            --name "$FUNCTION_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --rule-name "AllowSubnet-1" \
+            --action Allow \
+            --subnet "$SUBNET_ID" \
+            --priority 100 \
+            --description "Managed by HASTE security baseline" \
+            --output none
+    fi
+    az functionapp config access-restriction set \
+        --name "$FUNCTION_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --default-action Deny \
+        --scm-default-action Deny \
+        --use-same-restrictions-for-scm-site false \
+        --output none
+    CONFIG=$(function_config "$FUNCTION_NAME")
+    SITE=$(az functionapp show --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --output json)
+    if ! printf '{"config": %s, "site": %s}' "$CONFIG" "$SITE" \
+        | network_baseline verify --subnet "$SUBNET_ID" >&2; then
+        echo "ERROR: '$FUNCTION_NAME' does not meet the inbound network baseline (see above); fix it before deploying." >&2
+        return 1
+    fi
+}
+
+
 deploy_function() {
     local FUNCTION_NAME=$1
     local FUNCTION_DIR=$2
     local SET_APPSETTINGS=${3:-true}
+    local NETWORK_BASELINE=${4:-false}
 
     echo "+--------------------------------------------------+"
     echo "Deploying function app: $FUNCTION_NAME"
     echo "+--------------------------------------------------+"
+
+    if [ "$NETWORK_BASELINE" = "true" ]; then
+        ensure_network_baseline "$FUNCTION_NAME"
+    fi
 
     # Unique, stable host id per app/slot (<=32 lowercase alnum/hyphen) so the
     # publishing reconciler TimerTrigger's host-scoped Singleton lock does not
@@ -204,6 +342,7 @@ deploy_function() {
     fi
 
     echo "Deploying function code..."
+    open_deploy_access "$FUNCTION_NAME"
     # A non-zero exit can represent a package/build/deployment failure. Do not
     # convert it into a success-shaped warning: set -e propagates the failure.
     (
@@ -213,6 +352,7 @@ deploy_function() {
             --build remote \
             --verbose
     )
+    close_deploy_access "$FUNCTION_NAME"
     echo "Function deployment completed successfully."
 
     # Record the wheel this app actually installed. Nothing else on the app
@@ -421,11 +561,14 @@ EOF
 
 echo "Deploying component: $COMPONENT"
 
+trap cleanup_deploy_access EXIT
+
+# TiTiler takes the network baseline (fourth argument): only APIM may call it.
 case "$COMPONENT" in
     all)
         deploy_function "$FUNCTION_API" "$(dirname "$0")/../../api/hastefuncapi" true
         sync_apim_operations "$FUNCTION_API"
-        deploy_function "$FUNCTION_TITILER_API" "$(dirname "$0")/../../api/titilerfuncapi" false
+        deploy_function "$FUNCTION_TITILER_API" "$(dirname "$0")/../../api/titilerfuncapi" false true
         deploy_function "$FUNCTION_QUEUE_API" "$(dirname "$0")/../../api/hastefuncqueues" true
         deploy_static_web_app
         ;;
@@ -437,7 +580,7 @@ case "$COMPONENT" in
         deploy_function "$FUNCTION_QUEUE_API" "$(dirname "$0")/../../api/hastefuncqueues" true
         ;;
     titiler)
-        deploy_function "$FUNCTION_TITILER_API" "$(dirname "$0")/../../api/titilerfuncapi" false
+        deploy_function "$FUNCTION_TITILER_API" "$(dirname "$0")/../../api/titilerfuncapi" false true
         ;;
     swa)
         deploy_static_web_app
