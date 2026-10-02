@@ -54,7 +54,10 @@ public IPv4 address, named `haste-ci-*`, and remove it afterwards:
   different egress address than the public internet, set
   `HASTE_DEPLOY_SOURCE_IP` to that address first.
 - GitHub Actions (`deploy-apps.yml`): `deploy_apps.sh` adds the rule only for
-  the publish step and removes it when the run exits, including on failure.
+  the publish step and removes it right after, retrying transient failures.
+  Anything it cannot remove yet is retried when the run ends, including after a
+  failed publish. If the rule is still there at that point, the run fails and
+  names it.
   Before each TiTiler deploy it also re-applies the network baseline and stops if
   the app has an allow rule it does not expect.
 

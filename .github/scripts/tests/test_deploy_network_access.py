@@ -30,7 +30,8 @@ func() {
     return "${FUNC_EXIT:-0}"
 }
 curl() { printf '%s' "$RUNNER_IP"; }
-export -f az func curl
+sleep() { :; }
+export -f az func curl sleep
 bash "$SCRIPT" "$@"
 """
 
@@ -194,6 +195,7 @@ class TestDeployNetworkAccess(unittest.TestCase):
         defaults: dict[str, str | None] | None = None,
         component: str = "titiler",
         apim_subnet: str = SUBNET,
+        fail_removals: int = 0,
         **environment: str,
     ) -> tuple[subprocess.CompletedProcess[str], list[str], dict]:
         state = {
@@ -202,6 +204,7 @@ class TestDeployNetworkAccess(unittest.TestCase):
             "useMain": False,
             "defaults": defaults or {"main": None, "scm": None},
             "rules": rules or {"main": [], "scm": []},
+            "failRemovals": fail_removals,
         }
         with tempfile.TemporaryDirectory() as directory:
             state_file = Path(directory) / "state.json"
@@ -238,6 +241,12 @@ class TestDeployNetworkAccess(unittest.TestCase):
 
     def publish_line(self, calls: list[str]) -> str:
         return next(call for call in calls if call.startswith("func "))
+
+    @staticmethod
+    def rule_names(state: dict) -> list[str]:
+        return [
+            rule["name"] for rules in state["rules"].values() for rule in rules
+        ]
 
     def test_open_titiler_is_contained_before_it_is_published(self) -> None:
         result, calls, final = self.run_deploy()
@@ -276,20 +285,54 @@ class TestDeployNetworkAccess(unittest.TestCase):
         self.assertEqual(len(runner_rules), 2)
         for call in runner_rules:
             self.assertIn(f"--ip-address {RUNNER_IP}/32", call)
-        names = [
-            rule["name"] for rules in final["rules"].values() for rule in rules
-        ]
-        self.assertEqual(names, ["AllowSubnet-1"])
+        self.assertEqual(self.rule_names(final), ["AllowSubnet-1"])
 
     def test_failed_publish_still_removes_the_runner_rule(self) -> None:
         result, calls, final = self.run_deploy(FUNC_EXIT="1")
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("scm:haste-ci-77-2", self.publish_line(calls))
-        names = [
-            rule["name"] for rules in final["rules"].values() for rule in rules
-        ]
-        self.assertEqual(names, ["AllowSubnet-1"])
+        self.assertEqual(self.rule_names(final), ["AllowSubnet-1"])
+
+    def test_transient_cleanup_failure_is_retried(self) -> None:
+        result, _, final = self.run_deploy(fail_removals=1)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("WARNING", result.stderr)
+        self.assertEqual(self.rule_names(final), ["AllowSubnet-1"])
+
+    def test_cleanup_failure_after_publish_is_retried_at_exit(self) -> None:
+        # Six failures use up the three attempts right after publishing (two
+        # rules each); the exit handler's first attempt then succeeds.
+        result, calls, final = self.run_deploy(fail_removals=6)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("trying again when the deployment ends", result.stderr)
+        self.assertNotIn("ERROR", result.stderr)
+        tagged = next(
+            index
+            for index, call in enumerate(calls)
+            if call.startswith("functionapp update")
+        )
+        last_removal = max(
+            index
+            for index, call in enumerate(calls)
+            if "access-restriction remove" in call
+        )
+        self.assertLess(tagged, last_removal)
+        self.assertEqual(self.rule_names(final), ["AllowSubnet-1"])
+
+    def test_runner_rule_that_cannot_be_removed_fails_the_run(self) -> None:
+        result, calls, final = self.run_deploy(fail_removals=99)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Could not remove the temporary deploy rules", result.stderr
+        )
+        self.assertTrue(
+            any(call.startswith("functionapp update") for call in calls)
+        )
+        self.assertIn("haste-ci-77-2", self.rule_names(final))
 
     def test_rules_left_by_an_earlier_run_are_removed(self) -> None:
         stale = {
@@ -305,10 +348,7 @@ class TestDeployNetworkAccess(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("haste-ci-12-1", self.publish_line(calls))
-        names = [
-            rule["name"] for rules in final["rules"].values() for rule in rules
-        ]
-        self.assertEqual(names, ["AllowSubnet-1"])
+        self.assertEqual(self.rule_names(final), ["AllowSubnet-1"])
 
     def test_foreign_allow_rule_stops_the_deploy_and_is_kept(self) -> None:
         foreign = {

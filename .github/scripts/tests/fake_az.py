@@ -2,7 +2,8 @@
 
 The deploy script under test calls it through a bash ``az`` function. Every
 call is appended to $CALL_LOG; the app state lives in $FAKE_AZ_STATE as
-``{"apimSubnet", "httpsOnly", "defaults": {...}, "rules": {...}}``.
+``{"apimSubnet", "httpsOnly", "defaults": {...}, "rules": {...}}``. An
+optional ``failRemovals`` count makes that many rule removals fail first.
 """
 
 import json
@@ -89,6 +90,11 @@ def main(args: list[str]) -> int:
             rule["ipAddress"] = _option(args, "--ip-address")
         state["rules"][_site(args)].append(rule)
     elif command == "functionapp config access-restriction remove":
+        if state.get("failRemovals", 0) > 0:
+            state["failRemovals"] -= 1
+            _save(path, state)
+            print("Simulated transient failure", file=sys.stderr)
+            return 1
         site, name = _site(args), _option(args, "--rule-name")
         kept = [rule for rule in state["rules"][site] if rule["name"] != name]
         if len(kept) == len(state["rules"][site]):
@@ -103,9 +109,13 @@ def main(args: list[str]) -> int:
         flag = "--use-same-restrictions-for-scm-site"
         if flag in args:
             state["useMain"] = _option(args, flag) == "true"
+    _save(path, state)
+    return 0
+
+
+def _save(path: str, state: dict) -> None:
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(state, handle)
-    return 0
 
 
 if __name__ == "__main__":

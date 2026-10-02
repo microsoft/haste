@@ -148,7 +148,9 @@ open_deploy_access() {
             return 1
         }
     fi
-    DEPLOY_ACCESS_APPS+=("$FUNCTION_NAME")
+    if ! is_deploy_access_app "$FUNCTION_NAME"; then
+        DEPLOY_ACCESS_APPS+=("$FUNCTION_NAME")
+    fi
     remove_deploy_access "$FUNCTION_NAME"
     for SITE in $SITES; do
         echo "Allowing this runner on the $SITE site of $FUNCTION_NAME while it publishes..."
@@ -164,21 +166,70 @@ open_deploy_access() {
     done
 }
 
+is_deploy_access_app() {
+    local APP
+    for APP in "${DEPLOY_ACCESS_APPS[@]}"; do
+        if [ "$APP" = "$1" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+forget_deploy_access_app() {
+    local APP
+    local KEPT=()
+    for APP in "${DEPLOY_ACCESS_APPS[@]}"; do
+        if [ "$APP" != "$1" ]; then
+            KEPT+=("$APP")
+        fi
+    done
+    DEPLOY_ACCESS_APPS=("${KEPT[@]}")
+}
+
+# Rule updates can fail transiently (a concurrent change to the site config,
+# throttling), so a removal is retried before it counts as failed.
+retry_remove_deploy_access() {
+    local ATTEMPT
+    for ATTEMPT in 1 2 3; do
+        if remove_deploy_access "$1"; then
+            return 0
+        fi
+        if [ "$ATTEMPT" -lt 3 ]; then
+            sleep $((ATTEMPT * 5))
+        fi
+    done
+    return 1
+}
+
+# The code is already published at this point, so a rule that cannot be
+# removed yet does not stop the deployment: the app stays on the list and the
+# exit handler tries again.
 close_deploy_access() {
-    if [ "${#DEPLOY_ACCESS_APPS[@]}" -eq 0 ]; then
+    local FUNCTION_NAME=$1
+    if ! is_deploy_access_app "$FUNCTION_NAME"; then
         return 0
     fi
-    remove_deploy_access "$1"
-    DEPLOY_ACCESS_APPS=()
+    if retry_remove_deploy_access "$FUNCTION_NAME"; then
+        forget_deploy_access_app "$FUNCTION_NAME"
+    else
+        echo "WARNING: Could not remove the temporary deploy rules from '$FUNCTION_NAME' yet; trying again when the deployment ends." >&2
+    fi
 }
 
 # Runs on every exit, so a failed publish never leaves its runner rule behind.
+# A rule that survives every retry fails the run, even one that otherwise
+# succeeded, because it leaves the app open to the runner's address.
 cleanup_deploy_access() {
+    local STATUS=$?
     local FUNCTION_NAME
     for FUNCTION_NAME in "${DEPLOY_ACCESS_APPS[@]}"; do
-        remove_deploy_access "$FUNCTION_NAME" || \
+        if ! retry_remove_deploy_access "$FUNCTION_NAME"; then
             echo "ERROR: Could not remove the temporary deploy rules from '$FUNCTION_NAME'. Remove its access rules named ${DEPLOY_RULE_PREFIX}* by hand." >&2
+            STATUS=1
+        fi
     done
+    exit "$STATUS"
 }
 
 # Keep an app reachable only from the APIM subnet: both sites deny by default,

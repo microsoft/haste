@@ -54,8 +54,11 @@ for the browser.
    FTP enabled stops the deploy, and nothing is deleted.
 5. Restart, then add `haste-ci-<run>-<attempt>` (`/32` of the runner, priority 90)
    to each site that denies by default.
-6. `func azure functionapp publish`, then remove the rule. An EXIT trap removes
-   it if the publish fails.
+6. `func azure functionapp publish`, then remove the rule, retrying transient
+   failures. The code is already published, so a rule that still can't be
+   removed doesn't stop the deployment. The EXIT trap tries again, and it also
+   removes the rule when the publish fails. A rule that survives the trap fails
+   the run, because it leaves the app open to the runner's address.
 
 Sites that allow by default never receive the rule, because the first rule on
 such a site would switch it to deny-by-default. As a result the API and queues
@@ -68,6 +71,7 @@ apps deploy exactly as before.
 | APIM has no VNet integration subnet | Deploy fails closed before any change |
 | An operator added an allow rule by hand | Deploy fails and names the rule; the rule is kept |
 | A run dies before cleanup | The next deploy removes its `haste-ci-*` rule |
+| Removing the temporary rule fails | Retried. The deploy carries on and the exit handler retries; a rule that remains fails the run |
 | Default action unset, but the site has rules | Treated as deny-by-default, as App Service does |
 | `azd deploy` fails between hooks | Run `deploy/function-deploy-access.ps1 -Action Close` |
 | Azure sees a different egress address than ipify | Set `HASTE_DEPLOY_SOURCE_IP` (azd path) |
