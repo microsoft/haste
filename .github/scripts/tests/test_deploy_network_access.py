@@ -128,6 +128,50 @@ class TestNetworkBaselineHelper(unittest.TestCase):
         )
         self.assertEqual(baseline.deny_sites(config), ["main"])
 
+    def test_unset_default_with_own_rules_meets_the_baseline(self) -> None:
+        config = contained_config(
+            ipSecurityRestrictionsDefaultAction=None,
+            scmIpSecurityRestrictionsDefaultAction=None,
+            scmIpSecurityRestrictions=[
+                {
+                    "name": "Block internet",
+                    "action": "Deny",
+                    "ipAddress": "0.0.0.0/0",
+                    "priority": 500,
+                },
+                {
+                    "name": "Deny all",
+                    "action": "Deny",
+                    "ipAddress": "Any",
+                    "priority": 2147483647,
+                },
+            ],
+        )
+        site = {"properties": {"httpsOnly": True}}
+        self.assertEqual(baseline.violations(config, site, SUBNET), [])
+
+    def test_unset_default_without_own_rules_is_a_violation(self) -> None:
+        config = contained_config(
+            ipSecurityRestrictionsDefaultAction=None,
+            scmIpSecurityRestrictionsDefaultAction=None,
+            scmIpSecurityRestrictions=[
+                {
+                    "name": "Allow all",
+                    "action": "Allow",
+                    "ipAddress": "Any",
+                    "priority": 2147483647,
+                }
+            ],
+        )
+        site = {"properties": {"httpsOnly": True}}
+        self.assertEqual(
+            baseline.violations(config, site, SUBNET),
+            [
+                "the scm site does not deny traffic by default",
+                "unexpected allow rule 'Allow all' on the scm site",
+            ],
+        )
+
     def test_explicit_allow_default_never_needs_a_runner_rule(self) -> None:
         config = contained_config(
             ipSecurityRestrictionsDefaultAction="Allow",

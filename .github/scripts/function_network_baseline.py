@@ -57,25 +57,23 @@ def has_subnet_rule(config: dict[str, Any], subnet_id: str) -> bool:
     )
 
 
-def deny_sites(config: dict[str, Any]) -> list[str]:
-    """Sites that refuse traffic no rule allows.
+def _denies_by_default(config: dict[str, Any], site: str) -> bool:
+    """Whether a site refuses traffic that no rule allows.
 
     Without an explicit default action, App Service denies by default as soon
     as a site has any rule of its own, and allows everything otherwise.
     """
-    sites = []
-    for site, key in DEFAULT_ACTIONS.items():
-        action = config.get(key)
-        if action:
-            denies = action == "Deny"
-        else:
-            denies = any(
-                rule.get("priority") != SYNTHETIC_PRIORITY
-                for rule in _rules(config, site)
-            )
-        if denies:
-            sites.append(site)
-    return sites
+    action = config.get(DEFAULT_ACTIONS[site])
+    if action:
+        return action == "Deny"
+    return any(
+        rule.get("priority") != SYNTHETIC_PRIORITY
+        for rule in _rules(config, site)
+    )
+
+
+def deny_sites(config: dict[str, Any]) -> list[str]:
+    return [site for site in RULES if _denies_by_default(config, site)]
 
 
 def named_rules(config: dict[str, Any], prefix: str) -> list[tuple[str, str]]:
@@ -106,8 +104,8 @@ def violations(
 ) -> list[str]:
     problems = [
         f"the {name} site does not deny traffic by default"
-        for name, key in DEFAULT_ACTIONS.items()
-        if config.get(key) != "Deny"
+        for name in RULES
+        if not _denies_by_default(config, name)
     ]
     if config.get("scmIpSecurityRestrictionsUseMain") is not False:
         problems.append("the scm site inherits the main-site rules")
