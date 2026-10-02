@@ -29,6 +29,9 @@ param vnetName string
 @description('Functions subnet name.')
 param functionsSubnetName string
 
+@description('Subnet the APIM gateway egresses from (its VNet integration subnet). TiTiler accepts traffic only from this subnet.')
+param apimSubnetName string
+
 @description('Log Analytics workspace resource id.')
 param logAnalyticsId string
 
@@ -151,6 +154,10 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing 
   name: storageAccountName
 }
 
+// The browser reaches TiTiler only through SWA -> APIM, and no backend calls it
+// server-to-server, so the APIM egress subnet is its only legitimate caller.
+var apimSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, apimSubnetName)
+
 // Application settings shared by the api and queues apps. hastegeo's Config()
 // (instantiated at import time) reads these, so they must be present or the
 // worker cannot index function_app.py. Storage/queue access is identity-based
@@ -239,6 +246,9 @@ module apiApp 'functionApp.bicep' = {
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
     logAnalyticsId: logAnalyticsId
+    // Inbound access for the API app is unchanged by the network baseline.
+    restrictMainSite: false
+    restrictScmSite: false
     // Unique host id per app so the publishing reconciler TimerTrigger's
     // host-scoped Singleton lock doesn't collide across apps sharing storage.
     appSettings: concat(appConfigSettings, [
@@ -266,6 +276,11 @@ module titilerApp 'functionApp.bicep' = {
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
     logAnalyticsId: logAnalyticsId
+    allowedInboundSubnetIds: [
+      apimSubnetId
+    ]
+    restrictMainSite: true
+    restrictScmSite: true
     tags: tags
   }
   // All three apps integrate with the same func-subnet. A subnet's
@@ -289,6 +304,9 @@ module queueApp 'functionApp.bicep' = {
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
     logAnalyticsId: logAnalyticsId
+    // Inbound access for the queues app is unchanged by the network baseline.
+    restrictMainSite: false
+    restrictScmSite: false
     appSettings: concat(appConfigSettings, [
       { name: 'HASTE_MAX_IMAGERY_DOWNLOAD_BYTES', value: string(maxImageryDownloadBytes) }
       {

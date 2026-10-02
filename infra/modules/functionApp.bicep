@@ -1,7 +1,8 @@
 // One Flex Consumption Python function app with: per-app plan, App Insights
 // linked to Log Analytics, system + user-assigned identity, VNet integration,
-// identity-based AzureWebJobsStorage, the /data file-share mount, and the
-// blob/queue role grants for its system identity. (Reproduces one iteration of
+// identity-based AzureWebJobsStorage, the /data file-share mount, the
+// blob/queue role grants for its system identity, and the inbound network
+// baseline for its main and SCM sites. (Reproduces one iteration of
 // create_function_app.)
 
 @description('Azure region.')
@@ -37,6 +38,15 @@ param logAnalyticsId string
 @description('Extra application settings (name/value pairs) merged after the base settings. api/queues pass the hastegeo app config here; titiler passes none.')
 param appSettings array = []
 
+@description('Subnet resource ids allowed to reach the main site when restrictMainSite is true.')
+param allowedInboundSubnetIds array = []
+
+@description('Deny main-site traffic that does not come from allowedInboundSubnetIds.')
+param restrictMainSite bool = true
+
+@description('Deny all SCM/Kudu traffic. Deployments add a temporary rule for their own address while they publish.')
+param restrictScmSite bool = true
+
 @description('Resource tags.')
 param tags object = {}
 
@@ -56,6 +66,17 @@ var blobDelegatorRoleId = subscriptionResourceId(
 )
 
 var deploymentContainerName = 'app-package-${name}'
+
+var mainSiteRestrictions = [
+  for (subnetId, index) in allowedInboundSubnetIds: {
+    name: 'AllowSubnet-${index + 1}'
+    action: 'Allow'
+    priority: 100 + index
+    vnetSubnetResourceId: subnetId
+    tag: 'Default'
+    description: 'Managed by HASTE security baseline'
+  }
+]
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
   name: storageAccountName
@@ -142,6 +163,15 @@ resource site 'Microsoft.Web/sites@2023-12-01' = {
     }
     siteConfig: {
       ftpsState: 'Disabled'
+      minTlsVersion: '1.2'
+      scmMinTlsVersion: '1.2'
+      ipSecurityRestrictions: restrictMainSite ? mainSiteRestrictions : []
+      ipSecurityRestrictionsDefaultAction: restrictMainSite ? 'Deny' : 'Allow'
+      // The SCM site never inherits the main-site rules, so allowing a subnet
+      // to call the app never also lets it deploy to the app.
+      scmIpSecurityRestrictions: []
+      scmIpSecurityRestrictionsDefaultAction: restrictScmSite ? 'Deny' : 'Allow'
+      scmIpSecurityRestrictionsUseMain: false
       appSettings: concat([
         {
           name: 'AzureWebJobsStorage__accountName'

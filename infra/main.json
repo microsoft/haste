@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "10142577162809525137"
+      "templateHash": "7958925346472238973"
     }
   },
   "parameters": {
@@ -348,6 +348,7 @@
     "acsName": "[format('{0}-haste-{1}-acs', parameters('resourcePrefix'), parameters('randomSuffix'))]",
     "emailServiceName": "[format('{0}-haste-{1}-email', parameters('resourcePrefix'), parameters('randomSuffix'))]",
     "functionsSubnetName": "func-subnet",
+    "apimSubnetName": "default",
     "createBatchAccount": "[equals(parameters('batchAccountMode'), 'Create')]",
     "resolvedSharedRg": "[if(empty(parameters('sharedResourceGroup')), variables('rgName'), parameters('sharedResourceGroup'))]",
     "createdBatchAccountName": "[format('{0}haste{1}batch', parameters('resourcePrefix'), parameters('randomSuffix'))]",
@@ -1179,7 +1180,7 @@
             "value": "[variables('vnetName')]"
           },
           "defaultSubnetName": {
-            "value": "default"
+            "value": "[variables('apimSubnetName')]"
           },
           "storageAccountName": {
             "value": "[variables('storageAccountName')]"
@@ -1373,6 +1374,9 @@
           "functionsSubnetName": {
             "value": "[variables('functionsSubnetName')]"
           },
+          "apimSubnetName": {
+            "value": "[variables('apimSubnetName')]"
+          },
           "logAnalyticsId": {
             "value": "[reference('monitoring').outputs.logAnalyticsId.value]"
           },
@@ -1479,7 +1483,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.47.16.16243",
-              "templateHash": "1871735418649720540"
+              "templateHash": "15949969856414472234"
             }
           },
           "parameters": {
@@ -1535,6 +1539,12 @@
               "type": "string",
               "metadata": {
                 "description": "Functions subnet name."
+              }
+            },
+            "apimSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Subnet the APIM gateway egresses from (its VNet integration subnet). TiTiler accepts traffic only from this subnet."
               }
             },
             "logAnalyticsId": {
@@ -1770,6 +1780,9 @@
               }
             }
           },
+          "variables": {
+            "apimSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('apimSubnetName'))]"
+          },
           "resources": [
             {
               "type": "Microsoft.Resources/deployments",
@@ -1811,6 +1824,12 @@
                   "logAnalyticsId": {
                     "value": "[parameters('logAnalyticsId')]"
                   },
+                  "restrictMainSite": {
+                    "value": false
+                  },
+                  "restrictScmSite": {
+                    "value": false
+                  },
                   "appSettings": {
                     "value": "[concat(createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', '/data'), createObject('name', 'DATA_PATH', 'value', '/data'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer')), createObject('name', 'PUBLISH_EXPLORER_RENDER_ENABLED', 'value', if(parameters('publishExplorerRenderEnabled'), 'true', 'false'))), createArray(createObject('name', 'HASTE_MAX_UPLOAD_BYTES', 'value', string(parameters('maxUploadBytes'))), createObject('name', 'PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES', 'value', string(parameters('publishAssessmentMaxTotalBytes'))), createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionApiName'), 0, min(32, length(parameters('functionApiName'))))))))]"
                   },
@@ -1825,7 +1844,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.47.16.16243",
-                      "templateHash": "11943526678158877025"
+                      "templateHash": "2855188068864401882"
                     }
                   },
                   "parameters": {
@@ -1896,6 +1915,27 @@
                         "description": "Extra application settings (name/value pairs) merged after the base settings. api/queues pass the hastegeo app config here; titiler passes none."
                       }
                     },
+                    "allowedInboundSubnetIds": {
+                      "type": "array",
+                      "defaultValue": [],
+                      "metadata": {
+                        "description": "Subnet resource ids allowed to reach the main site when restrictMainSite is true."
+                      }
+                    },
+                    "restrictMainSite": {
+                      "type": "bool",
+                      "defaultValue": true,
+                      "metadata": {
+                        "description": "Deny main-site traffic that does not come from allowedInboundSubnetIds."
+                      }
+                    },
+                    "restrictScmSite": {
+                      "type": "bool",
+                      "defaultValue": true,
+                      "metadata": {
+                        "description": "Deny all SCM/Kudu traffic. Deployments add a temporary rule for their own address while they publish."
+                      }
+                    },
                     "tags": {
                       "type": "object",
                       "defaultValue": {},
@@ -1905,6 +1945,20 @@
                     }
                   },
                   "variables": {
+                    "copy": [
+                      {
+                        "name": "mainSiteRestrictions",
+                        "count": "[length(parameters('allowedInboundSubnetIds'))]",
+                        "input": {
+                          "name": "[format('AllowSubnet-{0}', add(copyIndex('mainSiteRestrictions'), 1))]",
+                          "action": "Allow",
+                          "priority": "[add(100, copyIndex('mainSiteRestrictions'))]",
+                          "vnetSubnetResourceId": "[parameters('allowedInboundSubnetIds')[copyIndex('mainSiteRestrictions')]]",
+                          "tag": "Default",
+                          "description": "Managed by HASTE security baseline"
+                        }
+                      }
+                    ],
                     "blobDataOwnerRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')]",
                     "queueDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
                     "blobDelegatorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')]",
@@ -1987,6 +2041,13 @@
                         },
                         "siteConfig": {
                           "ftpsState": "Disabled",
+                          "minTlsVersion": "1.2",
+                          "scmMinTlsVersion": "1.2",
+                          "ipSecurityRestrictions": "[if(parameters('restrictMainSite'), variables('mainSiteRestrictions'), createArray())]",
+                          "ipSecurityRestrictionsDefaultAction": "[if(parameters('restrictMainSite'), 'Deny', 'Allow')]",
+                          "scmIpSecurityRestrictions": [],
+                          "scmIpSecurityRestrictionsDefaultAction": "[if(parameters('restrictScmSite'), 'Deny', 'Allow')]",
+                          "scmIpSecurityRestrictionsUseMain": false,
                           "appSettings": "[concat(createArray(createObject('name', 'AzureWebJobsStorage__accountName', 'value', parameters('storageAccountName')), createObject('name', 'AzureWebJobsStorage__blobServiceUri', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'AzureWebJobsStorage__queueServiceUri', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Insights/components', format('{0}-ai', parameters('name'))), '2020-02-02').ConnectionString)), parameters('appSettings'))]"
                         }
                       },
@@ -2112,6 +2173,17 @@
                   "logAnalyticsId": {
                     "value": "[parameters('logAnalyticsId')]"
                   },
+                  "allowedInboundSubnetIds": {
+                    "value": [
+                      "[variables('apimSubnetId')]"
+                    ]
+                  },
+                  "restrictMainSite": {
+                    "value": true
+                  },
+                  "restrictScmSite": {
+                    "value": true
+                  },
                   "tags": {
                     "value": "[parameters('tags')]"
                   }
@@ -2123,7 +2195,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.47.16.16243",
-                      "templateHash": "11943526678158877025"
+                      "templateHash": "2855188068864401882"
                     }
                   },
                   "parameters": {
@@ -2194,6 +2266,27 @@
                         "description": "Extra application settings (name/value pairs) merged after the base settings. api/queues pass the hastegeo app config here; titiler passes none."
                       }
                     },
+                    "allowedInboundSubnetIds": {
+                      "type": "array",
+                      "defaultValue": [],
+                      "metadata": {
+                        "description": "Subnet resource ids allowed to reach the main site when restrictMainSite is true."
+                      }
+                    },
+                    "restrictMainSite": {
+                      "type": "bool",
+                      "defaultValue": true,
+                      "metadata": {
+                        "description": "Deny main-site traffic that does not come from allowedInboundSubnetIds."
+                      }
+                    },
+                    "restrictScmSite": {
+                      "type": "bool",
+                      "defaultValue": true,
+                      "metadata": {
+                        "description": "Deny all SCM/Kudu traffic. Deployments add a temporary rule for their own address while they publish."
+                      }
+                    },
                     "tags": {
                       "type": "object",
                       "defaultValue": {},
@@ -2203,6 +2296,20 @@
                     }
                   },
                   "variables": {
+                    "copy": [
+                      {
+                        "name": "mainSiteRestrictions",
+                        "count": "[length(parameters('allowedInboundSubnetIds'))]",
+                        "input": {
+                          "name": "[format('AllowSubnet-{0}', add(copyIndex('mainSiteRestrictions'), 1))]",
+                          "action": "Allow",
+                          "priority": "[add(100, copyIndex('mainSiteRestrictions'))]",
+                          "vnetSubnetResourceId": "[parameters('allowedInboundSubnetIds')[copyIndex('mainSiteRestrictions')]]",
+                          "tag": "Default",
+                          "description": "Managed by HASTE security baseline"
+                        }
+                      }
+                    ],
                     "blobDataOwnerRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')]",
                     "queueDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
                     "blobDelegatorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')]",
@@ -2285,6 +2392,13 @@
                         },
                         "siteConfig": {
                           "ftpsState": "Disabled",
+                          "minTlsVersion": "1.2",
+                          "scmMinTlsVersion": "1.2",
+                          "ipSecurityRestrictions": "[if(parameters('restrictMainSite'), variables('mainSiteRestrictions'), createArray())]",
+                          "ipSecurityRestrictionsDefaultAction": "[if(parameters('restrictMainSite'), 'Deny', 'Allow')]",
+                          "scmIpSecurityRestrictions": [],
+                          "scmIpSecurityRestrictionsDefaultAction": "[if(parameters('restrictScmSite'), 'Deny', 'Allow')]",
+                          "scmIpSecurityRestrictionsUseMain": false,
                           "appSettings": "[concat(createArray(createObject('name', 'AzureWebJobsStorage__accountName', 'value', parameters('storageAccountName')), createObject('name', 'AzureWebJobsStorage__blobServiceUri', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'AzureWebJobsStorage__queueServiceUri', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Insights/components', format('{0}-ai', parameters('name'))), '2020-02-02').ConnectionString)), parameters('appSettings'))]"
                         }
                       },
@@ -2413,6 +2527,12 @@
                   "logAnalyticsId": {
                     "value": "[parameters('logAnalyticsId')]"
                   },
+                  "restrictMainSite": {
+                    "value": false
+                  },
+                  "restrictScmSite": {
+                    "value": false
+                  },
                   "appSettings": {
                     "value": "[concat(createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', '/data'), createObject('name', 'DATA_PATH', 'value', '/data'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer')), createObject('name', 'PUBLISH_EXPLORER_RENDER_ENABLED', 'value', if(parameters('publishExplorerRenderEnabled'), 'true', 'false'))), createArray(createObject('name', 'HASTE_MAX_IMAGERY_DOWNLOAD_BYTES', 'value', string(parameters('maxImageryDownloadBytes'))), createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionQueueName'), 0, min(32, length(parameters('functionQueueName'))))))))]"
                   },
@@ -2427,7 +2547,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.47.16.16243",
-                      "templateHash": "11943526678158877025"
+                      "templateHash": "2855188068864401882"
                     }
                   },
                   "parameters": {
@@ -2498,6 +2618,27 @@
                         "description": "Extra application settings (name/value pairs) merged after the base settings. api/queues pass the hastegeo app config here; titiler passes none."
                       }
                     },
+                    "allowedInboundSubnetIds": {
+                      "type": "array",
+                      "defaultValue": [],
+                      "metadata": {
+                        "description": "Subnet resource ids allowed to reach the main site when restrictMainSite is true."
+                      }
+                    },
+                    "restrictMainSite": {
+                      "type": "bool",
+                      "defaultValue": true,
+                      "metadata": {
+                        "description": "Deny main-site traffic that does not come from allowedInboundSubnetIds."
+                      }
+                    },
+                    "restrictScmSite": {
+                      "type": "bool",
+                      "defaultValue": true,
+                      "metadata": {
+                        "description": "Deny all SCM/Kudu traffic. Deployments add a temporary rule for their own address while they publish."
+                      }
+                    },
                     "tags": {
                       "type": "object",
                       "defaultValue": {},
@@ -2507,6 +2648,20 @@
                     }
                   },
                   "variables": {
+                    "copy": [
+                      {
+                        "name": "mainSiteRestrictions",
+                        "count": "[length(parameters('allowedInboundSubnetIds'))]",
+                        "input": {
+                          "name": "[format('AllowSubnet-{0}', add(copyIndex('mainSiteRestrictions'), 1))]",
+                          "action": "Allow",
+                          "priority": "[add(100, copyIndex('mainSiteRestrictions'))]",
+                          "vnetSubnetResourceId": "[parameters('allowedInboundSubnetIds')[copyIndex('mainSiteRestrictions')]]",
+                          "tag": "Default",
+                          "description": "Managed by HASTE security baseline"
+                        }
+                      }
+                    ],
                     "blobDataOwnerRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')]",
                     "queueDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
                     "blobDelegatorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')]",
@@ -2589,6 +2744,13 @@
                         },
                         "siteConfig": {
                           "ftpsState": "Disabled",
+                          "minTlsVersion": "1.2",
+                          "scmMinTlsVersion": "1.2",
+                          "ipSecurityRestrictions": "[if(parameters('restrictMainSite'), variables('mainSiteRestrictions'), createArray())]",
+                          "ipSecurityRestrictionsDefaultAction": "[if(parameters('restrictMainSite'), 'Deny', 'Allow')]",
+                          "scmIpSecurityRestrictions": [],
+                          "scmIpSecurityRestrictionsDefaultAction": "[if(parameters('restrictScmSite'), 'Deny', 'Allow')]",
+                          "scmIpSecurityRestrictionsUseMain": false,
                           "appSettings": "[concat(createArray(createObject('name', 'AzureWebJobsStorage__accountName', 'value', parameters('storageAccountName')), createObject('name', 'AzureWebJobsStorage__blobServiceUri', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'AzureWebJobsStorage__queueServiceUri', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Insights/components', format('{0}-ai', parameters('name'))), '2020-02-02').ConnectionString)), parameters('appSettings'))]"
                         }
                       },
