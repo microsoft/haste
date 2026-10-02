@@ -12,7 +12,22 @@ conventions are documented in [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Security
+
+- **TiTiler accepts traffic only through APIM.** The tile server's Function App
+  now denies inbound traffic by default. Its main site allows only the APIM VNet
+  integration subnet, and its SCM (Kudu) site denies everything, so direct
+  requests to either `*.azurewebsites.net` hostname return `403`.
+  - Bicep declares the baseline.
+  - `deploy_apps.sh` re-applies and verifies it before every TiTiler deploy, and
+    stops on allow rules it does not expect.
+  - Both `deploy-apps.yml` and `azd deploy` publish through a temporary `/32`
+    rule and remove it afterwards.
+
+  **Upgrade action:** deploy TiTiler only from a branch that includes this
+  change. On an environment whose SCM site is already locked, older branches
+  fail at the TiTiler publish step. See
+  [docs/security-configuration.md](docs/security-configuration.md#55-function-app-inbound-access).
 
 ---
 

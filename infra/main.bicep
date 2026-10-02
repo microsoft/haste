@@ -197,6 +197,9 @@ var acsName = '${resourcePrefix}-haste-${randomSuffix}-acs'
 var emailServiceName = '${resourcePrefix}-haste-${randomSuffix}-email'
 
 var functionsSubnetName = 'func-subnet'
+// APIM's VNet integration subnet: APIM egresses to the function apps from it,
+// and TiTiler accepts inbound traffic only from it.
+var apimSubnetName = 'default'
 
 // Batch account resolution.
 var createBatchAccount = batchAccountMode == 'Create'
@@ -298,7 +301,7 @@ module apim 'modules/apim.bicep' = {
     publisherName: apimPublisherName
     umiResourceId: identity.outputs.resourceId
     vnetName: vnetName
-    defaultSubnetName: 'default'
+    defaultSubnetName: apimSubnetName
     storageAccountName: storageAccountName
     tags: tags
   }
@@ -328,6 +331,7 @@ module functions 'modules/functions.bicep' = {
     umiResourceId: identity.outputs.resourceId
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
+    apimSubnetName: apimSubnetName
     logAnalyticsId: monitoring.outputs.logAnalyticsId
     // hastegeo application config (api + queues; titiler needs none).
     batchAccountName: resolvedBatchAccountName

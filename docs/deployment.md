@@ -41,6 +41,29 @@ Function Apps, then runs the postdeploy hook: it publishes the UI to the Static
 Web App, syncs APIM operations and injects the Function host key, seeds default
 admin settings and the first admin user, and invites the first admin.
 
+### Network access during deployment
+
+The TiTiler Function App accepts traffic only from the APIM gateway subnet, and
+its SCM (Kudu) site denies all traffic, so publishing to it needs a temporary
+allow rule. Both deployment paths add a `/32` rule for the publishing machine's
+public IPv4 address, named `haste-ci-*`, and remove it afterwards:
+
+- `azd deploy` / `azd up`: the `titiler` predeploy and postdeploy hooks. If the
+  deploy fails between them, remove the rule with
+  `pwsh deploy/function-deploy-access.ps1 -Action Close`. If Azure sees a
+  different egress address than the public internet, set
+  `HASTE_DEPLOY_SOURCE_IP` to that address first.
+- GitHub Actions (`deploy-apps.yml`): `deploy_apps.sh` adds the rule only for
+  the publish step and removes it right after, retrying transient failures.
+  Anything it cannot remove yet is retried when the run ends, including after a
+  failed publish. If the rule is still there at that point, the run fails and
+  names it.
+  Before each TiTiler deploy it also re-applies the network baseline and stops if
+  the app has an allow rule it does not expect.
+
+See [Function App inbound access](security-configuration.md#55-function-app-inbound-access)
+for the baseline itself.
+
 ### Configuration
 
 All settings are supplied with `azd env set <NAME> <value>` before `azd up` — no

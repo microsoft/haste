@@ -24,6 +24,12 @@ infra:
 # Oryx build. Service-level hooks fire on the service's own package lifecycle
 # whichever command triggered it. titiler has no hastegeo dependency and needs
 # neither hook.
+#
+# titiler instead has deploy-access hooks: its main and SCM sites deny traffic
+# by default (infra/modules/functions.bicep), so publishing from this machine
+# needs a temporary allow rule for its address. If `azd deploy` fails before
+# postdeploy runs, remove the rule with
+# `pwsh deploy/function-deploy-access.ps1 -Action Close`.
 services:
   api:
     project: api/hastefuncapi
@@ -44,6 +50,15 @@ services:
     language: python
     host: function
     resourceName: ${FUNCTION_TITILER_NAME}
+    hooks:
+      predeploy:
+        shell: pwsh
+        continueOnError: false
+        run: ../../deploy/open-titiler-deploy-access.ps1
+      postdeploy:
+        shell: pwsh
+        continueOnError: false
+        run: ../../deploy/close-titiler-deploy-access.ps1
   queues:
     project: api/hastefuncqueues
     language: python

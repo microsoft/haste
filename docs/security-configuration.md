@@ -4,7 +4,7 @@
 |-------|-------|
 | **Repository** | microsoft/haste |
 | **Audience** | Customers / consumers / operators deploying HASTE |
-| **Last updated** | 2026-05-14 |
+| **Last updated** | 2026-10-02 |
 
 ---
 
@@ -168,6 +168,34 @@ Notes on why each non-`'self'` source is present — tighten if your build remov
 
 The UI's API client does **not** send explicit CSRF tokens; HASTE relies on the SWA Easy Auth session cookie having `SameSite=Lax` and on `Origin`/`Referer` enforcement at the SWA edge. If you front HASTE with a different reverse proxy or auth layer, validate that equivalent CSRF protection is in place — see §8.2.
 
+### 5.5 Function App inbound access
+
+The browser reaches the TiTiler tile server only through the Static Web App and APIM (`/api/titiler/*`); no HASTE backend calls it directly. The reference deployment therefore applies this baseline to the TiTiler Function App:
+
+| Site | Default action | Allowed sources |
+|------|----------------|-----------------|
+| Main (`<app>.azurewebsites.net`) | Deny | The APIM VNet integration subnet only (needs the `Microsoft.Web` service endpoint, which `infra/modules/network.bicep` enables) |
+| SCM / Kudu (`<app>.scm.azurewebsites.net`) | Deny | None. The SCM site does not inherit the main-site rules. |
+
+The app also requires HTTPS, TLS 1.2 or later on both sites, and has FTP/FTPS disabled.
+
+The baseline is enforced in three places so redeployment cannot widen it:
+
+- **Bicep** — `infra/modules/functionApp.bicep` (`allowedInboundSubnetIds`, `restrictMainSite`, `restrictScmSite`) with the TiTiler wiring in `infra/modules/functions.bicep`.
+- **`deploy_apps.sh`** — before every TiTiler deploy it re-applies the rule and default actions, then verifies the result. An allow rule it does not expect stops the deployment instead of being deleted, so an operator decides what the rule was for.
+- **Publishing** — a temporary `haste-ci-*` `/32` rule lets the deploying machine reach the locked sites while it publishes (see [Network access during deployment](deployment.md#network-access-during-deployment)).
+
+Operational notes:
+
+- Direct requests to `<app>.azurewebsites.net` and `<app>.scm.azurewebsites.net` return `403 Forbidden`. Test TiTiler through the UI or the APIM gateway (`/api/titiler/healthz`).
+- The Kudu console and log stream are unreachable from the internet. Use Application Insights or Log Analytics, or add a short-lived `/32` rule and remove it afterwards.
+- The API and queues Function Apps are not covered by this baseline yet. For them, §3.1 and §8.1 still apply.
+
+```bash
+# Inspect the effective rules for an app
+az functionapp config access-restriction show --resource-group <rg> --name <function-app>
+```
+
 ---
 
 ## 6. Containers and infrastructure
@@ -321,6 +349,7 @@ Each HASTE release documents security-relevant changes in [`CHANGELOG.md`](https
 Before exposing HASTE to anyone other than its developers, verify:
 
 - [ ] Function App is reachable only via SWA linked backend (or equivalent access restriction)
+- [ ] The TiTiler Function App's main site allows only the APIM subnet, and its SCM site denies all traffic (§5.5)
 - [ ] AAD (Entra ID) is configured as the SWA identity provider; mock auth is disabled
 - [ ] `DEVELOPMENT_MODE` is not set in any Application Setting
 - [ ] All secrets are in Key Vault or supplied via managed identity (no inline connection strings in source control)
