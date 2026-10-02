@@ -31,11 +31,11 @@ baseline in place across every redeployment.
 
 - [x] Direct requests to the TiTiler `*.azurewebsites.net` and
       `*.scm.azurewebsites.net` hostnames are refused (`403`).
-- [ ] Tiles still load through SWA → APIM.
+- [x] Tiles still load through SWA → APIM.
 - [ ] A fresh `azd up` provisions the baseline and can still publish TiTiler.
-- [ ] `deploy-apps.yml` re-applies and verifies the baseline before every
+- [x] `deploy-apps.yml` re-applies and verifies the baseline before every
       TiTiler deploy, and still publishes through the locked SCM site.
-- [ ] No deployment leaves a temporary allow rule behind, including failed ones.
+- [x] No deployment leaves a temporary allow rule behind, including failed ones.
 - [x] API and queues apps are unchanged.
 
 ## HASTE Components Affected
