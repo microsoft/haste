@@ -7,7 +7,12 @@ import os
 from threading import Lock
 
 import yaml
-from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
+from azure.core import MatchConditions
+from azure.core.exceptions import (
+    ResourceExistsError,
+    ResourceModifiedError,
+    ResourceNotFoundError,
+)
 from azure.storage.blob import BlobBlock  # type: ignore
 from azure.storage.blob import generate_container_sas
 
@@ -16,6 +21,7 @@ from ..utils.blob import (
     get_cached_user_delegation_key,
 )
 from ..utils.blob_access_policy import ensure_container_read_policy
+from ..utils.errors import MetadataConflictError
 from ..utils.metadata import matches_metadata_type
 from ..utils.parallel import parallel_map
 from .abstract_data_layer import AbstractDataLayer
@@ -249,6 +255,61 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
         data_format="json",
     ):
         self.save(data, identifier, data_type, data_file_path, data_format)
+
+    def load_with_version(
+        self, identifier, data_type, data_format="json"
+    ):
+        """Load JSON metadata and its Blob ETag for a conditional update."""
+        if data_format != "json":
+            raise ValueError("Versioned metadata reads support JSON only")
+        blob_name = self.get_file_path(identifier, data_type, data_format)
+        blob_client = self.container_client.get_blob_client(blob_name)
+        try:
+            downloader = blob_client.download_blob()
+            contents = json.loads(downloader.readall())
+            if isinstance(contents, str):
+                contents = json.loads(contents)
+            return contents, downloader.properties.etag
+        except ResourceNotFoundError as error:
+            raise FileNotFoundError(
+                f"{self.__class__.__name__}.load: No data found for "
+                f"identifier: {identifier} and data_type: {data_type}"
+            ) from error
+
+    def save_with_version(
+        self, identifier, data_type, data, expected_version,
+        data_format="json",
+    ):
+        """Replace JSON only if its ETag still matches the caller's read."""
+        if data_format != "json":
+            raise ValueError("Versioned metadata writes support JSON only")
+        blob_name = self.get_file_path(identifier, data_type, data_format)
+        blob_client = self.container_client.get_blob_client(blob_name)
+        try:
+            if expected_version is None:
+                # Create-only write: never replace a blob that appeared after
+                # the caller observed it as missing.
+                blob_client.upload_blob(
+                    json.dumps(data),
+                    overwrite=False,
+                    metadata=self._index_metadata(data_type, data),
+                )
+            else:
+                blob_client.upload_blob(
+                    json.dumps(data),
+                    overwrite=True,
+                    etag=expected_version,
+                    match_condition=MatchConditions.IfNotModified,
+                    metadata=self._index_metadata(data_type, data),
+                )
+        except (
+            ResourceExistsError,
+            ResourceModifiedError,
+            ResourceNotFoundError,
+        ) as error:
+            raise MetadataConflictError(
+                "Metadata changed before the conditional write completed"
+            ) from error
 
     def load(self, identifier, data_type, data_format="json"):
         blob_name = self.get_file_path(identifier, data_type, data_format)

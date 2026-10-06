@@ -48,14 +48,18 @@ principal and returns:
 ```
 
 A stable active session performs one ACL read and zero writes. It does not list
-SWA users through the Azure management plane. Existing inactive, pending, or
-deleted users receive a blocked session with no roles so the UI can retain its
-account-status page. The bootstrap response is not an authorization token;
-sensitive routes retain their own checks.
+SWA users through the Azure management plane. Inactive and deleted users
+receive a blocked session with no roles. A non-deleted `PendingAcceptance`
+user may trigger a cooldown-limited SWA check for that principal; only an exact
+AAD identity and role match may conditionally promote the ACL row. Bootstrap
+then re-reads the ACL and intersects its roles with the current principal. Any
+lookup, identity, role, or write uncertainty leaves the user without roles.
+The bootstrap response is not an authorization token; sensitive routes retain
+their own checks.
 
-Pending invitations remain blocked until an administrator runs the explicit
-user reconciliation workflow. Startup never writes the ACL or calls the Azure
-management plane.
+The pending UI makes one delayed retry and then waits for a user-led **Check
+access** action. Admin `GetUsers` reconciliation remains a secondary
+consistency workflow, not a prerequisite to complete normal onboarding.
 
 ## Published Datasets
 

@@ -17,6 +17,8 @@ os.environ.setdefault("TEMP_DATA_PATH", "/tmp/haste-user-security-tests")
 with redirect_stderr(io.StringIO()):
     from api.hastefuncapi import function_app
 
+from hastegeo.core.utils.errors import MetadataConflictError
+
 
 def principal_header(email: str, roles: list[str] | None = None) -> str:
     principal = {
@@ -114,6 +116,7 @@ class TestPutUserSecurity(unittest.IsolatedAsyncioTestCase):
 
     async def test_active_non_admin_can_update_own_settings(self) -> None:
         metadata = Mock()
+        metadata.storage = None
         metadata.load.return_value = [user_record()]
         request_user = user_record()
         request_user["settings"] = {"theme": "dark"}
@@ -127,6 +130,122 @@ class TestPutUserSecurity(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         saved_users = metadata.save.call_args.args[1]
         self.assertEqual(saved_users[0]["settings"], {"theme": "dark"})
+
+    async def test_acl_conflict_on_profile_update_returns_409(self) -> None:
+        metadata = Mock()
+        metadata.load.return_value = [user_record()]
+        request_user = user_record()
+        request_user["settings"] = {"theme": "dark"}
+        with patch.object(
+            function_app, "DEVELOPMENT_MODE", False
+        ), patch.object(
+            function_app, "MetadataProcessor", return_value=metadata
+        ), patch.object(
+            function_app,
+            "save_acl_with_rebase",
+            side_effect=MetadataConflictError("stale ACL version"),
+        ):
+            response = await function_app.PutUser(make_request(request_user))
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            json.loads(response.get_body())["error"]["code"], "ACL_CONFLICT"
+        )
+
+    async def test_admin_reconciliation_acl_conflict_returns_409(self) -> None:
+        metadata = Mock()
+        metadata.load.return_value = [user_record()]
+        swa_manager = Mock()
+        swa_manager.list_users.return_value = []
+        request = func.HttpRequest(
+            method="GET",
+            url="http://localhost/api/GetUsers",
+            headers={},
+            params={},
+            route_params={},
+            body=b"",
+        )
+        with patch.object(
+            function_app, "DEVELOPMENT_MODE", True
+        ), patch.object(
+            function_app, "MetadataProcessor", return_value=metadata
+        ), patch.object(
+            function_app,
+            "save_acl_with_rebase",
+            side_effect=MetadataConflictError("stale ACL version"),
+        ), patch(
+            "hastegeo.core.utils.user.UserManager", return_value=swa_manager
+        ):
+            response = await function_app.GetUsers(request)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            json.loads(response.get_body())["error"]["code"], "ACL_CONFLICT"
+        )
+
+    async def test_delete_acl_conflict_prevents_swa_removal(self) -> None:
+        metadata = Mock()
+        metadata.load.return_value = [user_record()]
+        swa_manager = Mock()
+        request = func.HttpRequest(
+            method="DELETE",
+            url="http://localhost/api/DeleteUser?userId=attacker@example.com",
+            headers={},
+            params={"userId": "attacker@example.com"},
+            route_params={},
+            body=b"",
+        )
+        with patch.object(
+            function_app, "DEVELOPMENT_MODE", True
+        ), patch.object(
+            function_app, "MetadataProcessor", return_value=metadata
+        ), patch.object(
+            function_app,
+            "save_acl_with_rebase",
+            side_effect=MetadataConflictError("stale ACL version"),
+        ), patch(
+            "hastegeo.core.utils.user.UserManager", return_value=swa_manager
+        ):
+            response = await function_app.DeleteUser(request)
+
+        self.assertEqual(response.status_code, 409)
+        swa_manager.delete_user_by_email.assert_not_called()
+
+    async def test_delete_saves_acl_revocation_before_swa_removal(self) -> None:
+        metadata = Mock()
+        metadata.load.return_value = [user_record()]
+        events = []
+        swa_manager = Mock()
+        swa_manager.delete_user_by_email.side_effect = lambda _email: events.append(
+            "swa"
+        )
+        request = func.HttpRequest(
+            method="DELETE",
+            url="http://localhost/api/DeleteUser?userId=attacker@example.com",
+            headers={},
+            params={"userId": "attacker@example.com"},
+            route_params={},
+            body=b"",
+        )
+
+        def record_acl_save(_metadata, _baseline, desired):
+            events.append("acl")
+            self.assertTrue(desired[0]["deleted"])
+            self.assertEqual(desired[0]["status"], "Inactive")
+
+        with patch.object(
+            function_app, "DEVELOPMENT_MODE", True
+        ), patch.object(
+            function_app, "MetadataProcessor", return_value=metadata
+        ), patch.object(
+            function_app, "save_acl_with_rebase", side_effect=record_acl_save
+        ), patch(
+            "hastegeo.core.utils.user.UserManager", return_value=swa_manager
+        ):
+            response = await function_app.DeleteUser(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(events, ["acl", "swa"])
 
     async def test_stale_principal_admin_role_does_not_bypass_acl(
         self,

@@ -93,6 +93,7 @@ from hastegeo.core.processors.session import (
 from hastegeo.core.processors.stats import StatsPreProcessor
 from hastegeo.core.processors.train import TrainPreprocessor
 from hastegeo.core.processors.uploader import FileUploader
+from hastegeo.core.processors.user_acl import save_acl_with_rebase
 from hastegeo.core.processors.validation import BuildingValidationProcessor
 from hastegeo.core.processors.validation_reports import (
     ValidationReportProcessor,
@@ -125,7 +126,10 @@ from hastegeo.core.utils.blob import (
     parse_byte_range,
 )
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
-from hastegeo.core.utils.errors import exception_diagnostics
+from hastegeo.core.utils.errors import (
+    MetadataConflictError,
+    exception_diagnostics,
+)
 from hastegeo.core.utils.gdal_security import (
     max_download_bytes,
     max_upload_bytes,
@@ -1945,15 +1949,14 @@ async def GetUsers(req: func.HttpRequest) -> func.HttpResponse:
         ),
     }
     try:
-        users = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().USERS.value
-            ).load,
-            "acl",
+        users_metadata = MetadataProcessor(
+            data_type=config.get_metadata_types().USERS.value
         )
+        users = await asyncio.to_thread(users_metadata.load, "acl")
         users = [
             User(**user).dict() for user in users
         ]  # To ensure defaults are applied to legacy entries
+        baseline_users = [dict(user) for user in users]
         app_users = await asyncio.to_thread(UserManager().list_users)
         app_users_dict = index_unique_aad_users(
             [
@@ -1994,15 +1997,20 @@ async def GetUsers(req: func.HttpRequest) -> func.HttpResponse:
                     user["updated_on"] = MetadataUtils.get_timestamp()
 
                 logger.info(f"User {user['userId']}: {comment}")
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().USERS.value
-            ).save,
-            "acl",
+        users = await asyncio.to_thread(
+            save_acl_with_rebase,
+            users_metadata,
+            baseline_users,
             users,
         )
         return func.HttpResponse(json.dumps(users), status_code=200)
 
+    except MetadataConflictError:
+        return _publishing_error_response(
+            "ACL_CONFLICT",
+            "User access changed during reconciliation; refresh and retry.",
+            409,
+        )
     except FileNotFoundError as e:
         logger.error(f"Users not found: {e}\n{traceback.format_exc()}")
         return func.HttpResponse("Users not found.", status_code=404)
@@ -2055,16 +2063,15 @@ async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
                 )
         if input.userId is None:
             input.userId = MetadataUtils.generate_id()
+        users_metadata = MetadataProcessor(
+            data_type=config.get_metadata_types().USERS.value
+        )
         try:
-            users_data = await asyncio.to_thread(
-                MetadataProcessor(
-                    data_type=config.get_metadata_types().USERS.value
-                ).load,
-                "acl",
-            )
+            users_data = await asyncio.to_thread(users_metadata.load, "acl")
         except FileNotFoundError:
             users_data = []
         users = [User(**user) for user in users_data]
+        baseline_users = [user.dict() for user in users]
 
         # Helper function for sending invitations
         async def send_invitation(
@@ -2200,10 +2207,9 @@ async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
             user_response = existing_user.dict()
         output = [user.dict() for user in users]
         await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().USERS.value
-            ).save,
-            "acl",
+            save_acl_with_rebase,
+            users_metadata,
+            baseline_users,
             output,
         )
         return func.HttpResponse(json.dumps(user_response), status_code=200)
@@ -2216,6 +2222,13 @@ async def PutUser(req: func.HttpRequest) -> func.HttpResponse:
         logger.error(f"Invalid JSON: {e}\n{traceback.format_exc()}")
         return func.HttpResponse(
             "Invalid JSON in request body.", status_code=400
+        )
+    except MetadataConflictError:
+        return _publishing_error_response(
+            "ACL_CONFLICT",
+            "User access changed while saving. Refresh the Users list and "
+            "inspect before retrying; an invitation may already have been sent.",
+            409,
         )
     except RuntimeError as e:
         logger.error(f"Error putting user: {e}\n{traceback.format_exc()}")
@@ -2241,14 +2254,12 @@ async def DeleteUser(req: func.HttpRequest) -> func.HttpResponse:
             user_id = _require_email_param(req, "userId")
         except ValueError as ve:
             return _bad_request(f"DeleteUser: {ve}")
-        users = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().USERS.value
-            ).load,
-            "acl",
+        users_metadata = MetadataProcessor(
+            data_type=config.get_metadata_types().USERS.value
         )
-        await asyncio.to_thread(UserManager().delete_user_by_email, user_id)
-        users = [User(**user) for user in users]
+        users_data = await asyncio.to_thread(users_metadata.load, "acl")
+        users = [User(**user) for user in users_data]
+        baseline_users = [user.dict() for user in users]
         for idx, user in enumerate(users):
             if user.userId == user_id:
                 logger.info(
@@ -2261,16 +2272,26 @@ async def DeleteUser(req: func.HttpRequest) -> func.HttpResponse:
 
         output = [user.dict() for user in users]
         await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().USERS.value
-            ).save,
-            "acl",
+            save_acl_with_rebase,
+            users_metadata,
+            baseline_users,
             output,
         )
+        # Revoke HASTE ACL access before asking SWA to remove the role. If the
+        # SWA delete fails, the user remains denied by HASTE while an admin
+        # investigates or retries the platform cleanup.
+        await asyncio.to_thread(UserManager().delete_user_by_email, user_id)
         return func.HttpResponse(
             f"User with ID {user_id} marked as deleted.", status_code=200
         )
 
+    except MetadataConflictError:
+        return _publishing_error_response(
+            "ACL_CONFLICT",
+            "User access changed before deletion; no SWA change was made. "
+            "Refresh the Users list and retry.",
+            409,
+        )
     except FileNotFoundError as e:
         logger.error(f"User not found: {e}\n{traceback.format_exc()}")
         return func.HttpResponse("User not found.", status_code=404)
@@ -2287,12 +2308,10 @@ async def GetUserById(req: func.HttpRequest) -> func.HttpResponse:
     logger.info("GetUser HTTP trigger function processed a request.")
     try:
         user_id = _require_email_param(req, "userId")
-        raw_users = await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().USERS.value
-            ).load,
-            "acl",
+        users_metadata = MetadataProcessor(
+            data_type=config.get_metadata_types().USERS.value
         )
+        raw_users = await asyncio.to_thread(users_metadata.load, "acl")
         if not DEVELOPMENT_MODE:
             caller, auth_error = await _get_active_publishing_caller(
                 req, raw_users=raw_users
@@ -2304,6 +2323,7 @@ async def GetUserById(req: func.HttpRequest) -> func.HttpResponse:
                 return func.HttpResponse("Forbidden.", status_code=403)
 
         users = [User(**user) for user in raw_users]
+        baseline_users = [user.dict() for user in users]
         existing_user = next(
             (
                 user
@@ -2329,10 +2349,9 @@ async def GetUserById(req: func.HttpRequest) -> func.HttpResponse:
                 users.append(new_user)
                 # Save the new user
                 await asyncio.to_thread(
-                    MetadataProcessor(
-                        data_type=config.get_metadata_types().USERS.value
-                    ).save,
-                    "acl",
+                    save_acl_with_rebase,
+                    users_metadata,
+                    baseline_users,
                     [user.dict() for user in users],
                 )
                 return func.HttpResponse(
@@ -2427,6 +2446,12 @@ async def GetUserById(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps(existing_user.dict()), status_code=200
         )
 
+    except MetadataConflictError:
+        return _publishing_error_response(
+            "ACL_CONFLICT",
+            "The user ACL changed during development-mode setup; retry.",
+            409,
+        )
     except ValueError as e:
         return _bad_request(str(e))
     except FileNotFoundError as e:

@@ -113,6 +113,27 @@ class MetadataProcessor:
             )
         return metadata
 
+    def load_with_version(self, key, data_format="json"):
+        """Load metadata with a backend version for conditional updates."""
+        with timed("load_with_version"):
+            return self.storage.load_with_version(
+                identifier=key,
+                data_type=self.data_type,
+                data_format=data_format,
+            )
+
+    def save_with_version(
+        self, key, metadata, expected_version, data_format="json"
+    ):
+        """Replace metadata only when its backend version has not changed."""
+        return self.storage.save_with_version(
+            identifier=key,
+            data_type=self.data_type,
+            data=metadata,
+            expected_version=expected_version,
+            data_format=data_format,
+        )
+
     def load_all(self, data_format="json"):
         """
         Load all metadata from the backend storage.

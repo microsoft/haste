@@ -14,7 +14,7 @@ import {
   Toaster,
 } from "@fluentui/react-components";
 import { AppContext } from "./AppContext";
-import { apiValidateUser } from "./util/api";
+import { apiRefreshSignIn, apiValidateUser } from "./util/api";
 import { loadSession } from "./util/sessionStartup";
 import { useTheme } from "./util/ThemeContext";
 import { getPalette } from "./util/theme";
@@ -43,7 +43,8 @@ function App() {
   const isHome = location.pathname === '/' || location.pathname === '/home';
 
   const [modalComponent, setModalComponent] = useState(null);
-  const [sessionError, setSessionError] = useState(false);
+  const [sessionError, setSessionError] = useState(null);
+  const [pendingCheckInProgress, setPendingCheckInProgress] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(() => {
     const stored = localStorage.getItem("haste-nav-collapsed");
     return stored === null ? true : stored === "true";
@@ -67,11 +68,40 @@ function App() {
       setSessionError,
     });
 
+  const checkPendingAccess = async () => {
+    if (pendingCheckInProgress) return;
+    setPendingCheckInProgress(true);
+    try {
+      await validateUser();
+    } finally {
+      setPendingCheckInProgress(false);
+    }
+  };
+
+  const refreshSignIn = () => {
+    // Do not carry query strings through SWA redirects: invitation links can
+    // contain bearer tokens. Returning to the current path is sufficient.
+    apiRefreshSignIn(location.pathname);
+  };
+
   useEffect(() => {
     validateUser();
 
     //eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The initial session bootstrap already attempts pending-user reconciliation.
+  // Make one delayed retry for invitation/role propagation, then leave retries
+  // user-led through the Check access button rather than polling Azure forever.
+  useEffect(() => {
+    if (appParams.userStatus !== "PendingAcceptance") return undefined;
+
+    const retryTimer = window.setTimeout(() => {
+      checkPendingAccess();
+    }, 12_000);
+    return () => window.clearTimeout(retryTimer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appParams.userStatus]);
 
   // Apply the user's saved color palette once preferences load. Falls back to
   // the default palette when the stored key is missing or invalid. The local
@@ -148,19 +178,77 @@ function App() {
       <div className={`app-container ${isHome ? 'background-color-home' : 'background-color-app'}`}>
         {sessionError ? (
           <div
-            className="d-flex flex-column justify-content-center align-items-center vh-100 gap-3"
+            className="d-flex flex-column justify-content-center align-items-center vh-100 gap-3 px-3 text-center"
             role="alert"
           >
-            <h2>Session unavailable</h2>
-            <p>HASTE could not load your session. Try again.</p>
-            <Button appearance="primary" onClick={validateUser}>
-              Retry
-            </Button>
+            <h2>
+              {sessionError.kind === "unauthorized"
+                ? "Sign-in needs refreshing"
+                : sessionError.kind === "forbidden"
+                  ? "Access unavailable"
+                  : "We couldn't connect to HASTE"}
+            </h2>
+            <p>
+              {sessionError.kind === "unauthorized"
+                ? "Your sign-in may have expired. Refresh your sign-in or try again."
+                : sessionError.kind === "forbidden"
+                  ? "Your account could not access HASTE. Contact your administrator if you think this is a mistake."
+                  : "Please try again. If the problem continues, refresh your sign-in or contact support."}
+            </p>
+            <div className="d-flex flex-wrap justify-content-center gap-2">
+              <Button appearance="primary" onClick={validateUser}>
+                Try again
+              </Button>
+              {sessionError.kind !== "forbidden" && (
+                <Button onClick={refreshSignIn}>Refresh sign-in</Button>
+              )}
+            </div>
+            <small>
+              Support reference: {sessionError.reference} · {sessionError.timestamp}
+              {sessionError.status ? ` · HTTP ${sessionError.status}` : ""}
+            </small>
           </div>
-        ) : ["Inactive", "PendingAcceptance", "Deleted"].includes(appParams.userStatus) ? (
-          <div className="d-flex flex-column justify-content-center align-items-center vh-100">
-            <h5>{appParams.userId} {appParams.userStatus === "PendingAcceptance" ? "account is pending acceptance" : appParams.userStatus === "Deleted" ? "account has been deleted" : "account is inactive"}</h5>
-            <p>{appParams.userStatus === "PendingAcceptance" ? "Please accept the invitation, if it has expired please contact the app administrator." : "Please contact the app administrator."}</p>
+        ) : [
+          "Inactive",
+          "PendingAcceptance",
+          "Deleted",
+          "RefreshingAccess",
+        ].includes(appParams.userStatus) ? (
+          <div className="d-flex flex-column justify-content-center align-items-center vh-100 gap-3 px-3 text-center">
+            <h5>
+              {appParams.userStatus === "PendingAcceptance"
+                ? `${appParams.userId} account is pending invitation completion`
+                : appParams.userStatus === "RefreshingAccess"
+                  ? "Your HASTE account is registered; sign-in needs refreshing"
+                  : appParams.userStatus === "Deleted"
+                    ? `${appParams.userId} account has been deleted`
+                    : `${appParams.userId} account is inactive`}
+            </h5>
+            <p>
+              {appParams.userStatus === "PendingAcceptance"
+                ? "After you accept the invitation, HASTE checks access when you return. " +
+                  "If you have not accepted it yet, use the original invitation link. " +
+                  "If access is still pending, wait about 10 seconds and select Check access."
+                : appParams.userStatus === "RefreshingAccess"
+                  ? "Your current SWA session does not include the HASTE role " +
+                    "required by your account. Refresh your sign-in; if access " +
+                    "is still unavailable afterward, contact the HASTE administrator."
+                  : "Please contact the app administrator."}
+            </p>
+            {appParams.userStatus === "PendingAcceptance" && (
+              <Button
+                appearance="primary"
+                onClick={checkPendingAccess}
+                disabled={pendingCheckInProgress}
+              >
+                {pendingCheckInProgress ? "Checking…" : "Check access"}
+              </Button>
+            )}
+            {appParams.userStatus === "RefreshingAccess" && (
+              <Button appearance="primary" onClick={refreshSignIn}>
+                Refresh sign-in
+              </Button>
+            )}
           </div>
         ) : (
           appParams.userId !== null ? (

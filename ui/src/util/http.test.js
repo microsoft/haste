@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { fetchJsonResponse } from "./http.js";
+import {
+  fetchJsonResponse,
+  HttpResponseError,
+  NetworkRequestError,
+} from "./http.js";
 
 function response({ status = 200, data = null, etag = null } = {}) {
   return {
@@ -50,14 +54,31 @@ test("returns null for a successful empty response", async () => {
   assert.deepEqual(result, { data: null, etag: null, status: 204 });
 });
 
-test("rejects unsuccessful responses", async () => {
+test("preserves HTTP status for failed responses", async () => {
   await assert.rejects(
     fetchJsonResponse(
       "/project",
       {},
       async () => response({ status: 503 })
     ),
-    /status: 503/
+    (error) => error instanceof HttpResponseError && error.status === 503
+  );
+});
+
+test("classifies network failures without hiding aborts", async () => {
+  await assert.rejects(
+    fetchJsonResponse("/project", {}, async () => {
+      throw new TypeError("offline");
+    }),
+    (error) => error instanceof NetworkRequestError
+      && error.cause?.message === "offline"
+  );
+
+  const abort = new Error("aborted");
+  abort.name = "AbortError";
+  await assert.rejects(
+    fetchJsonResponse("/project", {}, async () => { throw abort; }),
+    (error) => error === abort
   );
 });
 

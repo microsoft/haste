@@ -6,8 +6,11 @@ from ..models.session import SessionBootstrap, SessionPublishing, SessionUser
 from ..models.users import User
 from ..publishing.registry import PublishingProviderRegistry
 from .metadata import MetadataProcessor
+from .user_acl import metadata_supports_conditional_writes
+from .user_reconciliation import reconcile_pending_user
 
 APPLICATION_ROLES = frozenset({"administrators", "contributors"})
+REFRESHING_ACCESS_STATUS = "RefreshingAccess"
 
 
 def application_roles(value: Any) -> set[str]:
@@ -106,11 +109,13 @@ class SessionBootstrapProcessor:
         registry_factory: Callable[..., PublishingProviderRegistry] = (
             PublishingProviderRegistry
         ),
+        user_manager_factory: Callable[..., Any] | None = None,
         development_mode: bool = False,
     ) -> None:
         self.config = config or Config()
         self.processor_factory = processor_factory
         self.registry_factory = registry_factory
+        self.user_manager_factory = user_manager_factory
         self.development_mode = development_mode
 
     def load(self, principal: Mapping[str, Any]) -> SessionBootstrap:
@@ -119,7 +124,43 @@ class SessionBootstrapProcessor:
         if not principal_id and not login:
             raise SessionAccessError("Authentication is required.")
 
-        user = self._load_user(principal_id, login)
+        metadata, raw_users, version = self._load_users_snapshot()
+        user = find_principal_user(raw_users, principal_id, login)
+        if user is None and self.development_mode:
+            active_status = self.config.get_user_statuses().ACTIVE.value
+            user = User(
+                userId=login or principal_id,
+                objectId=principal_id or None,
+                email=login or principal_id,
+                userRoles=["administrators"],
+                status=active_status,
+                settings={},
+            )
+        if user is None:
+            raise SessionAccessError("An active HASTE user is required.")
+
+        if (
+            not user.deleted
+            and user.status == self.config.get_user_statuses().PENDING.value
+        ):
+            raw_users = reconcile_pending_user(
+                metadata,
+                raw_users,
+                target_user_id=user.userId or user.email or login,
+                principal_id=principal_id,
+                login=login,
+                principal_provider=self._string(
+                    principal.get("identityProvider")
+                    or principal.get("identity_provider")
+                ),
+                initial_version=version,
+                config=self.config,
+                user_manager_factory=self.user_manager_factory,
+            )
+            user = find_principal_user(raw_users, principal_id, login)
+            if user is None:
+                raise SessionAccessError("An active HASTE user is required.")
+
         active_status = self.config.get_user_statuses().ACTIVE.value
         if user.deleted or user.status != active_status:
             pending_status = self.config.get_user_statuses().PENDING.value
@@ -150,7 +191,21 @@ class SessionBootstrapProcessor:
             )
         )
         if not effective_roles:
-            raise SessionAccessError("No active HASTE role is assigned.")
+            return SessionBootstrap(
+                user=SessionUser(
+                    userId=user.email or user.userId or login,
+                    identityId=(
+                        principal_id or user.objectId or user.userId or login
+                    ),
+                    userRoles=[],
+                    settings=user.settings or {},
+                    status=REFRESHING_ACCESS_STATUS,
+                ),
+                publishing=SessionPublishing(
+                    publishingEnabled=False,
+                    providers=[],
+                ),
+            )
 
         registry = self.registry_factory(config=self.config)
         return SessionBootstrap(
@@ -172,30 +227,19 @@ class SessionBootstrapProcessor:
             ),
         )
 
-    def _load_user(self, principal_id: str, login: str) -> User:
+    def _load_users_snapshot(self) -> tuple[Any, list[dict], Any]:
+        metadata = self.processor_factory(
+            data_type=self.config.get_metadata_types().USERS.value,
+            config=self.config,
+        )
         try:
-            raw_users = self.processor_factory(
-                data_type=self.config.get_metadata_types().USERS.value,
-                config=self.config,
-            ).load("acl")
+            if metadata_supports_conditional_writes(metadata):
+                raw_users, version = metadata.load_with_version("acl")
+            else:
+                raw_users, version = metadata.load("acl"), None
         except FileNotFoundError:
-            raw_users = []
-
-        user = find_principal_user(raw_users, principal_id, login)
-        if user is not None:
-            return user
-
-        if self.development_mode:
-            active_status = self.config.get_user_statuses().ACTIVE.value
-            return User(
-                userId=login or principal_id,
-                objectId=principal_id or None,
-                email=login or principal_id,
-                userRoles=["administrators"],
-                status=active_status,
-                settings={},
-            )
-        raise SessionAccessError("An active HASTE user is required.")
+            raw_users, version = [], None
+        return metadata, raw_users, version
 
     @staticmethod
     def _string(value: Any) -> str:

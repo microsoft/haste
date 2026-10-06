@@ -1,7 +1,9 @@
+import os
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from hastegeo.core.config import Config
+from hastegeo.core.processors import user_reconciliation
 from hastegeo.core.processors.session import (
     SessionAccessError,
     SessionBootstrapProcessor,
@@ -12,6 +14,17 @@ from hastegeo.core.processors.session import (
 
 class TestSessionBootstrapProcessor(unittest.TestCase):
     def setUp(self) -> None:
+        environment = patch.dict(
+            os.environ,
+            {
+                "STATIC_APP_SUBSCRIPTION_ID": "subscription-id",
+                "STATIC_APP_RESOURCE_GROUP": "resource-group",
+                "STATIC_APP_NAME": "static-site",
+            },
+        )
+        environment.start()
+        self.addCleanup(environment.stop)
+        user_reconciliation._pending_check_times.clear()
         self.config = Config()
         self.active_status = self.config.get_user_statuses().ACTIVE.value
         self.metadata = Mock()
@@ -74,8 +87,11 @@ class TestSessionBootstrapProcessor(unittest.TestCase):
             }
         ]
 
-        with self.assertRaises(SessionAccessError):
-            self.processor.load(self.principal)
+        result = self.processor.load(self.principal)
+
+        self.assertEqual(result.user.status, "RefreshingAccess")
+        self.assertEqual(result.user.userRoles, [])
+        self.assertFalse(result.publishing.publishingEnabled)
 
     def test_legacy_email_match_is_case_insensitive(self) -> None:
         self.metadata.load.return_value = [
@@ -165,14 +181,120 @@ class TestSessionBootstrapProcessor(unittest.TestCase):
         ]
         principal = dict(self.principal, userRoles=["contributors"])
 
-        with self.assertRaises(SessionAccessError):
-            self.processor.load(principal)
+        result = self.processor.load(principal)
+
+        self.assertEqual(result.user.status, "RefreshingAccess")
+        self.assertEqual(result.user.userRoles, [])
+        self.assertFalse(result.publishing.publishingEnabled)
 
     def test_missing_principal_identity_is_denied(self) -> None:
         with self.assertRaises(SessionAccessError):
             self.processor.load({"userRoles": ["contributors"]})
 
         self.processor_factory.assert_not_called()
+
+    def test_pending_user_is_activated_on_bootstrap_and_read_back(
+        self,
+    ) -> None:
+        pending = self.config.get_user_statuses().PENDING.value
+        record = {
+            "userId": "analyst@example.com",
+            "email": "analyst@example.com",
+            "identityProvider": "aad",
+            "userRoles": ["contributors"],
+            "status": pending,
+            "deleted": False,
+            "settings": {},
+        }
+
+        class VersionedMetadata:
+            def __init__(self):
+                self.users = [dict(record)]
+                self.version = 1
+
+            def load_with_version(self, key):
+                return [dict(user) for user in self.users], self.version
+
+            def load(self, key):
+                return [dict(user) for user in self.users]
+
+            def save_with_version(self, key, users, version):
+                if version != self.version:
+                    raise RuntimeError("stale ETag")
+                self.users = [dict(user) for user in users]
+                self.version += 1
+
+        metadata = VersionedMetadata()
+        manager = Mock()
+        manager.list_users.return_value = [
+            {
+                "user_details": "analyst@example.com",
+                "provider": "aad",
+                "roles": "contributors,authenticated",
+                "user_id": "OBJECT-ID",
+            }
+        ]
+        processor = SessionBootstrapProcessor(
+            config=self.config,
+            processor_factory=Mock(return_value=metadata),
+            registry_factory=self.registry_factory,
+            user_manager_factory=Mock(return_value=manager),
+        )
+
+        result = processor.load(self.principal)
+
+        self.assertEqual(result.user.status, self.active_status)
+        self.assertEqual(result.user.userRoles, ["contributors"])
+        self.assertEqual(metadata.users[0]["objectId"], "OBJECT-ID")
+        manager.list_users.assert_called_once()
+
+    def test_pending_activation_without_principal_role_requires_refresh(
+        self,
+    ) -> None:
+        pending = self.config.get_user_statuses().PENDING.value
+        record = {
+            "userId": "analyst@example.com",
+            "email": "analyst@example.com",
+            "identityProvider": "aad",
+            "userRoles": ["contributors"],
+            "status": pending,
+            "deleted": False,
+        }
+
+        class Metadata:
+            def __init__(self):
+                self.users = [dict(record)]
+
+            def load(self, key):
+                return [dict(user) for user in self.users]
+
+            def save(self, key, users):
+                self.users = [dict(user) for user in users]
+
+        metadata = Metadata()
+        manager = Mock()
+        manager.list_users.return_value = [
+            {
+                "user_details": "analyst@example.com",
+                "provider": "aad",
+                "roles": "contributors,authenticated",
+                "user_id": "OBJECT-ID",
+            }
+        ]
+        processor = SessionBootstrapProcessor(
+            config=self.config,
+            processor_factory=Mock(return_value=metadata),
+            registry_factory=self.registry_factory,
+            user_manager_factory=Mock(return_value=manager),
+        )
+
+        result = processor.load(
+            dict(self.principal, userRoles=["authenticated"])
+        )
+
+        self.assertEqual(result.user.status, "RefreshingAccess")
+        self.assertEqual(result.user.userRoles, [])
+        self.assertEqual(metadata.users[0]["status"], self.active_status)
 
     def test_development_mode_can_create_ephemeral_session(self) -> None:
         self.metadata.load.side_effect = FileNotFoundError

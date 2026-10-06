@@ -6,11 +6,16 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from azure.core.exceptions import ResourceNotFoundError
+from azure.core.exceptions import (
+    ResourceExistsError,
+    ResourceModifiedError,
+    ResourceNotFoundError,
+)
 from hastegeo.core.data_layer.azure_blob_storage_data_layer import (
     _INITIALIZED_CONTAINERS,
     AzureBlobStorageDataLayer,
 )
+from hastegeo.core.utils.errors import MetadataConflictError
 
 
 class TestAzureBlobStorageDataLayerLoad(unittest.TestCase):
@@ -40,6 +45,64 @@ class TestAzureBlobStorageDataLayerLoad(unittest.TestCase):
         result = self.layer.load("record", "model")
 
         self.assertEqual(result, {"value": 1})
+
+    def test_versioned_load_returns_the_blob_etag(self) -> None:
+        self.downloader.readall.return_value = b'{"value": 1}'
+        self.downloader.properties.etag = '"etag-1"'
+
+        result, version = self.layer.load_with_version("acl", "users")
+
+        self.assertEqual(result, {"value": 1})
+        self.assertEqual(version, '"etag-1"')
+
+    def test_versioned_save_uses_if_match(self) -> None:
+        from azure.core import MatchConditions
+
+        self.layer._index_metadata = Mock(return_value={"kind": "users"})
+
+        self.layer.save_with_version(
+            "acl", "users", [{"userId": "a@example.com"}], '"etag-1"'
+        )
+
+        self.blob_client.upload_blob.assert_called_once()
+        self.assertEqual(
+            self.blob_client.upload_blob.call_args.kwargs["etag"],
+            '"etag-1"',
+        )
+        self.assertEqual(
+            self.blob_client.upload_blob.call_args.kwargs["match_condition"],
+            MatchConditions.IfNotModified,
+        )
+
+    def test_create_only_versioned_save_does_not_overwrite(self) -> None:
+        self.layer._index_metadata = Mock(return_value={"kind": "users"})
+
+        self.layer.save_with_version("acl", "users", [], None)
+
+        self.assertFalse(
+            self.blob_client.upload_blob.call_args.kwargs["overwrite"]
+        )
+        self.assertNotIn("etag", self.blob_client.upload_blob.call_args.kwargs)
+
+    def test_create_only_versioned_save_reports_existing_blob_conflict(
+        self,
+    ) -> None:
+        self.blob_client.upload_blob.side_effect = ResourceExistsError(
+            "already exists"
+        )
+
+        with self.assertRaises(MetadataConflictError):
+            self.layer.save_with_version("acl", "users", [], None)
+
+    def test_versioned_save_reports_conflicts(self) -> None:
+        self.blob_client.upload_blob.side_effect = ResourceModifiedError(
+            "stale etag"
+        )
+
+        with self.assertRaises(MetadataConflictError):
+            self.layer.save_with_version(
+                "acl", "users", [], '"etag-1"'
+            )
 
     def test_load_tolerates_legacy_double_serialized_json(self) -> None:
         self.downloader.readall.return_value = json.dumps(

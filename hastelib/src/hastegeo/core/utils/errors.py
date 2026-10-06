@@ -30,6 +30,10 @@ from typing import Any, Optional
 _SERVICE_TRAILER_MARKERS = ("\nRequestId:", "\nTime:")
 
 
+class MetadataConflictError(RuntimeError):
+    """Raised when a conditional metadata write sees a newer record."""
+
+
 def exception_diagnostics(exc: BaseException) -> list[dict[str, Any]]:
     """Describe failure locations/SDK codes without messages or payloads."""
     chain = []

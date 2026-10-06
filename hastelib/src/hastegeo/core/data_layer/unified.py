@@ -121,6 +121,35 @@ class UnifiedDataLayer:
             identifier, data_type, data_format=data_format
         )
 
+    def load_with_version(
+        self, identifier, data_type, data_format="json"
+    ):
+        loader = getattr(self.data_layer, "load_with_version", None)
+        if loader is None:
+            return self.load(identifier, data_type, data_format), None
+        return loader(identifier, data_type, data_format=data_format)
+
+    def save_with_version(
+        self,
+        identifier,
+        data_type,
+        data,
+        expected_version,
+        data_format="json",
+    ):
+        saver = getattr(self.data_layer, "save_with_version", None)
+        if saver is None:
+            raise RuntimeError(
+                "This metadata backend does not support conditional writes"
+            )
+        return saver(
+            identifier,
+            data_type,
+            data,
+            expected_version,
+            data_format=data_format,
+        )
+
     def load_all(self, data_type, data_format="json"):
         return self.data_layer.load_all(data_type, data_format=data_format)
 

@@ -4,7 +4,11 @@
 const APIUrl = import.meta.env?.VITE_API_URL || "";
 const APIMSubscriptionKey = import.meta.env?.VITE_APIM_SUBSCRIPTION_KEY;
 import { sanitizeRedirectPath } from "./validation.js";
-import { fetchJsonResponse } from "./http.js";
+import {
+  fetchJsonResponse,
+  HttpResponseError,
+  NetworkRequestError,
+} from "./http.js";
 
 export function buildUrl(endpoint) {
   const base = APIUrl + endpoint;
@@ -36,6 +40,16 @@ export async function apiValidateUser(setAppParams, get = apiGet) {
   return response;
 }
 
+export function buildSignInUrl(redirectPath, origin) {
+  const safePath = sanitizeRedirectPath(redirectPath);
+  const returnUrl = new URL(safePath, origin).href;
+  return `/.auth/login/aad?post_login_redirect_uri=${encodeURIComponent(returnUrl)}`;
+}
+
+export function apiRefreshSignIn(redirectPath = "/") {
+  window.location.assign(buildSignInUrl(redirectPath, window.location.origin));
+}
+
 export async function apiLogout(redirectPath = "/") {
   try {
     // Constrain to a same-origin relative path so a crafted logout link can't
@@ -57,6 +71,9 @@ export async function apiGetResponse(endpoint, options = {}) {
     return await fetchJsonResponse(buildUrl(endpoint), options);
   } catch (error) {
     if (error.name === "AbortError") throw error;
+    if (error instanceof HttpResponseError || error instanceof NetworkRequestError) {
+      throw error;
+    }
     console.error("Error fetching.:", error);
     throw new Error("Error fetching.");
   }

@@ -32,7 +32,8 @@ resource invitationRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
     permissions: [
       {
         actions: [
-          'microsoft.web/staticSites/*'
+          'Microsoft.Web/staticSites/createinvitation/action'
+          'Microsoft.Web/staticSites/authproviders/users/Delete'
         ]
         notActions: []
         dataActions: []
@@ -49,7 +50,49 @@ resource invitationAssignment 'Microsoft.Authorization/roleAssignments@2022-04-0
   name: guid(staticWebApp.id, functionSystemPrincipalId, 'HasteWebAppUserManager')
   scope: staticWebApp
   properties: {
-    roleDefinitionId: invitationRole.id
+    // Azure returns custom role definitions with subscription-scoped IDs,
+    // even when their only assignable scope is this resource group.
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      invitationRole.name
+    )
+    principalId: functionSystemPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// The pending-user session bootstrap only needs to list SWA users. Keep this
+// read permission separate from the API app's invitation-management actions.
+resource swaUserReaderRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
+  name: guid(resourceGroup().id, 'HasteSwaUserReader')
+  properties: {
+    roleName: 'HasteSwaUserReader-${uniqueString(resourceGroup().id)}'
+    description: 'Lets the HASTE API app list users for pending invitation reconciliation.'
+    type: 'CustomRole'
+    permissions: [
+      {
+        actions: [
+          'Microsoft.Web/staticSites/authproviders/listusers/Action'
+        ]
+        notActions: []
+        dataActions: []
+        notDataActions: []
+      }
+    ]
+    assignableScopes: [
+      resourceGroup().id
+    ]
+  }
+}
+
+resource swaUserReaderAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(staticWebApp.id, functionSystemPrincipalId, 'HasteSwaUserReader')
+  scope: staticWebApp
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      swaUserReaderRole.name
+    )
     principalId: functionSystemPrincipalId
     principalType: 'ServicePrincipal'
   }

@@ -393,6 +393,32 @@ class TestLocalReadContract(unittest.TestCase):
 
 
 class TestUnifiedReadContract(unittest.TestCase):
+    def test_create_only_conditional_save_delegates_to_backend(self) -> None:
+        unified = UnifiedDataLayer.__new__(UnifiedDataLayer)
+        unified.data_layer = Mock()
+
+        unified.save_with_version("acl", "users", [], None)
+
+        unified.data_layer.save_with_version.assert_called_once_with(
+            "acl", "users", [], None, data_format="json"
+        )
+        unified.data_layer.save.assert_not_called()
+
+    def test_missing_backend_conditional_write_fails_closed(self) -> None:
+        class NonVersionedBackend:
+            def __init__(self):
+                self.save_called = False
+
+            def save(self, **kwargs):
+                self.save_called = True
+
+        unified = UnifiedDataLayer.__new__(UnifiedDataLayer)
+        unified.data_layer = NonVersionedBackend()
+
+        with self.assertRaisesRegex(RuntimeError, "conditional writes"):
+            unified.save_with_version("acl", "users", [], None)
+        self.assertFalse(unified.data_layer.save_called)
+
     def test_load_map_delegates_all_arguments(self) -> None:
         unified = UnifiedDataLayer.__new__(UnifiedDataLayer)
         unified.data_layer = Mock()
