@@ -3,6 +3,7 @@
 ## Contents
 
 - [Slices](#slices)
+- [Projects Cancellation Follow-Up](#projects-cancellation-follow-up)
 - [CXL-01 Follow-Up](#cxl-01-follow-up)
 - [Exit Gates](#exit-gates)
 - [Agent Summary](#agent-summary)
@@ -23,6 +24,29 @@
 Each slice is reviewable and testable independently. No infrastructure or
 dependency changes are planned.
 
+## Projects Cancellation Follow-Up
+
+CXL-05P extracts only the Projects list from the broader CXL-05 cancellation
+work. Implementation was approved on 2026-09-16 and PR preparation on
+2026-09-17. The independent branch originally started at `main` (`2dad150`),
+whose source tree matches the original #210 base (`3834fb4`). On 2026-09-23,
+`main` (`86aa6f7`) was merged into #227 after #223 landed, preserving both
+CXL-01 and CXL-05P. Unrelated working-tree edits are unchanged.
+
+| Task | Agent | Validating Agent | Story | Status |
+|---|---|---|---|---|
+| Abort departed/replaced Projects reads and suppress stale data/header/tour updates | `ui` | `ui-validation` | US-005 | implemented locally |
+| Use local read loading/error/Retry and guard shared-country callbacks | `ui` | `ui-validation` | US-005 | implemented locally |
+| Preserve preference-save and awaitable row/card delete-refresh contracts | `ui` | `ui-validation` | US-005 | verified locally |
+| StrictMode, interrupted-navigation, error, shared-data, and action regression tests | `ui` | `ui-validation` | US-005 | passed locally |
+| Clear inherited header/tour state on mount; test pending and failed Home-to-Projects entry without StrictMode | `ui` | `ui-validation` | US-005 | passed locally |
+| Human review, CI and authenticated Dev1 smoke test | `ui` | `ui-validation` | US-005 | pending |
+
+Other CXL-05 list/admin pages remain pending. This change is prepared as a
+separate draft PR against `main`; it does not depend on #223. No application
+deployment or live configuration change is included.
+See [browser test commands](test-plan.md#projects-cancellation-regressions).
+
 ## CXL-01 Follow-Up
 
 Prepared on 2026-09-16 as a separate change based on the cumulative #210 tip
@@ -37,7 +61,9 @@ reviewed performance branches and unrelated working-tree edits.
 | Smoke-test representative authenticated Dev1 imagery | `ui` | `ui-validation` | US-005 | pending before rollout |
 
 No backend, infrastructure, dependency, save, export, or job-submission changes
-are included. The remaining cancellation work packages are not implemented.
+are included. CXL-01 was merged through #223 on 2026-09-23; the Projects-only
+follow-up is tracked separately above. Other cancellation work packages remain
+pending.
 See [test commands](test-plan.md#cxl-01-browser-regressions) and
 [verification results](results.md#cxl-01-local-verification).
 

@@ -6,6 +6,7 @@
 - [Implemented Changes](#implemented-changes)
 - [Expected Impact](#expected-impact)
 - [Local Verification](#local-verification)
+- [Projects Cancellation Verification](#projects-cancellation-verification)
 - [CXL-01 Local Verification](#cxl-01-local-verification)
 - [Open Validation](#open-validation)
 
@@ -100,6 +101,54 @@ Active Jobs independently. The session and Dashboard phases both displayed the
 same single overall `Loading dashboard` spinner. After Dashboard content
 rendered, that overall spinner cleared and the still-pending Active Jobs request
 displayed its intended spinner inside the Ongoing Jobs box.
+
+## Projects Cancellation Verification
+
+The Projects-only CXL-05P follow-up, based on #210 (`3834fb4`), passed 169
+existing UI/unit/request-failure tests on 2026-09-16. Eight new browser scenarios
+passed (nine Node entries including their parent suite), covering repeated
+interruptions, stale completions, retry, shared reference data, empty lists,
+preference writes, and awaitable row/card deletion refreshes.
+
+The production UI build completed in 411 ms. Scoped ESLint passes for Projects;
+full UI lint reports 170 existing diagnostics (162 errors, eight warnings),
+down from 173 after removing three unused imports in the touched component.
+Desktop and mobile loading/error screenshots were inspected and fit without
+overlap. Tests use synthetic local data and do not contact Dev1.
+
+The original diagnostic probe reproduced five continuing requests and late
+global header/tour/loading writes from abandoned Projects visits. The new
+tests verify cancellation and zero global loading writes for automatic reads.
+This evidence is independent of the earlier HAR network delays and Function
+startup stalls; those are not claimed as resolved. Human review, CI, and an
+authenticated Dev1 smoke test remain pending.
+
+On 2026-09-17, the change was moved onto `main` (`2dad150`) after verifying
+that its source tree matches the original #210 base. All 169 existing tests
+and eight browser scenarios passed again on the new branch. The browser
+runner uses an external Playwright installation; no application dependencies
+were added or changed.
+
+On 2026-09-23, #227 incorporated `main` (`86aa6f7`) after CXL-01 / #223
+merged. The combined tree passed 178 UI/unit/request-failure tests and both
+browser suites: eight CXL-01 scenarios and eight Projects scenarios. The
+production build completed in 483 ms. Full UI lint reports 169 diagnostics
+(161 errors, eight warnings). Both implementations and their browser tests
+were preserved byte-for-byte; four shared spec conflicts were resolved by
+retaining both follow-up sections. No application deployment was performed.
+
+The subsequent #227 Copilot review identified inherited Dashboard Help and tour
+state during Projects loading or failure. Two Home-to-Projects browser tests
+without StrictMode failed on the unchanged component while all eight existing
+StrictMode scenarios passed. Clearing inherited controls at Projects mount
+made all ten scenarios pass, including successful loading and Retry recovery
+(11 Node entries including the parent suite).
+
+The 2026-09-23 review fix also passed all 178 UI/unit/request-failure tests,
+scoped ESLint, and a production build in 392 ms. Full UI lint retains the same
+169 diagnostics (161 errors, eight warnings). Home and the existing request,
+mutation, and shared-data lifetimes were not changed. No Dev1 deployment or
+authenticated smoke test was performed.
 
 ## CXL-01 Local Verification
 
