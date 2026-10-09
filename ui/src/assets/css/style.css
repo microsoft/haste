@@ -628,6 +628,10 @@ body {
   background-color: #777777;
 }
 
+.modelStatus-Unknown {
+  background-color: #616161;
+}
+
 .section-header {
   background-color: #EAEAEA;
   box-shadow: inset 0px 10px 10px -10px rgba(0, 0, 0, 0.2);
