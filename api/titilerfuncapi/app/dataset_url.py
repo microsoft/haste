@@ -42,14 +42,6 @@ DEFAULT_PUBLIC_HOSTS = frozenset(
     }
 )
 
-# Comma-separated exact hostnames, e.g. the deployment's own blob endpoint.
-# These may resolve to private addresses (private endpoints).
-ALLOWED_HOSTS_ENV = "TITILER_ALLOWED_HOSTS"
-
-# Comma-separated origins (scheme://host:port) accepted over plain http.
-# Local docker-compose only (Azurite); deployments must never set it.
-DEV_ORIGINS_ENV = "TITILER_DEV_ALLOWED_ORIGINS"
-
 MAX_URL_LENGTH = 4096
 
 USER_AGENT = "haste-titiler"
@@ -76,12 +68,23 @@ class DatasetUrlPolicy:
     dev_origins: frozenset = frozenset()
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str] = os.environ):
+    def from_env(cls, environ: Mapping[str, str] = os.environ):
+        # Read with literal names: check_env_drift.py matches settings the
+        # deploy paths emit against `environ.get("NAME", ...)` calls.
+        #
+        # TITILER_ALLOWED_HOSTS: comma-separated exact hostnames, e.g. the
+        # deployment's own blob endpoint. These may resolve to private
+        # addresses (private endpoints).
         configured = frozenset(
-            _parse_host(h) for h in _split(env.get(ALLOWED_HOSTS_ENV, ""))
+            _parse_host(h)
+            for h in _split(environ.get("TITILER_ALLOWED_HOSTS", ""))
         )
+        # TITILER_DEV_ALLOWED_ORIGINS: comma-separated http://host:port
+        # origins accepted over plain http. Local docker-compose only
+        # (Azurite); deployments must never set it.
         dev = frozenset(
-            _parse_dev_origin(o) for o in _split(env.get(DEV_ORIGINS_ENV, ""))
+            _parse_dev_origin(o)
+            for o in _split(environ.get("TITILER_DEV_ALLOWED_ORIGINS", ""))
         )
         return cls(configured_hosts=configured, dev_origins=dev)
 
@@ -99,14 +102,16 @@ def _split(raw: str) -> list:
 def _parse_host(raw: str) -> str:
     host = raw.lower()
     if not _HOSTNAME_RE.match(host) or _is_ip_literal(host):
-        raise ValueError(f"{ALLOWED_HOSTS_ENV}: invalid hostname {raw!r}")
+        raise ValueError(f"TITILER_ALLOWED_HOSTS: invalid hostname {raw!r}")
     return host
 
 
 def _parse_dev_origin(raw: str) -> tuple:
     parts = urlsplit(raw)
     if parts.scheme != "http" or not parts.port or parts.path not in ("", "/"):
-        raise ValueError(f"{DEV_ORIGINS_ENV}: expected http://host:port")
+        raise ValueError(
+            "TITILER_DEV_ALLOWED_ORIGINS: expected http://host:port"
+        )
     return ("http", parts.hostname, parts.port)
 
 
