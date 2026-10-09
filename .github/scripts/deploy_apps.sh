@@ -379,6 +379,15 @@ deploy_function() {
             --output none
     fi
 
+    # TiTiler reads HASTE imagery only from this storage host (plus its
+    # built-in public open-data hosts). Mirrors functions.bicep; without it
+    # HASTE imagery tiles fail closed.
+    if [ "$FUNCTION_NAME" = "$FUNCTION_TITILER_API" ]; then
+        az functionapp config appsettings set --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --settings \
+            "TITILER_ALLOWED_HOSTS=${STORAGE_ACCOUNT}.blob.core.windows.net" \
+            --output none
+    fi
+
     az functionapp restart --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP"
 
     # Function apps publish via `func` -> remote pip install on Azure, so the

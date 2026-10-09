@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "7958925346472238973"
+      "templateHash": "1042585544187711670"
     }
   },
   "parameters": {
@@ -1483,7 +1483,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.47.16.16243",
-              "templateHash": "15949969856414472234"
+              "templateHash": "6211354945421529250"
             }
           },
           "parameters": {
@@ -2183,6 +2183,14 @@
                   },
                   "restrictScmSite": {
                     "value": true
+                  },
+                  "appSettings": {
+                    "value": [
+                      {
+                        "name": "TITILER_ALLOWED_HOSTS",
+                        "value": "[split(reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob, '/')[2]]"
+                      }
+                    ]
                   },
                   "tags": {
                     "value": "[parameters('tags')]"

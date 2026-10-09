@@ -158,6 +158,9 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing 
 // server-to-server, so the APIM egress subnet is its only legitimate caller.
 var apimSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, apimSubnetName)
 
+// Bare hostname of the blob endpoint HASTE imagery tiles are served from.
+var titilerStorageHost = split(storageAccount.properties.primaryEndpoints.blob, '/')[2]
+
 // Application settings shared by the api and queues apps. hastegeo's Config()
 // (instantiated at import time) reads these, so they must be present or the
 // worker cannot index function_app.py. Storage/queue access is identity-based
@@ -281,6 +284,11 @@ module titilerApp 'functionApp.bicep' = {
     ]
     restrictMainSite: true
     restrictScmSite: true
+    // The only storage host TiTiler may read from besides the built-in
+    // public open-data hosts. Unset means HASTE imagery tiles fail closed.
+    appSettings: [
+      { name: 'TITILER_ALLOWED_HOSTS', value: titilerStorageHost }
+    ]
     tags: tags
   }
   // All three apps integrate with the same func-subnet. A subnet's
