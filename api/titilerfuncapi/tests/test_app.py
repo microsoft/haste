@@ -130,14 +130,14 @@ class TestGeoTIFFReader(unittest.TestCase):
             self.assertEqual(src.dataset.driver, "GTiff")
 
     def test_refuses_vrt_content_even_with_tif_name(self):
-        secret = os.path.join(self.tmp.name, "secret.tif")
-        _write_geotiff(secret)
+        target = os.path.join(self.tmp.name, "target.tif")
+        _write_geotiff(target)
         disguised = os.path.join(self.tmp.name, "innocent.tif")
         with open(disguised, "w") as fh:
             fh.write(
                 '<VRTDataset rasterXSize="16" rasterYSize="16">'
                 '<VRTRasterBand dataType="Byte" band="1"><SimpleSource>'
-                f'<SourceFilename relativeToVRT="0">{secret}</SourceFilename>'
+                f'<SourceFilename relativeToVRT="0">{target}</SourceFilename>'
                 "<SourceBand>1</SourceBand></SimpleSource></VRTRasterBand>"
                 "</VRTDataset>"
             )
