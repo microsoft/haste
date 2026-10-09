@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "928602136220233773"
+      "templateHash": "7157770476167388725"
     }
   },
   "parameters": {
@@ -3157,7 +3157,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.47.16.16243",
-              "templateHash": "11764283406952728228"
+              "templateHash": "11068195621256641385"
             }
           },
           "parameters": {
@@ -3207,9 +3207,9 @@
             },
             "titilerMaxUrlLength": {
               "type": "int",
-              "defaultValue": 6144,
+              "defaultValue": 2048,
               "metadata": {
-                "description": "Longest TiTiler request URL (path + query) accepted, in characters."
+                "description": "Longest TiTiler request URL (path + query) accepted, in characters. TiTiler's App Service front end already rejects query strings over 2,048 characters with an opaque 404, so a higher value has no effect; this returns a clear 414 instead."
               }
             }
           },

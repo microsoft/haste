@@ -29,8 +29,8 @@ param titilerCallsPerClientPerMinute int = 1200
 @description('TiTiler tile requests allowed per minute across all clients.')
 param titilerCallsPerMinute int = 20000
 
-@description('Longest TiTiler request URL (path + query) accepted, in characters.')
-param titilerMaxUrlLength int = 6144
+@description('Longest TiTiler request URL (path + query) accepted, in characters. TiTiler\'s App Service front end already rejects query strings over 2,048 characters with an opaque 404, so a higher value has no effect; this returns a clear 414 instead.')
+param titilerMaxUrlLength int = 2048
 
 // The APIM product the SWA linked-backend generated (named after the SWA host's
 // first label, e.g. "agreeable-smoke-06273c21e").
