@@ -84,11 +84,19 @@ services:
 # deployer to the SWA. Runs on `azd up` and `azd deploy`. See deploy/postdeploy.ps1.
 # (Scripts live in deploy/, not hooks/ — the latter is blocked by an org push rule
 # that restricts the git-hooks directory name.)
+#
+# After provisioning: remove TiTiler role assignments and APIM operations that
+# infra no longer declares (Bicep never deletes them). Fails provisioning if
+# any are left. See deploy/reconcile-titiler-baseline.ps1.
 hooks:
   preprovision:
     shell: pwsh
     continueOnError: true
     run: ./deploy/resolve-batch-image-tags.ps1
+  postprovision:
+    shell: pwsh
+    continueOnError: false
+    run: ./deploy/reconcile-titiler-baseline.ps1
   postdeploy:
     shell: pwsh
     continueOnError: false

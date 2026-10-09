@@ -20,6 +20,9 @@ param storageAccountName string
 @description('Premium file storage account name.')
 param fileStorageAccountName string
 
+@description('TiTiler host storage account name (its AzureWebJobsStorage and deployment package).')
+param titilerStorageAccountName string
+
 @description('User-assigned managed identity resource id.')
 param umiResourceId string
 
@@ -276,6 +279,13 @@ module titilerApp 'functionApp.bicep' = {
     storageAccountName: storageAccountName
     fileStorageAccountName: fileStorageAccountName
     umiResourceId: umiResourceId
+    // Least privilege: TiTiler reads imagery only through the SAS URLs it is
+    // given, so it keeps its host state in its own account and gets no
+    // shared identity, no /data mount and no rights on the shared accounts.
+    hostStorageAccountName: titilerStorageAccountName
+    attachSharedIdentity: false
+    mountDataShare: false
+    grantBlobDelegator: false
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
     logAnalyticsId: logAnalyticsId
