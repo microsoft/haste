@@ -23,6 +23,15 @@ param staticWebAppHostName string
 @description('Storage account name backing the storage-proxy operations.')
 param storageAccountName string
 
+@description('TiTiler tile requests allowed per client per minute.')
+param titilerCallsPerClientPerMinute int = 1200
+
+@description('TiTiler tile requests allowed per minute across all clients.')
+param titilerCallsPerMinute int = 20000
+
+@description('Longest TiTiler request URL (path + query) accepted, in characters.')
+param titilerMaxUrlLength int = 6144
+
 // The APIM product the SWA linked-backend generated (named after the SWA host's
 // first label, e.g. "agreeable-smoke-06273c21e").
 var swaProductId = split(staticWebAppHostName, '.')[0]
@@ -139,22 +148,46 @@ resource productApiTitiler 'Microsoft.ApiManagement/service/products/apis@2024-0
   dependsOn: [ apiTitiler ]
 }
 
-// API-level policy routes all titiler operations (get-tiles + the hook-synced
-// ones) to the titiler backend.
-resource apiPolicyTitiler 'Microsoft.ApiManagement/service/apis/policies@2024-06-01-preview' = {
-  parent: apiTitiler
-  name: 'policy'
-  properties: {
-    format: 'xml'
-    value: replace('''<policies>
+// API-level policy for TiTiler. get-tiles (GET only) is its only operation:
+// the op-sync hook skips TiTiler, and reconcile-titiler-baseline.ps1 removes
+// operations an older hook created. Requests are rate limited per client
+// (first X-Forwarded-For hop, as forwarded by the Static Web App, else the
+// caller address) and overall, and anything with a body or an overlong URL
+// is refused before it reaches the backend.
+var titilerPolicy = '''<policies>
   <inbound>
     <base />
+    <choose>
+      <when condition="@(context.Request.Headers.GetValueOrDefault(&quot;Content-Length&quot;, &quot;0&quot;) != &quot;0&quot; || context.Request.Headers.ContainsKey(&quot;Transfer-Encoding&quot;))">
+        <return-response>
+          <set-status code="413" reason="Request body not allowed" />
+        </return-response>
+      </when>
+      <when condition="@(context.Request.OriginalUrl.Path.Length + context.Request.OriginalUrl.QueryString.Length &gt; __MAXURL__)">
+        <return-response>
+          <set-status code="414" reason="URI Too Long" />
+        </return-response>
+      </when>
+    </choose>
+    <rate-limit-by-key calls="__PERCLIENT__" renewal-period="60" counter-key="@(&quot;titiler-client:&quot; + context.Request.Headers.GetValueOrDefault(&quot;X-Forwarded-For&quot;, context.Request.IpAddress).Split(',')[0].Trim())" />
+    <rate-limit-by-key calls="__TOTAL__" renewal-period="60" counter-key="titiler-all" />
     <set-backend-service id="apim-generated-policy" backend-id="__BID__" />
   </inbound>
   <backend><base /></backend>
   <outbound><base /></outbound>
   <on-error><base /></on-error>
-</policies>''', '__BID__', functionTitilerName)
+</policies>'''
+
+resource apiPolicyTitiler 'Microsoft.ApiManagement/service/apis/policies@2024-06-01-preview' = {
+  parent: apiTitiler
+  name: 'policy'
+  properties: {
+    format: 'xml'
+    value: replace(replace(replace(replace(titilerPolicy,
+      '__BID__', functionTitilerName),
+      '__MAXURL__', string(titilerMaxUrlLength)),
+      '__PERCLIENT__', string(titilerCallsPerClientPerMinute)),
+      '__TOTAL__', string(titilerCallsPerMinute))
   }
   dependsOn: [ backendTitiler ]
 }

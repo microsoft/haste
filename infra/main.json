@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "1042585544187711670"
+      "templateHash": "11596877949166094211"
     }
   },
   "parameters": {
@@ -3046,7 +3046,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.47.16.16243",
-              "templateHash": "10500822423455486582"
+              "templateHash": "11764283406952728228"
             }
           },
           "parameters": {
@@ -3079,6 +3079,27 @@
               "metadata": {
                 "description": "Storage account name backing the storage-proxy operations."
               }
+            },
+            "titilerCallsPerClientPerMinute": {
+              "type": "int",
+              "defaultValue": 1200,
+              "metadata": {
+                "description": "TiTiler tile requests allowed per client per minute."
+              }
+            },
+            "titilerCallsPerMinute": {
+              "type": "int",
+              "defaultValue": 20000,
+              "metadata": {
+                "description": "TiTiler tile requests allowed per minute across all clients."
+              }
+            },
+            "titilerMaxUrlLength": {
+              "type": "int",
+              "defaultValue": 6144,
+              "metadata": {
+                "description": "Longest TiTiler request URL (path + query) accepted, in characters."
+              }
             }
           },
           "variables": {
@@ -3086,7 +3107,8 @@
             "subscriptionKeyParameterNames": {
               "header": "Ocp-Apim-Subscription-Key",
               "query": "subscription-key"
-            }
+            },
+            "titilerPolicy": "<policies>\r\n  <inbound>\r\n    <base />\r\n    <choose>\r\n      <when condition=\"@(context.Request.Headers.GetValueOrDefault(&quot;Content-Length&quot;, &quot;0&quot;) != &quot;0&quot; || context.Request.Headers.ContainsKey(&quot;Transfer-Encoding&quot;))\">\r\n        <return-response>\r\n          <set-status code=\"413\" reason=\"Request body not allowed\" />\r\n        </return-response>\r\n      </when>\r\n      <when condition=\"@(context.Request.OriginalUrl.Path.Length + context.Request.OriginalUrl.QueryString.Length &gt; __MAXURL__)\">\r\n        <return-response>\r\n          <set-status code=\"414\" reason=\"URI Too Long\" />\r\n        </return-response>\r\n      </when>\r\n    </choose>\r\n    <rate-limit-by-key calls=\"__PERCLIENT__\" renewal-period=\"60\" counter-key=\"@(&quot;titiler-client:&quot; + context.Request.Headers.GetValueOrDefault(&quot;X-Forwarded-For&quot;, context.Request.IpAddress).Split(',')[0].Trim())\" />\r\n    <rate-limit-by-key calls=\"__TOTAL__\" renewal-period=\"60\" counter-key=\"titiler-all\" />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>"
           },
           "resources": [
             {
@@ -3180,7 +3202,7 @@
               "name": "[format('{0}/{1}/{2}', parameters('apimName'), parameters('functionTitilerName'), 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace('<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>', '__BID__', parameters('functionTitilerName'))]"
+                "value": "[replace(replace(replace(replace(variables('titilerPolicy'), '__BID__', parameters('functionTitilerName')), '__MAXURL__', string(parameters('titilerMaxUrlLength'))), '__PERCLIENT__', string(parameters('titilerCallsPerClientPerMinute'))), '__TOTAL__', string(parameters('titilerCallsPerMinute')))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionTitilerName'))]",

@@ -9,6 +9,8 @@ on:
       # Decides the TiTiler network baseline that deploy_apps.sh enforces.
       - ".github/scripts/function_network_baseline.py"
       - ".github/scripts/tests/**"
+      - "deploy/sync-apim-operations.ps1"
+      - "api/titilerfuncapi/app/function.json"
       - ".github/workflows/*size-limit*.yml"
       - ".github/workflows/deploy-apps.yml"
       - "infra/**"
