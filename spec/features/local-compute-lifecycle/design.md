@@ -1,0 +1,306 @@
+# Design: local compute lifecycle
+
+## Contents
+
+- [Contract and authority](#contract-and-authority)
+- [Admission and execution](#admission-and-execution)
+- [Persistence and cancellation](#persistence-and-cancellation)
+- [Metadata and queue recovery](#metadata-and-queue-recovery)
+- [Configuration and rollout](#configuration-and-rollout)
+- [Effect on cloud (Batch) environments](#effect-on-cloud-batch-environments)
+- [Validation and integration seams](#validation-and-integration-seams)
+
+## Contract and authority
+
+`LocalRunner.add_task` atomically creates or replays a versioned receipt and
+returns the existing two-string identity. It performs no resource download,
+container wait, or output upload. Receipts live outside task output trees on
+the existing shared Docker volume. They survive task cleanup and contain
+safe resource descriptors, execution identity, phases, cancellation intent,
+and persistence evidence, never storage credentials or signed URLs.
+Unsigned account identity and endpoint are bound to the receipt; credential
+rotation through `Config` is allowed, but switching accounts cannot silently
+redirect an accepted task.
+
+Execution names are deterministic hashes of the job/task identity. Docker
+labels fence container ownership. A repeated request with different launch
+values fails rather than replacing accepted work. A cancellation tombstone
+also prevents a late submission from starting cancelled work.
+
+The phase sequence is `queued -> preparing -> running -> uploading ->
+completed | failed | cancelled`. Preparation and upload remain nonterminal.
+The legacy status API maps nonterminal phases to `InProgress`, keeping
+processors in their polling branch; the receipt exposes the precise phase.
+Lifecycle messages use the existing `timestamp|message` workflow log format.
+Docker exit alone is never business success.
+
+## Admission and execution
+
+Unstarted, named Docker reservation containers act as host-wide capacity
+slots. Docker's atomic name uniqueness serializes contenders even when
+Function workers use different processes or shared-volume mounts. The
+reservation labels identify its execution and configured limit. A separate
+unstarted `haste-local-capacity` container pins one limit for the entire host,
+preventing mixed controller settings from allocating different slot ranges.
+Reservations and the policy container run no workload and acquire no GPU.
+
+The default limit is one. A receipt reserves a slot before input staging and
+keeps it through execution and required output persistence. Excess receipts
+remain queued and are considered in acceptance order on each reconciliation.
+Only the owning execution may release a reservation. Crash recovery reuses
+both the reservation and the deterministic workload container.
+
+Kernel file locks on the shared volume serialize each receipt's short
+mutations and each task's longer reconciliation separately. No host-wide
+lock spans staging or uploads. Atomic replacement and filesystem sync protect
+receipt writes; kernel locks release on worker death.
+
+The controller persists create/start intent before Docker side effects.
+After a lost create/start response it inspects the same named container.
+It starts only a never-started container; an exited execution is never
+restarted. A missing previously started container is an explicit failure,
+not permission to recompute.
+
+## Persistence and cancellation
+
+The reconciliation timer resumes partial staging, samples Docker logs
+without following them, inspects execution state, and uploads task files
+using existing storage paths. Authentication is resolved through `Config`.
+Staging paths must remain inside the task directory. The output uploader
+keeps the existing removal of the `outputs/` prefix.
+Declared output patterns are retained in receipts; workflow and Docker logs
+are persisted as well. Internal staging links are not output files.
+Selected output symlinks and paths escaping the workspace fail explicitly.
+
+`outputs_persisted` starts false. It becomes true only after all required
+uploads succeed. Restart during upload repeats idempotent overwrites without
+rerunning compute. Upload failure records an explicit failed receipt with
+`outputs_persisted=false` and retains all local evidence.
+
+The queue defers processor cleanup until its fenced metadata commit succeeds.
+Cleanup then records intent but deletes task files only for terminal receipts
+with proven persistence. Receipts remain as durable idempotency tombstones.
+A cleanup call cannot discard outputs after failed persistence.
+
+Local images and queues can have different UIDs. The adapter injects a
+local-only workspace flag; image exit hooks prepare only owned files and
+directories within the exact job/task subtree. Files gain read access, not
+write access, and directories allow removal by the queue process.
+Preparation uses inode-bound Linux descriptors and never follows symlinks.
+For interrupted workers or older receipts, a bounded helper runs as the
+original image user with no network, GPU, or capabilities and a read-only
+container filesystem. Queue access is rechecked before persistence or
+cleanup succeeds. Batch permissions are unchanged.
+
+Cancellation records intent under the short receipt lock and stops the
+owned Docker container. Launch and cancellation are serialized. A cancel
+during staging prevents launch; a cancel during upload wins over later
+completion. Already committed terminal results remain terminal. Cancellation
+never targets an unrelated container or treats a status-file edit as a stop.
+The top-level legacy `Cancelled` status records user intent. The nested job
+status acknowledges the provider outcome only after the stop operation.
+If completion already won, the nested status and message report that fact
+instead of claiming the execution was stopped. Every runner's `cancel_task`
+returns `False` only in that case; Azure Batch maps `TaskCompleted` to it,
+and a missing task, like a missing local receipt, counts as stopped.
+
+## Metadata and queue recovery
+
+Optimized metadata reads remain independent of revision-fenced writes.
+Batch reads, cached Blob clients and longest-type-name filtering are retained;
+global local/Data Lake scans cover only the root and one partition level.
+PostgreSQL uses the same port-aware connection helper for single, batch,
+identifier and conditional operations.
+
+Queue payloads are wake-ups, not authoritative document snapshots. Pending
+identities are allocated in the existing job models and persisted before
+messages are sent. Consumers load the current document, check the attempt,
+and claim a revision-fenced processing turn. An expired claim permits
+restart recovery; an old claim cannot publish state.
+Five-minute claims renew every minute during a processing turn. This small
+coordination heartbeat neither runs nor schedules compute; losing it fences
+the writer, and the persisted claim expires for independent timer recovery.
+
+A failed turn is recorded on the record and retried after a backoff: 30 s,
+doubling to at most an hour, reset once a turn makes progress. The failure
+replaces the previous interruption line in the status history instead of
+adding one. The delivery then completes, so the Functions host neither
+retries it nor moves it to a poison queue. Deliveries that arrive during the
+backoff are ignored; queue recovery re-enqueues the record once it expires.
+A new request, such as a cancellation, starts a fresh retry budget. A poison
+message recovers its record at once unless a backoff is already running.
+
+Transport interruptions and ambiguous submission responses retain the pending
+IDs instead of marking possibly accepted compute failed. SDK request/retry
+wrappers are classified by their underlying error, not assumed transient.
+Identity mismatches, invalid configuration, authentication/authorization
+rejections, and other deterministic provider failures fail the workload
+through its fenced metadata commit; recovery does not resubmit terminal
+workloads. This applies to all five workloads, including imagery. That
+commit also closes the pending execution record as failed, with a
+completion time, so job history matches the workload and a retry receives
+a new identity.
+Local filesystem errors with confirmed receipt absence remain explicit failures.
+An interrupted receipt write or acknowledgement with a persisted or
+unverifiable receipt retains the same identity for reconciliation.
+
+Batch replay checks existing tasks across the configured candidate jobs
+before capacity routing and accepts a same-job `TaskExists` race without
+changing the legacy return shape.
+
+An accepted Batch task that no longer exists, because it or its job was
+deleted, can never report an outcome. Reading its status raises a typed
+"task missing" error, and the queue turn ends the execution in one step. The
+workload and its execution record become Failed, with a completion time and
+one status line; a requested cancellation stays Cancelled. There is no
+retry, and no cleanup targets the missing task. Batch file reads and cleanup
+treat a missing task like a lost node, and cancelling one counts as stopped.
+The local runner already reports a missing receipt as a failure.
+
+Only workload-owned runtime fields are merged back. New attempts,
+cancellation intent, terminal outcomes, other workloads, and user edits
+survive stale messages and racing callbacks. Follow-on work is recorded
+durably so a failed queue send does not silently lose inference or zipping.
+Follow-ons have stable request keys. A different follow-on waits if its
+target is busy; it cannot acknowledge another execution as its own work.
+Imagery label generation uses an attempt-scoped deterministic ID and
+create-only persistence, preserving labels already edited after a retry.
+
+Newer upstream workflows share this boundary. Image-layer saves merge
+top-level fields atomically; local merges take the conditional writer's lock.
+Footprint-tile fields belong to the footprint workflow: job submissions never
+restore them from a snapshot, and imagery commits never write them. Tiles are
+requested only after an imagery completion commits, from the stored layer, so
+a duplicate completion cannot reset active tiling. Inference start and result
+publication hold the prediction-edit lock; published prediction outputs merge
+only on commit, never from a submitted snapshot.
+
+Queued wake-ups stay within the Azure message limit. The queued copy trims its
+status history and omits finished jobs' logs; oversized training copies also
+omit the current task log. Monitors replace their previous in-progress entry
+and bound stored history. Starting a new zip clears earlier zip jobs' logs.
+
+The publishing repository's revision-plus-lock boundary is prior art.
+Metadata uses a shared conditional-update primitive instead of publishing
+leases: Blob ETags, Cosmos ETags, PostgreSQL MVCC conditional writes, and
+kernel-locked atomic local files. ADLS Gen2 metadata uses its same file's
+Blob API with conditional writes; this is not a fallback storage account.
+All metadata merge/save operations use that boundary for JSON. Unsupported
+operations and storage errors fail explicitly; nothing depends on
+`publishing_enabled` or on an additional lock service.
+PostgreSQL table creation, CRUD, spatial reads/writes, and conditional
+metadata operations share the same connection helper, including the
+configured `POSTGRES_PORT`, credentials, and required SSL. Each operation
+keeps its existing connection/cursor transaction boundary.
+
+Two independent Function timers drive recovery. `ReconcileLocalTasks`
+runs every 15 seconds and reconciles receipts, including queued work and
+interrupted staging/uploads. It is registered only when `RUNNER_TYPE` is
+`local`, so Batch environments get no timer that fires to do nothing.
+`ReconcileJobQueues`
+runs every 5 minutes for the currently configured legacy runner and
+re-enqueues current pending/running/cancelling records and unfinished
+follow-ons. This second path closes gaps before receipt creation and after
+lost queue sends, independently of queue retry counts. It is a safety net,
+not the polling path: monitors re-enqueue their own wake-ups with a
+30-second delay, and a job whose worker is lost is picked up within its
+5-minute claim plus one timer interval. Each run reads every job record in
+the environment, once per metadata type shared by the workloads stored in
+the same records, which is why it stays infrequent. It only acts on
+records the job-state pipeline has written. Records from before an upgrade
+continue through their own queue messages, and poison messages for them are
+ignored, except that a poisoned image layer fails as it did before, so
+upgrading never revives old stuck work. One failing record or scan does not
+stop recovery of the others. Slow staging
+does not block metadata polling or cancellation delivery. Neither timer owns
+compute in memory, and both resume on a new Function worker.
+
+## Configuration and rollout
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `RUNNER_TYPE` | Existing default | Local reconciliation is gated; queue recovery respects persisted backend identity |
+| `HASTE_LOCAL_MAX_ACTIVE_TASKS` | `1` | Host-wide active workload limit |
+| `HASTE_DOCKER_AZURITE_VOLUME` | `docker_azurite-data` | Existing shared task volume |
+| `HASTE_DOCKER_NETWORK` | `docker_default` | Existing workload network |
+| `HASTE_DOCKER_MEM_LIMIT` | `32g` | Existing per-workload memory bound |
+| `HASTE_DOCKER_SHM_SIZE` | `8g` | Existing shared-memory bound |
+| `PRESERVE_LOCAL_TASK_DIRS` | `0` | Keep even safely persisted task files |
+| `CLEANUP_CONTAINERS` | `1` | Remove stopped workloads after persistence |
+
+Deploy only after draining legacy local jobs: legacy unnamed Docker
+executions cannot be safely adopted or cancelled by identity. Missing
+status files and old success files without persistence evidence do not
+prove success. Keep the shared volume and deterministic container identities
+across worker restarts. Do not remove reservation containers or receipts
+while work is active. Roll back only after draining the new lifecycle.
+
+A record saved by an older build keeps this build's runtime field. If that
+build started a newer execution meanwhile, the stored turn still names the
+execution it replaced. It is ignored for the current execution, except for
+cleanup it still owes, so a rollback followed by a redeploy cannot fence a
+running job or replay another execution's follow-ons.
+
+Workers consuming one local deployment's queues must address the same Docker
+daemon and mount the same task volume at `/shared/azurite`. Independent local
+hosts need isolated deployment queues/metadata; this is not a multi-host local
+scheduler. Independent deployments on one Docker host still share its
+capacity policy.
+
+To change the host limit, drain **all** local work, stop its controllers,
+remove only the unstarted `haste-local-capacity` policy container, and restart
+every controller with the same `HASTE_LOCAL_MAX_ACTIVE_TASKS` value.
+Do not remove the policy while any controller can admit work.
+
+## Effect on cloud (Batch) environments
+
+Queue processing is shared by local and Batch runs, so this change also
+applies to Batch deployments. It adds no Azure resources, app settings or
+pipeline changes, and it doesn't change Batch pools, images, task commands
+or output paths.
+
+- **Submission:** the API saves each submission, with its execution
+  identity, before queueing it. A retried submission reuses that identity,
+  and Batch replay finds an existing task instead of adding a duplicate.
+- **Processing:** a queue message only wakes a consumer, which reloads the
+  stored record and claims a fenced turn. Updates from an older attempt, a
+  late poll or a finished job are discarded. Task files are cleaned only
+  after the result is saved, and follow-on inference and zip requests
+  survive failed sends. Footprint tiling, prediction editing, the imagery
+  download cap and bounded status history run through the same path.
+- **Recovery:** the queue app gains poison consumers for the training,
+  embedding, inference and zip queues, and `ReconcileJobQueues`, which runs
+  every 5 minutes and reads every job record in the environment.
+  `ReconcileLocalTasks` isn't registered for Batch.
+- **Failure handling:**
+  - A job whose Batch task or job was deleted ends Failed.
+  - A turn that keeps failing backs off to at most an hour, with one status
+    line.
+  - Cancelling a task that had already finished keeps its outcome.
+- **Existing records:** records written before the deploy are driven only by
+  their own queue messages, as before. Stuck records are not revived; old
+  poison messages are ignored, and a poisoned image layer fails as before.
+- **Rollout:** deploying restarts the function apps. In-flight Batch jobs
+  started by the old build are adopted through their next queue message.
+  Roll back only after the queues drain. A redeploy after a rollback does
+  not fence jobs the older build started.
+
+## Validation and integration seams
+
+Deterministic fake Docker/storage tests cover acceptance barriers, phase
+transitions, host slots, competing submissions, response loss, worker
+restart, cancellation races, missing execution evidence, partial persistence,
+and cleanup retention. Metadata tests exercise conditional conflicts for
+every supported backend and stale/terminal/user-edit fencing. Queue tests
+cover all five workloads, lost delivery, poison recovery, and follow-ons.
+Unit tests make no cloud/network calls.
+
+The progress prerequisite must preserve receipt ownership, phase mapping,
+and output-persistence gating when changing `get_filecontent_from_task`.
+It may consume existing workflow logs but must not infer execution success
+from telemetry. Lifecycle entries share `logs/workflow_progress.log`; no
+new local progress schema is introduced. Processor queue sends and cleanup
+must remain owned by the fenced queue boundary, not telemetry branches.
+The backend-neutral/AML feature must preserve pending
+identity, current-attempt fencing, deterministic Docker reconciliation,
+host admission, and the cleanup/persistence invariant.

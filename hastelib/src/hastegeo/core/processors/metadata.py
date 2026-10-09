@@ -1,10 +1,14 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import json
+from copy import deepcopy
+from typing import Any, Callable
 
 from hastegeo.core.config import Config
 
+from ..data_layer.conditional import JsonDocument, RevisionConflictError
 from ..data_layer.unified import UnifiedDataLayer
+from ..utils.metadata import MetadataUtils
 from ..utils.parallel import (
     configured_worker_count,
     parallel_map,
@@ -76,8 +80,18 @@ class MetadataProcessor:
             >>> processor.save('project_1', {'name': 'My Project', 'status': 'active'})
         """
         if self.data_type == "imagelayer" and data_format == "json":
+            # Image layers merge top-level fields atomically at storage.
             return self.storage.merge_json(key, self.data_type, metadata)
-
+        if data_format == "json" and isinstance(metadata, (dict, list)):
+            self.mutate(
+                key,
+                lambda current: (
+                    self._combine_metadata(current, metadata)
+                    if current is not None
+                    else metadata
+                ),
+            )
+            return
         try:
             existing_metadata = self.load(key, data_format=data_format)
         except FileNotFoundError:
@@ -100,6 +114,59 @@ class MetadataProcessor:
                 data_type=self.data_type,
                 data_format=data_format,
             )
+
+    def mutate(
+        self,
+        key: str,
+        mutation: Callable[[JsonDocument | None], JsonDocument | None],
+    ) -> JsonDocument | None:
+        """Apply a pure JSON mutation using the store's native revision fence."""
+        for _ in range(8):
+            try:
+                current, version = self.storage.load_json_versioned(
+                    key, self.data_type
+                )
+            except FileNotFoundError:
+                current, version = None, None
+            updated = mutation(deepcopy(current))
+            if updated is None:
+                return current
+            try:
+                self.storage.save_json_if_version(
+                    key, self.data_type, updated, version
+                )
+                return updated
+            except RevisionConflictError:
+                continue
+        raise RevisionConflictError(
+            "Metadata update exceeded its conflict budget"
+        )
+
+    def append_status_message(
+        self,
+        key: str,
+        field: str,
+        message: str,
+        expected: dict[str, Any],
+    ) -> JsonDocument | None:
+        """Append one status entry while the ``expected`` fields still hold.
+
+        Unlike ``save``, this never writes back a caller's snapshot, so it
+        cannot undo or mislabel a concurrent update. Returns the stored
+        document, or ``None`` if it does not exist.
+        """
+
+        def append(current: JsonDocument | None) -> JsonDocument | None:
+            if not isinstance(current, dict) or any(
+                current.get(name) != value for name, value in expected.items()
+            ):
+                return None
+            current[field] = MetadataUtils.append_status_message(
+                current.get(field), message
+            )
+            return current
+
+        return self.mutate(key, append)
 
     def load(self, key, data_format="json"):
         """

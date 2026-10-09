@@ -3,11 +3,14 @@
 
 """Imagery persists before handing footprint-owned state to the consumer."""
 
+from copy import deepcopy
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from hastegeo.core.models.footprint_tiles import FootprintTilesRequest
-from hastegeo.core.processors import footprint_tiles, imagery
+from hastegeo.core.models.projects import ImageLayer
+from hastegeo.core.processors import footprint_tiles, imagery, job_state
+from hastegeo.core.processors.job_state import JobStateRepository, Workload
 
 from .test_footprint_tiles import (
     SECRET_URL,
@@ -18,17 +21,52 @@ from .test_footprint_tiles import (
 )
 
 
+class _MemoryMetadata:
+    def __init__(self, test_case: FootprintTestCase) -> None:
+        self.test_case = test_case
+
+    def load(self, key: str, data_format: str = "json") -> dict:
+        return deepcopy(self.test_case.record)
+
+    def mutate(self, key: str, mutation: Any) -> dict | None:
+        updated = mutation(deepcopy(self.test_case.record))
+        if updated is not None:
+            self.test_case.record = deepcopy(updated)
+            return deepcopy(self.test_case.record)
+        return deepcopy(self.test_case.record)
+
+
 class TestImageryHandoff(FootprintTestCase):
+    def _repository(self) -> JobStateRepository:
+        return JobStateRepository(
+            self.config,
+            processor_factory=lambda **kwargs: _MemoryMetadata(self),
+        )
+
+    def _persist_and_enqueue(self, layer: ImageLayer) -> ImageLayer:
+        repository = self._repository()
+        with patch.object(
+            job_state, "JobStateRepository", return_value=repository
+        ):
+            return job_state.persist_and_enqueue(
+                layer, Workload.IMAGERY, self.config, MagicMock()
+            )
+
     def test_standard_and_building_workflows_persist_before_enqueue(
         self,
     ) -> None:
         for workflow in ("standard", "building"):
             with self.subTest(workflow=workflow):
-                self.record = _layer(buildingFootprintsUrl=None).model_dump()
-                output = _layer(
+                self.record = _layer(
                     workflowType=workflow,
                     status=STATUSES.COMPLETED.value,
                     labelsUrl="https://acct/new-labels",
+                ).model_dump()
+                output = _layer(
+                    workflowType=workflow,
+                    status=STATUSES.COMPLETED.value,
+                    buildingFootprintsUrl=None,
+                    labelsUrl="stale-before-commit",
                 )
 
                 def consume(message: str, **kwargs: Any) -> None:
@@ -45,15 +83,13 @@ class TestImageryHandoff(FootprintTestCase):
                     self.assertNotIn("do-not-log", message)
 
                 self.queue.put_message.side_effect = consume
-                imagery.save_imagery_layer(
-                    output, config=self.config, prepare_footprints=True
-                )
+                imagery.prepare_footprint_tiles(output, config=self.config)
         self.assertEqual(self.queue.put_message.call_count, 2)
 
     def test_fast_consumer_transitions_survive_the_imagery_handoff(
         self,
     ) -> None:
-        self.record["buildingFootprintsUrl"] = None
+        self.record["status"] = STATUSES.COMPLETED.value
         output = _layer(status=STATUSES.COMPLETED.value)
 
         def consume(message: str, **kwargs: Any) -> None:
@@ -63,9 +99,7 @@ class TestImageryHandoff(FootprintTestCase):
             footprint_tiles.process_tiles_request(request, config=self.config)
 
         self.queue.put_message.side_effect = consume
-        imagery.save_imagery_layer(
-            output, config=self.config, prepare_footprints=True
-        )
+        imagery.prepare_footprint_tiles(output, config=self.config)
         # Both the new-request and poll consumers ran before send returned.
         self.assertEqual(
             self.record["footprintTilesStatus"], STATUSES.COMPLETED.value
@@ -77,10 +111,10 @@ class TestImageryHandoff(FootprintTestCase):
 
         # Late imagery/error saves and duplicate completed deliveries must
         # not restore the stale footprint fields from output.
-        imagery.save_imagery_layer(output, config=self.config)
-        imagery.save_imagery_layer(
-            output, config=self.config, prepare_footprints=True
-        )
+        stale = _layer(status=STATUSES.COMPLETED.value)
+        self._repository().begin(Workload.IMAGERY, stale)
+        self._persist_and_enqueue(stale)
+        imagery.prepare_footprint_tiles(output, config=self.config)
         self.assertEqual(
             self.record["footprintPmtilesUrl"], "https://acct/tiles.pmtiles"
         )
@@ -91,15 +125,14 @@ class TestImageryHandoff(FootprintTestCase):
     ) -> None:
         for status in (STATUSES.PENDING.value, STATUSES.IN_PROGRESS.value):
             self.record = _layer(
+                status=STATUSES.COMPLETED.value,
                 footprintTilesStatus=status,
                 footprintTilesJob=_job(),
                 footprintTilesRequestId="active-request",
             ).model_dump()
-            imagery.save_imagery_layer(
-                _layer(status=STATUSES.COMPLETED.value),
-                config=self.config,
-                prepare_footprints=True,
-            )
+            stale = _layer(status=STATUSES.COMPLETED.value)
+            self._repository().begin(Workload.IMAGERY, stale)
+            imagery.prepare_footprint_tiles(stale, config=self.config)
             self.assertEqual(self.record["footprintTilesStatus"], status)
             self.assertEqual(
                 self.record["footprintTilesRequestId"], "active-request"
@@ -113,11 +146,10 @@ class TestImageryHandoff(FootprintTestCase):
         self,
     ) -> None:
         output = _layer(status=STATUSES.COMPLETED.value)
+        self.record["status"] = STATUSES.COMPLETED.value
         self.queue.put_message.side_effect = RuntimeError(SECRET_URL)
         with patch.object(imagery.Logger, "get_logger") as get_logger:
-            imagery.save_imagery_layer(
-                output, config=self.config, prepare_footprints=True
-            )
+            imagery.prepare_footprint_tiles(output, config=self.config)
         self.assertEqual(self.record["status"], STATUSES.COMPLETED.value)
         self.assertEqual(
             self.record["footprintTilesStatus"], STATUSES.FAILED.value
@@ -129,28 +161,23 @@ class TestImageryHandoff(FootprintTestCase):
         )
 
     def test_only_the_final_successful_imagery_save_may_enqueue(self) -> None:
-        for layer, final_save in (
-            (_layer(status=STATUSES.COMPLETED.value), False),
-            (_layer(status=STATUSES.FAILED.value), True),
+        for layer in (
+            _layer(status=STATUSES.FAILED.value),
             (
                 _layer(
                     status=STATUSES.COMPLETED.value,
                     buildingFootprintsUrl=None,
-                ),
-                True,
+                )
             ),
         ):
-            imagery.save_imagery_layer(
-                layer, config=self.config, prepare_footprints=final_save
-            )
+            self.record = layer.model_dump()
+            imagery.prepare_footprint_tiles(layer, config=self.config)
         self.queue.put_message.assert_not_called()
 
     def test_failed_imagery_persistence_does_not_publish(self) -> None:
+        self.record["status"] = STATUSES.COMPLETED.value
         self.storage.save.side_effect = RuntimeError("storage unavailable")
-        with self.assertRaises(RuntimeError):
-            imagery.save_imagery_layer(
-                _layer(status=STATUSES.COMPLETED.value),
-                config=self.config,
-                prepare_footprints=True,
-            )
+        imagery.prepare_footprint_tiles(
+            _layer(status=STATUSES.COMPLETED.value), config=self.config
+        )
         self.queue.put_message.assert_not_called()

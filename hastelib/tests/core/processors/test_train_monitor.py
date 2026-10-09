@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from hastegeo.core.config import Config
 from hastegeo.core.models.projects import Model, TrainingJob
+from hastegeo.core.processors.job_state import Workload, queue_payload
 from hastegeo.core.processors.train import (
     TRAINING_IN_PROGRESS_MESSAGE,
     TrainPostprocessor,
@@ -82,9 +83,12 @@ def _monitor(mocker) -> TrainPostprocessor:
         "_get_training_logs",
         return_value=("2026-09-22T19:24:47+00:00", epoch_logs),
     )
+    poll_count = 0
 
     def update_metrics(job_completed=False):
-        poll = processor.queue_client.put_message.call_count + 1
+        nonlocal poll_count
+        poll_count += 1
+        poll = poll_count
         job = processor.model_data.trainingJob
         job.completedEpochs = str(min(2, poll // 400))
         job.approxMinutesToComplete = str(max(1, 600 - poll // 2))
@@ -105,14 +109,21 @@ class TestTrainingMonitorQueueMessage:
         payload = json.dumps(_submitted_model().dict())
 
         for _ in range(POLLS):
-            # Each poll starts from the message the previous one queued,
+            # Each poll starts from the bounded queued wake-up record,
             # exactly as the queue trigger hands it over.
             processor.model_data = Model(**json.loads(payload))
             processor.process()
-            payload = processor.queue_client.put_message.call_args.args[0]
-            assert len(payload.encode("utf-8")) < QUEUE_MESSAGE_LIMIT_BYTES
+            assert (
+                processor.model_data.statusMessage.count(
+                    TRAINING_IN_PROGRESS_MESSAGE
+                )
+                == 1
+            )
+            payload = queue_payload(
+                Workload.TRAINING, processor.model_data.dict()
+            )
+            assert queued_message_size(payload) <= QUEUE_MESSAGE_LIMIT_BYTES
 
-        assert processor.queue_client.put_message.call_count == POLLS
         history = json.loads(payload)["statusMessage"]
         assert history.count(TRAINING_IN_PROGRESS_MESSAGE) == 1
         latest = f"{POLLS * SECONDS_PER_POLL / 60:.2f}"
@@ -151,8 +162,8 @@ class TestTrainingMonitorQueueMessage:
 
         processor.process()
 
-        payload = processor.queue_client.put_message.call_args.args[0]
-        assert len(payload.encode("utf-8")) < QUEUE_MESSAGE_LIMIT_BYTES
+        payload = queue_payload(Workload.TRAINING, processor.model_data.dict())
+        assert queued_message_size(payload) <= QUEUE_MESSAGE_LIMIT_BYTES
         history = json.loads(payload)["statusMessage"]
         assert STATUS_HISTORY_TRIMMED in history
         assert history.count(TRAINING_IN_PROGRESS_MESSAGE) == 1
@@ -187,8 +198,9 @@ class TestTrainingMonitorQueueMessage:
 
         processor.process()
 
-        payload = processor.queue_client.put_message.call_args.args[0]
-        assert len(payload.encode("utf-8")) < QUEUE_MESSAGE_LIMIT_BYTES
+        assert processor.model_data.statusMessage.endswith(newest_entry)
+        payload = queue_payload(Workload.TRAINING, processor.model_data.dict())
+        assert queued_message_size(payload) <= QUEUE_MESSAGE_LIMIT_BYTES
         history = json.loads(payload)["statusMessage"]
         assert STATUS_HISTORY_TRIMMED in history
         assert history.endswith(newest_entry)
@@ -214,7 +226,7 @@ class TestTrainingMonitorQueueMessage:
         # logs is over the limit: the queued copy must make room.
         unfitted = json.dumps(processor.model_data.dict())
         assert queued_message_size(unfitted) > QUEUE_MESSAGE_LIMIT_BYTES
-        payload = processor.queue_client.put_message.call_args.args[0]
+        payload = queue_payload(Workload.TRAINING, processor.model_data.dict())
         assert queued_message_size(payload) <= QUEUE_MESSAGE_LIMIT_BYTES
         queued = json.loads(payload)
         assert queued["trainingJob"]["logs"] == logs
@@ -233,9 +245,49 @@ class TestTrainingMonitorQueueMessage:
 
         processor.process()
 
-        payload = processor.queue_client.put_message.call_args.args[0]
+        payload = queue_payload(Workload.TRAINING, processor.model_data.dict())
         assert queued_message_size(payload) <= QUEUE_MESSAGE_LIMIT_BYTES
         assert json.loads(payload)["trainingJob"]["logs"] is None
         # The record the trigger saves keeps them; the next poll re-reads
         # them from the task anyway.
         assert processor.model_data.trainingJob.logs == logs
+
+
+class TestDirectTrainingCancellation:
+    def test_confirmed_stop_is_recorded_as_cancelled(self, mocker):
+        processor = _monitor(mocker)
+        processor.model_data = _submitted_model()
+        processor.runner.cancel_task.return_value = True
+
+        result = processor.cancel()
+
+        assert result.status == STATUS.CANCELLED.value
+        assert result.trainingJob.status == STATUS.CANCELLED.value
+        assert "Task cancelled" in result.statusMessage
+        processor.runner.get_task_status.assert_not_called()
+        processor.runner.cleanup_task.assert_called_once_with(
+            job_id="job-1", task_id="trn-1"
+        )
+
+    def test_task_that_finished_first_keeps_its_outcome(self, mocker):
+        processor = _monitor(mocker)
+        processor.model_data = _submitted_model()
+        processor.runner.cancel_task.return_value = False
+
+        def finished(job_id: str, task_id: str) -> str:
+            processor.runner.cleanup_task.assert_not_called()
+            return STATUS.COMPLETED.value
+
+        processor.runner.get_task_status.side_effect = finished
+
+        result = processor.cancel()
+
+        assert result.status == STATUS.CANCELLED.value
+        assert result.trainingJob.status == STATUS.COMPLETED.value
+        assert (
+            f"Task already reached {STATUS.COMPLETED.value} before "
+            "cancellation" in result.statusMessage
+        )
+        processor.runner.cleanup_task.assert_called_once_with(
+            job_id="job-1", task_id="trn-1"
+        )

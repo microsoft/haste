@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 from azure.batch.models import BatchError, BatchErrorException, ErrorMessage
 from hastegeo.core.runners.azure_batch import (
+    AzureBatchJob,
     AzureBatchRunner,
     batch_error_code,
     is_node_unavailable_error,
@@ -27,6 +28,7 @@ from hastegeo.core.runners.azure_batch import (
     retry_on_server_error,
     unwrap_retry_error,
 )
+from hastegeo.core.runners.base import TaskMissingError
 from tenacity import RetryError, wait_none
 
 
@@ -205,10 +207,25 @@ class TestGetFileContentFromTask(unittest.TestCase):
     def test_propagates_unrelated_batch_errors(self):
         runner = _runner()
         runner.batch_cluster.get_file_by_match_from_task.side_effect = (
-            _batch_error("JobNotFound", status_code=404)
+            _batch_error("OperationTimedOut", status_code=408)
         )
         with self.assertRaises(BatchErrorException):
             runner.get_filecontent_from_task("job-1", "task-1", "any.json")
+
+    def test_returns_none_when_the_task_or_job_is_gone(self):
+        # A deleted task's node files are gone too; completion paths fall back
+        # to the outputs uploaded to blob, and the status read reports it.
+        for code in ("TaskNotFound", "JobNotFound"):
+            with self.subTest(code=code):
+                runner = _runner()
+                lookup = runner.batch_cluster.get_file_by_match_from_task
+                lookup.side_effect = _batch_error(code, status_code=404)
+                self.assertIsNone(
+                    runner.get_filecontent_from_task(
+                        "job-1", "task-1", "any.json"
+                    )
+                )
+                runner.logger.warning.assert_called_once()
 
     def test_returns_none_for_an_exhausted_node_not_ready_budget(self):
         # What the runner actually sees once the retries are spent.
@@ -274,6 +291,72 @@ class TestCleanupTask(unittest.TestCase):
         )
         runner.cleanup_task("job-1", "task-1")
         runner.batch_cluster.disable_job.assert_called_once_with("job-1")
+
+    def test_skips_cleanup_when_the_task_or_job_is_gone(self):
+        for code in ("TaskNotFound", "JobNotFound"):
+            with self.subTest(code=code):
+                runner = _runner()
+                runner.batch_cluster.delete_files_from_task.side_effect = (
+                    _batch_error(code, status_code=404)
+                )
+                runner.cleanup_task("job-1", "task-1")
+                runner.batch_cluster.disable_job.assert_called_once_with(
+                    "job-1"
+                )
+
+
+class TestGetTaskStatus(unittest.TestCase):
+    def test_a_task_or_job_that_is_gone_is_reported_missing(self):
+        for code in ("TaskNotFound", "JobNotFound"):
+            for error in (
+                _batch_error(code, status_code=404),
+                _retry_error(_batch_error(code, status_code=404)),
+            ):
+                with self.subTest(code=code, error=type(error).__name__):
+                    runner = _runner()
+                    runner.batch_cluster.is_task_succeeded.side_effect = error
+                    with self.assertRaises(TaskMissingError):
+                        runner.get_task_status("job-1", "task-1")
+
+    def test_propagates_unrelated_batch_errors(self):
+        runner = _runner()
+        runner.batch_cluster.is_task_succeeded.side_effect = _batch_error(
+            "OperationTimedOut", status_code=408
+        )
+        with self.assertRaises(BatchErrorException):
+            runner.get_task_status("job-1", "task-1")
+
+
+class TestCancelTask(unittest.TestCase):
+    def _cluster(self) -> AzureBatchJob:
+        cluster = AzureBatchJob.__new__(AzureBatchJob)
+        cluster.batch_client = MagicMock()
+        cluster.logger = MagicMock()
+        return cluster
+
+    def test_reports_whether_the_task_was_still_running(self):
+        for error, stopped in (
+            (None, True),
+            (_batch_error("TaskCompleted"), False),
+            (_batch_error("TaskNotFound", status_code=404), True),
+            (_batch_error("JobNotFound", status_code=404), True),
+        ):
+            with self.subTest(error=error and error.error.code):
+                cluster = self._cluster()
+                cluster.batch_client.task.terminate.side_effect = error
+
+                self.assertIs(cluster.cancel_task("job-1", "task-1"), stopped)
+                cluster.batch_client.task.terminate.assert_called_once_with(
+                    "job-1", "task-1"
+                )
+
+    def test_propagates_unrelated_batch_errors(self):
+        cluster = self._cluster()
+        cluster.batch_client.task.terminate.side_effect = _batch_error(
+            "OperationTimedOut", status_code=408
+        )
+        with self.assertRaises(BatchErrorException):
+            cluster.cancel_task("job-1", "task-1")
 
 
 if __name__ == "__main__":
