@@ -21,7 +21,8 @@ param(
     [string]$FunctionName = $env:FUNCTION_TITILER_NAME,
     [string]$ResourceGroup = $env:AZURE_RESOURCE_GROUP,
     [string]$StorageAccountName = $env:TITILER_STORAGE_ACCOUNT_NAME,
-    [string]$ApimName = $env:APIM_NAME
+    [string]$ApimName = $env:APIM_NAME,
+    [string]$SubscriptionId = $env:AZURE_SUBSCRIPTION_ID
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,7 +31,8 @@ foreach ($pair in @(
         @('FUNCTION_TITILER_NAME', $FunctionName),
         @('AZURE_RESOURCE_GROUP', $ResourceGroup),
         @('TITILER_STORAGE_ACCOUNT_NAME', $StorageAccountName),
-        @('APIM_NAME', $ApimName))) {
+        @('APIM_NAME', $ApimName),
+        @('AZURE_SUBSCRIPTION_ID', $SubscriptionId))) {
     if ([string]::IsNullOrWhiteSpace($pair[1])) {
         throw "reconcile-titiler-baseline: $($pair[0]) is required (azd provides it from main.bicep outputs)."
     }
@@ -40,8 +42,10 @@ $helper = Join-Path (Split-Path -Parent $PSScriptRoot) '.github/scripts/titiler_
 $python = (Get-Command python -ErrorAction SilentlyContinue) ?? (Get-Command python3 -ErrorAction SilentlyContinue)
 if (-not $python) { throw 'reconcile-titiler-baseline: python is required.' }
 
+# Every call names the environment's subscription: the az CLI default may be
+# a different one, where the resource group does not exist.
 function Invoke-Az {
-    $output = az @args
+    $output = az @args --subscription $SubscriptionId
     if ($LASTEXITCODE -ne 0) { throw "az $($args -join ' ') failed." }
     return $output
 }
