@@ -8,7 +8,13 @@ on:
       - ".github/scripts/deploy_apps.sh"
       # Decides the TiTiler network baseline that deploy_apps.sh enforces.
       - ".github/scripts/function_network_baseline.py"
+      # Decides what deploy/reconcile-titiler-baseline.ps1 removes.
+      - ".github/scripts/titiler_baseline.py"
       - ".github/scripts/tests/**"
+      - "deploy/reconcile-titiler-baseline.ps1"
+      - "deploy/sync-apim-operations.ps1"
+      - "azure.yaml"
+      - "api/titilerfuncapi/app/function.json"
       - ".github/workflows/*size-limit*.yml"
       - ".github/workflows/deploy-apps.yml"
       - "infra/**"

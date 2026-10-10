@@ -10,12 +10,15 @@
 # infra/modules/apimApis.bicep; this only adds per-endpoint operations.
 #
 # Inputs (azd environment): APIM_NAME, AZURE_RESOURCE_GROUP, and the function app
-# names to sync (api + titiler).
+# names to sync (api only). TiTiler is deliberately not synced: its single
+# catch-all function would become an APIM operation exposing every TiTiler
+# route. Its one operation (get-tiles) is declared in apimApis.bicep, and
+# reconcile-titiler-baseline.ps1 removes any other.
 
 param(
     [string]$ApimName = $env:APIM_NAME,
     [string]$ResourceGroup = $env:AZURE_RESOURCE_GROUP,
-    [string[]]$FunctionApps = @($env:FUNCTION_API_NAME, $env:FUNCTION_TITILER_NAME)
+    [string[]]$FunctionApps = @($env:FUNCTION_API_NAME)
 )
 
 $ErrorActionPreference = 'Stop'
