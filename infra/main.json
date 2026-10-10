@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "7157770476167388725"
+      "templateHash": "13313484601979574233"
     }
   },
   "parameters": {
@@ -3157,7 +3157,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.47.16.16243",
-              "templateHash": "11068195621256641385"
+              "templateHash": "14571555177518355580"
             }
           },
           "parameters": {
@@ -3209,7 +3209,7 @@
               "type": "int",
               "defaultValue": 2048,
               "metadata": {
-                "description": "Longest TiTiler request URL (path + query) accepted, in characters. TiTiler's App Service front end already rejects query strings over 2,048 characters with an opaque 404, so a higher value has no effect; this returns a clear 414 instead."
+                "description": "Longest TiTiler request URL (path + query) accepted, in characters. APIM's own front end already rejects query strings over 2,048 characters with a 404 before policies run, so this is a backstop and a higher value has no effect."
               }
             }
           },

@@ -90,7 +90,7 @@ Write-Host "✔ TiTiler identity holds roles only on '$StorageAccountName'."
 foreach ($name in Get-StaleOperations) {
     Write-Host "  removing APIM operation '$name' from '$FunctionName'"
     Invoke-Az apim api operation delete --resource-group $ResourceGroup `
-        --service-name $ApimName --api-id $FunctionName --operation-id $name --yes -o none | Out-Null
+        --service-name $ApimName --api-id $FunctionName --operation-id $name -o none | Out-Null
 }
 $left = Get-StaleOperations
 if ($left.Count -gt 0) {
