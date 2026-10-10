@@ -153,7 +153,9 @@ Test-Check 'A5' 'TiTiler storage account: identity-only, private, functions subn
     if (-not $titilerSaInfo) { return Result $false $missingSa }
     $sa = $titilerSaInfo
     $rules = @($sa.networkRuleSet.virtualNetworkRules)
-    $subnetOk = $rules.Count -eq 1 -and $rules[0].virtualNetworkResourceId.ToLower() -eq $site.virtualNetworkSubnetId.ToLower()
+    # Flex Consumption apps report the subnet under properties.
+    $siteSubnet = "$($site.virtualNetworkSubnetId ?? $site.properties.virtualNetworkSubnetId)".ToLower()
+    $subnetOk = $rules.Count -eq 1 -and $siteSubnet -and "$($rules[0].virtualNetworkResourceId)".ToLower() -eq $siteSubnet
     $ok = ($sa.allowSharedKeyAccess -eq $false) -and ($sa.allowBlobPublicAccess -eq $false) -and ($sa.networkRuleSet.defaultAction -eq 'Deny') -and $subnetOk
     Result $ok "sharedKey=$($sa.allowSharedKeyAccess); publicBlob=$($sa.allowBlobPublicAccess); default=$($sa.networkRuleSet.defaultAction); vnetRules=$($rules.Count) (functions subnet: $subnetOk)"
 }
