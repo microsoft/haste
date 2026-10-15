@@ -16,7 +16,7 @@
 # skips product policies but still runs the TiTiler API policy, where the limits
 # live. One request also goes to TiTiler's own hostname (expected to be refused).
 #
-# -SwaCookie runs the per-user rate-limit test. It sends ~1,250 requests through
+# -SwaCookie runs the per-user rate-limit test. It sends up to 3,000 requests through
 # the Static Web App, which uses up this machine's per-client allowance for up to
 # a minute. If the limit turns out to be shared, every dev user is throttled for
 # that minute, so run it on a dev environment only. Get the cookie from the
@@ -196,7 +196,9 @@ Test-Check 'B2' 'APIM TiTiler policy has the limits' {
 
 # Gateway and the built-in all-APIs subscription key (see header).
 $gateway = (Invoke-Az apim show --name $apim --resource-group $rg --query gatewayUrl -o tsv).TrimEnd('/')
-$swaHost = Invoke-Az staticwebapp show --name $cfg.STATIC_WEB_APP_NAME --resource-group $rg --query defaultHostname -o tsv
+# With a custom domain, the default hostname 301s to it and the sign-in
+# cookie belongs to it, so D1 has to go there.
+$swaHost = Invoke-Az staticwebapp show --name $cfg.STATIC_WEB_APP_NAME --resource-group $rg --query 'customDomains[0] || defaultHostname' -o tsv
 $apimKey = $null
 try {
     $apimKey = (Invoke-Arm POST "$apimBase/subscriptions/master/listSecrets?$apiVersion").primaryKey
@@ -274,38 +276,79 @@ Test-Check 'C12' "TiTiler's own hostname is refused" {
 }
 
 # --- D. Per-user rate limit ---------------------------------------------------
-# Exhaust this machine's per-client allowance through the Static Web App (the
-# UI path), then call APIM directly naming this machine's address in
-# X-Forwarded-For. A 429 there means the SWA forwards the real client address
-# and the limit is per user.
-Test-Check 'D1' 'Per-client rate limit is keyed on the real user address' {
-    if (-not $SwaCookie) { return Skip 'pass -SwaCookie to run (see header)' }
-    if (-not $apimKey) { return Skip 'no APIM subscription key' }
-    $swaUrl = Get-TileUrl 'not-a-url' '1/0/0' "https://$swaHost/api/titiler"
-    $cookie = "StaticWebAppsAuthCookie=$SwaCookie"
-    $statuses = 1..1250 | ForEach-Object -ThrottleLimit 32 -Parallel {
-        $client = $using:http
-        $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $using:swaUrl)
-        [void]$request.Headers.TryAddWithoutValidation('Cookie', $using:cookie)
+# D1 sends batches through the Static Web App (the UI path) until they are
+# being throttled, then at once calls APIM directly, which is keyed on the
+# address APIM sees. 429s there mean the SWA path is keyed on this user's
+# address. D2 follows straight away with requests through the SWA carrying
+# made-up X-Forwarded-For values, which must not get a fresh allowance.
+#
+# APIM v2 limits are approximate (counters are shared across subscriptions,
+# but dev1 first throttled a 1,200/min key at ~1,490 calls), and an
+# over-limit key is throttled only partly: about half its requests still
+# get through. So the checks compare against a fresh key, which gets no 429
+# at all, rather than expecting every request to be refused. Both have to
+# land within the 60 s window.
+$script:d1Throttled = $false
+function Send-SwaBatch([string]$Url, [string]$Cookie, [int]$Count, [switch]$FakeForwardedFor) {
+    return 1..$Count | ForEach-Object -ThrottleLimit 32 -Parallel {
+        $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $using:Url)
+        [void]$request.Headers.TryAddWithoutValidation('Cookie', $using:Cookie)
+        if ($using:FakeForwardedFor) {
+            # Documentation range (198.51.100.0/24), new address per request.
+            [void]$request.Headers.TryAddWithoutValidation('X-Forwarded-For', "198.51.100.$(Get-Random -Minimum 1 -Maximum 255)")
+        }
         # New connection per request, so a client port in the forwarded
         # address would change between requests and show up as no 429s.
         $request.Headers.ConnectionClose = $true
-        [int]$client.SendAsync($request).GetAwaiter().GetResult().StatusCode
+        [int]($using:http).SendAsync($request).GetAwaiter().GetResult().StatusCode
     }
-    $counts = $statuses | Group-Object | Sort-Object Name | ForEach-Object { "$($_.Name)x$($_.Count)" }
-    $throttled = @($statuses | Where-Object { $_ -eq 429 }).Count
-    if (@($statuses | Where-Object { $_ -in 401, 302, 403 }).Count -gt 0) {
-        return Result $false "SWA refused the cookie ($($counts -join ' ')); sign in again and copy a fresh value"
-    }
-    if ($throttled -eq 0) {
-        return Result $false "no 429 after 1,250 requests ($($counts -join ' ')): the per-client key changes between requests (e.g. includes a port), so the per-client limit is not effective"
-    }
+}
+function Format-Counts($Statuses) {
+    return ($Statuses | Group-Object | Sort-Object Name | ForEach-Object { "$($_.Name)x$($_.Count)" }) -join ' '
+}
+
+Test-Check 'D1' 'Per-client rate limit is keyed on the real user address' {
+    if (-not $SwaCookie) { return Skip 'pass -SwaCookie to run (see header)' }
+    if (-not $apimKey) { return Skip 'no APIM subscription key' }
+    $script:swaUrl = Get-TileUrl 'not-a-url' '1/0/0' "https://$swaHost/api/titiler"
+    $script:swaCookieHeader = "StaticWebAppsAuthCookie=$SwaCookie"
     $myIp = (Invoke-RestMethod https://api.ipify.org).Trim()
-    $direct = Send-Http GET (Get-TileUrl 'not-a-url') ($keyHeader + @{ 'X-Forwarded-For' = $myIp })
-    if ($direct.Status -eq 429) {
-        return Result $true "SWA path throttled ($($counts -join ' ')); direct call as $myIp also 429, so the key is this user's address"
+    $statuses = [System.Collections.Generic.List[int]]::new()
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    do {
+        $batch = @(Send-SwaBatch $script:swaUrl $script:swaCookieHeader 100)
+        $statuses.AddRange([int[]]$batch)
+        if (@($batch | Where-Object { $_ -in 401, 302, 403 }).Count) {
+            return Result $false "SWA refused the cookie ($(Format-Counts $statuses)); sign in again and copy a fresh value"
+        }
+        if (@($batch | Where-Object { $_ -ge 300 -and $_ -lt 400 }).Count) {
+            return Result $false "SWA redirected the requests ($(Format-Counts $statuses)) instead of proxying them to APIM; check which hostname $swaHost redirects to"
+        }
+        $full = @($batch | Where-Object { $_ -eq 429 }).Count -ge 30
+    } until ($full -or $statuses.Count -ge 3000)
+    $sent = "$(Format-Counts $statuses) in $([int]$watch.Elapsed.TotalSeconds) s"
+    if (-not $full) {
+        return Result $false "SWA path never throttled ($sent): the per-client key changes between requests (e.g. includes a port), so the per-client limit is not effective"
     }
-    return Result $false "SWA path throttled ($($counts -join ' ')) but a direct call as $myIp got $($direct.Status): the SWA path is keyed on something shared (likely the SWA egress address), so all users share one allowance"
+    $script:d1Throttled = $true
+    $directUrl = Get-TileUrl 'not-a-url'
+    $direct = @(1..20 | ForEach-Object -ThrottleLimit 20 -Parallel {
+        $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $using:directUrl)
+        foreach ($k in ($using:keyHeader).Keys) { [void]$request.Headers.TryAddWithoutValidation($k, ($using:keyHeader)[$k]) }
+        [int]($using:http).SendAsync($request).GetAwaiter().GetResult().StatusCode
+    })
+    if (@($direct | Where-Object { $_ -eq 429 }).Count -ge 3) {
+        return Result $true "SWA path throttled ($sent); direct calls as $myIp also throttled ($(Format-Counts $direct)), so the key is this user's address"
+    }
+    return Result $false "SWA path throttled ($sent) but direct calls as $myIp were not ($(Format-Counts $direct)): the SWA path is keyed on something shared (likely the SWA egress address), so all users share one allowance"
+}
+
+Test-Check 'D2' 'Made-up X-Forwarded-For does not reset the per-client limit' {
+    if (-not $SwaCookie) { return Skip 'pass -SwaCookie to run (see header)' }
+    if (-not $script:d1Throttled) { return Skip 'needs D1 to have used up the allowance first' }
+    $statuses = @(Send-SwaBatch $script:swaUrl $script:swaCookieHeader 20 -FakeForwardedFor)
+    $throttled = @($statuses | Where-Object { $_ -eq 429 }).Count
+    Result ($throttled -ge 3) "$(Format-Counts $statuses) (expected some 429s, as for D1's key; none means a caller-chosen X-Forwarded-For buys a fresh allowance)"
 }
 
 # --- Summary ------------------------------------------------------------------
