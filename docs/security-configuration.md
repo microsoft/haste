@@ -196,6 +196,38 @@ Operational notes:
 az functionapp config access-restriction show --resource-group <rg> --name <function-app>
 ```
 
+### 5.6 TiTiler input, APIM surface and identity
+
+TiTiler opens whatever dataset URL the caller passes, so it is treated as untrusted input on a service with as little reach as possible.
+
+**Dataset URLs** (`api/titilerfuncapi/app/dataset_url.py`):
+
+- Only plain `https://` URLs on an exact host list are accepted: the two public open-data hosts the catalog explorer previews, plus the hosts in `TITILER_ALLOWED_HOSTS`. Bicep and `deploy_apps.sh` set it to the environment's blob host. Wildcard domains are not supported.
+- Everything else gets a generic `400` before GDAL is involved. That covers other schemes, local and GDAL virtual-file-system paths, inline documents, archive paths, traversal, credentials, explicit ports, IP literals, control and non-ASCII characters, and fragments. The log records the reason, never the URL, since it can carry a SAS token.
+- The first use of a URL sends one `HEAD` with redirects disabled. Redirects, non-2xx responses, and hosts resolving to loopback, link-local, metadata or (for public hosts) private addresses are refused. Passing URLs are cached for 10 minutes.
+- Datasets open with the `GTiff` driver only. GDAL settings that disable plugin drivers, sibling-file probing, PAM, and Python or raw-file VRT bands are forced at startup and per request.
+- Only `/cog/tiles/WebMercatorQuad/{z}/{x}/{y}` (with its format and scale variants) and `/healthz` are served.
+
+**APIM** (`infra/modules/apimApis.bicep`): `get-tiles` (`GET`) is TiTiler's only operation. The API policy refuses requests with a body (`413`) and URLs over `titilerMaxUrlLength` (`414`), and rate limits tile requests per user (`titilerCallsPerClientPerMinute`, default 1,200) and in total (`titilerCallsPerMinute`, default 20,000).
+
+The per-user key is the user's address without its port. The Static Web App appends the user as `ip:port` to any `X-Forwarded-For` the browser sent, and APIM's front end appends the Static Web App the same way. So on the Static Web App's product, which accepts only requests the Static Web App signed, the policy uses the second-to-last entry and ignores anything before it. Other callers are keyed on the address APIM sees.
+
+APIM v2 tiers count these limits approximately. An over-limit key is slowed rather than cut off, and throttling can start some way past the configured number, so size them as throttling, not as a hard cap.
+
+**Identity and storage** (`infra/modules/functionApp.bicep`, `infra/modules/storage.bicep`):
+
+- TiTiler runs from its own host storage account. That account accepts identity auth only, has public blob access off, and is reachable only from the functions subnet.
+- TiTiler does not get the shared user-assigned identity, the account-key `/data` mount, the Blob Delegator role, or any role on the shared storage account.
+- Bicep never deletes what it stops declaring, so the azd `postprovision` hook `deploy/reconcile-titiler-baseline.ps1` deletes TiTiler role assignments outside its own account and any TiTiler APIM operation other than `get-tiles`. Provisioning fails if either remains.
+
+**Verifying an environment:**
+
+```powershell
+pwsh deploy/verify-titiler-baseline.ps1 -EnvName <env>
+```
+
+The script prints PASS or FAIL per check and exits non-zero on any failure. Add `-ReportPath <file>` for a JSON report. Add `-SwaCookie <value>` to also test the per-user rate limit through the Static Web App. That test sends up to 3,000 requests and can throttle the signed-in user for a minute, so run it on dev environments only. Both options are described in the script header.
+
 ---
 
 ## 6. Containers and infrastructure
@@ -350,6 +382,7 @@ Before exposing HASTE to anyone other than its developers, verify:
 
 - [ ] Function App is reachable only via SWA linked backend (or equivalent access restriction)
 - [ ] The TiTiler Function App's main site allows only the APIM subnet, and its SCM site denies all traffic (§5.5)
+- [ ] `deploy/verify-titiler-baseline.ps1` passes for the environment, and `TITILER_ALLOWED_HOSTS` lists only hosts you serve imagery from (§5.6)
 - [ ] AAD (Entra ID) is configured as the SWA identity provider; mock auth is disabled
 - [ ] `DEVELOPMENT_MODE` is not set in any Application Setting
 - [ ] All secrets are in Key Vault or supplied via managed identity (no inline connection strings in source control)
