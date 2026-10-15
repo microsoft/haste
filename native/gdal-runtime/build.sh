@@ -249,6 +249,17 @@ fi
 cmake --build "$WORK/gdal-build" --parallel "$JOBS"
 cmake --install "$WORK/gdal-build"
 
+# BUILD_APPS=OFF intentionally omits gdal-config. Generate its build-time
+# metadata script with apps enabled, but do not build or install GDAL utilities.
+cmake -S "$GDAL_SOURCE" -B "$WORK/gdal-build" -DBUILD_APPS=ON
+install -D -m 755 "$WORK/gdal-build/apps/gdal-config" \
+  "$PREFIX/bin/gdal-config"
+config_version="$("$PREFIX/bin/gdal-config" --version)"
+if [[ "$config_version" != "3.13.3" ]]; then
+  echo "gdal-config reports $config_version, expected 3.13.3" >&2
+  exit 1
+fi
+
 export GDAL_CONFIG="$PREFIX/bin/gdal-config"
 export PROJ_DIR="$PREFIX"
 export PROJ_VERSION

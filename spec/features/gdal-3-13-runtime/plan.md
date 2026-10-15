@@ -94,7 +94,11 @@ GDAL CMake options:
     `GDAL_USE_DEFLATE`, `GDAL_USE_ZSTD` and `GDAL_USE_JPEG`.
   - Then turn on `GDAL_USE_TIFF_INTERNAL`, `GDAL_USE_GEOTIFF_INTERNAL`,
     `GDAL_USE_PNG_INTERNAL` and `GDAL_USE_JSONC_INTERNAL`. json-c is required.
-- `gdal-config` is installed even with `BUILD_APPS=OFF`.
+- `BUILD_APPS=OFF` omits `gdal-config`. After installing the native library,
+  the build reconfigures to generate this build-only metadata script, copies
+  only `gdal-config` into the build prefix and does not compile or ship GDAL
+  command-line utilities. The first CI run exposed this issue and failed
+  before producing wheels.
 
 PROJ:
 

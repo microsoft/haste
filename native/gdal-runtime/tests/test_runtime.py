@@ -115,6 +115,13 @@ class LockTests(unittest.TestCase):
         self.assertIn('"osgeo.gdal"', smoke_test)
         self.assertNotIn("packagefeedproxy.microsoft.io", workflow)
 
+    def test_build_script_generates_gdal_config_without_gdal_apps(self):
+        build_script = (ROOT / "build.sh").read_text(encoding="utf-8")
+        self.assertIn("-DBUILD_APPS=OFF", build_script)
+        self.assertIn("-DBUILD_APPS=ON", build_script)
+        self.assertIn('"$WORK/gdal-build/apps/gdal-config"', build_script)
+        self.assertIn('"$PREFIX/bin/gdal-config" --version', build_script)
+
 
 class WheelAssemblyTests(unittest.TestCase):
     def test_maps_binding_data_into_the_combined_wheel(self):
