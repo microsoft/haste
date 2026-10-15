@@ -107,8 +107,12 @@ GDAL CMake options:
   3.13.3 and has been removed in favor of the supported runtime setting above.
   The next run exposed GDAL's in-tree Python binding target using builder
   Python 3.15 without setuptools; that target is now disabled because the
-  pinned CPython 3.11 bindings are built separately. No wheel artifact has
-  passed smoke testing yet.
+  pinned CPython 3.11 bindings are built separately. The latest run compiled
+  native GDAL, generated `gdal-config` and fetched all pinned binding sdists,
+  then failed when the manifest loader could not find `libssl.so.3` under the
+  runtime library path. OpenSSL now installs to the same `lib` directory as
+  the other native dependencies. No wheel artifact has passed smoke testing
+  yet.
 
 PROJ:
 

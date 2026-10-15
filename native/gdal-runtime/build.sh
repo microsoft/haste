@@ -101,7 +101,7 @@ extract openssl
 (
   cd "$WORK"/openssl-*/
   ./Configure linux-x86_64 shared no-tests no-apps no-docs no-module \
-    no-legacy no-engine no-dso no-autoload-config \
+    no-legacy no-engine no-dso no-autoload-config --libdir=lib \
     --prefix="$PREFIX" --openssldir="$PREFIX/ssl"
   make -j"$JOBS"
   make install_sw
