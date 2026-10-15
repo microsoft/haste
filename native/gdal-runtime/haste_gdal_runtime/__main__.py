@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
 from . import (
+    BINDINGS,
     DEFAULT_ALLOWED_VSI,
     Policy,
     RuntimeCheckError,
@@ -56,7 +58,8 @@ def _manifest(args: argparse.Namespace) -> int:
     manifest = {
         "schema": 1,
         "gdal_release": native.version_info("RELEASE_NAME"),
-        "proj_release": build_info.get("PROJ_RUNTIME_VERSION"),
+        "proj_release": build_info.get("PROJ_RUNTIME_VERSION")
+        or os.environ.get("PROJ_VERSION"),
         "build_info": build_info,
         "drivers": native.drivers(),
         "vsi_prefixes": native.vsi_prefixes(),
@@ -87,6 +90,11 @@ def main(argv: list[str]) -> int:
     verify.add_argument("--allow-driver", action="append")
     verify.add_argument("--allow-vsi", action="append")
     verify.add_argument("--require-binding", action="append")
+    verify.add_argument(
+        "--skip-bindings",
+        action="store_true",
+        help="inspect the native runtime without importing bindings",
+    )
 
     manifest = commands.add_parser(
         "manifest", help="describe a freshly built libgdal (build time)"
@@ -106,7 +114,7 @@ def main(argv: list[str]) -> int:
     configure(policy)
     try:
         removed = harden(policy)
-        observed = report()
+        observed = report(bindings=() if args.skip_bindings else BINDINGS)
         observed["removed"] = removed
         problems = evaluate(observed, load_manifest(), policy)
     except RuntimeCheckError as error:

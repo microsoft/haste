@@ -6,9 +6,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import assemble_wheels  # noqa: E402
 import fetch_sources  # noqa: E402
 import haste_gdal_runtime as rt  # noqa: E402
 from haste_gdal_runtime._native import mapped_libraries  # noqa: E402
+from verify_build_manifest import validate as validate_manifest  # noqa: E402
 
 LIB = Path("/opt/libs/libgdal-abc.so.38")
 PROJ_LIB = "/opt/libs/libproj-abc.so.25"
@@ -81,6 +83,77 @@ class LockTests(unittest.TestCase):
             fetch_sources.parse_lock("HASTE_GDAL_BUILD 1\n" + row + "\n" + row)
         with self.assertRaises(ValueError):
             fetch_sources.parse_lock(row)
+
+    def test_python_sdists_are_not_in_native_fetch_lock(self):
+        text = (ROOT / "sources.lock").read_text(encoding="utf-8")
+        self.assertNotIn("pythonhosted.org", text)
+
+    def test_binding_build_helpers_require_explicit_feed(self):
+        for name in ("install_build_tools.sh", "fetch_binding_sdists.sh"):
+            text = (ROOT / name).read_text(encoding="utf-8")
+            self.assertIn("PIP_INDEX_URL", text)
+            self.assertIn("--index-url", text)
+            self.assertNotIn("pypi.org/simple", text)
+        build_bindings = (ROOT / "build_bindings.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"--no-index"', build_bindings)
+
+    def test_build_workflow_uses_only_the_protected_internal_feed(self):
+        workflow = (
+            ROOT.parents[1]
+            / ".github"
+            / "workflows"
+            / "gdal-runtime-build.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("secrets.PIP_INDEX_URL", workflow)
+        self.assertIn("environment: gdal-runtime-build", workflow)
+        self.assertIn("--no-index", (ROOT / "smoke_test.py").read_text())
+        self.assertNotIn("packagefeedproxy.microsoft.io", workflow)
+
+
+class WheelAssemblyTests(unittest.TestCase):
+    def test_maps_binding_data_into_the_combined_wheel(self):
+        member = "rasterio-1.4.4.data/platlib/rasterio/_base.so"
+        staging = assemble_wheels.rewrite_data_path(
+            member, "haste_gdal_runtime-3.13.3+haste.1.data"
+        )
+        self.assertEqual(
+            staging,
+            "haste_gdal_runtime-3.13.3+haste.1.data/platlib/"
+            "rasterio/_base.so",
+        )
+        output = assemble_wheels.restore_data_path(
+            staging, "rasterio", "1.4.4+haste.1"
+        )
+        self.assertEqual(
+            output,
+            "rasterio-1.4.4+haste.1.data/platlib/rasterio/_base.so",
+        )
+
+    def test_binding_metadata_pins_runtime_and_removes_old_runtime(self):
+        metadata = (
+            b"Metadata-Version: 2.1\n"
+            b"Name: rasterio\n"
+            b"Version: 1.4.4\n"
+            b"Requires-Dist: haste-gdal-runtime>=3\n"
+            b"Requires-Dist: numpy\n"
+        )
+        updated = assemble_wheels.update_metadata(
+            metadata, "1.4.4+haste.1", "3.13.3+haste.1"
+        )
+        self.assertIn(b"Version: 1.4.4+haste.1", updated)
+        self.assertIn(
+            b"Requires-Dist: haste-gdal-runtime==3.13.3+haste.1", updated
+        )
+        self.assertIn(b"Requires-Dist: numpy", updated)
+        self.assertNotIn(b"haste-gdal-runtime>=3", updated)
+
+    def test_local_version_discards_any_existing_local_suffix(self):
+        self.assertEqual(
+            assemble_wheels.local_version("1.2.3+source", "7"),
+            "1.2.3+haste.7",
+        )
 
 
 class MappedLibrariesTests(unittest.TestCase):
@@ -186,6 +259,84 @@ class EvaluateTests(unittest.TestCase):
     def test_missing_required_binding(self):
         policy = rt.Policy("3.13.3", required_bindings=("rasterio",))
         self.assertTrue(self.run_eval(good_report(), policy=policy))
+
+
+class ManifestTests(unittest.TestCase):
+    def test_approved_manifest_is_accepted(self):
+        manifest = {
+            "gdal_release": "3.13.3",
+            "proj_release": "9.8.1",
+            "vrt_raw_band_compiled": False,
+            "drivers": sorted(
+                {
+                    "COG",
+                    "GTiff",
+                    "VRT",
+                    "MEM",
+                    "PNG",
+                    "JPEG",
+                    "GeoJSON",
+                    "GeoJSONSeq",
+                    "ESRIJSON",
+                    "TopoJSON",
+                    "GPKG",
+                    "SQLite",
+                }
+            ),
+            "probes_permissive": {
+                "raw_band": "rejected",
+                "python_pixel_function": "read-failed",
+            },
+        }
+        self.assertEqual(validate_manifest(manifest), [])
+
+    def test_manifest_rejects_extra_driver_or_enabled_raw_band(self):
+        manifest = {
+            "gdal_release": "3.13.3",
+            "proj_release": "9.8.1",
+            "vrt_raw_band_compiled": True,
+            "drivers": ["GTiff", "HDF5"],
+            "probes_permissive": {
+                "raw_band": "read",
+                "python_pixel_function": "rejected",
+            },
+        }
+        errors = validate_manifest(manifest)
+        self.assertGreaterEqual(len(errors), 3)
+        self.assertTrue(any("inventory" in error for error in errors))
+
+    def test_manifest_rejects_unapproved_proj_release(self):
+        manifest = {
+            "gdal_release": "3.13.3",
+            "proj_release": "9.7.0",
+            "vrt_raw_band_compiled": False,
+            "drivers": sorted(
+                {
+                    "COG",
+                    "GTiff",
+                    "VRT",
+                    "MEM",
+                    "PNG",
+                    "JPEG",
+                    "GeoJSON",
+                    "GeoJSONSeq",
+                    "ESRIJSON",
+                    "TopoJSON",
+                    "GPKG",
+                    "SQLite",
+                }
+            ),
+            "probes_permissive": {
+                "raw_band": "rejected",
+                "python_pixel_function": "read-failed",
+            },
+        }
+        self.assertTrue(
+            any(
+                "PROJ release" in error
+                for error in validate_manifest(manifest)
+            )
+        )
 
 
 if __name__ == "__main__":

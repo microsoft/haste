@@ -1,0 +1,88 @@
+name: Build GDAL native runtime
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "native/gdal-runtime/**"
+      - ".github/workflows/gdal-runtime-build.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "native/gdal-runtime/**"
+      - ".github/workflows/gdal-runtime-build.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Run native runtime unit tests
+        working-directory: native/gdal-runtime
+        run: python -m unittest discover -s tests -v
+
+  build:
+    needs: unit
+    runs-on: ubuntu-latest
+    environment: gdal-runtime-build
+    permissions:
+      contents: read
+    container:
+      image: quay.io/pypa/manylinux_2_28_x86_64@sha256:1e102f2e9ed9b7fd8d64b29f798c76078c3fa8f14d34914d7a4045e39419d8e0
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Require the protected internal Python feed
+        env:
+          PIP_INDEX_URL: ${{ secrets.PIP_INDEX_URL }}
+        run: |
+          if [[ -z "${PIP_INDEX_URL:-}" ]]; then
+            echo "::error::Configure PIP_INDEX_URL in the protected gdal-runtime-build environment."
+            exit 1
+          fi
+
+      - name: Install native build tools
+        run: dnf install -y nasm perl perl-IPC-Cmd perl-Text-Template sqlite
+
+      - name: Build native runtime and binding wheels
+        env:
+          BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
+          PIP_INDEX_URL: ${{ secrets.PIP_INDEX_URL }}
+        run: bash native/gdal-runtime/build.sh
+
+      - name: Smoke-test the native runtime wheel offline
+        working-directory: native/gdal-runtime
+        env:
+          BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
+        run: |
+          build="$(python3 fetch_sources.py --print-build)"
+          /opt/python/cp311-cp311/bin/python smoke_test.py \
+            --wheel-dir "$BUILD_ROOT/dist" \
+            --build "$build"
+
+      - name: Upload immutable build artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist/*.whl
+          if-no-files-found: error
+          retention-days: 7

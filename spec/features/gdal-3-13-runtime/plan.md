@@ -6,8 +6,8 @@
 | 0 | Baseline runtime report from every current runtime | `backend-dev` | pending |
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
-| 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | pending |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | pending |
+| 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented, awaiting CI build |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | initial build and native smoke workflow implemented; full supply-chain gates pending |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -44,29 +44,14 @@ What exists:
 
 Next, in order:
 
-1. Unit tests for the pure-Python parts: lock parsing, `mapped_libraries`,
-   `configure`, `skip_list`, `evaluate`.
-2. Add the five binding sdists to the lock: GDAL 3.13.3, rasterio 1.4.4,
-   fiona 1.10.1, pyogrio 0.13.0, pyproj 3.7.2.
-3. Write the hash-locked build toolchains. Two are needed (see below).
-4. `build.sh`, run in the pinned builder image: zlib, libdeflate, zstd,
-   libjpeg-turbo, OpenSSL, curl, sqlite, PROJ, then GDAL. Then:
-   - check that every non-system dependency resolves to the install prefix;
-   - write the manifest with `python -m haste_gdal_runtime manifest`;
-   - assert the manifest's drivers equal the expected set below.
-5. `assemble_wheels.py`:
-   - build the binding wheels;
-   - merge them with the runtime package, with only one `.dist-info`
-     (auditwheel rejects more than one);
-   - run `auditwheel repair` once;
-   - split back into one wheel per distribution with `+haste.N` versions;
-   - make each binding wheel require the exact runtime wheel.
-6. `smoke_test.py`: install the wheels in the Functions Python 3.11 image and
-   the Batch base image, run `python -m haste_gdal_runtime verify`, read and
-   write the allowed formats, and do one HTTPS `/vsicurl/` read.
-7. `.github/workflows/gdal-runtime-build.yml`: unit, build and smoke jobs,
-   with no write credentials. Publishing and attestation are a separate,
-   approval-gated change.
+1. Run the digest-pinned build workflow with the protected
+   `gdal-runtime-build` environment and its `PIP_INDEX_URL` secret. Resolve any
+   failures in the real native build before treating these wheels as usable.
+2. Extend smoke tests to install and import every binding, exercise the
+   supported raster/vector workflows, and test HTTPS `/vsicurl/` against a
+   local TLS server in each target runtime image.
+3. Add dependency vulnerability/license gates, SBOM and notices, provenance
+   attestation, and the separate approval-gated immutable publisher.
 
 ## Verified build facts
 

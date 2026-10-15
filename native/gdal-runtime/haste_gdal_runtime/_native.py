@@ -100,7 +100,7 @@ class NativeGdal:
                 [c_void_p] + [c_int] * 5 + [c_void_p] + [c_int] * 5,
                 c_int,
             ),
-            "GDALClose": ([c_void_p], c_int),
+            "GDALClose": ([c_void_p], None),
         }
         for name, (argtypes, restype) in signatures.items():
             function = getattr(lib, name)
@@ -228,16 +228,19 @@ class NativeGdal:
         """
         settings = PERMISSIVE_CONFIG if permissive else {}
         with tempfile.TemporaryDirectory(prefix="haste-gdal-probe-") as tmp:
-            (Path(tmp) / "raw.bin").write_bytes(b"\x01")
+            root = Path(tmp)
+            (root / "raw.bin").write_bytes(b"\x01")
             raw_vrt = Path(tmp) / "raw.vrt"
             raw_vrt.write_text(_RAW_BAND_VRT, encoding="utf-8")
+            python_vrt = root / "python.vrt"
+            python_vrt.write_text(_PYTHON_PIXEL_FUNCTION_VRT, encoding="utf-8")
+            plain_vrt = root / "plain.vrt"
+            plain_vrt.write_text(_PLAIN_VRT, encoding="utf-8")
             with self._thread_config(settings):
                 return {
                     "raw_band": self.try_read(str(raw_vrt)),
-                    "python_pixel_function": self.try_read(
-                        _PYTHON_PIXEL_FUNCTION_VRT
-                    ),
-                    "vrt_driver": self.try_read(_PLAIN_VRT),
+                    "python_pixel_function": self.try_read(str(python_vrt)),
+                    "vrt_driver": self.try_read(str(plain_vrt)),
                 }
 
 
