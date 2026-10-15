@@ -41,7 +41,6 @@ python3 "$ROOT/fetch_sources.py" --dest "$SOURCES"
 bash "$ROOT/install_build_tools.sh" "$TOOL_VENV"
 bash "$ROOT/install_build_tools.sh" "$FIONA_VENV" \
   "$ROOT/requirements-fiona-build.txt"
-bash "$ROOT/fetch_binding_sdists.sh" "$SOURCES/bindings"
 
 extract() {
   local name="$1"
@@ -268,6 +267,11 @@ export PROJ_DIR="$PREFIX"
 export PROJ_VERSION
 export GDAL_DATA="$PREFIX/share/gdal"
 export PROJ_DATA="$PREFIX/share/proj"
+
+# pip inspects GDAL's PEP 517 metadata while downloading its sdist. That
+# metadata step runs gdal-config, so resolve binding sdists only after the
+# native runtime and its build-only config tool are available.
+bash "$ROOT/fetch_binding_sdists.sh" "$SOURCES/bindings"
 
 mkdir -p "$BUILD_ROOT/package/haste_gdal_runtime/share/gdal"
 mkdir -p "$BUILD_ROOT/package/haste_gdal_runtime/share/proj"

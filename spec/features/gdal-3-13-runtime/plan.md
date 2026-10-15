@@ -97,11 +97,12 @@ GDAL CMake options:
 - `BUILD_APPS=OFF` omits `gdal-config`. After installing the native library,
   the build reconfigures to generate this build-only metadata script, copies
   only `gdal-config` into the build prefix and does not compile or ship GDAL
-  command-line utilities. The first CI run exposed this issue. A second run
-  showed the PEP 517 binding build still could not resolve the script by
-  name; the build now exposes it on the standard PATH and checks the binding
-  build subprocess environment before attempting wheel creation. No wheel
-  artifact has passed smoke testing yet.
+  command-line utilities. CI logs showed that the repeated `gdal-config`
+  failure happened earlier than the binding-wheel build: pip inspected GDAL's
+  PEP 517 metadata while fetching binding sdists, before the native runtime
+  existed. The build now fetches those sdists only after it creates and exposes
+  `gdal-config`. The next CI run must verify this ordering; no wheel artifact
+  has passed smoke testing yet.
 
 PROJ:
 

@@ -126,6 +126,24 @@ class LockTests(unittest.TestCase):
         )
         self.assertIn('"$PREFIX/bin/gdal-config" --version', build_script)
 
+    def test_binding_sdists_are_fetched_after_gdal_config_is_available(self):
+        build_script = (ROOT / "build.sh").read_text(encoding="utf-8")
+        config_created = build_script.index(
+            'install -D -m 755 "$WORK/gdal-build/apps/gdal-config"'
+        )
+        config_exported = build_script.index(
+            'export GDAL_CONFIG="$PREFIX/bin/gdal-config"'
+        )
+        sdists_fetched = build_script.index(
+            'bash "$ROOT/fetch_binding_sdists.sh" "$SOURCES/bindings"'
+        )
+        binding_build = 'python3 "$ROOT/build_bindings.py"'
+        bindings_built = build_script.index(binding_build)
+
+        self.assertLess(config_created, config_exported)
+        self.assertLess(config_exported, sdists_fetched)
+        self.assertLess(sdists_fetched, bindings_built)
+
 
 class WheelAssemblyTests(unittest.TestCase):
     def test_maps_binding_data_into_the_combined_wheel(self):
