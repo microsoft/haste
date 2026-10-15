@@ -151,9 +151,15 @@ resource productApiTitiler 'Microsoft.ApiManagement/service/products/apis@2024-0
 // API-level policy for TiTiler. get-tiles (GET only) is its only operation:
 // the op-sync hook skips TiTiler, and reconcile-titiler-baseline.ps1 removes
 // operations an older hook created. Requests are rate limited per client
-// (first X-Forwarded-For hop, as forwarded by the Static Web App, else the
-// caller address) and overall, and anything with a body or an overlong URL
-// is refused before it reaches the backend.
+// and overall, and anything with a body or an overlong URL is refused before
+// it reaches the backend.
+//
+// The per-client key is an address without its port. The SWA appends the
+// user as "ip:port" (new port per connection) to whatever X-Forwarded-For the
+// browser sent, and APIM's front end then appends the SWA as "ip:port", so on
+// the SWA product (which only SWA-signed requests pass) the user is the
+// second-to-last hop; earlier hops are client-supplied. Other callers (the
+// all-APIs keys) are keyed on the address APIM saw.
 var titilerPolicy = '''<policies>
   <inbound>
     <base />
@@ -169,7 +175,15 @@ var titilerPolicy = '''<policies>
         </return-response>
       </when>
     </choose>
-    <rate-limit-by-key calls="__PERCLIENT__" renewal-period="60" counter-key="@(&quot;titiler-client:&quot; + context.Request.Headers.GetValueOrDefault(&quot;X-Forwarded-For&quot;, context.Request.IpAddress).Split(',')[0].Trim())" />
+    <rate-limit-by-key calls="__PERCLIENT__" renewal-period="60" counter-key="@{
+        var hops = context.Request.Headers.GetValueOrDefault(&quot;X-Forwarded-For&quot;, &quot;&quot;).Split(',');
+        var fromSwa = context.Product != null &amp;&amp; context.Product.Id == &quot;__SWAPRODUCT__&quot; &amp;&amp; hops.Length &gt;= 2;
+        var hop = fromSwa ? hops[hops.Length - 2].Trim() : context.Request.IpAddress;
+        var close = hop.IndexOf(']');
+        if (hop.StartsWith(&quot;[&quot;) &amp;&amp; close &gt; 0) { hop = hop.Substring(1, close - 1); }
+        else if (hop.IndexOf(':') &gt; 0 &amp;&amp; hop.IndexOf(':') == hop.LastIndexOf(':')) { hop = hop.Substring(0, hop.IndexOf(':')); }
+        return &quot;titiler-client:&quot; + hop;
+      }" />
     <rate-limit-by-key calls="__TOTAL__" renewal-period="60" counter-key="titiler-all" />
     <set-backend-service id="apim-generated-policy" backend-id="__BID__" />
   </inbound>
@@ -183,8 +197,9 @@ resource apiPolicyTitiler 'Microsoft.ApiManagement/service/apis/policies@2024-06
   name: 'policy'
   properties: {
     format: 'xml'
-    value: replace(replace(replace(replace(titilerPolicy,
+    value: replace(replace(replace(replace(replace(titilerPolicy,
       '__BID__', functionTitilerName),
+      '__SWAPRODUCT__', swaProductId),
       '__MAXURL__', string(titilerMaxUrlLength)),
       '__PERCLIENT__', string(titilerCallsPerClientPerMinute)),
       '__TOTAL__', string(titilerCallsPerMinute))

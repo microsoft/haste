@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "13313484601979574233"
+      "templateHash": "13515907901274365588"
     }
   },
   "parameters": {
@@ -3157,7 +3157,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.47.16.16243",
-              "templateHash": "14571555177518355580"
+              "templateHash": "2049843368965168332"
             }
           },
           "parameters": {
@@ -3219,7 +3219,7 @@
               "header": "Ocp-Apim-Subscription-Key",
               "query": "subscription-key"
             },
-            "titilerPolicy": "<policies>\r\n  <inbound>\r\n    <base />\r\n    <choose>\r\n      <when condition=\"@(context.Request.Headers.GetValueOrDefault(&quot;Content-Length&quot;, &quot;0&quot;) != &quot;0&quot; || context.Request.Headers.ContainsKey(&quot;Transfer-Encoding&quot;))\">\r\n        <return-response>\r\n          <set-status code=\"413\" reason=\"Request body not allowed\" />\r\n        </return-response>\r\n      </when>\r\n      <when condition=\"@(context.Request.OriginalUrl.Path.Length + context.Request.OriginalUrl.QueryString.Length &gt; __MAXURL__)\">\r\n        <return-response>\r\n          <set-status code=\"414\" reason=\"URI Too Long\" />\r\n        </return-response>\r\n      </when>\r\n    </choose>\r\n    <rate-limit-by-key calls=\"__PERCLIENT__\" renewal-period=\"60\" counter-key=\"@(&quot;titiler-client:&quot; + context.Request.Headers.GetValueOrDefault(&quot;X-Forwarded-For&quot;, context.Request.IpAddress).Split(',')[0].Trim())\" />\r\n    <rate-limit-by-key calls=\"__TOTAL__\" renewal-period=\"60\" counter-key=\"titiler-all\" />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>"
+            "titilerPolicy": "<policies>\r\n  <inbound>\r\n    <base />\r\n    <choose>\r\n      <when condition=\"@(context.Request.Headers.GetValueOrDefault(&quot;Content-Length&quot;, &quot;0&quot;) != &quot;0&quot; || context.Request.Headers.ContainsKey(&quot;Transfer-Encoding&quot;))\">\r\n        <return-response>\r\n          <set-status code=\"413\" reason=\"Request body not allowed\" />\r\n        </return-response>\r\n      </when>\r\n      <when condition=\"@(context.Request.OriginalUrl.Path.Length + context.Request.OriginalUrl.QueryString.Length &gt; __MAXURL__)\">\r\n        <return-response>\r\n          <set-status code=\"414\" reason=\"URI Too Long\" />\r\n        </return-response>\r\n      </when>\r\n    </choose>\r\n    <rate-limit-by-key calls=\"__PERCLIENT__\" renewal-period=\"60\" counter-key=\"@{\r\n        var hops = context.Request.Headers.GetValueOrDefault(&quot;X-Forwarded-For&quot;, &quot;&quot;).Split(',');\r\n        var fromSwa = context.Product != null &amp;&amp; context.Product.Id == &quot;__SWAPRODUCT__&quot; &amp;&amp; hops.Length &gt;= 2;\r\n        var hop = fromSwa ? hops[hops.Length - 2].Trim() : context.Request.IpAddress;\r\n        var close = hop.IndexOf(']');\r\n        if (hop.StartsWith(&quot;[&quot;) &amp;&amp; close &gt; 0) { hop = hop.Substring(1, close - 1); }\r\n        else if (hop.IndexOf(':') &gt; 0 &amp;&amp; hop.IndexOf(':') == hop.LastIndexOf(':')) { hop = hop.Substring(0, hop.IndexOf(':')); }\r\n        return &quot;titiler-client:&quot; + hop;\r\n      }\" />\r\n    <rate-limit-by-key calls=\"__TOTAL__\" renewal-period=\"60\" counter-key=\"titiler-all\" />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"__BID__\" />\r\n  </inbound>\r\n  <backend><base /></backend>\r\n  <outbound><base /></outbound>\r\n  <on-error><base /></on-error>\r\n</policies>"
           },
           "resources": [
             {
@@ -3313,7 +3313,7 @@
               "name": "[format('{0}/{1}/{2}', parameters('apimName'), parameters('functionTitilerName'), 'policy')]",
               "properties": {
                 "format": "xml",
-                "value": "[replace(replace(replace(replace(variables('titilerPolicy'), '__BID__', parameters('functionTitilerName')), '__MAXURL__', string(parameters('titilerMaxUrlLength'))), '__PERCLIENT__', string(parameters('titilerCallsPerClientPerMinute'))), '__TOTAL__', string(parameters('titilerCallsPerMinute')))]"
+                "value": "[replace(replace(replace(replace(replace(variables('titilerPolicy'), '__BID__', parameters('functionTitilerName')), '__SWAPRODUCT__', variables('swaProductId')), '__MAXURL__', string(parameters('titilerMaxUrlLength'))), '__PERCLIENT__', string(parameters('titilerCallsPerClientPerMinute'))), '__TOTAL__', string(parameters('titilerCallsPerMinute')))]"
               },
               "dependsOn": [
                 "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimName'), parameters('functionTitilerName'))]",

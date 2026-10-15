@@ -45,6 +45,29 @@ class TestTitilerApimContract(unittest.TestCase):
         self.assertIn('code="414"', policy)
         self.assertIn("X-Forwarded-For", policy)
 
+    def test_titiler_client_key_ignores_client_supplied_hops(self) -> None:
+        # Earlier hops are whatever the browser sent; the SWA's own hop
+        # (second-to-last, as "ip:port") is the user.
+        policy = self.template["variables"]["titilerPolicy"]
+        self.assertNotIn(".Split(',')[0]", policy)
+        self.assertIn("hops[hops.Length - 2]", policy)
+        self.assertIn("context.Product.Id == &quot;__SWAPRODUCT__&quot;", policy)
+
+    def test_titiler_client_key_drops_port(self) -> None:
+        policy = self.template["variables"]["titilerPolicy"]
+        self.assertIn("hop.Substring(0, hop.IndexOf(':'))", policy)
+
+    def test_titiler_policy_names_swa_product(self) -> None:
+        policy_resource = next(
+            r
+            for r in _resources(self.template)
+            if r["type"] == "Microsoft.ApiManagement/service/apis/policies"
+            and "titilerPolicy" in r["properties"]["value"]
+        )
+        value = policy_resource["properties"]["value"]
+        self.assertIn("'__SWAPRODUCT__'", value)
+        self.assertIn("swaProductId", value)
+
 
 class TestTitilerIngress(unittest.TestCase):
     def test_op_sync_skips_titiler(self) -> None:
