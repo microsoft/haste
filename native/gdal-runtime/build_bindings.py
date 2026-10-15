@@ -117,6 +117,17 @@ def main(argv: list[str] | None = None) -> int:
         ("pyproj", "3.7.2", args.common_venv / "bin" / "python"),
     )
     for distribution, version, python in bindings:
+        config_version = subprocess.run(
+            ["gdal-config", "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        ).stdout.strip()
+        if config_version != "3.13.3":
+            raise RuntimeError(
+                f"gdal-config reports {config_version}, expected 3.13.3"
+            )
         sdist = find_sdist(source_dir, distribution, version)
         check_sdist(sdist)
         print(f"building {distribution} {version}", flush=True)

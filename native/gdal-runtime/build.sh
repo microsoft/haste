@@ -259,6 +259,9 @@ if [[ "$config_version" != "3.13.3" ]]; then
   echo "gdal-config reports $config_version, expected 3.13.3" >&2
   exit 1
 fi
+ln -sfn "$PREFIX/bin/gdal-config" /usr/local/bin/gdal-config
+command -v gdal-config
+gdal-config --version
 
 export GDAL_CONFIG="$PREFIX/bin/gdal-config"
 export PROJ_DIR="$PREFIX"
