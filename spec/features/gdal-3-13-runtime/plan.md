@@ -105,7 +105,10 @@ GDAL CMake options:
   compilation. A proposed compile-time definition for the `/vsicurl?`
   header-file restriction collided with a same-named C++ identifier in GDAL
   3.13.3 and has been removed in favor of the supported runtime setting above.
-  No wheel artifact has passed smoke testing yet.
+  The next run exposed GDAL's in-tree Python binding target using builder
+  Python 3.15 without setuptools; that target is now disabled because the
+  pinned CPython 3.11 bindings are built separately. No wheel artifact has
+  passed smoke testing yet.
 
 PROJ:
 

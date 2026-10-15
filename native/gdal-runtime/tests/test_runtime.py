@@ -119,6 +119,7 @@ class LockTests(unittest.TestCase):
         build_script = (ROOT / "build.sh").read_text(encoding="utf-8")
         self.assertIn("-DBUILD_APPS=OFF", build_script)
         self.assertIn("-DBUILD_APPS=ON", build_script)
+        self.assertIn("-DBUILD_PYTHON_BINDINGS=OFF", build_script)
         self.assertIn('"$WORK/gdal-build/apps/gdal-config"', build_script)
         self.assertIn(
             'ln -sfn "$PREFIX/bin/gdal-config" /usr/local/bin/gdal-config',

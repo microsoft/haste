@@ -199,6 +199,7 @@ cmake -S "$GDAL_SOURCE" -B "$WORK/gdal-build" \
   -DCMAKE_PREFIX_PATH="$PREFIX" \
   -DBUILD_SHARED_LIBS=ON \
   -DBUILD_APPS=OFF \
+  -DBUILD_PYTHON_BINDINGS=OFF \
   -DBUILD_TESTING=OFF \
   -DGDAL_BUILD_OPTIONAL_DRIVERS=OFF \
   -DOGR_BUILD_OPTIONAL_DRIVERS=OFF \
@@ -234,7 +235,10 @@ cmake -S "$GDAL_SOURCE" -B "$WORK/gdal-build" \
 # Fail if this source release silently ignores a security-critical CMake
 # option. The GDAL configure step also audits every unconsumed cache entry.
 cmake -LAH -N "$WORK/gdal-build" > "$BUILD_ROOT/gdal-cmake-cache.txt"
-for option in GDAL_VRT_ENABLE_RAWRASTERBAND GDAL_AUTOLOAD_PLUGINS; do
+for option in \
+  GDAL_VRT_ENABLE_RAWRASTERBAND \
+  GDAL_AUTOLOAD_PLUGINS \
+  BUILD_PYTHON_BINDINGS; do
   grep -q "^${option}:BOOL=OFF$" "$BUILD_ROOT/gdal-cmake-cache.txt"
 done
 grep -q '^CMAKE_CXX_FLAGS:STRING=.*GDAL_VRT_DISABLE_PYTHON' \
