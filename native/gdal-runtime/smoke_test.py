@@ -1,4 +1,4 @@
-"""Install and verify the runtime wheel without accessing any package index."""
+"""Install and verify the GDAL runtime and binding wheels offline."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-gdal", default="3.13.3")
     args = parser.parse_args(argv)
 
-    runtime_version = f"{args.expected_gdal}+haste.{args.build}"
+    local_version = f"{args.expected_gdal}+haste.{args.build}"
     subprocess.run(
         [
             sys.executable,
@@ -42,7 +42,8 @@ def main(argv: list[str] | None = None) -> int:
             "--no-deps",
             "--find-links",
             str(args.wheel_dir),
-            f"haste-gdal-runtime=={runtime_version}",
+            f"haste-gdal-runtime=={local_version}",
+            f"GDAL=={local_version}",
         ],
         check=True,
     )
@@ -53,7 +54,8 @@ def main(argv: list[str] | None = None) -> int:
         "verify",
         "--expected-gdal",
         args.expected_gdal,
-        "--skip-bindings",
+        "--require-binding",
+        "osgeo.gdal",
     ]
     for driver in DRIVERS:
         command.extend(["--allow-driver", driver])

@@ -109,7 +109,10 @@ class LockTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("secrets.PIP_INDEX_URL", workflow)
         self.assertIn("environment: gdal-runtime-build", workflow)
-        self.assertIn("--no-index", (ROOT / "smoke_test.py").read_text())
+        smoke_test = (ROOT / "smoke_test.py").read_text()
+        self.assertIn("--no-index", smoke_test)
+        self.assertIn('f"GDAL=={local_version}"', smoke_test)
+        self.assertIn('"osgeo.gdal"', smoke_test)
         self.assertNotIn("packagefeedproxy.microsoft.io", workflow)
 
 

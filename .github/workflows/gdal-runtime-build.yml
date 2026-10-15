@@ -69,7 +69,7 @@ jobs:
           PIP_INDEX_URL: ${{ secrets.PIP_INDEX_URL }}
         run: bash native/gdal-runtime/build.sh
 
-      - name: Smoke-test the native runtime wheel offline
+      - name: Smoke-test the native runtime and GDAL binding wheels offline
         working-directory: native/gdal-runtime
         env:
           BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
