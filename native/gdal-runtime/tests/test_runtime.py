@@ -125,6 +125,9 @@ class LockTests(unittest.TestCase):
             build_script,
         )
         self.assertIn('"$PREFIX/bin/gdal-config" --version', build_script)
+        self.assertIn("GDAL_VRT_DISABLE_PYTHON", build_script)
+        header_file_macro = "CPL_VSIL_CURL_HEADER_FILE_KVP_DISABLED"
+        self.assertNotIn(header_file_macro, build_script)
 
     def test_binding_sdists_are_fetched_after_gdal_config_is_available(self):
         build_script = (ROOT / "build.sh").read_text(encoding="utf-8")
@@ -223,6 +226,9 @@ class ConfigureTests(unittest.TestCase):
         rt.configure(environ=env)
         self.assertEqual(env["GDAL_VRT_ENABLE_RAWRASTERBAND"], "NO")
         self.assertEqual(env["GDAL_DRIVER_PATH"], "disable")
+        self.assertEqual(
+            env["CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED"], "NO"
+        )
         self.assertEqual(env["GDAL_DISABLE_READDIR_ON_OPEN"], "TRUE")
         self.assertEqual(env["GDAL_DATA"], str(rt.GDAL_DATA_DIR))
 

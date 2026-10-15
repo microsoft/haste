@@ -73,9 +73,9 @@ GDAL CMake options:
   search path list is empty. Driver and plugin paths are then ignored.
 - Adding `-DGDAL_VRT_DISABLE_PYTHON` to the C++ flags forces
   `GDAL_VRT_ENABLE_PYTHON` to `NO` whatever the configuration.
-- Adding `-DCPL_VSIL_CURL_HEADER_FILE_KVP_DISABLED` removes `header_file=`
-  from `/vsicurl?`. The runtime setting `CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED`
-  accepts `NO` (disabled), `ONLY_IN_TEMP` (the default) or `YES`.
+- Setting `CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED=NO` rejects `header_file=`
+  in `/vsicurl?`. The setting also accepts `ONLY_IN_TEMP` (the default) or
+  `YES`; the runtime package pins it to `NO`.
 - Turn optional drivers off, then name the ones to keep:
   - `GDAL_BUILD_OPTIONAL_DRIVERS=OFF` and `OGR_BUILD_OPTIONAL_DRIVERS=OFF`.
   - GTiff, VRT, GeoJSON and Shape are switched back on automatically unless
@@ -101,8 +101,11 @@ GDAL CMake options:
   failure happened earlier than the binding-wheel build: pip inspected GDAL's
   PEP 517 metadata while fetching binding sdists, before the native runtime
   existed. The build now fetches those sdists only after it creates and exposes
-  `gdal-config`. The next CI run must verify this ordering; no wheel artifact
-  has passed smoke testing yet.
+  `gdal-config`; the latest run passed that stage and reached native
+  compilation. A proposed compile-time definition for the `/vsicurl?`
+  header-file restriction collided with a same-named C++ identifier in GDAL
+  3.13.3 and has been removed in favor of the supported runtime setting above.
+  No wheel artifact has passed smoke testing yet.
 
 PROJ:
 

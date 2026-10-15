@@ -228,7 +228,7 @@ cmake -S "$GDAL_SOURCE" -B "$WORK/gdal-build" \
   -DOGR_ENABLE_DRIVER_GPKG=ON \
   -DOGR_ENABLE_DRIVER_SQLITE=ON \
   -DOGR_ENABLE_DRIVER_SHAPE=OFF \
-  -DCMAKE_CXX_FLAGS=-DGDAL_VRT_DISABLE_PYTHON\ -DCPL_VSIL_CURL_HEADER_FILE_KVP_DISABLED \
+  -DCMAKE_CXX_FLAGS=-DGDAL_VRT_DISABLE_PYTHON \
   2>&1 | tee "$BUILD_ROOT/gdal-configure.log"
 
 # Fail if this source release silently ignores a security-critical CMake
@@ -237,7 +237,7 @@ cmake -LAH -N "$WORK/gdal-build" > "$BUILD_ROOT/gdal-cmake-cache.txt"
 for option in GDAL_VRT_ENABLE_RAWRASTERBAND GDAL_AUTOLOAD_PLUGINS; do
   grep -q "^${option}:BOOL=OFF$" "$BUILD_ROOT/gdal-cmake-cache.txt"
 done
-grep -q '^CMAKE_CXX_FLAGS:STRING=.*GDAL_VRT_DISABLE_PYTHON.*CPL_VSIL_CURL_HEADER_FILE_KVP_DISABLED' \
+grep -q '^CMAKE_CXX_FLAGS:STRING=.*GDAL_VRT_DISABLE_PYTHON' \
   "$BUILD_ROOT/gdal-cmake-cache.txt"
 if grep -q 'Manually-specified variables were not used' \
   "$BUILD_ROOT/gdal-configure.log"; then
