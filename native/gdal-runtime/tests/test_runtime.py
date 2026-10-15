@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import assemble_wheels  # noqa: E402
+import baseline_report  # noqa: E402
 import fetch_sources  # noqa: E402
 import haste_gdal_runtime as rt  # noqa: E402
 from haste_gdal_runtime._native import mapped_libraries  # noqa: E402
@@ -173,6 +174,15 @@ class MappedLibrariesTests(unittest.TestCase):
 
     def test_none_found(self):
         self.assertEqual(mapped_libraries("libproj", self.MAPS), [])
+
+    def test_baseline_report_records_distinct_native_libraries(self):
+        report = baseline_report.collect_report(self.MAPS)
+        self.assertEqual(
+            report["libraries"]["libgdal"],
+            ["/a/libgdal-1.so.38", "/b/libgdal.so.36"],
+        )
+        self.assertEqual(report["libraries"]["libproj"], [])
+        self.assertIsNone(report["native"]["library"])
 
 
 class ConfigureTests(unittest.TestCase):

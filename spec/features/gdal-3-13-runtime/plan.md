@@ -3,7 +3,7 @@
 | Phase | Task | Agent | Status |
 |---|---|---|---|
 | 0 | Spec and ADR-0007 | `backend-dev` | done |
-| 0 | Baseline runtime report from every current runtime | `backend-dev` | pending |
+| 0 | Baseline runtime report from every current runtime | `backend-dev` | report script implemented; collection from current runtimes pending |
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented, awaiting CI build |
@@ -29,6 +29,10 @@ What exists:
   nine downloads were checked against these hashes.
 - `native/gdal-runtime/fetch_sources.py`: downloads and verifies the lock;
   any mismatch is fatal.
+- `native/gdal-runtime/baseline_report.py`: emits versions from every
+  importable binding, mapped libgdal/libproj paths, driver and VSI inventories,
+  and a safe allowlist of GDAL/PROJ config values. Reports from the existing
+  Function Apps and Batch images still need to be collected.
 - `native/gdal-runtime/haste_gdal_runtime/`: the runtime package.
   - `configure(policy)` sets the operator settings, pins `GDAL_DATA`,
     `PROJ_DATA` and `GDAL_CONFIG_FILE` to the package, and puts disallowed
