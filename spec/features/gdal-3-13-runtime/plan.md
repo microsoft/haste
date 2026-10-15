@@ -7,7 +7,7 @@
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented, awaiting CI build |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | initial build and native smoke workflow implemented; full supply-chain gates pending |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private CI building; offline smoke now installs and verifies the native runtime plus GDAL Python binding; full binding and supply-chain gates pending |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -48,12 +48,12 @@ What exists:
 
 Next, in order:
 
-1. Run the digest-pinned build workflow with the protected
-   `gdal-runtime-build` environment and its `PIP_INDEX_URL` secret. Resolve any
-   failures in the real native build before treating these wheels as usable.
-2. Extend smoke tests to install and import every binding, exercise the
-   supported raster/vector workflows, and test HTTPS `/vsicurl/` against a
-   local TLS server in each target runtime image.
+1. Resolve failures in the active digest-pinned private CI build. Treat the
+   native runtime and GDAL binding wheels as usable only after the offline
+   in-container smoke check passes.
+2. Extend smoke tests to install and import rasterio, fiona, pyogrio and
+   pyproj, exercise the supported raster/vector workflows, and test HTTPS
+   `/vsicurl/` against a local TLS server in each target runtime image.
 3. Add dependency vulnerability/license gates, SBOM and notices, provenance
    attestation, and the separate approval-gated immutable publisher.
 
