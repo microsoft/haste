@@ -120,6 +120,7 @@ class LockTests(unittest.TestCase):
         self.assertIn("-DBUILD_APPS=OFF", build_script)
         self.assertIn("-DBUILD_APPS=ON", build_script)
         self.assertIn("-DBUILD_PYTHON_BINDINGS=OFF", build_script)
+        self.assertIn("-DENABLE_GNM=OFF", build_script)
         self.assertIn("--libdir=lib", build_script)
         self.assertIn('"$WORK/gdal-build/apps/gdal-config"', build_script)
         self.assertIn(

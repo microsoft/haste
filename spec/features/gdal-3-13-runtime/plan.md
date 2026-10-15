@@ -86,8 +86,9 @@ GDAL CMake options:
   - MEM is always built.
 - The expected driver inventory is GTiff, COG, VRT, MEM, PNG, JPEG, GeoJSON,
   GeoJSONSeq, ESRIJSON, TopoJSON, GPKG and SQLite. Every driver registration
-  is conditional, so nothing else should appear. In 3.13, "Memory" is a
-  hidden alias of MEM and is not in the driver list.
+  is conditional, so nothing else should appear. `ENABLE_GNM=OFF` removes the
+  default GNMDatabase and GNMFile drivers. In 3.13, "Memory" is a hidden alias
+  of MEM and is not in the driver list.
 - Dependency selection:
   - `GDAL_USE_EXTERNAL_LIBS=OFF` and `GDAL_USE_INTERNAL_LIBS=OFF`.
   - Then turn on `GDAL_USE_CURL`, `GDAL_USE_SQLITE3`, `GDAL_USE_ZLIB`,
@@ -111,8 +112,10 @@ GDAL CMake options:
   native GDAL, generated `gdal-config` and fetched all pinned binding sdists,
   then failed when the manifest loader could not find `libssl.so.3` under the
   runtime library path. OpenSSL now installs to the same `lib` directory as
-  the other native dependencies. No wheel artifact has passed smoke testing
-  yet.
+  the other native dependencies. That run also exposed GDAL's default
+  GNMDatabase and GNMFile drivers as extra inventory entries; GNM is now
+  disabled and checked in the CMake cache. No wheel artifact has passed smoke
+  testing yet.
 
 PROJ:
 
