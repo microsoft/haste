@@ -277,7 +277,8 @@ export PROJ_DATA="$PREFIX/share/proj"
 # pip inspects GDAL's PEP 517 metadata while downloading its sdist. That
 # metadata step runs gdal-config, so resolve binding sdists only after the
 # native runtime and its build-only config tool are available.
-bash "$ROOT/fetch_binding_sdists.sh" "$SOURCES/bindings"
+PYTHON="$TOOL_VENV/bin/python" \
+  bash "$ROOT/fetch_binding_sdists.sh" "$SOURCES/bindings"
 
 mkdir -p "$BUILD_ROOT/package/haste_gdal_runtime/share/gdal"
 mkdir -p "$BUILD_ROOT/package/haste_gdal_runtime/share/proj"

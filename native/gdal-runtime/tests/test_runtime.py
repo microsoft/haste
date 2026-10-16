@@ -104,6 +104,10 @@ class LockTests(unittest.TestCase):
             self.assertIn("PIP_INDEX_URL", text)
             self.assertIn("--index-url", text)
             self.assertNotIn("pypi.org/simple", text)
+        fetch_script = (ROOT / "fetch_binding_sdists.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("--no-build-isolation", fetch_script)
         build_bindings = (ROOT / "build_bindings.py").read_text(
             encoding="utf-8"
         )
@@ -156,6 +160,10 @@ class LockTests(unittest.TestCase):
         bindings_built = build_script.index(binding_build)
 
         self.assertLess(config_created, config_exported)
+        self.assertIn(
+            'PYTHON="$TOOL_VENV/bin/python" \\',
+            build_script[config_exported:sdists_fetched],
+        )
         self.assertLess(config_exported, sdists_fetched)
         self.assertLess(sdists_fetched, bindings_built)
 

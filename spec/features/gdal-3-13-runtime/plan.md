@@ -120,8 +120,11 @@ GDAL CMake options:
   the native `ENABLE_GNM=OFF` setting and GDAL's published Python sdist, whose
   generated extension list still compiles `gnm_wrap.cpp`. GNM is now retained
   so the pinned binding can compile; its two drivers are explicitly captured
-  in the manifest and excluded by the runtime's allowed-driver policy. No
-  wheel artifact has passed smoke testing yet.
+  in the manifest and excluded by the runtime's allowed-driver policy. The
+  latest run then failed while pip prepared sdist metadata: isolated build
+  dependencies caused redundant feed requests and an HTTP 429. Sdist metadata
+  preparation now uses the preinstalled hash-pinned build-tools venv without
+  isolation. No wheel artifact has passed smoke testing yet.
 
 PROJ:
 

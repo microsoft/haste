@@ -13,6 +13,7 @@ mkdir -p "$DEST"
 "${PYTHON:-python3}" -m pip download \
   --isolated \
   --index-url "$PIP_INDEX_URL" \
+  --no-build-isolation \
   --no-deps \
   --no-binary=:all: \
   --require-hashes \
