@@ -61,13 +61,28 @@ jobs:
           BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
         run: bash native/gdal-runtime/build.sh
 
+      - name: Download hash-locked smoke dependencies
+        env:
+          BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
+        run: |
+          mkdir -p "$BUILD_ROOT/smoke-wheels"
+          "$BUILD_ROOT/venv/bin/python" -m pip download \
+            --isolated \
+            --index-url https://pypi.org/simple \
+            --only-binary=:all: \
+            --no-deps \
+            --require-hashes \
+            --dest "$BUILD_ROOT/smoke-wheels" \
+            -r native/gdal-runtime/requirements-smoke.txt
+
       - name: Install hash-locked binding smoke dependencies
         env:
           BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
         run: |
           "$BUILD_ROOT/venv/bin/python" -m pip install \
             --isolated \
-            --index-url https://pypi.org/simple \
+            --no-index \
+            --find-links "$BUILD_ROOT/smoke-wheels" \
             --only-binary=:all: \
             --no-deps \
             --require-hashes \
@@ -90,3 +105,70 @@ jobs:
           path: ${{ runner.temp }}/haste-gdal-runtime/dist/*.whl
           if-no-files-found: error
           retention-days: 7
+
+      - name: Upload hash-locked smoke dependency wheels
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: haste-gdal-smoke-deps-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/smoke-wheels/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  target-image-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: functions-python311
+            image: mcr.microsoft.com/azure-functions/python:4-python3.11@sha256:2c39d8b50750fbec9a91ef33323fadd1b986358fab4f7823db5b11b6e533f479
+          - name: imageryprep-python311
+            image: mcr.microsoft.com/azureml/curated/minimal-py311-inference:59@sha256:89a46a46b71b4692731654d0523f53c8d14929e41ea8129293dc4e39fcabb14c
+    name: smoke-${{ matrix.name }}
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Download build wheels
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist
+
+      - name: Download hash-locked smoke dependencies
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-smoke-deps-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/smoke-wheels
+
+      - name: Smoke-test wheels in ${{ matrix.name }}
+        env:
+          SMOKE_IMAGE: ${{ matrix.image }}
+          WHEEL_DIR: ${{ runner.temp }}/haste-gdal-runtime/dist
+          SMOKE_WHEEL_DIR: ${{ runner.temp }}/haste-gdal-runtime/smoke-wheels
+        run: |
+          docker run --rm --entrypoint sh \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/native/gdal-runtime,target=/smoke,readonly" \
+            --mount "type=bind,source=$WHEEL_DIR,target=/wheels,readonly" \
+            --mount "type=bind,source=$SMOKE_WHEEL_DIR,target=/smoke-wheels,readonly" \
+            "$SMOKE_IMAGE" -ec '
+              cd /tmp
+              python -m pip install \
+                --isolated \
+                --no-index \
+                --find-links /smoke-wheels \
+                --only-binary=:all: \
+                --no-deps \
+                --require-hashes \
+                -r /smoke/requirements-smoke.txt
+              build="$(python /smoke/fetch_sources.py --print-build)"
+              python /smoke/smoke_test.py \
+                --wheel-dir /wheels \
+                --build "$build"
+            '

@@ -7,7 +7,7 @@
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private all-binding, native-library, raster/vector, COG/reprojection/mosaic, PyProj and local HTTPS `/vsicurl/` smoke passed; SBOM, notices, vulnerability gate and provenance remain |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private builder all-binding smoke passed; digest-pinned Functions and imageryprep base-image smoke matrix added and pending CI; SBOM, notices, vulnerability gate and provenance remain |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -48,9 +48,9 @@ What exists:
 
 Next, in order:
 
-1. Extend the passing all-binding, raster/vector, COG, reprojection, mosaic
-   and HTTPS `/vsicurl/` smoke from the pinned builder to each target runtime
-   image. The private smoke required fixes for binding-specific versions,
+1. Pass the new digest-pinned Functions and imageryprep base-image smoke
+   matrix. Training remains blocked on the planned Python 3.11 migration from
+   its current Python 3.10 Conda environment. The private smoke required fixes for binding-specific versions,
    source-checkout import shadowing, Pyogrio WKB type, GDAL's documented CA
    setting (`GDAL_CURL_CA_BUNDLE`), and internal-feed rate limiting. The
    final run passed after those fixes.

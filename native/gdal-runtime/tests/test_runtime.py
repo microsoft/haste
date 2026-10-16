@@ -168,6 +168,32 @@ class LockTests(unittest.TestCase):
         self.assertIn('"osgeo.gdal"', smoke_test)
         self.assertIn("cwd=args.wheel_dir.resolve()", smoke_test)
 
+    def test_build_workflow_smokes_functions_and_imageryprep_base_images(self):
+        workflow = (
+            ROOT.parents[1]
+            / ".github"
+            / "workflows"
+            / "gdal-runtime-build.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("target-image-smoke:", workflow)
+        self.assertIn("actions/download-artifact@", workflow)
+        self.assertIn("functions-python311", workflow)
+        self.assertIn("imageryprep-python311", workflow)
+        self.assertIn(
+            "mcr.microsoft.com/azure-functions/python:4-python3.11@sha256:",
+            workflow,
+        )
+        self.assertIn(
+            "mcr.microsoft.com/azureml/curated/"
+            "minimal-py311-inference:59@sha256:",
+            workflow,
+        )
+        self.assertIn("docker run --rm --entrypoint sh", workflow)
+        self.assertIn("haste-gdal-smoke-deps-${{ github.sha }}", workflow)
+        self.assertIn("--find-links /smoke-wheels", workflow)
+        self.assertIn("--no-index", workflow)
+
     def test_binding_smoke_runner_prefers_installed_runtime_over_checkout(
         self,
     ):
