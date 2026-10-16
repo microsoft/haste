@@ -268,9 +268,10 @@ def _smoke_bindings(directory: Path) -> None:
     if ogr_geometry is None:
         raise RuntimeError("OGR could not create the test point geometry")
     pyogrio_path = directory / "pyogrio.geojson"
+    geometry_wkb = bytes(ogr_geometry.ExportToWkb())
     pyogrio.raw.write(
         pyogrio_path,
-        np.array([ogr_geometry.ExportToWkb()], dtype=object),
+        np.array([geometry_wkb], dtype=object),
         [np.array(["pyogrio"], dtype=object)],
         ["name"],
         layer="pyogrio_features",

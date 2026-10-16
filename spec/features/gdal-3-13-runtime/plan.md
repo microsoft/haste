@@ -7,7 +7,7 @@
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | native build and smoke dependencies passed private CI; expanded smoke now installs each pinned binding; last run found source-checkout import shadowing; runner fix added, retry pending |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | native build and smoke dependencies passed private CI; expanded smoke resolves installed runtime and binding wheels; latest run reached Pyogrio write and exposed WKB type mismatch; conversion to bytes added, retry pending |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -49,11 +49,11 @@ What exists:
 Next, in order:
 
 1. Pass the expanded all-binding, raster/vector, COG, reprojection, mosaic
-   and HTTPS `/vsicurl/` smoke in the private validation branch. The first
-   attempt used GDAL's version for every binding; the per-binding versions
-   are now fixed. The next run loaded the runtime self-check from the checkout
-   instead of site-packages; the smoke runner now puts the source driver path
-   after installed packages so it verifies the wheel.
+   and HTTPS `/vsicurl/` smoke in the private validation branch. Initial
+   attempts used GDAL's version for every binding and loaded the runtime
+   self-check from the checkout; both issues are fixed. The latest run reached
+   Pyogrio vector writing and found that WKB must be converted to `bytes`; the
+   fixture now performs that conversion.
 2. Extend the same validation to each target runtime image.
 3. Add dependency vulnerability/license gates, SBOM and notices, provenance
    attestation, and the separate approval-gated immutable publisher.
