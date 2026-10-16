@@ -147,7 +147,7 @@ def inspect_wheel(path: Path, stage_prefix: str) -> WheelInput:
             if member.endswith("/"):
                 continue
             if member.startswith(f"{dist_info}/"):
-                relative = member[len(dist_info) + 1 :]
+                relative = member[len(dist_info) + 1:]
                 if relative not in {"RECORD", "METADATA", "WHEEL"}:
                     result.metadata_files[relative] = archive.read(member)
                 continue
@@ -162,6 +162,15 @@ def read_wheel_payload(wheel: WheelInput) -> dict[str, bytes]:
             stage_member: archive.read(source_member)
             for source_member, stage_member in wheel.stage_members.items()
         }
+
+
+def read_runtime_package(runtime_package: Path) -> dict[str, bytes]:
+    payload: dict[str, bytes] = {}
+    for path in sorted(runtime_package.rglob("*")):
+        if path.is_file():
+            relative = path.relative_to(runtime_package).as_posix()
+            payload[f"haste_gdal_runtime/{relative}"] = path.read_bytes()
+    return payload
 
 
 def write_wheel(
@@ -215,9 +224,11 @@ def merge_and_repair(
     inputs = [inspect_wheel(path, stage_prefix) for path in binding_wheels]
     names = {wheel.name for wheel in inputs}
     if names != REQUIRED_BINDINGS:
+        missing = sorted(REQUIRED_BINDINGS - names)
+        unexpected = sorted(names - REQUIRED_BINDINGS)
         raise ValueError(
-            f"binding wheel set mismatch: missing={sorted(REQUIRED_BINDINGS - names)}, "
-            f"unexpected={sorted(names - REQUIRED_BINDINGS)}"
+            f"binding wheel set mismatch: missing={missing}, "
+            f"unexpected={unexpected}"
         )
 
     owners: dict[str, dict[str, str]] = {}
@@ -228,22 +239,18 @@ def merge_and_repair(
             previous = payload.get(stage_member)
             if previous is not None and previous != content:
                 raise ValueError(
-                    f"wheel payload collision with different content: {stage_member}"
+                    "wheel payload collision with different content: "
+                    f"{stage_member}"
                 )
             payload[stage_member] = content
 
-    runtime_members = {}
-    for path in sorted(runtime_package.rglob("*")):
-        if path.is_file():
-            member = path.relative_to(runtime_package).as_posix()
-            runtime_members[member] = member
-            content = path.read_bytes()
-            previous = payload.get(member)
-            if previous is not None and previous != content:
-                raise ValueError(
-                    f"runtime package payload collision: {member}"
-                )
-            payload[member] = content
+    runtime_payload = read_runtime_package(runtime_package)
+    runtime_members = {member: member for member in runtime_payload}
+    for member, content in runtime_payload.items():
+        previous = payload.get(member)
+        if previous is not None and previous != content:
+            raise ValueError(f"runtime package payload collision: {member}")
+        payload[member] = content
     owners[RUNTIME_NAME] = runtime_members
 
     metadata = (

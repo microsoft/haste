@@ -1,5 +1,6 @@
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -127,6 +128,7 @@ class LockTests(unittest.TestCase):
         self.assertIn('f"GDAL=={local_version}"', smoke_test)
         self.assertIn('"osgeo.gdal"', smoke_test)
         self.assertNotIn("packagefeedproxy.microsoft.io", workflow)
+        self.assertIn("cwd=args.wheel_dir.resolve()", smoke_test)
 
     def test_build_script_generates_gdal_config_without_gdal_apps(self):
         build_script = (ROOT / "build.sh").read_text(encoding="utf-8")
@@ -169,6 +171,27 @@ class LockTests(unittest.TestCase):
 
 
 class WheelAssemblyTests(unittest.TestCase):
+    def test_runtime_package_payload_is_rooted_in_importable_package(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package = Path(temp_dir)
+            (package / "__init__.py").write_text(
+                "VERSION = '3.13.3'\n", encoding="utf-8"
+            )
+            (package / "manifest.json").write_text(
+                '{"gdal_release": "3.13.3"}\n', encoding="utf-8"
+            )
+
+            payload = assemble_wheels.read_runtime_package(package)
+
+        self.assertEqual(
+            set(payload),
+            {
+                "haste_gdal_runtime/__init__.py",
+                "haste_gdal_runtime/manifest.json",
+            },
+        )
+        self.assertIn(b"3.13.3", payload["haste_gdal_runtime/manifest.json"])
+
     def test_maps_binding_data_into_the_combined_wheel(self):
         member = "rasterio-1.4.4.data/platlib/rasterio/_base.so"
         staging = assemble_wheels.rewrite_data_path(

@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     ]
     for driver in DRIVERS:
         command.extend(["--allow-driver", driver])
-    subprocess.run(command, check=True)
+    subprocess.run(command, check=True, cwd=args.wheel_dir.resolve())
     return 0
 
 

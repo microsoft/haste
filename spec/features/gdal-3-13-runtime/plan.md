@@ -124,7 +124,11 @@ GDAL CMake options:
   latest run then failed while pip prepared sdist metadata: isolated build
   dependencies caused redundant feed requests and an HTTP 429. Sdist metadata
   preparation now uses the preinstalled hash-pinned build-tools venv without
-  isolation. No wheel artifact has passed smoke testing yet.
+  isolation. The next run built native GDAL and all five binding wheels, but
+  smoke found that the assembler placed runtime files at the wheel root
+  instead of under `haste_gdal_runtime/`; the test working directory also
+  shadowed the installed package. Both packaging issues are now fixed and
+  regression-tested. No wheel artifact has passed smoke testing yet.
 
 PROJ:
 
