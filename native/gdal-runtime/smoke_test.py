@@ -23,6 +23,22 @@ DRIVERS = (
 )
 
 
+def binding_smoke_command(script: Path, python: str) -> list[str]:
+    """Run the source smoke driver without shadowing installed packages.
+
+    The driver is loaded by file path, but its directory is appended to
+    ``sys.path`` so site-packages takes precedence for haste_gdal_runtime.
+    """
+    code = (
+        "import runpy, sys\n"
+        "from pathlib import Path\n"
+        "script = sys.argv.pop(1)\n"
+        "sys.path.append(str(Path(script).resolve().parent))\n"
+        "runpy.run_path(script, run_name='__main__')\n"
+    )
+    return [python, "-c", code, str(script)]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel-dir", required=True, type=Path)
@@ -75,11 +91,9 @@ def main(argv: list[str] | None = None) -> int:
     for driver in DRIVERS:
         command.extend(["--allow-driver", driver])
     subprocess.run(command, check=True, cwd=args.wheel_dir.resolve())
+    binding_smoke = Path(__file__).with_name("binding_workflow_smoke.py")
     subprocess.run(
-        [
-            sys.executable,
-            str(Path(__file__).with_name("binding_workflow_smoke.py")),
-        ],
+        binding_smoke_command(binding_smoke, sys.executable),
         check=True,
         cwd=args.wheel_dir.resolve(),
     )

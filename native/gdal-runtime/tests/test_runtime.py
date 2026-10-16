@@ -11,6 +11,7 @@ import assemble_wheels  # noqa: E402
 import baseline_report  # noqa: E402
 import fetch_sources  # noqa: E402
 import haste_gdal_runtime as rt  # noqa: E402
+import smoke_test  # noqa: E402
 from haste_gdal_runtime._native import mapped_libraries  # noqa: E402
 from verify_build_manifest import validate as validate_manifest  # noqa: E402
 
@@ -160,6 +161,17 @@ class LockTests(unittest.TestCase):
         self.assertIn("distributions.items()", smoke_test)
         self.assertIn('"osgeo.gdal"', smoke_test)
         self.assertIn("cwd=args.wheel_dir.resolve()", smoke_test)
+
+    def test_binding_smoke_runner_prefers_installed_runtime_over_checkout(
+        self,
+    ):
+        command = smoke_test.binding_smoke_command(
+            ROOT / "binding_workflow_smoke.py", "python"
+        )
+
+        self.assertEqual(command[1], "-c")
+        self.assertIn("runpy.run_path", command[2])
+        self.assertIn("sys.path.append", command[2])
 
     def test_smoke_dependencies_are_exact_and_hash_locked(self):
         requirements = (ROOT / "requirements-smoke.txt").read_text(
