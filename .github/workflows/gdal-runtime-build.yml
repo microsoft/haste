@@ -102,7 +102,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: haste-gdal-runtime-${{ github.sha }}
-          path: ${{ runner.temp }}/haste-gdal-runtime/dist/*.whl
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist/*
           if-no-files-found: error
           retention-days: 7
 
@@ -172,3 +172,55 @@ jobs:
                 --wheel-dir /wheels \
                 --build "$build"
             '
+
+  vulnerability-scan:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Download build inventory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist
+
+      - name: Scan the CycloneDX inventory for known vulnerabilities
+        uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
+        with:
+          sbom: ${{ runner.temp }}/haste-gdal-runtime/dist/bom.cdx.json
+          fail-build: true
+          severity-cutoff: medium
+          output-format: table
+
+  attest:
+    needs:
+      - target-image-smoke
+      - vulnerability-scan
+    if: >-
+      github.repository == 'microsoft/haste' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Download verified runtime artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist
+
+      - name: Attest wheel build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ runner.temp }}/haste-gdal-runtime/dist/*.whl
+
+      - name: Attest the CycloneDX SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ runner.temp }}/haste-gdal-runtime/dist/*.whl
+          sbom-path: ${{ runner.temp }}/haste-gdal-runtime/dist/bom.cdx.json

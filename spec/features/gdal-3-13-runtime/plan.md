@@ -7,7 +7,7 @@
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private builder all-binding smoke passed; digest-pinned Functions and imageryprep base-image smoke matrix added and pending CI; SBOM, notices, vulnerability gate and provenance remain |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private builder all-binding smoke passed; base-image smoke matrix running; SBOM/notices/checksums, Grype gate and main-branch provenance/SBOM attestations added; scan and base-image results pending |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -48,14 +48,18 @@ What exists:
 
 Next, in order:
 
-1. Pass the new digest-pinned Functions and imageryprep base-image smoke
-   matrix. Training remains blocked on the planned Python 3.11 migration from
-   its current Python 3.10 Conda environment. The private smoke required fixes for binding-specific versions,
+1. Complete the running digest-pinned Functions and imageryprep base-image
+   smoke matrix (private run `38951613935`). Training remains blocked on the
+   planned Python 3.11 migration from its current Python 3.10 Conda
+   environment. The private smoke required fixes for binding-specific versions,
    source-checkout import shadowing, Pyogrio WKB type, GDAL's documented CA
    setting (`GDAL_CURL_CA_BUNDLE`), and internal-feed rate limiting. The
-   final run passed after those fixes.
-2. Add dependency vulnerability/license gates, SBOM and notices, provenance
-   attestation, and the separate approval-gated immutable publisher.
+   builder run `38946439904` passed after those fixes. The build now generates
+   a CycloneDX inventory, bundled license text where available, a license
+   inventory that flags missing texts for review, and SHA-256 checksums.
+2. Verify the new Grype vulnerability gate and main-branch attestations, then
+   complete the OSS license review and separate approval-gated immutable
+   publisher.
 
 ## Verified build facts
 
@@ -135,8 +139,11 @@ GDAL CMake options:
   artifact. Smoke-only dependencies are fetched from public PyPI with exact
   hashes to avoid internal-feed throttling. The private fork's CodeQL jobs
   completed analysis but could not upload results because code scanning is
-  disabled for that repository. Target-image testing, supply-chain evidence
-  and durable publication remain.
+  disabled for that repository. Target-image run `38951613935` is still
+  running. The builder now emits a CycloneDX inventory, notice bundle and
+  checksums, and a separate Grype job gates on medium-or-higher findings.
+  Scan results, cryptographic provenance, license approval and durable
+  publication remain.
 
 PROJ:
 

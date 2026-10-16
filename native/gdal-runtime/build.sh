@@ -309,4 +309,11 @@ python3 "$ROOT/assemble_wheels.py" \
   --gdal-version 3.13.3 \
   --prefix "$PREFIX"
 
+python3 "$ROOT/create_supply_chain.py" \
+  --source-lock "$ROOT/sources.lock" \
+  --source-dir "$SOURCES" \
+  --wheel-dir "$BUILD_ROOT/dist" \
+  --manifest "$BUILD_ROOT/package/haste_gdal_runtime/manifest.json" \
+  --output-dir "$BUILD_ROOT/dist"
+
 echo "Native runtime and binding wheels built under $BUILD_ROOT/dist"

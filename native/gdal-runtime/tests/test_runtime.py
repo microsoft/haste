@@ -1,7 +1,11 @@
+import io
+import json
 import os
 import sys
+import tarfile
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 import assemble_wheels  # noqa: E402
 import baseline_report  # noqa: E402
+import create_supply_chain  # noqa: E402
 import fetch_sources  # noqa: E402
 import haste_gdal_runtime as rt  # noqa: E402
 import smoke_test  # noqa: E402
@@ -193,6 +198,129 @@ class LockTests(unittest.TestCase):
         self.assertIn("haste-gdal-smoke-deps-${{ github.sha }}", workflow)
         self.assertIn("--find-links /smoke-wheels", workflow)
         self.assertIn("--no-index", workflow)
+        self.assertIn("dist/*", workflow)
+        self.assertIn("vulnerability-scan:", workflow)
+        self.assertIn("anchore/scan-action@", workflow)
+        self.assertIn("fail-build: true", workflow)
+        self.assertIn("severity-cutoff: medium", workflow)
+        self.assertIn("attest:", workflow)
+        self.assertIn("github.repository == 'microsoft/haste'", workflow)
+        self.assertIn("actions/attest@", workflow)
+        self.assertIn("sbom-path:", workflow)
+
+    def test_build_script_generates_sbom_notices_and_checksums(self):
+        build_script = (ROOT / "build.sh").read_text(encoding="utf-8")
+        supply_chain_script = (ROOT / "create_supply_chain.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('python3 "$ROOT/create_supply_chain.py"', build_script)
+        self.assertIn("bom.cdx.json", supply_chain_script)
+        self.assertIn("THIRD_PARTY_NOTICES.txt", supply_chain_script)
+        self.assertIn("SHA256SUMS", supply_chain_script)
+
+    def test_supply_chain_bundle_includes_source_wheel_and_notice_evidence(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "sources"
+            wheel_dir = root / "wheels"
+            output_dir = root / "output"
+            source_dir.mkdir()
+            wheel_dir.mkdir()
+
+            source_archive = source_dir / "sample-1.0.tar.gz"
+            with tarfile.open(source_archive, "w:gz") as archive:
+                content = b"sample license text\n"
+                member = tarfile.TarInfo("sample-1.0/LICENSE")
+                member.size = len(content)
+                archive.addfile(member, io.BytesIO(content))
+            source_hash = create_supply_chain.sha256(source_archive)
+            source_lock = root / "sources.lock"
+            source_lock.write_text(
+                "HASTE_GDAL_BUILD 1\n"
+                f"sample 1.0 https://example.test/sample-1.0.tar.gz "
+                f"{source_hash}\n",
+                encoding="utf-8",
+            )
+
+            distributions = (
+                ("haste_gdal_runtime", "haste-gdal-runtime"),
+                ("GDAL", "GDAL"),
+                ("rasterio", "rasterio"),
+                ("fiona", "fiona"),
+                ("pyogrio", "pyogrio"),
+                ("pyproj", "pyproj"),
+            )
+            for filename, name in distributions:
+                wheel_path = wheel_dir / f"{filename}-1.0-py3-none-any.whl"
+                with zipfile.ZipFile(wheel_path, "w") as wheel:
+                    wheel.writestr(
+                        f"{filename}-1.0.dist-info/METADATA",
+                        "Metadata-Version: 2.1\n"
+                        f"Name: {name}\n"
+                        "Version: 1.0\n"
+                        "License: MIT\n\n",
+                    )
+                    if name == "haste-gdal-runtime":
+                        wheel.writestr(
+                            f"{filename}-1.0.dist-info/licenses/LICENSE",
+                            "runtime license text\n",
+                        )
+            manifest = root / "manifest.json"
+            manifest.write_text('{"gdal_release":"3.13.3"}\n')
+
+            outputs = create_supply_chain.generate(
+                source_lock,
+                source_dir,
+                wheel_dir,
+                manifest,
+                output_dir,
+            )
+
+            bom = json.loads(
+                (output_dir / "bom.cdx.json").read_text(encoding="utf-8")
+            )
+            notices = (output_dir / "THIRD_PARTY_NOTICES.txt").read_text(
+                encoding="utf-8"
+            )
+            checksums = (output_dir / "SHA256SUMS").read_text(encoding="utf-8")
+
+        self.assertEqual(len(outputs), 4)
+        self.assertEqual(bom["bomFormat"], "CycloneDX")
+        self.assertEqual(len(bom["components"]), 7)
+        self.assertIn("sample license text", notices)
+        self.assertIn("runtime license text", notices)
+        self.assertIn("haste_gdal_runtime-1.0-py3-none-any.whl", checksums)
+        self.assertIn("manifest.json", checksums)
+
+    def test_supply_chain_bundle_rejects_changed_locked_source(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "sources"
+            wheel_dir = root / "wheels"
+            output_dir = root / "output"
+            source_dir.mkdir()
+            wheel_dir.mkdir()
+            (source_dir / "sample-1.0.tar.gz").write_bytes(b"wrong source")
+            (wheel_dir / "placeholder.whl").write_bytes(b"")
+            source_lock = root / "sources.lock"
+            source_lock.write_text(
+                "HASTE_GDAL_BUILD 1\n"
+                f"sample 1.0 https://example.test/sample-1.0.tar.gz "
+                f'{"0" * 64}\n',
+                encoding="utf-8",
+            )
+            manifest = root / "manifest.json"
+            manifest.write_text("{}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                create_supply_chain.generate(
+                    source_lock,
+                    source_dir,
+                    wheel_dir,
+                    manifest,
+                    output_dir,
+                )
 
     def test_binding_smoke_runner_prefers_installed_runtime_over_checkout(
         self,
