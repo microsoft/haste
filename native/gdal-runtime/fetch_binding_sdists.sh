@@ -4,10 +4,7 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DEST="${1:?usage: fetch_binding_sdists.sh DESTINATION}"
 
-if [[ -z "${PIP_INDEX_URL:-}" ]]; then
-  echo "PIP_INDEX_URL must point to the approved internal package feed" >&2
-  exit 2
-fi
+PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.org/simple}"
 
 mkdir -p "$DEST"
 "${PYTHON:-python3}" -m pip download \

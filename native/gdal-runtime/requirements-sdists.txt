@@ -1,4 +1,5 @@
-# Binding sources are resolved from PIP_INDEX_URL only and verified by pip.
+# Binding sources use PIP_INDEX_URL, or PyPI when no index is configured,
+# and are verified by pip against these hashes.
 # --no-binary=:all: is supplied by the fetch script; hashes pin the exact
 # sdists and are independent of the package feed URL.
 GDAL==3.13.3 \

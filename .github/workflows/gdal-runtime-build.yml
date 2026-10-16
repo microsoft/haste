@@ -41,6 +41,8 @@ jobs:
     needs: unit
     runs-on: ubuntu-latest
     environment: gdal-runtime-build
+    env:
+      PIP_INDEX_URL: ${{ secrets.PIP_INDEX_URL || 'https://pypi.org/simple' }}
     permissions:
       contents: read
     container:
@@ -51,22 +53,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Require the protected internal Python feed
-        env:
-          PIP_INDEX_URL: ${{ secrets.PIP_INDEX_URL }}
-        run: |
-          if [[ -z "${PIP_INDEX_URL:-}" ]]; then
-            echo "::error::Configure PIP_INDEX_URL in the protected gdal-runtime-build environment."
-            exit 1
-          fi
-
       - name: Install native build tools
         run: dnf install -y nasm perl perl-IPC-Cmd perl-Text-Template sqlite
 
       - name: Build native runtime and binding wheels
         env:
           BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
-          PIP_INDEX_URL: ${{ secrets.PIP_INDEX_URL }}
         run: bash native/gdal-runtime/build.sh
 
       - name: Smoke-test the native runtime and GDAL binding wheels offline

@@ -1,5 +1,5 @@
-# Install only from the approved internal package feed. The build script
-# requires PIP_INDEX_URL and does not set a public-index fallback.
+# Install from PIP_INDEX_URL, or PyPI when no index is configured. Every
+# dependency remains hash-locked regardless of the selected package index.
 setuptools==84.0.0 \
     --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670
 wheel==0.48.0 \

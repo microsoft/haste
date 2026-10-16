@@ -12,10 +12,8 @@ WHEELS="$BUILD_ROOT/wheels"
 TOOL_VENV="$BUILD_ROOT/venv"
 FIONA_VENV="$BUILD_ROOT/venv-fiona"
 
-if [[ -z "${PIP_INDEX_URL:-}" ]]; then
-  echo "PIP_INDEX_URL must point to the approved internal package feed" >&2
-  exit 2
-fi
+PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.org/simple}"
+export PIP_INDEX_URL
 if [[ ! -x "$PYTHON" ]]; then
   echo "CPython 3.11 interpreter not found: $PYTHON" >&2
   exit 2

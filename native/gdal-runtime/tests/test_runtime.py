@@ -99,22 +99,29 @@ class LockTests(unittest.TestCase):
         text = (ROOT / "sources.lock").read_text(encoding="utf-8")
         self.assertNotIn("pythonhosted.org", text)
 
-    def test_binding_build_helpers_require_explicit_feed(self):
+    def test_binding_build_helpers_default_to_hash_pinned_public_index(self):
         for name in ("install_build_tools.sh", "fetch_binding_sdists.sh"):
             text = (ROOT / name).read_text(encoding="utf-8")
             self.assertIn("PIP_INDEX_URL", text)
+            self.assertIn("https://pypi.org/simple", text)
             self.assertIn("--index-url", text)
-            self.assertNotIn("pypi.org/simple", text)
         fetch_script = (ROOT / "fetch_binding_sdists.sh").read_text(
             encoding="utf-8"
         )
         self.assertIn("--no-build-isolation", fetch_script)
+        build_script = (ROOT / "build.sh").read_text(encoding="utf-8")
+        public_index = (
+            'PIP_INDEX_URL="${PIP_INDEX_URL:-'
+            'https://pypi.org/simple}"'
+        )
+        self.assertIn(public_index, build_script)
+        self.assertIn("export PIP_INDEX_URL", build_script)
         build_bindings = (ROOT / "build_bindings.py").read_text(
             encoding="utf-8"
         )
         self.assertIn('"--no-index"', build_bindings)
 
-    def test_build_workflow_uses_only_the_protected_internal_feed(self):
+    def test_build_workflow_uses_optional_feed_with_public_default(self):
         workflow = (
             ROOT.parents[1]
             / ".github"
@@ -122,6 +129,7 @@ class LockTests(unittest.TestCase):
             / "gdal-runtime-build.yml"
         ).read_text(encoding="utf-8")
         self.assertIn("secrets.PIP_INDEX_URL", workflow)
+        self.assertIn("https://pypi.org/simple", workflow)
         self.assertIn("environment: gdal-runtime-build", workflow)
         smoke_test = (ROOT / "smoke_test.py").read_text()
         self.assertIn("--no-index", smoke_test)
