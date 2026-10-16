@@ -30,15 +30,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-gdal", default="3.13.3")
     args = parser.parse_args(argv)
 
-    local_version = f"{args.expected_gdal}+haste.{args.build}"
-    distributions = (
-        "haste-gdal-runtime",
-        "GDAL",
-        "rasterio",
-        "fiona",
-        "pyogrio",
-        "pyproj",
-    )
+    distributions = {
+        "haste-gdal-runtime": args.expected_gdal,
+        "GDAL": args.expected_gdal,
+        "rasterio": "1.4.4",
+        "fiona": "1.10.1",
+        "pyogrio": "0.13.0",
+        "pyproj": "3.7.2",
+    }
     subprocess.run(
         [
             sys.executable,
@@ -50,7 +49,10 @@ def main(argv: list[str] | None = None) -> int:
             "--no-deps",
             "--find-links",
             str(args.wheel_dir),
-            *(f"{name}=={local_version}" for name in distributions),
+            *(
+                f"{name}=={version}+haste.{args.build}"
+                for name, version in distributions.items()
+            ),
         ],
         check=True,
     )

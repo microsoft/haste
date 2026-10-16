@@ -7,7 +7,7 @@
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | native/GDAL smoke passed upstream; private branch adds all-binding functional tests, locked test dependencies and HTTPS range-read test; private CI pending; supply-chain gates pending |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | native build and smoke dependencies passed private CI; first expanded smoke attempt used GDAL's version for every binding instead of each binding pin; per-binding version mapping and regression test added; retry pending |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -49,7 +49,9 @@ What exists:
 Next, in order:
 
 1. Pass the expanded all-binding, raster/vector, COG, reprojection, mosaic
-   and HTTPS `/vsicurl/` smoke in the private validation branch.
+   and HTTPS `/vsicurl/` smoke in the private validation branch. A first
+   attempt stopped at wheel installation because the smoke script used GDAL's
+   version for all bindings; the script now uses each binding's pinned version.
 2. Extend the same validation to each target runtime image.
 3. Add dependency vulnerability/license gates, SBOM and notices, provenance
    attestation, and the separate approval-gated immutable publisher.

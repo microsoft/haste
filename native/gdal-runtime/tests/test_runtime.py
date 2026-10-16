@@ -146,6 +146,8 @@ class LockTests(unittest.TestCase):
             "pyproj",
         ):
             self.assertIn(f'"{distribution}"', smoke_test)
+        for version in ("1.4.4", "1.10.1", "0.13.0", "3.7.2"):
+            self.assertIn(f'"{version}"', smoke_test)
         for binding in ("rasterio", "fiona", "pyogrio", "pyproj"):
             self.assertIn(binding, binding_smoke)
         self.assertIn("https://127.0.0.1", binding_smoke)
@@ -155,7 +157,7 @@ class LockTests(unittest.TestCase):
         self.assertIn('compress="ZSTD"', binding_smoke)
         self.assertIn("EXPECTED_BINDINGS", binding_smoke)
         self.assertIn("--no-index", smoke_test)
-        self.assertIn("for name in distributions", smoke_test)
+        self.assertIn("distributions.items()", smoke_test)
         self.assertIn('"osgeo.gdal"', smoke_test)
         self.assertIn("cwd=args.wheel_dir.resolve()", smoke_test)
 
