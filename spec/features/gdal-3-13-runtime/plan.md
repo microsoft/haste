@@ -6,8 +6,8 @@
 | 0 | Baseline runtime report from every current runtime | `backend-dev` | report script implemented; collection from current runtimes pending |
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
-| 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented, awaiting CI build |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private CI building; offline smoke now installs and verifies the native runtime plus GDAL Python binding; full binding and supply-chain gates pending |
+| 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | runtime and GDAL binding passed offline smoke; other binding imports and supply-chain gates pending |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -43,18 +43,15 @@ What exists:
     compare it with the manifest and policy.
   - `secure_startup(policy)` runs harden, then verify.
   - The CLI offers `report`, `verify` and `manifest`.
-  - The policy logic was exercised with synthetic reports. Nothing has run
-    against a real libgdal yet.
+  - Policy logic has synthetic unit coverage; the runtime also passed a
+    real-libgdal smoke check with GDAL 3.13.3 and PROJ 9.8.1.
 
 Next, in order:
 
-1. Resolve failures in the active digest-pinned private CI build. Treat the
-   native runtime and GDAL binding wheels as usable only after the offline
-   in-container smoke check passes.
-2. Extend smoke tests to install and import rasterio, fiona, pyogrio and
+1. Extend smoke tests to install and import rasterio, fiona, pyogrio and
    pyproj, exercise the supported raster/vector workflows, and test HTTPS
    `/vsicurl/` against a local TLS server in each target runtime image.
-3. Add dependency vulnerability/license gates, SBOM and notices, provenance
+2. Add dependency vulnerability/license gates, SBOM and notices, provenance
    attestation, and the separate approval-gated immutable publisher.
 
 ## Verified build facts
@@ -124,11 +121,9 @@ GDAL CMake options:
   latest run then failed while pip prepared sdist metadata: isolated build
   dependencies caused redundant feed requests and an HTTP 429. Sdist metadata
   preparation now uses the preinstalled hash-pinned build-tools venv without
-  isolation. The next run built native GDAL and all five binding wheels, but
-  smoke found that the assembler placed runtime files at the wheel root
-  instead of under `haste_gdal_runtime/`; the test working directory also
-  shadowed the installed package. Both packaging issues are now fixed and
-  regression-tested. No wheel artifact has passed smoke testing yet.
+  isolation. A six-wheel artifact was built; the runtime and GDAL Python
+  binding passed offline smoke. Rasterio, Fiona, Pyogrio and PyProj imports
+  and workflows have not yet been smoke-tested.
 
 PROJ:
 
