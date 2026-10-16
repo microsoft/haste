@@ -157,7 +157,7 @@ class LockTests(unittest.TestCase):
         self.assertIn("HTTPS /vsicurl/", binding_smoke)
         self.assertIn("bytes(ogr_geometry.ExportToWkb())", binding_smoke)
         self.assertIn(
-            'gdal.SetConfigOption("CPL_CURL_CA_BUNDLE"', binding_smoke
+            'gdal.SetConfigOption("GDAL_CURL_CA_BUNDLE"', binding_smoke
         )
         self.assertIn("gdal.GetLastErrorMsg()", binding_smoke)
         self.assertIn('compress="ZSTD"', binding_smoke)
