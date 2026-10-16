@@ -207,6 +207,14 @@ class LockTests(unittest.TestCase):
         self.assertIn("github.repository == 'microsoft/haste'", workflow)
         self.assertIn("actions/attest@", workflow)
         self.assertIn("sbom-path:", workflow)
+        self.assertIn("training-base-smoke:", workflow)
+        self.assertIn("Smoke-test training-python311 wheels", workflow)
+        self.assertIn("python=3.11 pip", workflow)
+        self.assertIn(
+            "mcr.microsoft.com/azureml/curated/"
+            "minimal-py312-cuda12.4-inference@sha256:",
+            workflow,
+        )
 
     def test_build_script_generates_sbom_notices_and_checksums(self):
         build_script = (ROOT / "build.sh").read_text(encoding="utf-8")

@@ -7,7 +7,7 @@
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private builder all-binding smoke passed; base-image smoke matrix running; SBOM/notices/checksums, Grype gate and main-branch provenance/SBOM attestations added; scan and base-image results pending |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private builder all-binding smoke passed; digest-pinned Functions, imageryprep and training CUDA-base smoke jobs added; SBOM/notices/checksums, Grype gate and main-branch attestations added; CI pending |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -48,10 +48,10 @@ What exists:
 
 Next, in order:
 
-1. Complete the running digest-pinned Functions and imageryprep base-image
-   smoke matrix (private run `38951613935`). Training remains blocked on the
-   planned Python 3.11 migration from its current Python 3.10 Conda
-   environment. The private smoke required fixes for binding-specific versions,
+1. Complete the digest-pinned Functions, imageryprep and training CUDA-base
+   smoke jobs. The training job creates a temporary Python 3.11 Conda env;
+   integration into the full training env remains pending. The private smoke
+   required fixes for binding-specific versions,
    source-checkout import shadowing, Pyogrio WKB type, GDAL's documented CA
    setting (`GDAL_CURL_CA_BUNDLE`), and internal-feed rate limiting. The
    builder run `38946439904` passed after those fixes. The build now generates

@@ -194,10 +194,65 @@ jobs:
           severity-cutoff: medium
           output-format: table
 
+  training-base-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Download build wheels
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist
+
+      - name: Download hash-locked smoke dependencies
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-smoke-deps-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/smoke-wheels
+
+      - name: Smoke-test training-python311 wheels in the CUDA base
+        env:
+          WHEEL_DIR: ${{ runner.temp }}/haste-gdal-runtime/dist
+          SMOKE_WHEEL_DIR: ${{ runner.temp }}/haste-gdal-runtime/smoke-wheels
+        run: |
+          docker run --rm --entrypoint sh \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/native/gdal-runtime,target=/smoke,readonly" \
+            --mount "type=bind,source=$WHEEL_DIR,target=/wheels,readonly" \
+            --mount "type=bind,source=$SMOKE_WHEEL_DIR,target=/smoke-wheels,readonly" \
+            mcr.microsoft.com/azureml/curated/minimal-py312-cuda12.4-inference@sha256:171ee0f9b43d2295c0266c55b2974d1ab300ca2dbec081bdd0fb2604f75644b3 \
+            -ec '
+              /opt/miniconda/bin/conda create --yes \
+                --prefix /tmp/gdal-runtime-py311 \
+                --channel conda-forge \
+                python=3.11 pip
+              python=/tmp/gdal-runtime-py311/bin/python
+              "$python" -m pip install \
+                --isolated \
+                --no-index \
+                --find-links /smoke-wheels \
+                --only-binary=:all: \
+                --no-deps \
+                --require-hashes \
+                -r /smoke/requirements-smoke.txt
+              build="$("$python" /smoke/fetch_sources.py --print-build)"
+              "$python" /smoke/smoke_test.py \
+                --wheel-dir /wheels \
+                --build "$build"
+            '
+
   attest:
     needs:
       - target-image-smoke
       - vulnerability-scan
+      - training-base-smoke
     if: >-
       github.repository == 'microsoft/haste' &&
       github.event_name == 'push' &&
