@@ -7,7 +7,7 @@
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | native build and smoke dependencies passed private CI; expanded smoke resolves installed runtime and binding wheels; latest run reached Pyogrio write and exposed WKB type mismatch; conversion to bytes added, retry pending |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | expanded smoke passes binding imports, versions, raster/vector ops through Pyogrio; latest run failed local HTTPS read because CA bundle config was not passed to GDAL; explicit CPL_CURL_CA_BUNDLE and diagnostics added; retry pending |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -50,10 +50,11 @@ Next, in order:
 
 1. Pass the expanded all-binding, raster/vector, COG, reprojection, mosaic
    and HTTPS `/vsicurl/` smoke in the private validation branch. Initial
-   attempts used GDAL's version for every binding and loaded the runtime
-   self-check from the checkout; both issues are fixed. The latest run reached
-   Pyogrio vector writing and found that WKB must be converted to `bytes`; the
-   fixture now performs that conversion.
+   attempts used GDAL's version for every binding, loaded the runtime
+   self-check from the checkout, and passed non-bytes WKB to Pyogrio; those
+   issues are fixed. The latest run failed local HTTPS certificate validation.
+   The smoke now sets `CPL_CURL_CA_BUNDLE` explicitly and reports GDAL's last
+   error on failure.
 2. Extend the same validation to each target runtime image.
 3. Add dependency vulnerability/license gates, SBOM and notices, provenance
    attestation, and the separate approval-gated immutable publisher.
@@ -129,7 +130,10 @@ GDAL CMake options:
   runtime plus GDAL-binding offline smoke with the public PyPI fallback. The
   private validation branch now adds all-binding and functional smoke, using
   a separately hash-locked set of runtime dependencies and a local TLS server
-  for `/vsicurl/`. This expanded test has not yet passed in CI.
+  for `/vsicurl/`. Run 38934654693 passed imports, binding versions, native
+  library checks and raster/vector tests through Pyogrio, but HTTPS failed
+  because the test CA was not passed via `CPL_CURL_CA_BUNDLE`. The smoke now
+  sets that GDAL option explicitly and preserves the error diagnostic.
 
 PROJ:
 

@@ -308,18 +308,19 @@ def _smoke_bindings(directory: Path) -> None:
         previous_ssl_cert = os.environ.get("SSL_CERT_FILE")
         previous_no_proxy = os.environ.get("NO_PROXY")
         previous_no_proxy_lower = os.environ.get("no_proxy")
-        previous_curl_config = gdal.GetConfigOption("CURL_CA_BUNDLE")
-        previous_ssl_config = gdal.GetConfigOption("SSL_CERT_FILE")
+        previous_cpl_curl_ca = gdal.GetConfigOption("CPL_CURL_CA_BUNDLE")
         os.environ["CURL_CA_BUNDLE"] = str(certificate)
         os.environ["SSL_CERT_FILE"] = str(certificate)
         os.environ["NO_PROXY"] = "127.0.0.1,localhost"
         os.environ["no_proxy"] = "127.0.0.1,localhost"
-        gdal.SetConfigOption("CURL_CA_BUNDLE", str(certificate))
-        gdal.SetConfigOption("SSL_CERT_FILE", str(certificate))
+        gdal.SetConfigOption("CPL_CURL_CA_BUNDLE", str(certificate))
         try:
             network_dataset = gdal.Open(url, gdal.GA_ReadOnly)
             if network_dataset is None:
-                raise RuntimeError("GDAL /vsicurl/ HTTPS read failed")
+                detail = gdal.GetLastErrorMsg()
+                raise RuntimeError(
+                    f"GDAL /vsicurl/ HTTPS read failed: {detail}"
+                )
             if network_dataset.ReadAsArray().tolist() != first_pixels.tolist():
                 raise RuntimeError("GDAL /vsicurl/ pixels differ from source")
             network_dataset = None
@@ -340,8 +341,7 @@ def _smoke_bindings(directory: Path) -> None:
                 os.environ.pop("no_proxy", None)
             else:
                 os.environ["no_proxy"] = previous_no_proxy_lower
-            gdal.SetConfigOption("CURL_CA_BUNDLE", previous_curl_config)
-            gdal.SetConfigOption("SSL_CERT_FILE", previous_ssl_config)
+            gdal.SetConfigOption("CPL_CURL_CA_BUNDLE", previous_cpl_curl_ca)
     finally:
         server.shutdown()
         server.server_close()
