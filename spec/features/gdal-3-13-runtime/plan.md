@@ -7,7 +7,7 @@
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private all-binding imports, native-library checks, raster/vector workflows and local HTTPS `/vsicurl/` smoke passed; SBOM, notices, vulnerability gate and provenance remain |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private all-binding, native-library, raster/vector, COG/reprojection/mosaic, PyProj and local HTTPS `/vsicurl/` smoke passed; SBOM, notices, vulnerability gate and provenance remain |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -133,8 +133,10 @@ GDAL CMake options:
   read/write, COG, reprojection, mosaic, WarpedVRT and PyProj, and read a
   raster over HTTPS with certificate verification. It uploaded the six-wheel
   artifact. Smoke-only dependencies are fetched from public PyPI with exact
-  hashes to avoid internal-feed throttling. Target-image testing, supply-chain
-  evidence and durable publication remain.
+  hashes to avoid internal-feed throttling. The private fork's CodeQL jobs
+  completed analysis but could not upload results because code scanning is
+  disabled for that repository. Target-image testing, supply-chain evidence
+  and durable publication remain.
 
 PROJ:
 
