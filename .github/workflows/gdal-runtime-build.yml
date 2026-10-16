@@ -67,7 +67,7 @@ jobs:
         run: |
           "$BUILD_ROOT/venv/bin/python" -m pip install \
             --isolated \
-            --index-url "$PIP_INDEX_URL" \
+            --index-url https://pypi.org/simple \
             --only-binary=:all: \
             --no-deps \
             --require-hashes \

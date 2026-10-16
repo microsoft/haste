@@ -7,7 +7,7 @@
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | expanded smoke passes binding imports, versions, raster/vector ops through Pyogrio; HTTPS probe exposed wrong GDAL CA option; source verified GDAL_CURL_CA_BUNDLE and test corrected; retry pending |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | expanded smoke passes binding imports, versions, raster/vector ops through Pyogrio; latest retry reached smoke dependency install but internal feed returned HTTP 429; smoke-only wheels now use hash-verified public PyPI; HTTPS rerun pending |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -52,10 +52,11 @@ Next, in order:
    and HTTPS `/vsicurl/` smoke in the private validation branch. Initial
    attempts used GDAL's version for every binding, loaded the runtime
    self-check from the checkout, and passed non-bytes WKB to Pyogrio; those
-   issues are fixed. The latest run failed local HTTPS certificate validation
-   because the test used an invalid GDAL config key. GDAL 3.13.3 source
-   confirms the supported setting is `GDAL_CURL_CA_BUNDLE`; the smoke uses it
-   and reports GDAL's last error on failure.
+   issues are fixed. Run 38939370567 confirmed GDAL's HTTPS setting is
+   `GDAL_CURL_CA_BUNDLE` but still failed to trust the generated certificate.
+   Run 38942517454 rebuilt successfully but hit HTTP 429 while installing
+   smoke dependencies from the internal feed. The smoke-only install now uses
+   public PyPI with hashes.
 2. Extend the same validation to each target runtime image.
 3. Add dependency vulnerability/license gates, SBOM and notices, provenance
    attestation, and the separate approval-gated immutable publisher.
@@ -134,8 +135,10 @@ GDAL CMake options:
   for `/vsicurl/`. Run 38934654693 passed imports, binding versions, native
   library checks and raster/vector tests through Pyogrio, but HTTPS failed
   because the smoke used the wrong CA option name. GDAL 3.13.3 source confirms
-  it is `GDAL_CURL_CA_BUNDLE`, not `CPL_CURL_CA_BUNDLE`; the test now uses the
-  correct setting and preserves the error diagnostic.
+  it is `GDAL_CURL_CA_BUNDLE`, not `CPL_CURL_CA_BUNDLE`; run 38939370567 used
+  the correct option but certificate validation still failed. Run 38942517454
+  built all wheels but the smoke dependency install was throttled by the
+  internal feed. The smoke-only install now uses public PyPI with exact hashes.
 
 PROJ:
 

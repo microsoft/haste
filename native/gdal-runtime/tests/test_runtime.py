@@ -135,6 +135,7 @@ class LockTests(unittest.TestCase):
         self.assertIn("dnf install -y nasm openssl", workflow)
         self.assertIn("--require-hashes", workflow)
         self.assertIn("--only-binary=:all:", workflow)
+        self.assertIn("--index-url https://pypi.org/simple", workflow)
         smoke_test = (ROOT / "smoke_test.py").read_text()
         self.assertIn("binding_workflow_smoke.py", smoke_test)
         binding_smoke = (ROOT / "binding_workflow_smoke.py").read_text()
