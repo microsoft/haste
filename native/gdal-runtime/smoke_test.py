@@ -31,6 +31,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     local_version = f"{args.expected_gdal}+haste.{args.build}"
+    distributions = (
+        "haste-gdal-runtime",
+        "GDAL",
+        "rasterio",
+        "fiona",
+        "pyogrio",
+        "pyproj",
+    )
     subprocess.run(
         [
             sys.executable,
@@ -42,8 +50,7 @@ def main(argv: list[str] | None = None) -> int:
             "--no-deps",
             "--find-links",
             str(args.wheel_dir),
-            f"haste-gdal-runtime=={local_version}",
-            f"GDAL=={local_version}",
+            *(f"{name}=={local_version}" for name in distributions),
         ],
         check=True,
     )
@@ -54,12 +61,26 @@ def main(argv: list[str] | None = None) -> int:
         "verify",
         "--expected-gdal",
         args.expected_gdal,
-        "--require-binding",
-        "osgeo.gdal",
     ]
+    for binding in (
+        "osgeo.gdal",
+        "rasterio",
+        "fiona",
+        "pyogrio",
+        "pyproj",
+    ):
+        command.extend(["--require-binding", binding])
     for driver in DRIVERS:
         command.extend(["--allow-driver", driver])
     subprocess.run(command, check=True, cwd=args.wheel_dir.resolve())
+    subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("binding_workflow_smoke.py")),
+        ],
+        check=True,
+        cwd=args.wheel_dir.resolve(),
+    )
     return 0
 
 

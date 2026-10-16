@@ -7,7 +7,7 @@
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | validation build passed runtime/GDAL smoke; public PyPI fallback added when `PIP_INDEX_URL` is unset; upstream rerun pending; other binding imports and supply-chain gates pending |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | native/GDAL smoke passed upstream; private branch adds all-binding functional tests, locked test dependencies and HTTPS range-read test; private CI pending; supply-chain gates pending |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -48,12 +48,9 @@ What exists:
 
 Next, in order:
 
-1. Rerun the upstream workflow. When `PIP_INDEX_URL` is unset, build tools
-   and binding sdists resolve from public PyPI; when set, they use that index.
-   Both paths remain constrained by `--require-hashes`.
-2. Extend smoke tests to install and import rasterio, fiona, pyogrio and
-   pyproj, exercise the supported raster/vector workflows, and test HTTPS
-   `/vsicurl/` against a local TLS server in each target runtime image.
+1. Pass the expanded all-binding, raster/vector, COG, reprojection, mosaic
+   and HTTPS `/vsicurl/` smoke in the private validation branch.
+2. Extend the same validation to each target runtime image.
 3. Add dependency vulnerability/license gates, SBOM and notices, provenance
    attestation, and the separate approval-gated immutable publisher.
 
@@ -124,13 +121,11 @@ GDAL CMake options:
   latest run then failed while pip prepared sdist metadata: isolated build
   dependencies caused redundant feed requests and an HTTP 429. Sdist metadata
   preparation now uses the preinstalled hash-pinned build-tools venv without
-  isolation. A six-wheel artifact was built; the runtime and GDAL Python
-  binding passed offline smoke. Rasterio, Fiona, Pyogrio and PyProj imports
-  and workflows have not yet been smoke-tested. Upstream PR run 38917929441
-  stopped before its native build because the protected
-  `gdal-runtime-build` environment did not have `PIP_INDEX_URL` configured.
-  The workflow and build scripts now fall back to public PyPI when that
-  optional variable is unset; all packages remain hash-locked.
+  isolation. Upstream run 38918675350 built the six-wheel artifact and passed
+  runtime plus GDAL-binding offline smoke with the public PyPI fallback. The
+  private validation branch now adds all-binding and functional smoke, using
+  a separately hash-locked set of runtime dependencies and a local TLS server
+  for `/vsicurl/`. This expanded test has not yet passed in CI.
 
 PROJ:
 

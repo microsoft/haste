@@ -111,8 +111,7 @@ class LockTests(unittest.TestCase):
         self.assertIn("--no-build-isolation", fetch_script)
         build_script = (ROOT / "build.sh").read_text(encoding="utf-8")
         public_index = (
-            'PIP_INDEX_URL="${PIP_INDEX_URL:-'
-            'https://pypi.org/simple}"'
+            'PIP_INDEX_URL="${PIP_INDEX_URL:-' 'https://pypi.org/simple}"'
         )
         self.assertIn(public_index, build_script)
         self.assertIn("export PIP_INDEX_URL", build_script)
@@ -131,11 +130,52 @@ class LockTests(unittest.TestCase):
         self.assertIn("secrets.PIP_INDEX_URL", workflow)
         self.assertIn("https://pypi.org/simple", workflow)
         self.assertIn("environment: gdal-runtime-build", workflow)
+        self.assertIn("requirements-smoke.txt", workflow)
+        self.assertIn("dnf install -y nasm openssl", workflow)
+        self.assertIn("--require-hashes", workflow)
+        self.assertIn("--only-binary=:all:", workflow)
         smoke_test = (ROOT / "smoke_test.py").read_text()
+        self.assertIn("binding_workflow_smoke.py", smoke_test)
+        binding_smoke = (ROOT / "binding_workflow_smoke.py").read_text()
+        for distribution in (
+            "haste-gdal-runtime",
+            "GDAL",
+            "rasterio",
+            "fiona",
+            "pyogrio",
+            "pyproj",
+        ):
+            self.assertIn(f'"{distribution}"', smoke_test)
+        for binding in ("rasterio", "fiona", "pyogrio", "pyproj"):
+            self.assertIn(binding, binding_smoke)
+        self.assertIn("https://127.0.0.1", binding_smoke)
+        self.assertIn("WarpedVRT", binding_smoke)
+        self.assertIn("BuildVRT", binding_smoke)
+        self.assertIn("HTTPS /vsicurl/", binding_smoke)
+        self.assertIn('compress="ZSTD"', binding_smoke)
+        self.assertIn("EXPECTED_BINDINGS", binding_smoke)
         self.assertIn("--no-index", smoke_test)
-        self.assertIn('f"GDAL=={local_version}"', smoke_test)
+        self.assertIn("for name in distributions", smoke_test)
         self.assertIn('"osgeo.gdal"', smoke_test)
         self.assertIn("cwd=args.wheel_dir.resolve()", smoke_test)
+
+    def test_smoke_dependencies_are_exact_and_hash_locked(self):
+        requirements = (ROOT / "requirements-smoke.txt").read_text(
+            encoding="utf-8"
+        )
+        for name in (
+            "affine",
+            "attrs",
+            "certifi",
+            "click",
+            "click-plugins",
+            "cligj",
+            "numpy",
+            "packaging",
+            "pyparsing",
+        ):
+            self.assertIn(f"{name}==", requirements)
+        self.assertEqual(requirements.count("--hash=sha256:"), 9)
 
     def test_build_script_generates_gdal_config_without_gdal_apps(self):
         build_script = (ROOT / "build.sh").read_text(encoding="utf-8")
@@ -276,9 +316,7 @@ class ConfigureTests(unittest.TestCase):
         rt.configure(environ=env)
         self.assertEqual(env["GDAL_VRT_ENABLE_RAWRASTERBAND"], "NO")
         self.assertEqual(env["GDAL_DRIVER_PATH"], "disable")
-        self.assertEqual(
-            env["CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED"], "NO"
-        )
+        self.assertEqual(env["CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED"], "NO")
         self.assertEqual(env["GDAL_DISABLE_READDIR_ON_OPEN"], "TRUE")
         self.assertEqual(env["GDAL_DATA"], str(rt.GDAL_DATA_DIR))
 
