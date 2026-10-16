@@ -84,11 +84,15 @@ GDAL CMake options:
     `OGR_ENABLE_DRIVER_SHAPE=OFF`.
   - GPKG needs `OGR_ENABLE_DRIVER_SQLITE=ON`.
   - MEM is always built.
-- The expected driver inventory is GTiff, COG, VRT, MEM, PNG, JPEG, GeoJSON,
-  GeoJSONSeq, ESRIJSON, TopoJSON, GPKG and SQLite. Every driver registration
-  is conditional, so nothing else should appear. `ENABLE_GNM=OFF` removes the
-  default GNMDatabase and GNMFile drivers. In 3.13, "Memory" is a hidden alias
-  of MEM and is not in the driver list.
+- The expected native driver inventory is GTiff, COG, VRT, MEM, PNG, JPEG,
+  GeoJSON, GeoJSONSeq, ESRIJSON, TopoJSON, GPKG, SQLite, GNMDatabase and
+  GNMFile. The published GDAL Python sdist includes its GNM wrapper based on
+  the release-time CMake configuration and compiles it unconditionally for
+  the pinned build, so `ENABLE_GNM` must remain on to supply its headers and
+  symbols. The runtime manifest records both GNM drivers; HASTE's per-workflow
+  allowed-driver policy adds them to `GDAL_SKIP` and deregisters them at
+  startup. In 3.13, "Memory" is a hidden alias of MEM and is not in the driver
+  list.
 - Dependency selection:
   - `GDAL_USE_EXTERNAL_LIBS=OFF` and `GDAL_USE_INTERNAL_LIBS=OFF`.
   - Then turn on `GDAL_USE_CURL`, `GDAL_USE_SQLITE3`, `GDAL_USE_ZLIB`,
@@ -112,10 +116,12 @@ GDAL CMake options:
   native GDAL, generated `gdal-config` and fetched all pinned binding sdists,
   then failed when the manifest loader could not find `libssl.so.3` under the
   runtime library path. OpenSSL now installs to the same `lib` directory as
-  the other native dependencies. That run also exposed GDAL's default
-  GNMDatabase and GNMFile drivers as extra inventory entries; GNM is now
-  disabled and checked in the CMake cache. No wheel artifact has passed smoke
-  testing yet.
+  the other native dependencies. The latest run exposed a conflict between
+  the native `ENABLE_GNM=OFF` setting and GDAL's published Python sdist, whose
+  generated extension list still compiles `gnm_wrap.cpp`. GNM is now retained
+  so the pinned binding can compile; its two drivers are explicitly captured
+  in the manifest and excluded by the runtime's allowed-driver policy. No
+  wheel artifact has passed smoke testing yet.
 
 PROJ:
 

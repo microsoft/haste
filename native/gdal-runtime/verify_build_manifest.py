@@ -19,6 +19,8 @@ EXPECTED_DRIVERS = {
     "TopoJSON",
     "GPKG",
     "SQLite",
+    "GNMDatabase",
+    "GNMFile",
 }
 
 

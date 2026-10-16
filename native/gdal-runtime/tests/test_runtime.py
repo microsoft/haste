@@ -19,7 +19,16 @@ PROJ_LIB = "/opt/libs/libproj-abc.so.25"
 MANIFEST = {
     "gdal_release": "3.13.3",
     "proj_release": "9.8.1",
-    "drivers": ["GTiff", "COG", "VRT", "MEM", "PNG", "GPKG"],
+    "drivers": [
+        "GTiff",
+        "COG",
+        "VRT",
+        "MEM",
+        "PNG",
+        "GPKG",
+        "GNMDatabase",
+        "GNMFile",
+    ],
     "vsi_prefixes": ["/vsimem/", "/vsicurl/", "/vsisubfile/"],
     "vrt_raw_band_compiled": False,
     "probes_permissive": {
@@ -120,7 +129,7 @@ class LockTests(unittest.TestCase):
         self.assertIn("-DBUILD_APPS=OFF", build_script)
         self.assertIn("-DBUILD_APPS=ON", build_script)
         self.assertIn("-DBUILD_PYTHON_BINDINGS=OFF", build_script)
-        self.assertIn("-DENABLE_GNM=OFF", build_script)
+        self.assertIn("-DENABLE_GNM=ON", build_script)
         self.assertIn("--libdir=lib", build_script)
         self.assertIn('"$WORK/gdal-build/apps/gdal-config"', build_script)
         self.assertIn(
@@ -241,7 +250,16 @@ class ConfigureTests(unittest.TestCase):
         rt.configure(policy, environ=env, manifest=MANIFEST)
         self.assertEqual(
             sorted(env["GDAL_SKIP"].split(",")),
-            ["COG", "Foo", "GPKG", "MEM", "PNG", "VRT"],
+            [
+                "COG",
+                "Foo",
+                "GNMDatabase",
+                "GNMFile",
+                "GPKG",
+                "MEM",
+                "PNG",
+                "VRT",
+            ],
         )
 
     def test_skip_list_empty_without_allowlist(self):
@@ -332,6 +350,8 @@ class ManifestTests(unittest.TestCase):
                     "TopoJSON",
                     "GPKG",
                     "SQLite",
+                    "GNMDatabase",
+                    "GNMFile",
                 }
             ),
             "probes_permissive": {
@@ -375,6 +395,8 @@ class ManifestTests(unittest.TestCase):
                     "TopoJSON",
                     "GPKG",
                     "SQLite",
+                    "GNMDatabase",
+                    "GNMFile",
                 }
             ),
             "probes_permissive": {

@@ -207,7 +207,7 @@ cmake -S "$GDAL_SOURCE" -B "$WORK/gdal-build" \
   -DGDAL_ENABLE_DRIVER_VRT=ON \
   -DGDAL_VRT_ENABLE_RAWRASTERBAND=OFF \
   -DGDAL_AUTOLOAD_PLUGINS=OFF \
-  -DENABLE_GNM=OFF \
+  -DENABLE_GNM=ON \
   -DGDAL_USE_EXTERNAL_LIBS=OFF \
   -DGDAL_USE_INTERNAL_LIBS=OFF \
   -DGDAL_USE_CURL=ON \
@@ -239,10 +239,10 @@ cmake -LAH -N "$WORK/gdal-build" > "$BUILD_ROOT/gdal-cmake-cache.txt"
 for option in \
   GDAL_VRT_ENABLE_RAWRASTERBAND \
   GDAL_AUTOLOAD_PLUGINS \
-  ENABLE_GNM \
   BUILD_PYTHON_BINDINGS; do
   grep -q "^${option}:BOOL=OFF$" "$BUILD_ROOT/gdal-cmake-cache.txt"
 done
+grep -q '^ENABLE_GNM:BOOL=ON$' "$BUILD_ROOT/gdal-cmake-cache.txt"
 grep -q '^CMAKE_CXX_FLAGS:STRING=.*GDAL_VRT_DISABLE_PYTHON' \
   "$BUILD_ROOT/gdal-cmake-cache.txt"
 if grep -q 'Manually-specified variables were not used' \
