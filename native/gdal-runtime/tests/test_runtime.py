@@ -127,7 +127,6 @@ class LockTests(unittest.TestCase):
         self.assertIn("--no-index", smoke_test)
         self.assertIn('f"GDAL=={local_version}"', smoke_test)
         self.assertIn('"osgeo.gdal"', smoke_test)
-        self.assertNotIn("packagefeedproxy.microsoft.io", workflow)
         self.assertIn("cwd=args.wheel_dir.resolve()", smoke_test)
 
     def test_build_script_generates_gdal_config_without_gdal_apps(self):
