@@ -7,7 +7,7 @@
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | runtime and GDAL binding passed offline smoke; other binding imports and supply-chain gates pending |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | validation build passed runtime/GDAL smoke; upstream PR build is blocked because protected environment lacks `PIP_INDEX_URL`; other binding imports and supply-chain gates pending |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -48,10 +48,13 @@ What exists:
 
 Next, in order:
 
-1. Extend smoke tests to install and import rasterio, fiona, pyogrio and
+1. Configure the protected `gdal-runtime-build` environment's `PIP_INDEX_URL`
+   secret in `microsoft/haste`, then rerun the upstream workflow. The build
+   must continue to use the secret without storing its value in the repo.
+2. Extend smoke tests to install and import rasterio, fiona, pyogrio and
    pyproj, exercise the supported raster/vector workflows, and test HTTPS
    `/vsicurl/` against a local TLS server in each target runtime image.
-2. Add dependency vulnerability/license gates, SBOM and notices, provenance
+3. Add dependency vulnerability/license gates, SBOM and notices, provenance
    attestation, and the separate approval-gated immutable publisher.
 
 ## Verified build facts
@@ -123,7 +126,10 @@ GDAL CMake options:
   preparation now uses the preinstalled hash-pinned build-tools venv without
   isolation. A six-wheel artifact was built; the runtime and GDAL Python
   binding passed offline smoke. Rasterio, Fiona, Pyogrio and PyProj imports
-  and workflows have not yet been smoke-tested.
+  and workflows have not yet been smoke-tested. Upstream PR run 38917929441
+  stopped before its native build because the protected
+  `gdal-runtime-build` environment does not have `PIP_INDEX_URL` configured;
+  add that environment secret before the next upstream build.
 
 PROJ:
 
