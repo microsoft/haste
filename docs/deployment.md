@@ -64,6 +64,25 @@ public IPv4 address, named `haste-ci-*`, and remove it afterwards:
 See [Function App inbound access](security-configuration.md#55-function-app-inbound-access)
 for the baseline itself.
 
+### TiTiler baseline
+
+`azd provision` and `azd up` run `deploy/reconcile-titiler-baseline.ps1` after
+provisioning. It removes TiTiler role assignments and APIM operations that older
+deployments created outside Bicep, and fails if any remain. To check a deployed
+environment, run `pwsh deploy/verify-titiler-baseline.ps1 -EnvName <env>`. See
+[TiTiler input, APIM surface and identity](security-configuration.md#56-titiler-input-apim-surface-and-identity).
+
+When moving an existing environment onto this baseline:
+
+- Run `az account set` to the environment's subscription first; the older azd
+  hooks call `az` without one.
+- Delete role assignments on the API and queues apps that were created by
+  script with random IDs. Bicep recreates them with its own IDs; otherwise
+  provisioning fails with `RoleAssignmentExists`.
+- Provisioning moves TiTiler onto its new, empty host storage account, so tiles
+  return `404` until the deploy step publishes TiTiler again. `azd up` does
+  both; after `azd provision` alone, run `azd deploy titiler`.
+
 ### Configuration
 
 All settings are supplied with `azd env set <NAME> <value>` before `azd up` — no

@@ -11,6 +11,9 @@ param storageAccountName string
 @description('Premium file storage account name.')
 param fileStorageAccountName string
 
+@description('TiTiler host storage account name (its AzureWebJobsStorage and deployment package only).')
+param titilerStorageAccountName string
+
 @description('Principal id of the user-assigned managed identity.')
 param umiPrincipalId string
 
@@ -113,6 +116,38 @@ resource fileStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
 }
 
+// TiTiler's own host state and deployment package. Kept apart from the shared
+// account so the tile server's identity has no data-plane rights on HASTE
+// imagery, metadata, other apps' packages or other apps' host keys. Identity
+// auth only, reachable only from the functions subnet. The shared
+// user-assigned identity is deliberately not granted anything here.
+resource titilerStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: titilerStorageAccountName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Standard_LRS'
+  }
+  kind: 'StorageV2'
+  properties: {
+    accessTier: 'Hot'
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    networkAcls: {
+      bypass: 'Logging, Metrics, AzureServices'
+      defaultAction: 'Deny'
+      virtualNetworkRules: [
+        {
+          id: functionsSubnetId
+          action: 'Allow'
+        }
+      ]
+    }
+  }
+}
+
 resource fileServices 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
   parent: fileStorageAccount
   name: 'default'
@@ -159,4 +194,5 @@ resource umiBlobOwnerOnFileStorage 'Microsoft.Authorization/roleAssignments@2022
 output storageAccountName string = storageAccount.name
 output storageAccountId string = storageAccount.id
 output fileStorageAccountName string = fileStorageAccount.name
+output titilerStorageAccountName string = titilerStorageAccount.name
 output fileStorageAccountId string = fileStorageAccount.id

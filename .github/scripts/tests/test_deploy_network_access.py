@@ -271,6 +271,27 @@ class TestDeployNetworkAccess(unittest.TestCase):
         )
         self.assertLess(set_defaults, restart)
 
+    def test_titiler_storage_host_is_set_before_restart(self) -> None:
+        result, calls, _ = self.run_deploy()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = next(
+            index
+            for index, call in enumerate(calls)
+            if call.startswith("functionapp config appsettings set")
+            and "TITILER_ALLOWED_HOSTS=" in call
+        )
+        restart = next(
+            index
+            for index, call in enumerate(calls)
+            if call.startswith("functionapp restart")
+        )
+        self.assertLess(settings, restart)
+        self.assertRegex(
+            calls[settings],
+            r"TITILER_ALLOWED_HOSTS=[a-z0-9]+\.blob\.core\.windows\.net\b",
+        )
+
     def test_publish_runs_through_a_temporary_runner_rule(self) -> None:
         result, calls, final = self.run_deploy()
 

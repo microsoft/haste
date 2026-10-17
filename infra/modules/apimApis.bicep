@@ -23,6 +23,15 @@ param staticWebAppHostName string
 @description('Storage account name backing the storage-proxy operations.')
 param storageAccountName string
 
+@description('TiTiler tile requests allowed per client per minute.')
+param titilerCallsPerClientPerMinute int = 1200
+
+@description('TiTiler tile requests allowed per minute across all clients.')
+param titilerCallsPerMinute int = 20000
+
+@description('Longest TiTiler request URL (path + query) accepted, in characters. APIM\'s own front end already rejects query strings over 2,048 characters with a 404 before policies run, so this is a backstop and a higher value has no effect.')
+param titilerMaxUrlLength int = 2048
+
 // The APIM product the SWA linked-backend generated (named after the SWA host's
 // first label, e.g. "agreeable-smoke-06273c21e").
 var swaProductId = split(staticWebAppHostName, '.')[0]
@@ -139,22 +148,61 @@ resource productApiTitiler 'Microsoft.ApiManagement/service/products/apis@2024-0
   dependsOn: [ apiTitiler ]
 }
 
-// API-level policy routes all titiler operations (get-tiles + the hook-synced
-// ones) to the titiler backend.
-resource apiPolicyTitiler 'Microsoft.ApiManagement/service/apis/policies@2024-06-01-preview' = {
-  parent: apiTitiler
-  name: 'policy'
-  properties: {
-    format: 'xml'
-    value: replace('''<policies>
+// API-level policy for TiTiler. get-tiles (GET only) is its only operation:
+// the op-sync hook skips TiTiler, and reconcile-titiler-baseline.ps1 removes
+// operations an older hook created. Requests are rate limited per client
+// and overall, and anything with a body or an overlong URL is refused before
+// it reaches the backend.
+//
+// The per-client key is an address without its port. The SWA appends the
+// user as "ip:port" (new port per connection) to whatever X-Forwarded-For the
+// browser sent, and APIM's front end then appends the SWA as "ip:port", so on
+// the SWA product (which only SWA-signed requests pass) the user is the
+// second-to-last hop; earlier hops are client-supplied. Other callers (the
+// all-APIs keys) are keyed on the address APIM saw.
+var titilerPolicy = '''<policies>
   <inbound>
     <base />
+    <choose>
+      <when condition="@(context.Request.Headers.GetValueOrDefault(&quot;Content-Length&quot;, &quot;0&quot;) != &quot;0&quot; || context.Request.Headers.ContainsKey(&quot;Transfer-Encoding&quot;))">
+        <return-response>
+          <set-status code="413" reason="Request body not allowed" />
+        </return-response>
+      </when>
+      <when condition="@(context.Request.OriginalUrl.Path.Length + context.Request.OriginalUrl.QueryString.Length &gt; __MAXURL__)">
+        <return-response>
+          <set-status code="414" reason="URI Too Long" />
+        </return-response>
+      </when>
+    </choose>
+    <rate-limit-by-key calls="__PERCLIENT__" renewal-period="60" counter-key="@{
+        var hops = context.Request.Headers.GetValueOrDefault(&quot;X-Forwarded-For&quot;, &quot;&quot;).Split(',');
+        var fromSwa = context.Product != null &amp;&amp; context.Product.Id == &quot;__SWAPRODUCT__&quot; &amp;&amp; hops.Length &gt;= 2;
+        var hop = fromSwa ? hops[hops.Length - 2].Trim() : context.Request.IpAddress;
+        var close = hop.IndexOf(']');
+        if (hop.StartsWith(&quot;[&quot;) &amp;&amp; close &gt; 0) { hop = hop.Substring(1, close - 1); }
+        else if (hop.IndexOf(':') &gt; 0 &amp;&amp; hop.IndexOf(':') == hop.LastIndexOf(':')) { hop = hop.Substring(0, hop.IndexOf(':')); }
+        return &quot;titiler-client:&quot; + hop;
+      }" />
+    <rate-limit-by-key calls="__TOTAL__" renewal-period="60" counter-key="titiler-all" />
     <set-backend-service id="apim-generated-policy" backend-id="__BID__" />
   </inbound>
   <backend><base /></backend>
   <outbound><base /></outbound>
   <on-error><base /></on-error>
-</policies>''', '__BID__', functionTitilerName)
+</policies>'''
+
+resource apiPolicyTitiler 'Microsoft.ApiManagement/service/apis/policies@2024-06-01-preview' = {
+  parent: apiTitiler
+  name: 'policy'
+  properties: {
+    format: 'xml'
+    value: replace(replace(replace(replace(replace(titilerPolicy,
+      '__BID__', functionTitilerName),
+      '__SWAPRODUCT__', swaProductId),
+      '__MAXURL__', string(titilerMaxUrlLength)),
+      '__PERCLIENT__', string(titilerCallsPerClientPerMinute)),
+      '__TOTAL__', string(titilerCallsPerMinute))
   }
   dependsOn: [ backendTitiler ]
 }

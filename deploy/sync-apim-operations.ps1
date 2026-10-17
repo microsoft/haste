@@ -10,35 +10,42 @@
 # infra/modules/apimApis.bicep; this only adds per-endpoint operations.
 #
 # Inputs (azd environment): APIM_NAME, AZURE_RESOURCE_GROUP, and the function app
-# names to sync (api + titiler).
+# names to sync (api only). TiTiler is deliberately not synced: its single
+# catch-all function would become an APIM operation exposing every TiTiler
+# route. Its one operation (get-tiles) is declared in apimApis.bicep, and
+# reconcile-titiler-baseline.ps1 removes any other.
 
 param(
     [string]$ApimName = $env:APIM_NAME,
     [string]$ResourceGroup = $env:AZURE_RESOURCE_GROUP,
-    [string[]]$FunctionApps = @($env:FUNCTION_API_NAME, $env:FUNCTION_TITILER_NAME)
+    [string[]]$FunctionApps = @($env:FUNCTION_API_NAME)
 )
 
 $ErrorActionPreference = 'Stop'
 $subId = $env:AZURE_SUBSCRIPTION_ID
+# Every az call names the env's subscription: the CLI's current one may be
+# another env's, and then the key lookup below finds nothing and leaves the
+# API backend without a key (every /api/haste call returns 401).
+$subArgs = if ($subId) { @('--subscription', $subId) } else { @() }
 
 function Sync-One([string]$FunctionName) {
     if ([string]::IsNullOrWhiteSpace($FunctionName)) { return }
     Write-Host "── Syncing APIM operations for '$FunctionName' ──"
 
     # APIM service must exist.
-    az apim show --name $ApimName --resource-group $ResourceGroup -o none 2>$null
+    az apim show --name $ApimName --resource-group $ResourceGroup @subArgs -o none 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "APIM '$ApimName' not found; skipping operation sync for $FunctionName."
         return
     }
     # Base API (api-id == function app name) must exist (created by apimApis.bicep).
-    az apim api show --resource-group $ResourceGroup --service-name $ApimName --api-id $FunctionName -o none 2>$null
+    az apim api show --resource-group $ResourceGroup --service-name $ApimName --api-id $FunctionName @subArgs -o none 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "APIM API '$FunctionName' not found; run provision (apimApis.bicep) first. Skipping."
         return
     }
 
-    $functionsJson = az functionapp function list --name $FunctionName --resource-group $ResourceGroup -o json 2>$null
+    $functionsJson = az functionapp function list --name $FunctionName --resource-group $ResourceGroup @subArgs -o json 2>$null
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($functionsJson)) {
         Write-Warning "Could not list functions for '$FunctionName'; skipping."
         return
@@ -69,7 +76,7 @@ function Sync-One([string]$FunctionName) {
         # is set here (and it avoids az rest, which can't decode APIM's BOM'd
         # policy responses on Windows).
         az apim api operation show --resource-group $ResourceGroup --service-name $ApimName `
-            --api-id $FunctionName --operation-id $opName -o none 2>$null
+            --api-id $FunctionName --operation-id $opName @subArgs -o none 2>$null
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  '$opName' already exists — skip"
             continue
@@ -86,7 +93,7 @@ function Sync-One([string]$FunctionName) {
         if ($templateParam) {
             $createArgs += @('--template-parameters', "name=$templateParam", 'required=true', 'type=string')
         }
-        az @createArgs -o none
+        az @createArgs @subArgs -o none
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  ✔ '$opName' created"
         } else {
@@ -103,7 +110,7 @@ function Sync-One([string]$FunctionName) {
 # (not az rest, which can't decode APIM's BOM'd responses on Windows).
 function Set-BackendKey([string]$FunctionName, [string]$BackendUrl) {
     if ([string]::IsNullOrWhiteSpace($FunctionName)) { return }
-    $mk = az functionapp keys list --name $FunctionName --resource-group $ResourceGroup --query masterKey -o tsv 2>$null
+    $mk = az functionapp keys list --name $FunctionName --resource-group $ResourceGroup @subArgs --query masterKey -o tsv 2>$null
     if ([string]::IsNullOrWhiteSpace($mk)) {
         Write-Warning "  no master key for '$FunctionName' yet; backend left credential-less."
         return
@@ -123,7 +130,7 @@ resource backend 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' =
 "@
     $bicepFile = (New-TemporaryFile).FullName + '.bicep'
     [System.IO.File]::WriteAllText($bicepFile, $bicep)
-    az deployment group create --resource-group $ResourceGroup --template-file $bicepFile --no-prompt -o none 2>$null
+    az deployment group create --resource-group $ResourceGroup @subArgs --template-file $bicepFile --no-prompt -o none 2>$null
     if ($LASTEXITCODE -eq 0) { Write-Host "  ✔ backend key set for '$FunctionName'" }
     else { Write-Warning "  backend key deploy failed for '$FunctionName'" }
     Remove-Item $bicepFile -ErrorAction SilentlyContinue

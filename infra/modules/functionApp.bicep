@@ -1,9 +1,9 @@
 // One Flex Consumption Python function app with: per-app plan, App Insights
-// linked to Log Analytics, system + user-assigned identity, VNet integration,
-// identity-based AzureWebJobsStorage, the /data file-share mount, the
-// blob/queue role grants for its system identity, and the inbound network
-// baseline for its main and SCM sites. (Reproduces one iteration of
-// create_function_app.)
+// linked to Log Analytics, system (+ optional shared user-assigned) identity,
+// VNet integration, identity-based AzureWebJobsStorage, the optional /data
+// file-share mount, the blob/queue role grants for its system identity on its
+// host storage account, and the inbound network baseline for its main and SCM
+// sites. (Reproduces one iteration of create_function_app.)
 
 @description('Azure region.')
 param location string
@@ -20,11 +20,23 @@ param alwaysReadyCount int
 @description('Functions storage account name.')
 param storageAccountName string
 
+@description('Storage account holding the app host state (AzureWebJobsStorage, host keys) and deployment package. The app system identity is granted data roles on this account only. Defaults to the shared functions account.')
+param hostStorageAccountName string = storageAccountName
+
 @description('Premium file storage account name (mounted at /data).')
 param fileStorageAccountName string
 
 @description('User-assigned managed identity resource id.')
 param umiResourceId string
+
+@description('Attach the shared user-assigned identity. It holds data-plane roles on the shared storage accounts, so apps that must not reach that data leave it off.')
+param attachSharedIdentity bool = true
+
+@description('Mount the shared premium file share at /data (account-key based). When false, any existing mount is removed.')
+param mountDataShare bool = true
+
+@description('Grant Storage Blob Delegator on the host storage account (needed to mint user-delegation SAS).')
+param grantBlobDelegator bool = true
 
 @description('VNet name for VNet integration.')
 param vnetName string
@@ -79,7 +91,7 @@ var mainSiteRestrictions = [
 ]
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
-  name: storageAccountName
+  name: hostStorageAccountName
 }
 
 resource fileStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
@@ -126,12 +138,16 @@ resource site 'Microsoft.Web/sites@2023-12-01' = {
   location: location
   kind: 'functionapp,linux'
   tags: tags
-  identity: {
-    type: 'SystemAssigned, UserAssigned'
-    userAssignedIdentities: {
-      '${umiResourceId}': {}
-    }
-  }
+  identity: attachSharedIdentity
+    ? {
+        type: 'SystemAssigned, UserAssigned'
+        userAssignedIdentities: {
+          '${umiResourceId}': {}
+        }
+      }
+    : {
+        type: 'SystemAssigned'
+      }
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
@@ -175,7 +191,7 @@ resource site 'Microsoft.Web/sites@2023-12-01' = {
       appSettings: concat([
         {
           name: 'AzureWebJobsStorage__accountName'
-          value: storageAccountName
+          value: hostStorageAccountName
         }
         {
           name: 'AzureWebJobsStorage__blobServiceUri'
@@ -194,18 +210,22 @@ resource site 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
+// Deployed either way: this config is a whole-dictionary PUT, so the empty
+// form removes a mount left by an earlier deployment.
 resource storageMount 'Microsoft.Web/sites/config@2023-12-01' = {
   parent: site
   name: 'azurestorageaccounts'
-  properties: {
-    data: {
-      type: 'AzureFiles'
-      accountName: fileStorageAccountName
-      shareName: 'data'
-      mountPath: '/data'
-      accessKey: fileStorageAccount.listKeys().keys[0].value
-    }
-  }
+  properties: mountDataShare
+    ? {
+        data: {
+          type: 'AzureFiles'
+          accountName: fileStorageAccountName
+          shareName: 'data'
+          mountPath: '/data'
+          accessKey: fileStorageAccount.listKeys().keys[0].value
+        }
+      }
+    : {}
 }
 
 resource siteBlobOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -228,7 +248,7 @@ resource siteQueueContributor 'Microsoft.Authorization/roleAssignments@2022-04-0
   }
 }
 
-resource siteBlobDelegator 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource siteBlobDelegator 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (grantBlobDelegator) {
   name: guid(storageAccount.id, site.id, 'blobDelegator')
   scope: storageAccount
   properties: {

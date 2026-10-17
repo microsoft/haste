@@ -81,16 +81,13 @@ for long-running operations:
 ### Tile Server — `titilerfuncapi`
 
 A [TiTiler](https://developmentseed.org/titiler/) `0.21.1` tile server (FastAPI, run as an
-Azure Function via an ASGI wrapper), providing:
+Azure Function via an ASGI wrapper), serving only:
 
-- `/cog/*` — Cloud Optimized GeoTIFF tile endpoints
-- `/stac/*` — SpatioTemporal Asset Catalog endpoints
-- `/mosaicjson/*` — MosaicJSON mosaic endpoints
-- `/tms/*` — TileMatrixSet metadata
+- `/cog/tiles/WebMercatorQuad/{z}/{x}/{y}` — map tiles from a GeoTIFF, with format and scale variants
 - `/healthz` — health check
-- `/` — HTML landing page
 
-The `/cog`, `/stac`, and `/mosaicjson` routers are individually toggleable via settings.
+It opens only `https://` GeoTIFFs on an approved host list, and APIM exposes only the tile
+route. See [TiTiler input, APIM surface and identity](security-configuration.md#56-titiler-input-apim-surface-and-identity).
 
 ### Core Library — `hastegeo`
 

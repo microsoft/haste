@@ -105,6 +105,9 @@ param enableFrontDoor bool = false
 @description('Dev-only: api/queues auto-provision any authenticated user as admin and use anonymous auth. Keep false for production.')
 param developmentMode bool = false
 
+@description('Log Analytics retention in days (30-730). Lowering it deletes older data.')
+param logRetentionInDays int = 30
+
 @description('Ordered candidate training pool ids (comma-separated). Empty => single training pool.')
 param trainingPoolIds string = ''
 
@@ -181,6 +184,7 @@ param pcGeoCatalogIngestPrincipalId string = ''
 var rgName = '${resourcePrefix}-haste-${randomSuffix}-rg'
 var storageAccountName = '${resourcePrefix}haste${randomSuffix}sa'
 var fileStorageAccountName = '${resourcePrefix}haste${randomSuffix}fs'
+var titilerStorageAccountName = '${resourcePrefix}hastetiler${randomSuffix}sa'
 var umiName = '${resourcePrefix}-haste-${randomSuffix}-umi'
 var vnetName = '${resourcePrefix}-haste-${randomSuffix}-vnet'
 var nsgName = '${resourcePrefix}-haste-${randomSuffix}-nsg'
@@ -233,6 +237,7 @@ module monitoring 'modules/monitoring.bicep' = {
     location: location
     logAnalyticsName: logAnalyticsName
     tags: tags
+    retentionInDays: logRetentionInDays
   }
 }
 
@@ -266,6 +271,7 @@ module storage 'modules/storage.bicep' = {
     location: location
     storageAccountName: storageAccountName
     fileStorageAccountName: fileStorageAccountName
+    titilerStorageAccountName: titilerStorageAccountName
     umiPrincipalId: identity.outputs.principalId
     vnetName: vnetName
     defaultSubnetName: 'default'
@@ -328,6 +334,7 @@ module functions 'modules/functions.bicep' = {
     functionQueueName: functionQueueName
     storageAccountName: storageAccountName
     fileStorageAccountName: fileStorageAccountName
+    titilerStorageAccountName: storage.outputs.titilerStorageAccountName
     umiResourceId: identity.outputs.resourceId
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
@@ -368,8 +375,8 @@ module functions 'modules/functions.bicep' = {
     publishBlobContainer: publishBlobContainer
     tags: tags
   }
+  // storage: implied by titilerStorageAccountName.
   dependsOn: [
-    storage
     network
     batchAccount
   ]
@@ -502,6 +509,7 @@ output STATIC_WEB_APP_NAME string = staticWebAppName
 output VITE_AZURE_MAPS_CLIENT_ID string = frontend.outputs.mapsClientId
 output APIM_NAME string = apimName
 output STORAGE_ACCOUNT_NAME string = storageAccountName
+output TITILER_STORAGE_ACCOUNT_NAME string = titilerStorageAccountName
 output BATCH_ACCOUNT_NAME string = resolvedBatchAccountName
 output BATCH_POOL_NAME string = batchPoolMode == 'Create' ? createdBatchPoolName : existingBatchPoolId
 @secure()

@@ -29,6 +29,41 @@ conventions are documented in [RELEASING.md](RELEASING.md).
   fail at the TiTiler publish step. See
   [docs/security-configuration.md](docs/security-configuration.md#55-function-app-inbound-access).
 
+- **TiTiler opens only approved GeoTIFFs and serves only map tiles.** TiTiler
+  used to pass the caller's `url` straight to GDAL. Now:
+  - It accepts only plain `https://` URLs on an exact host list: the two
+    open-data hosts the catalog explorer previews, plus `TITILER_ALLOWED_HOSTS`
+    (set to the environment's blob host). Local and GDAL virtual paths, inline
+    documents, other schemes, IP literals, redirects and private addresses are
+    refused with `400` before GDAL runs.
+  - Datasets open with the GeoTIFF driver only, under fixed GDAL settings.
+  - Only the WebMercatorQuad tile route and `/healthz` remain; every other
+    TiTiler route returns `404`.
+- **TiTiler has its own storage and no shared identity.** It runs from a
+  dedicated host storage account and loses the shared user-assigned identity,
+  the `/data` mount, and every role on the shared storage account. A new azd
+  `postprovision` hook, `deploy/reconcile-titiler-baseline.ps1`, removes access
+  that older deployments granted outside Bicep.
+- **APIM exposes one TiTiler operation, with limits.** `GET` tiles is the only
+  operation. Requests with a body get `413` and URLs over 2,048 characters get
+  `414`. Rate limits are 1,200 tile requests per minute per user and 20,000 in
+  total. The per-user key is the address the Static Web App forwards, so a
+  client-supplied `X-Forwarded-For` does not change it. APIM enforces these
+  limits approximately, so treat them as throttling rather than a hard cap.
+- `deploy/verify-titiler-baseline.ps1 -EnvName <env>` checks a deployed
+  environment against this baseline.
+
+  **Upgrade action:** reprovision each environment (`azd up`); the deploy-apps
+  workflow deploys code only. Saved tile URLs on hosts outside the allowlist,
+  including a previous storage account, stop rendering. Before provisioning:
+  - run `az account set` to the environment's subscription;
+  - delete any role assignments on the API and queues apps that were created
+    by script rather than Bicep, otherwise provisioning fails with
+    `RoleAssignmentExists`.
+
+  See
+  [docs/security-configuration.md](docs/security-configuration.md#56-titiler-input-apim-surface-and-identity).
+
 ---
 
 ## [v4.0.0] — Prediction editing, shared results, and app-wide performance

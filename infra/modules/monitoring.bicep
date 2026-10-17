@@ -10,6 +10,11 @@ param logAnalyticsName string
 @description('Resource tags.')
 param tags object = {}
 
+@description('Days to keep workspace data. Lowering it deletes older data.')
+@minValue(30)
+@maxValue(730)
+param retentionInDays int = 30
+
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsName
   location: location
@@ -18,7 +23,7 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
     sku: {
       name: 'PerGB2018'
     }
-    retentionInDays: 30
+    retentionInDays: retentionInDays
   }
 }
 
