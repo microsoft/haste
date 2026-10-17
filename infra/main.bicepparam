@@ -38,6 +38,9 @@ param enableFrontDoor = bool(readEnvironmentVariable('HASTE_ENABLE_FRONT_DOOR', 
 // Dev-only auto-provisioning + anonymous auth (never true for production).
 param developmentMode = bool(readEnvironmentVariable('HASTE_DEVELOPMENT_MODE', 'false'))
 
+// Log Analytics retention (30-730 days). Lowering it deletes older data.
+param logRetentionInDays = int(readEnvironmentVariable('HASTE_LOG_RETENTION_DAYS', '30'))
+
 // v2.1.0 capacity-aware routing + per-job SAS (default = legacy single-pool).
 param trainingPoolIds = readEnvironmentVariable('HASTE_BATCH_TRAINING_POOL_IDS', '')
 param inferencePoolIds = readEnvironmentVariable('HASTE_BATCH_INFERENCE_POOL_IDS', '')

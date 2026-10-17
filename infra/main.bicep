@@ -105,6 +105,9 @@ param enableFrontDoor bool = false
 @description('Dev-only: api/queues auto-provision any authenticated user as admin and use anonymous auth. Keep false for production.')
 param developmentMode bool = false
 
+@description('Log Analytics retention in days (30-730). Lowering it deletes older data.')
+param logRetentionInDays int = 30
+
 @description('Ordered candidate training pool ids (comma-separated). Empty => single training pool.')
 param trainingPoolIds string = ''
 
@@ -234,6 +237,7 @@ module monitoring 'modules/monitoring.bicep' = {
     location: location
     logAnalyticsName: logAnalyticsName
     tags: tags
+    retentionInDays: logRetentionInDays
   }
 }
 

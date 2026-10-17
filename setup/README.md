@@ -90,6 +90,7 @@ Common knobs:
 | `HASTE_FIRST_ADMIN_EMAIL` | signed-in user | First admin for non-interactive/CI deploys. |
 | `HASTE_ENABLE_FRONT_DOOR` | `false` | Provision Front Door + WAF. |
 | `HASTE_DEVELOPMENT_MODE` | `false` | Dev-only anonymous auth + auto-provisioning. Never `true` in production. |
+| `HASTE_LOG_RETENTION_DAYS` | `30` | Log Analytics retention (30–730 days). Lowering it deletes older data. |
 
 ## Preview changes (what-if)
 

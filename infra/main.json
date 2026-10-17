@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "13515907901274365588"
+      "templateHash": "9892879045433928477"
     }
   },
   "parameters": {
@@ -173,6 +173,13 @@
       "defaultValue": false,
       "metadata": {
         "description": "Dev-only: api/queues auto-provision any authenticated user as admin and use anonymous auth. Keep false for production."
+      }
+    },
+    "logRetentionInDays": {
+      "type": "int",
+      "defaultValue": 30,
+      "metadata": {
+        "description": "Log Analytics retention in days (30-730). Lowering it deletes older data."
       }
     },
     "trainingPoolIds": {
@@ -392,6 +399,9 @@
           },
           "tags": {
             "value": "[parameters('tags')]"
+          },
+          "retentionInDays": {
+            "value": "[parameters('logRetentionInDays')]"
           }
         },
         "template": {
@@ -401,7 +411,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.47.16.16243",
-              "templateHash": "15189054065006265096"
+              "templateHash": "10021576879820094378"
             }
           },
           "parameters": {
@@ -423,6 +433,15 @@
               "metadata": {
                 "description": "Resource tags."
               }
+            },
+            "retentionInDays": {
+              "type": "int",
+              "defaultValue": 30,
+              "minValue": 30,
+              "maxValue": 730,
+              "metadata": {
+                "description": "Days to keep workspace data. Lowering it deletes older data."
+              }
             }
           },
           "resources": [
@@ -436,7 +455,7 @@
                 "sku": {
                   "name": "PerGB2018"
                 },
-                "retentionInDays": 30
+                "retentionInDays": "[parameters('retentionInDays')]"
               }
             }
           ],

@@ -299,6 +299,15 @@ enabled.
 |---|---|---|
 | `HASTE_ENABLE_FRONT_DOOR` | `false` | Provision Front Door + WAF in front of the app. |
 
+## Log retention
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HASTE_LOG_RETENTION_DAYS` | `30` | Log Analytics retention in days (30–730). Lowering it deletes data older than the new value. |
+
+Set it before provisioning any environment whose retention was raised outside
+Bicep; otherwise `azd provision` resets the workspace to 30 days.
+
 ## Development mode
 
 Development mode is a **dev-only** switch. It must never be `true` in production.
