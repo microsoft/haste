@@ -2,6 +2,17 @@
 
 This document contains third-party software notices and information for HASTE (High-speed Assessment and Satellite Tracking for Emergencies).
 
+## Contents
+
+- [Dependencies](#dependencies)
+- [Major Third-Party Components](#major-third-party-components)
+- [Optional DINOv3 Model Assets (Not Bundled)](#optional-dinov3-model-assets-not-bundled)
+- [Optional DINOv2 Model Assets (Not Bundled)](#optional-dinov2-model-assets-not-bundled)
+- [Build / Development Tooling](#build--development-tooling-not-redistributed)
+- [Proprietary Components](#proprietary-components-non-oss-redistribution-permitted)
+- [Additional Notices](#additional-notices)
+- [License Compliance](#license-compliance)
+
 ## Dependencies
 
 This software includes third-party packages and libraries. The complete list of dependencies and their licenses can be found in the following files:
@@ -12,6 +23,7 @@ This software includes third-party packages and libraries. The complete list of 
 - `api/titilerfuncapi/requirements.txt`
 - `docker/imageryprep/requirements.txt`
 - `docker/training/env/env.yml`
+- `docker/transformerinference/requirements.txt`
 - `hastelib/pyproject.toml`
 - `env.yml`
 
@@ -55,6 +67,58 @@ This software includes third-party packages and libraries. The complete list of 
 - **License**: BSD License
 - **Source**: https://rasterio.readthedocs.io/
 - **Usage**: Geospatial raster data I/O
+
+### Transformers (DINO Backbone Implementations)
+- **Package**: `transformers`
+- **License**: Apache License 2.0
+- **License Terms**: https://github.com/huggingface/transformers/blob/v5.5.4/LICENSE
+- **Source**: https://github.com/huggingface/transformers
+- **Usage**: Constructs DINOv2 and DINOv3 backbones from separately supplied configuration and weights in the optional transformer inference image.
+
+The DINOv3 implementation in Transformers carries the notice:
+Copyright 2025 Meta AI and The HuggingFace Inc. team. All rights reserved.
+
+### Building Damage Assessment Adapter Code
+- **License**: MIT License
+- **Copyright**: Copyright (c) Microsoft Corporation.
+- **Source**: https://github.com/microsoft/building-damage-assessment/tree/4d0d1925dc3a5a63566f047102f8dd474dbbcf80
+- **Usage**: DINOv3 UPerNet architecture and raster inference code adapted for HASTE.
+- **DINOv2 reference**: https://github.com/microsoft/building-damage-assessment/tree/958ff3d30601ffc3577da81af1ac0a545deb295e
+- **DINOv2 usage**: Register-token ViT-S/14, legacy UPerNet decoder and offline raster inference adapted under the same Microsoft MIT license.
+
+## Optional DINOv3 Model Assets (Not Bundled)
+
+HASTE includes integration code for separately supplied DINOv3 models, not a
+bundled DINOv3 model. Checkpoint weights and associated backbone configuration
+assets are obtained and imported separately into an operator's storage; they
+are not included in the HASTE source repository.
+
+The custom xView2 checkpoint used during local development was imported only
+to exercise this integration. Its packaging, hosting, and distribution are
+separate from HASTE, and deploying HASTE does not automatically install it.
+Local test assets under `localtmp/` are excluded from Git.
+
+DINOv3 model assets and derivatives remain subject to the separate
+[Meta DINOv3 License](https://github.com/facebookresearch/dinov3/blob/ffb4bb89c6558ca3244655c25a3955d01788b732/LICENSE.md),
+including its use restrictions and redistribution requirements. Anyone
+distributing those materials or derivatives separately must comply with that
+agreement, including providing a copy with the distributed materials.
+
+Neither HASTE's MIT license nor the Transformers implementation's Apache-2.0
+license relicenses separately supplied DINOv3 model assets.
+
+## Optional DINOv2 Model Assets (Not Bundled)
+
+DINOv2 backbone code and weights are provided by Meta under the
+[Apache License 2.0](https://github.com/facebookresearch/dinov2/blob/main/LICENSE).
+Preserve its applicable copyright, license and attribution notices when
+redistributing backbone assets or derivatives.
+
+The six custom xView2 DINOv2 follow-up checkpoints are separately supplied
+assets, not bundled with HASTE. HASTE records their approved hashes and
+provenance; explicit import copies them into operator-controlled storage.
+Their hosting and distribution remain separate from HASTE. Checkpoints and
+credentials are not included in the repository, wheel or container images.
 
 ## Build / Development Tooling (Not Redistributed)
 

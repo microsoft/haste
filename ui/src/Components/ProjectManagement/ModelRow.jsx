@@ -13,7 +13,7 @@ import {
 import { FluentIcon } from "../../util/icons";
 import { useContext } from "react";
 import PropTypes from "prop-types";
-import { apiDelete, apiPut } from "../../util/api";
+import { apiDelete } from "../../util/api";
 import { AppContext } from "../../AppContext";
 import StatusIndicator from "../OtherComponents/StatusIndicator";
 import ModelResultsButton from "./ModelResultsButton";
@@ -22,18 +22,10 @@ import ModelCancelButton from "../OtherComponents/ModelCancelButton";
 import { limitTextLength } from "../../util/conversion";
 import { fileDownload } from "../../util/file";
 import CreateEditModelCheckpoint from "../CreateEditModelCheckpoint";
+import { getCatalogRunProvenance, isInferenceOnlyModel } from "../CatalogInferenceHelper";
+import { modelRowStatus } from "./ModelRowHelper";
 
 const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, fetchProjectDetails, setModalComponent, validationLabelCount }) => {
-  ModelRow.propTypes = {
-    projectId: PropTypes.string.isRequired,
-    imageLayerId: PropTypes.string.isRequired,
-    imagerySource: PropTypes.string.isRequired,
-    models: PropTypes.array.isRequired,
-    fetchProjectDetails: PropTypes.func.isRequired,
-    setModalComponent: PropTypes.func.isRequired,
-    validationLabelCount: PropTypes.number,
-  };
-  
   const { setDialog, setIsLoading } = useContext(AppContext);
 
   function sleep(ms) {
@@ -122,7 +114,7 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
             ]);
           },
         },
-      ],
+      ].filter((action) => !isInferenceOnlyModel(model) || action.key === "remove"),
     };
   };
 
@@ -142,14 +134,14 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
             />
           );
         }
-        const trainDate = model.trainDate
+        const inferenceOnly = isInferenceOnlyModel(model);
+        const provenance = getCatalogRunProvenance(model);
+        const trainDate = !inferenceOnly && model.trainDate && typeof model.trainDate === "string"
           ? `${model.trainDate.substring(0, 10)} ${model.trainDate.substring(11, 19)}`
           : "";
         const userId = limitTextLength(model.userId, false, 35);
-        const labelsText = model.labelsCount !== undefined ? `${model.labelsCount} Labels` : "";
-        const statusMessage =
-          (model.statusMessage || "") + (model.inferenceStatusMessage || "");
-        const isInference = !!model.inferenceStatus;
+        const labelsText = !inferenceOnly && model.labelsCount != null ? `${model.labelsCount} Labels` : "";
+        const { isInference, ...statusProps } = modelRowStatus(model);
 
         return (
           <div className="lmodel" key={model.modelId || index}>
@@ -163,14 +155,22 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
                 {labelsText && (
                   <span className="lmodel-chip">{labelsText}</span>
                 )}
+                {inferenceOnly && <span className="lmodel-chip">Inference only</span>}
               </div>
               <div className="lmodel-meta">
+                {provenance && <span><b>Catalog:</b> {provenance.catalogName}</span>}
+                {provenance?.adapter && (
+                  <>
+                    <span className="lmodel-meta-sep">&middot;</span>
+                    <span><b>Adapter:</b> {provenance.adapter}</span>
+                  </>
+                )}
                 {trainDate && (
                   <span>
                     <b>Trained:</b> {trainDate}
                   </span>
                 )}
-                {trainDate && model.userId && (
+                {(trainDate || inferenceOnly) && model.userId && (
                   <span className="lmodel-meta-sep">&middot;</span>
                 )}
                 {model.userId && (
@@ -184,14 +184,15 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
             </div>
             <div className="lmodel-status">
               <StatusIndicator
-                currentStep={isInference ? model.inferenceCurrentStep : model.currentStep}
-                totalSteps={isInference ? model.inferenceTotalSteps : model.totalSteps}
-                progressPct={isInference ? model.inferenceProgressPct : model.progressPct}
-                status={isInference ? model.inferenceStatus : model.status}
-                statusMessage={statusMessage}
+                {...statusProps}
                 id={isInference ? `singleModelInferenceStatus${index}` : `singleModelTrainStatus${index}`}
                 prefix={isInference ? "Inference" : "Training"}
                 contextLabel={`Model: ${model.name} \u00b7 ${isInference ? "Inference" : "Training"}`}
+                infoMetadata={provenance ? [
+                  { label: "Catalog model", value: provenance.catalogName },
+                  { label: "Inference adapter", value: provenance.adapter || "--" },
+                  { label: "Request ID", value: provenance.requestId || "--" },
+                ] : undefined}
               />
               <ModelCancelButton
                 model={model}
@@ -241,6 +242,17 @@ const ModelRow = ({ models, projectId, imageLayerId, imagerySource, eventTypes, 
       })}
     </>
   );
+};
+
+ModelRow.propTypes = {
+  projectId: PropTypes.string.isRequired,
+  imageLayerId: PropTypes.string.isRequired,
+  imagerySource: PropTypes.string.isRequired,
+  eventTypes: PropTypes.array,
+  models: PropTypes.array.isRequired,
+  fetchProjectDetails: PropTypes.func.isRequired,
+  setModalComponent: PropTypes.func.isRequired,
+  validationLabelCount: PropTypes.number,
 };
 
 export default ModelRow;

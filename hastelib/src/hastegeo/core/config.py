@@ -689,6 +689,9 @@ class Config:
                 "AZURE_BATCH_DOCKER_IMAGE",
                 "<registry-name>.azurecr.io/<training-image>:latest",
             ),
+            "transformer_inference_docker_image": os.getenv(
+                "AZURE_BATCH_TRANSFORMER_INFERENCE_DOCKER_IMAGE"
+            ),
             "docker_container_work_dir": os.getenv(
                 "AZURE_BATCH_DOCKER_CONTAINER_WORK_DIR", "/app"
             ),

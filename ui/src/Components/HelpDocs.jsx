@@ -37,11 +37,7 @@ const HelpDocs = () => {
       appTitle: "HASTE Docs",
     }));
     setIsLoading(false);
-  }, []);
-
-  useEffect(() => {
-    setSelectedKey(currentHelpDocSection.replace('#', '-'));
-  }, [currentHelpDocSection]);
+  }, [setAppParams, setIsLoading]);
 
   const navLinkGroups = [
     {
@@ -196,6 +192,11 @@ const HelpDocs = () => {
               onClick: () => setCurrentHelpDocSection('modelCatalog#use-the-model-catalog'),
             },
             {
+              key: 'modelCatalog-run-inference-without-training',
+              name: 'Run Inference Without Training',
+              onClick: () => setCurrentHelpDocSection('modelCatalog#run-inference-without-training'),
+            },
+            {
               key : 'modelCatalog-remove-a-model-from-the-catalog',
               name: 'Remove a Model from Catalog',
               onClick: () => setCurrentHelpDocSection('modelCatalog#remove-a-model-from-the-catalog'),
@@ -206,26 +207,18 @@ const HelpDocs = () => {
     }
   ];
 
-  const [selectedKey, setSelectedKey] = useState(navLinkGroups[0].links[0].key);
-
+  const selectedKey = currentHelpDocSection.replace('#', '-');
 
   const navigate = useNavigate();
 
-  function getCurrentHelpDocSection() {
+  // Update the URL when currentHelpDocSection changes.
+  useEffect(() => {
+    navigate(`/help-docs/${currentHelpDocSection || "overview"}`);
+  }, [currentHelpDocSection, navigate]);
 
+  function getCurrentHelpDocSection() {
     const section = currentHelpDocSection ? currentHelpDocSection.split("#")[0] : "overview";
     const anchor = currentHelpDocSection ? currentHelpDocSection.split("#")[1] : null;
-
-    // Update the URL when currentHelpDocSection changes
-    useEffect(() => {
-      if (currentHelpDocSection) {
-        navigate(`/help-docs/${currentHelpDocSection}`);
-      } else {
-        navigate(`/help-docs/overview`);
-      }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentHelpDocSection]);
-
     switch (section) {
       case "overview":
         return <HelpDocsOverview anchor={anchor} setCurrentHelpDocSection={setCurrentHelpDocSection} />;

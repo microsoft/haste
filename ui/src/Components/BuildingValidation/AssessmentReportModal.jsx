@@ -176,6 +176,7 @@ const AssessmentReportModal = ({
   const edited = (report?.predictionVersion ?? 0) > 0;
 
   const preds = report?.predictions;
+  const hasUnscored = (preds?.unscored ?? 0) > 0;
   const pop = report?.populationEstimate;
   const metrics = report?.metrics;
   const sample = report?.evaluationSample;
@@ -248,7 +249,10 @@ const AssessmentReportModal = ({
                   <div style={{ display: "flex", flexDirection: "column", gap: tokens.spacingS }}>
                     <div style={rowStyle}>
                       <div style={{ flexGrow: 1, ...halfItemStyle }}>
-                        <MetricCard label="Buildings with a prediction" value={int(preds?.total)} />
+                        <MetricCard
+                          label={hasUnscored ? "Buildings in results" : "Buildings with a prediction"}
+                          value={int(preds?.total)}
+                        />
                       </div>
                       <div style={{ flexGrow: 1, ...halfItemStyle }}>
                         <MetricCard label="Known predictions" value={int(preds?.knownNonCloudy)} />
@@ -262,6 +266,9 @@ const AssessmentReportModal = ({
                         <MetricCard label={edited ? "Damaged (saved analyst classes)" : `Predicted damaged (> ${report.threshold})`} value={`${int(preds?.predictedDamaged)} (${preds?.predictedDamagedPctOfKnown ?? 0}% of known predictions)`} accent={tokens.colorDangerForeground1} />
                       </div>
                     </div>
+                    {hasUnscored && (
+                      <MetricCard label="No observation (subset of Unknown)" value={int(preds.unscored)} />
+                    )}
                   </div>
                 </div>
 

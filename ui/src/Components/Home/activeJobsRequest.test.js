@@ -68,3 +68,17 @@ test("polls only while visible and idle", () => {
     false
   );
 });
+
+test("compact active jobs preserve pretrained inference progress without client-side training fan-out", () => {
+  for (const status of ["Queued", "InProgress"]) {
+    const job = Object.freeze({
+      key: "inference:catalog-run", kind: "Inference", projectId: "project-1",
+      imageLayerId: "layer-1", modelId: "catalog-run", name: "Catalog inference fixture",
+      indicator: Object.freeze({ status, currentStep: 1, totalSteps: 7, progressPct: 15 }),
+    });
+    const jobs = activeJobsAfterResponse([], { status: 200, data: { jobs: [job] } });
+    assert.deepEqual(jobs, [job]);
+    assert.deepEqual(activeJobIndicatorProps(jobs[0].indicator), job.indicator);
+    assert.equal(activeJobsAfterResponse(jobs, { status: 304, data: null }), jobs);
+  }
+});

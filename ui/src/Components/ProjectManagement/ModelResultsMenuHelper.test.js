@@ -167,6 +167,32 @@ test("test_standard_artifacts_remain_available_without_predictions", () => {
   assert.equal(menu("embedding").some((entry) => entry.key === artifact.key), false);
 });
 
+test("test_pretrained_results_use_shared_readiness_without_training_or_inference_job_history", () => {
+  const model = {
+    ...ready, modelType: "pretrained", status: null, trainingJob: null, inferenceJobs: [],
+  };
+  assert.ok(menu("inference", model).every((entry) => !entry.disabled));
+  const rawOnly = menu("inference", {
+    ...model, predictionsReady: false,
+    predictionsReadiness: { attrsReady: false, detail: "Prediction attributes are not available." },
+  });
+  assert.equal(item(rawOnly, "viewResults").disabled, true);
+  assert.match(item(rawOnly, "viewResults").tooltip, /attributes are not available/);
+  for (const key of ["downloadGeopackage", "validationReport", "assessmentReport"]) {
+    assert.equal(item(rawOnly, key).disabled, false, key);
+  }
+});
+
+test("test_failed_pretrained_runs_keep_available_inference_artifacts_reachable", () => {
+  const artifact = { key: "downloadInferenceArtifacts", disabled: false, onClick() {} };
+  const items = menu("inference", {
+    modelType: "pretrained", status: null, inferenceStatus: "Failed", inferenceJobs: [],
+  }, { artifactItems: [artifact] });
+  assert.equal(item(items, "downloadInferenceArtifacts"), artifact);
+  assert.equal(items.every((entry) => entry.disabled), false);
+  assert.equal(item(items, "viewResults").disabled, true);
+});
+
 test("test_rows_delegate_modals_and_preserve_layout_hooks", async () => {
   const read = (name) => readFile(new URL(name, import.meta.url), "utf8");
   const shared = await read("ModelResultsMenu.jsx");

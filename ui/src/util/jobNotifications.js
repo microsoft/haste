@@ -30,11 +30,13 @@ export function collectProjectJobStates(project) {
       if (!modelId) continue;
       const isEmbedding = model.modelType === "embedding";
 
-      jobs.set(`${isEmbedding ? "embedding" : "training"}:${modelId}`, {
-        status: model.status,
-        title: isEmbedding ? "Embedding" : "Model training",
-        subject: model.name || (isEmbedding ? "Embedding" : "Model"),
-      });
+      if (model.modelType !== "pretrained") {
+        jobs.set(`${isEmbedding ? "embedding" : "training"}:${modelId}`, {
+          status: model.status,
+          title: isEmbedding ? "Embedding" : "Model training",
+          subject: model.name || (isEmbedding ? "Embedding" : "Model"),
+        });
+      }
 
       if (model.inferenceStatus) {
         jobs.set(`inference:${modelId}`, {

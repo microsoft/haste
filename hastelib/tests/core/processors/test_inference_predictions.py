@@ -92,6 +92,18 @@ class TestInferenceResults(ResultsTestCase):
         )
         self.assertEqual(self.record["predictionRevision"], "old")
 
+    def test_catalog_record_cannot_enter_legacy_queue_without_identity(
+        self,
+    ) -> None:
+        self.record["modelType"] = "pretrained"
+        self.assertIsNone(
+            inference.process_inference_request(
+                Model(**self.record), self.config
+            )
+        )
+        self.runner.add_task.assert_not_called()
+        self.runner.get_task_status.assert_not_called()
+
     def test_completed_pair_is_checked_in_local_and_batch_upload_paths(
         self,
     ) -> None:

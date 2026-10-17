@@ -53,7 +53,9 @@ def set_up_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def classify(x: float) -> int:
+def classify(x: float | None) -> int | None:
+    if x is None or not np.isfinite(x):
+        return None
     thresholds = [0.2, 0.4, 0.6, 0.8]
     for i, threshold in enumerate(thresholds):
         if x <= threshold:
@@ -63,6 +65,11 @@ def classify(x: float) -> int:
 
 def main(args: argparse.Namespace) -> None:
     """Main function for the output2visualizer.py script."""
+    if os.path.realpath(args.output_fn) in {
+        os.path.realpath(args.predictions_fn),
+        os.path.realpath(args.merged_footprints_fn),
+    }:
+        raise ValueError("Output must not overwrite an input")
     if os.path.exists(args.output_fn) and not args.overwrite:
         raise FileExistsError(
             f"{args.output_fn} already exists. Use --overwrite to overwrite it."
@@ -74,6 +81,8 @@ def main(args: argparse.Namespace) -> None:
         predictions_crs = src.crs
         height, width = src.shape
         transform = src.transform
+        # Class zero is invalid, not observed background (which is class 1).
+        observed = (src.read_masks(1) != 0) & np.isin(src.read(1), [1, 2, 3])
 
     ############################################
     # Read predictions within building footprints
@@ -108,6 +117,7 @@ def main(args: argparse.Namespace) -> None:
         rasterio.features.rasterize(
             shape_vals, out=mask, transform=transform, fill=0
         )
+    mask[~observed] = 0
 
     colors = IDX_TO_COLOR[mask]
     colors = colors.transpose(2, 0, 1)
@@ -122,7 +132,7 @@ def main(args: argparse.Namespace) -> None:
         width=width,
         count=4,
         dtype="uint8",
-        nodata=0,
+        nodata=None,
         compress="LZW",
         blocksize=512,
         overview_resampling="nearest",
