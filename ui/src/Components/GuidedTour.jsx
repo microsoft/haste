@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { AppContext } from "../AppContext.jsx";
 import {
   Text,
@@ -38,6 +38,8 @@ const GuidedTour = () => {
   const [isVisible, setIsVisible] = useState(false);
   // Bounding rect of the currently highlighted target (spotlight).
   const [spot, setSpot] = useState(null);
+  const cardRef = useRef(null);
+  const focusedStepRef = useRef(null);
 
   
 
@@ -73,6 +75,7 @@ const GuidedTour = () => {
   };
 
   const closeTour = () => {
+    focusedStepRef.current = null;
     initCurrentTour(null);
     setFilteredTourSteps([]);
     setSpot(null);
@@ -104,8 +107,25 @@ const GuidedTour = () => {
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appParams.currentTourStep, filteedTourSteps, isVisible]);
+
+  useEffect(() => {
+    if (!isVisible || !appParams.currentTour) {
+      focusedStepRef.current = null;
+      return;
+    }
+
+    const focusKey = `${appParams.currentTour.name}:${appParams.currentTourStep}`;
+    if (spot && focusedStepRef.current !== focusKey) {
+      cardRef.current?.focus();
+      focusedStepRef.current = focusKey;
+    }
+  }, [
+    appParams.currentTour,
+    appParams.currentTourStep,
+    isVisible,
+    spot,
+  ]);
 
   const renderTeachingBubble = () => {
     const step = filteedTourSteps[appParams.currentTourStep - 1];
@@ -127,13 +147,20 @@ const GuidedTour = () => {
 
     const totalSteps = filteedTourSteps.length;
 
-    return (
+    const tourContent = (
       <div className="tour-overlay">
         <div
           className="tour-hole"
           style={{ top: holeTop, left: holeLeft, width: holeW, height: holeH }}
         />
-        <div className="tour-card" style={cardStyle}>
+        <div
+          aria-labelledby="guided-tour-title"
+          className="tour-card"
+          ref={cardRef}
+          role="region"
+          style={cardStyle}
+          tabIndex={-1}
+        >
           <div className="tour-card-head">
             <span className="tour-eyebrow">Quick tour</span>
             <Button
@@ -143,7 +170,9 @@ const GuidedTour = () => {
               onClick={closeTour}
             />
           </div>
-          <Text className="tour-card-title">{step.title}</Text>
+          <Text className="tour-card-title" id="guided-tour-title">
+            {step.title}
+          </Text>
           <div className="tour-card-body">
             {/*
               SECURITY: parse() renders HTML from tour-step `content`. This
@@ -194,6 +223,8 @@ const GuidedTour = () => {
         </div>
       </div>
     );
+
+    return tourContent;
   };
 
   const renderFixedCard = () => {

@@ -70,6 +70,58 @@ export const AppProvider = ({ children }) => {
       ],
     },
     {
+      name: "createProjectGuide",
+      cookieName: "createProjectGuidedTour",
+      steps: [
+        {
+          type: "teachingBubble",
+          target: "#createEditProjectName",
+          title: "Identify the project",
+          content:
+            "Give the assessment a recognizable name so collaborators can distinguish it from other events.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#createEditProjectDescription",
+          title: "Describe the project",
+          content:
+            "Summarize the event and the purpose of this assessment for collaborators.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#createEditProjectEventDate",
+          title: "Set the event date",
+          content: "Choose the date when the disaster or event occurred.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#createEditProjectAffectedCountries",
+          title: "Add affected countries",
+          content: "Select every country covered by this assessment.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#createEditProjectEventTypes",
+          title: "Select event types",
+          content: "Select all event categories that apply to this project.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#createEditProjectPrimaryClasses",
+          title: "Define assessment classes",
+          content:
+            "Use the default damage categories or tailor their names and colors before creating the project.",
+        },
+        {
+          type: "teachingBubble",
+          target: "#createEditProjectSubmit",
+          title: "Create the project",
+          content:
+            "Review the required fields, then submit. Validation will focus the first item that still needs attention.",
+        },
+      ],
+    },
+    {
       name: "singleProjectGuide",
       cookieName: "generalGuidedTour",
       steps: [
