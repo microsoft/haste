@@ -31,4 +31,6 @@ jobs:
             /tmp/titiler-test-requirements.txt
           python -m pip install -r /tmp/titiler-test-requirements.txt httpx
       - name: Run tests
+        env:
+          PYTHONPATH: api/titilerfuncapi
         run: python -m unittest discover -s api/titilerfuncapi/tests -t . -v
