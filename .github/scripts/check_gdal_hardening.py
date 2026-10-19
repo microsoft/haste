@@ -48,6 +48,9 @@ FORBIDDEN_VALUES = {
     "GDAL_VRT_PYTHON_TRUSTED_MODULES": r"[^'\"\s][^)]*",
     "GDAL_PYTHON_DRIVER_PATH": r"[^'\"\s][^)]*",
     "GDAL_DRIVER_PATH": r"(?!disable\b)[^'\"\s][^)]*",
+    "GDAL_DISABLE_READDIR_ON_OPEN": (
+        r"(?!EMPTY_DIR\b)[^'\"\s][^)]*"
+    ),
     "CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED": (
         r"(?:YES|TRUE|ON|1|ONLY_IN_TEMP)"
     ),

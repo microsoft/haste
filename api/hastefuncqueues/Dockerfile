@@ -5,6 +5,7 @@ WORKDIR /home/site/wwwroot
 ENV GDAL_VRT_ENABLE_RAWRASTERBAND=NO \
     GDAL_VRT_ENABLE_PYTHON=NO \
     GDAL_DRIVER_PATH=disable \
+    GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR \
     CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED=NO
 
 # Create non-root user first so COPY --chown can reference it; Secrets dir is empty so chown is fast

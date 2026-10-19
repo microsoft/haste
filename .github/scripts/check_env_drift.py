@@ -102,6 +102,7 @@ ALLOWLIST = {
     # Read by the native GDAL/CPL libraries rather than Python code.
     "CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED": "consumed by GDAL's CPL runtime",
     "GDAL_DRIVER_PATH": "consumed by GDAL's driver manager",
+    "GDAL_DISABLE_READDIR_ON_OPEN": "consumed by GDAL's directory scanner",
     "GDAL_VRT_ENABLE_PYTHON": "consumed by GDAL's VRT driver",
     "GDAL_VRT_ENABLE_RAWRASTERBAND": "consumed by GDAL's VRT driver",
 }

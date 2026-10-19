@@ -169,6 +169,7 @@ var gdalHardeningSettings = [
   { name: 'GDAL_VRT_ENABLE_RAWRASTERBAND', value: 'NO' }
   { name: 'GDAL_VRT_ENABLE_PYTHON', value: 'NO' }
   { name: 'GDAL_DRIVER_PATH', value: 'disable' }
+  { name: 'GDAL_DISABLE_READDIR_ON_OPEN', value: 'EMPTY_DIR' }
   { name: 'CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED', value: 'NO' }
 ]
 var titilerGdalHardeningSettings = concat(gdalHardeningSettings, [

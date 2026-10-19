@@ -27,6 +27,7 @@ class GdalHardeningGuardTests(unittest.TestCase):
             "GDAL_VRT_ENABLE_RAWRASTERBAND",
             "GDAL_VRT_ENABLE_PYTHON",
             "GDAL_DRIVER_PATH",
+            "GDAL_DISABLE_READDIR_ON_OPEN",
             "CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED",
         )
         for relative_path in surfaces:
@@ -50,6 +51,7 @@ class GdalHardeningGuardTests(unittest.TestCase):
             'GDAL_VRT_RAWRASTERBAND_ALLOWED_SOURCE = "ALL"',
             'GDAL_PYTHON_DRIVER_PATH = "/tmp/plugins"',
             'GDAL_DRIVER_PATH = "/tmp/plugins"',
+            "GDAL_DISABLE_READDIR_ON_OPEN=NO",
             "CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED=ONLY_IN_TEMP",
             "CPL_ENABLE_PATH_TRAVERSAL_DETECTION=NO",
             'gdal.SetConfigOption("GDAL_HTTP_UNSAFESSL", "YES")',
@@ -66,6 +68,7 @@ class GdalHardeningGuardTests(unittest.TestCase):
             "GDAL_VRT_ENABLE_RAWRASTERBAND=NO",
             "GDAL_VRT_ENABLE_PYTHON=NO",
             "GDAL_DRIVER_PATH=disable",
+            "GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR",
             'GDAL_SKIP="VRT HDF5"',
         )
         with tempfile.TemporaryDirectory() as temp_dir:

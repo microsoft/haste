@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "11511201165685226687"
+      "templateHash": "15373772247851481484"
     }
   },
   "parameters": {
@@ -1547,7 +1547,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.47.16.16243",
-              "templateHash": "16528792065408680215"
+              "templateHash": "13934699567350286886"
             }
           },
           "parameters": {
@@ -1864,6 +1864,10 @@
               {
                 "name": "GDAL_DRIVER_PATH",
                 "value": "disable"
+              },
+              {
+                "name": "GDAL_DISABLE_READDIR_ON_OPEN",
+                "value": "EMPTY_DIR"
               },
               {
                 "name": "CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED",
