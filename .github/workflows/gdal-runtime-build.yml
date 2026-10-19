@@ -6,12 +6,40 @@ on:
       - main
     paths:
       - "native/gdal-runtime/**"
+      - ".github/scripts/publish_gdal_runtime.py"
+      - ".github/scripts/tests/test_publish_gdal_runtime.py"
+      - "api/titilerfuncapi/**"
+      - "hastelib/src/hastegeo/__init__.py"
+      - "hastelib/src/hastegeo/core/processors/uploader.py"
+      - "hastelib/src/hastegeo/core/utils/footprints.py"
+      - "hastelib/src/hastegeo/core/utils/gdal_security.py"
+      - "hastelib/src/hastegeo/core/utils/imagery.py"
+      - "hastelib/src/hastegeo/workflows/prepare_imagery.py"
+      - "hastelib/tests/core/processors/test_uploader_format.py"
+      - "hastelib/tests/core/utils/test_footprints.py"
+      - "hastelib/tests/core/utils/test_gdal_security.py"
+      - "hastelib/tests/core/utils/test_imagery.py"
+      - "hastelib/tests/core/utils/test_imagery_runtime.py"
       - ".github/workflows/gdal-runtime-build.yml"
   push:
     branches:
       - main
     paths:
       - "native/gdal-runtime/**"
+      - ".github/scripts/publish_gdal_runtime.py"
+      - ".github/scripts/tests/test_publish_gdal_runtime.py"
+      - "api/titilerfuncapi/**"
+      - "hastelib/src/hastegeo/__init__.py"
+      - "hastelib/src/hastegeo/core/processors/uploader.py"
+      - "hastelib/src/hastegeo/core/utils/footprints.py"
+      - "hastelib/src/hastegeo/core/utils/gdal_security.py"
+      - "hastelib/src/hastegeo/core/utils/imagery.py"
+      - "hastelib/src/hastegeo/workflows/prepare_imagery.py"
+      - "hastelib/tests/core/processors/test_uploader_format.py"
+      - "hastelib/tests/core/utils/test_footprints.py"
+      - "hastelib/tests/core/utils/test_gdal_security.py"
+      - "hastelib/tests/core/utils/test_imagery.py"
+      - "hastelib/tests/core/utils/test_imagery_runtime.py"
       - ".github/workflows/gdal-runtime-build.yml"
   workflow_dispatch:
 

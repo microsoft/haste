@@ -183,6 +183,8 @@ class LockTests(unittest.TestCase):
             / "gdal-runtime-build.yml"
         ).read_text(encoding="utf-8")
 
+        self.assertIn(".github/scripts/publish_gdal_runtime.py", workflow)
+        self.assertIn("api/titilerfuncapi/**", workflow)
         self.assertIn("target-image-smoke:", workflow)
         self.assertIn("actions/download-artifact@", workflow)
         self.assertIn("functions-python311", workflow)
