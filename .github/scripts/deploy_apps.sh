@@ -90,6 +90,7 @@ DEPLOY_RULE_PREFIX="haste-ci-"
 DEPLOY_RULE_NAME="${DEPLOY_RULE_PREFIX}${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}"
 DEPLOY_RUNNER_IP=""
 DEPLOY_ACCESS_APPS=()
+GDAL_RUNTIME_PENDING_APPS=()
 FIXED_TAGS="project=haste created_by=deploy_apps"
 DYNAMIC_TAGS="env=${ENVIRONMENT} deployed_version=${APP_TAG}"
 EMAIL_SENDER="DoNotReply@notifications.${STATIC_APP_DOMAIN}"
@@ -187,6 +188,18 @@ forget_deploy_access_app() {
     DEPLOY_ACCESS_APPS=("${KEPT[@]}")
 }
 
+forget_gdal_runtime_pending_app() {
+    local APP=$1
+    local APP_PENDING
+    local KEPT=()
+    for APP_PENDING in "${GDAL_RUNTIME_PENDING_APPS[@]}"; do
+        if [ "$APP_PENDING" != "$APP" ]; then
+            KEPT+=("$APP_PENDING")
+        fi
+    done
+    GDAL_RUNTIME_PENDING_APPS=("${KEPT[@]}")
+}
+
 # Rule updates can fail transiently (a concurrent change to the site config,
 # throttling), so a removal is retried before it counts as failed.
 retry_remove_deploy_access() {
@@ -223,6 +236,23 @@ close_deploy_access() {
 cleanup_deploy_access() {
     local STATUS=$?
     local FUNCTION_NAME
+    for FUNCTION_NAME in "${GDAL_RUNTIME_PENDING_APPS[@]}"; do
+        if ! az functionapp config appsettings set \
+            --name "$FUNCTION_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --settings "HASTE_GDAL_RUNTIME_REQUIRED=true" \
+            --output none; then
+            echo "ERROR: Could not restore fail-closed GDAL runtime enforcement on '$FUNCTION_NAME'." >&2
+            STATUS=1
+            continue
+        fi
+        if ! az functionapp restart \
+            --name "$FUNCTION_NAME" \
+            --resource-group "$RESOURCE_GROUP"; then
+            echo "ERROR: Could not restart '$FUNCTION_NAME' after restoring GDAL runtime enforcement." >&2
+            STATUS=1
+        fi
+    done
     for FUNCTION_NAME in "${DEPLOY_ACCESS_APPS[@]}"; do
         if ! retry_remove_deploy_access "$FUNCTION_NAME"; then
             echo "ERROR: Could not remove the temporary deploy rules from '$FUNCTION_NAME'. Remove its access rules named ${DEPLOY_RULE_PREFIX}* by hand." >&2
@@ -336,6 +366,7 @@ deploy_function() {
             exit 1
         }
 
+        GDAL_RUNTIME_PENDING_APPS+=("$FUNCTION_NAME")
         az functionapp config appsettings set --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --settings \
             "${size_settings[@]}" \
             "${gdal_settings[@]}" \
@@ -394,6 +425,7 @@ deploy_function() {
             "AzureFunctionsWebHost__hostId=${HOST_ID}" \
             --output none
     else
+        GDAL_RUNTIME_PENDING_APPS+=("$FUNCTION_NAME")
         az functionapp config appsettings set --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --settings \
             "${gdal_settings[@]}" \
             --output none
@@ -473,6 +505,7 @@ deploy_function() {
         --settings "HASTE_GDAL_RUNTIME_REQUIRED=true" \
         --output none
     az functionapp restart --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP"
+    forget_gdal_runtime_pending_app "$FUNCTION_NAME"
 
     # Record the wheel this app actually installed. Nothing else on the app
     # says which hastegeo it is running -- the wheel is pinned into

@@ -374,6 +374,19 @@ class TestDeployNetworkAccess(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("scm:haste-ci-77-2", self.publish_line(calls))
         self.assertEqual(self.rule_names(final), ["AllowSubnet-1"])
+        runtime_settings = [
+            index
+            for index, call in enumerate(calls)
+            if call.startswith("functionapp config appsettings set")
+            and "HASTE_GDAL_RUNTIME_REQUIRED=true" in call
+        ]
+        self.assertTrue(runtime_settings)
+        self.assertTrue(
+            any(
+                call.startswith("functionapp restart")
+                for call in calls[runtime_settings[-1] + 1 :]
+            )
+        )
 
     def test_transient_cleanup_failure_is_retried(self) -> None:
         result, _, final = self.run_deploy(fail_removals=1)
