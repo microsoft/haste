@@ -5,16 +5,16 @@
 | 0 | Spec and ADR-0007 | `backend-dev` | done |
 | 0 | Baseline runtime report from every current runtime | `backend-dev` | report script implemented; collection from current runtimes pending |
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
-| 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | implemented; private run `38955056455` passed real-runtime smoke; current review fixes still need a fresh CI build |
+| 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | implemented; manifest now records all binding versions and startup checks compare them with installed wheels; latest private CI build pending |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private run `38955056455` passed build, all-binding smoke, Grype SBOM scan, and Functions/imageryprep/training-base smoke; current changes add wheel-path scanning, SPDX/name metadata for locked sources and wheels, and a protected publisher; fresh CI pending; upstream-only attestation skipped on fork |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private run `38955056455` passed the native build, all-binding smoke, Grype SBOM scan, and base-image smokes; current revision adds binary scanning, binding-version manifest checks, app-package builds, and a full Python 3.11 training-environment smoke; latest CI pending; upstream-only attestation skipped on fork |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | private publisher verifies provenance, exact source-lock/SBOM match, wheel licenses, checksums and immutable upload; local tests pass; Microsoft OSS approval and upstream confirmation still required |
-| 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | in progress: single-libgdal/libproj checks and startup activation in `hastegeo` are implemented; runtime installation and required-setting wiring remain |
+| 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | in progress: single-libgdal/libproj and per-binding version checks are implemented; consumer packages install the shared wheel set and enable fail-closed startup; CI integration is pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | in progress: uploaded chunk headers, downloaded TIFFs and user GPKG inputs are content-checked; imagery opens are GTiff-only and GPKG reads use Fiona's GPKG allowlist; audit of remaining GDAL opens/configuration paths is pending |
-| 2 | GDAL hardening settings in Bicep, `deploy_apps.sh`, Dockerfiles and compose | `backend-dev` | in progress: VRT raw-band/Python disablement, plugin disablement, `/vsicurl` header KVP rejection and TiTiler VRT denylist are wired through Function Apps and local/container config; generated template compiles; runtime wheel installation remains pending |
-| 3 | TiTiler: hash-locked dependencies on the runtime; startup self-check; VRT driver policy; negative tests | `backend-dev` | in progress: startup hook excludes VRT and a native-runtime smoke tests WarpedVRT with VRT disabled; fresh CI result, wheel installation, request-source restrictions, and `/vsi` negative tests remain |
-| 4 | Build-once Function App packages; `--no-build` deploy; post-deploy verification | `backend-dev` | pending |
-| 5 | imageryprep and training images (training to Python 3.11); local dev and CI test environments | `backend-dev` + `gis` | pending |
+| 2 | GDAL hardening settings in Bicep, `deploy_apps.sh`, Dockerfiles and compose | `backend-dev` | implemented in private fork: runtime-required flag and `GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR` are wired through deployment and container surfaces; Bicep compiles; deploy script keeps old workers running until package publish succeeds, then enables fail-closed startup |
+| 3 | TiTiler: hash-locked dependencies on the runtime; startup self-check; VRT driver policy; negative tests | `backend-dev` | startup policy and VRT-disabled reprojection smoke are implemented; private CI now builds/import-tests a TiTiler package against the native artifact; request-source restrictions and `/vsi` negative tests remain |
+| 4 | Build-once Function App packages; `--no-build` deploy; post-deploy verification | `backend-dev` | private CI package builder implemented for API, queues, and TiTiler: resolves against this run's wheel artifact, emits a hash lock and package SHA-256, imports the app in the Functions Python 3.11 image, and uploads the packages; deploy consumption and post-deploy checks remain gated |
+| 5 | imageryprep and training images (training to Python 3.11); local dev and CI test environments | `backend-dev` + `gis` | imageryprep and full training environment now pin the shared wheels; training moves to Python 3.11 and replaces `ogr2ogr`, `gdal_rasterize`, and `gdal_translate` with in-process APIs; private full-environment smoke pending; local dev update remains |
 | 6 | Dependency pin guards, forbidden-configuration guard, docs, close the GDAL exception | `backend-dev` | in progress: repo guard rejects weakened GDAL settings across infra, workflows, scripts, API and Docker config; release-package guards added; old dependency pins and exception stay until runtime consumer packages are built and approved |
 | 7 | Dev rollout, runtime evidence, production after approval | `backend-dev` | pending |
 
@@ -48,22 +48,26 @@ What exists:
 
 Next, in order:
 
-1. Complete the OSS license review, confirm the immutable publisher target,
-   and publish the verified wheels and evidence. The training job creates a
-   temporary Python 3.11 Conda env; migration of the full training env remains
-   pending. The private smoke required fixes for binding-specific versions,
+1. Finish CI for the current private head: build and validate the native
+   bundle, resolve/import-test the three Function App packages, and create the
+   full training Conda environment using the same runtime wheels. The current
+   training smoke also exercises in-process mask rasterization and COG
+   translation. Do not publish or deploy from the private fork.
+2. Complete the OSS license review, confirm the immutable publisher target,
+   and publish the verified wheels and evidence only after approval. The
+   private smoke required fixes for binding-specific versions,
    source-checkout import shadowing, Pyogrio WKB type, GDAL's documented CA
    setting (`GDAL_CURL_CA_BUNDLE`), and internal-feed rate limiting. The
-   builder run `38946439904` passed after those fixes. The build now generates
-   a CycloneDX inventory, bundled license text where available, a license
-   inventory that flags missing texts for review, and SHA-256 checksums. Current
-   unvalidated changes add a Grype scan of built wheel files, license metadata
-   and notice references for locked native sources, a SQLite public-domain
-   notice, and a publisher that rejects unlicensed SBOM components. Microsoft
-   OSS approval remains pending.
-2. Integrate the published artifact into the runtime self-check, TiTiler/API/
-   queues packages, imageryprep and training image builds; complete the
-   approved dev1 rollout only after those consumers pass their tests.
+   builder run `38946439904` passed after those fixes. The build emits a
+   CycloneDX inventory, bundled license text where available, a license
+   inventory that flags missing texts for review, and SHA-256 checksums. The
+   publisher validates source-lock/SBOM agreement, notices, wheel metadata,
+   hashes, and immutable asset names. Microsoft OSS approval remains pending.
+3. After explicit approval to move upstream, integrate the artifact into the
+   upstream release/deployment path and deploy the same tested Function App
+   packages and container images to a development environment. Verify runtime
+   reports and HASTE workflow smokes before treating it as ready. Other
+   development, production, and community environments remain separately gated.
 
 ## Verified build facts
 

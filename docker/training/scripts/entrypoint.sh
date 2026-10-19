@@ -31,7 +31,7 @@ echo "[TRAINING-ENTRYPOINT] Python version:"
 python --version
 
 echo "[TRAINING-ENTRYPOINT] Verifying training workflow import"
-python -c "import hastegeo" 2>&1 || echo "[TRAINING-ENTRYPOINT] Failed to import base hastegeo package"
+python -c "import hastegeo; print('Successfully imported hastegeo')" 2>&1
 
 # When no command is provided (e.g. compose build helper), drop into bash to avoid exiting with an error
 if [ $# -eq 0 ]; then

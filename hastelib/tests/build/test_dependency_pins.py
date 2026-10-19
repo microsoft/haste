@@ -143,10 +143,19 @@ class GdalPinConsistencyTests(unittest.TestCase):
                     {expected_build},
                     set(re.findall(r"\+haste\.(\d+)", unquote(text))),
                 )
-                filenames = [
-                    Path(unquote(urlsplit(url).path)).name
-                    for url in re.findall(r"https://\S+\.whl", text)
-                ]
+                filenames = []
+                for line in text.splitlines():
+                    match = re.match(
+                        r"^\s*-?\s*([A-Za-z0-9_.-]+)\s*@\s*(https://\S+)",
+                        line,
+                    )
+                    if not match:
+                        continue
+                    name = re.sub(r"[-_.]+", "-", match.group(1)).lower()
+                    if name in expected:
+                        filenames.append(
+                            Path(unquote(urlsplit(match.group(2)).path)).name
+                        )
                 for filename in filenames:
                     if filename.startswith("haste_gdal_runtime-"):
                         self.assertIn(

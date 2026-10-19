@@ -115,9 +115,7 @@ def update_metadata(
         output.append(f"Requires-Dist: {RUNTIME_NAME}=={runtime_version}")
     updated_header = "\n".join(output)
     updated = (
-        f"{updated_header}\n\n{body}"
-        if separator
-        else f"{updated_header}\n"
+        f"{updated_header}\n\n{body}" if separator else f"{updated_header}\n"
     )
     return updated.encode("utf-8")
 

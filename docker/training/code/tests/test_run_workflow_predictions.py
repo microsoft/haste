@@ -73,8 +73,6 @@ def workflow_case(tmp_path, mocker):
             assert payload["predictionRevision"] == "run-1234"
             assert payload["classes"] == ["Damaged"]
             visualizer.main(visualizer.set_up_parser().parse_args(command[2:]))
-        elif step == "gdal_translate":
-            rasterio.shutil.copy(command[-2], command[-1], driver="COG")
         else:
             pytest.fail(f"Unexpected step: {step}")
 
@@ -87,6 +85,15 @@ def workflow_case(tmp_path, mocker):
     )
     mocker.patch.object(workflow, "run_subprocess", side_effect=launch)
 
+    def translate_to_cog(source, destination, parameters):
+        assert parameters == ""
+        steps.append("gdal_translate")
+        rasterio.shutil.copy(source, destination, driver="COG")
+
+    mocker.patch.object(
+        workflow, "translate_to_cog", side_effect=translate_to_cog
+    )
+
     def run(step="inference"):
         config_path = tmp_path / "config.yml"
         config_path.write_text(yaml.safe_dump(config))
@@ -97,6 +104,20 @@ def workflow_case(tmp_path, mocker):
         workflow.main()
 
     return config, run, steps, attrs
+
+
+def test_translate_creation_options_accepts_plain_and_cli_style_values():
+    assert workflow.gdal_translate_creation_options(
+        "COMPRESS=ZSTD PREDICTOR=2"
+    ) == ["COMPRESS=ZSTD", "PREDICTOR=2"]
+    assert workflow.gdal_translate_creation_options(
+        "-co COMPRESS=ZSTD -co PREDICTOR=2 -of COG"
+    ) == ["COMPRESS=ZSTD", "PREDICTOR=2"]
+
+
+def test_translate_creation_options_rejects_unsupported_cli_switches():
+    with pytest.raises(ValueError, match="format COG"):
+        workflow.gdal_translate_creation_options("-of GTiff")
 
 
 @pytest.mark.parametrize("step", ["inference", None])

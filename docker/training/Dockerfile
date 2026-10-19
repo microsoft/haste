@@ -82,18 +82,14 @@ RUN sed -i 's/\r$//' /app/scripts/*.sh && chmod +x /app/scripts/*.sh
 
 # Activate the environment by default and expose shared data directories
 ENV PATH="/opt/conda/envs/bda/bin:${PATH}"
-ENV PROJ_LIB=/opt/conda/envs/bda/share/proj
-ENV GDAL_DATA=/opt/conda/envs/bda/share/gdal
 ENV PYTHONPATH=/app
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
-# Refuse the GDAL drivers carrying the deferred CVEs (HDF4/HDF-EOS heap
-# overflow CVE-2026-8087 et al.) at the GDAL level, so subprocess CLI tools
-# (gdalwarp/gdal_translate) and the runtime never register them. In-process
-# training step entrypoints additionally call hastegeo.core.utils.
-# gdal_security.harden_gdal(). See docs/known-vulnerabilities.md Root Cause C.
+# Refuse unused GDAL drivers at the GDAL level. Training invokes GDAL through
+# the shared Python runtime rather than shipping separate CLI executables.
 ENV GDAL_SKIP="HDF4 HDF4Image HDF5 HDF5Image netCDF"
+ENV HASTE_GDAL_RUNTIME_REQUIRED=true
 ENV GDAL_VRT_ENABLE_RAWRASTERBAND=NO
 ENV GDAL_VRT_ENABLE_PYTHON=NO
 ENV GDAL_DRIVER_PATH=disable
