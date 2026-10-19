@@ -214,8 +214,12 @@ class LockTests(unittest.TestCase):
         self.assertIn("github.repository == 'microsoft/haste'", workflow)
         self.assertIn("actions/attest@", workflow)
         self.assertIn("sbom-path:", workflow)
+        self.assertIn("publisher-unit:", workflow)
+        self.assertIn(
+            "publish:\n    needs:\n      - attest\n      - publisher-unit",
+            workflow,
+        )
         self.assertIn("publish:", workflow)
-        self.assertIn("needs: attest", workflow)
         self.assertIn("GDAL_RUNTIME_LICENSE_REVIEWED == 'true'", workflow)
         self.assertIn("GDAL_RUNTIME_PUBLISH_ENABLED == 'true'", workflow)
         self.assertIn("gdal-runtime-publish", workflow)
