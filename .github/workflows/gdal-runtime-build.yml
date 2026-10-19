@@ -464,6 +464,8 @@ jobs:
             --env WHEEL_DIR \
             mcr.microsoft.com/azureml/curated/minimal-py312-cuda12.4-inference@sha256:171ee0f9b43d2295c0266c55b2974d1ab300ca2dbec081bdd0fb2604f75644b3 \
             -ec '
+              apt-get update
+              apt-get install -y --no-install-recommends libgl1-mesa-glx
               /opt/miniconda/bin/conda env create --yes \
                 --prefix /tmp/gdal-runtime-training \
                 --file /training-env.yml
