@@ -40,7 +40,7 @@ on:
         default: ""
         type: string
       gdal_package_run_id:
-        description: "Successful GDAL runtime build run ID with tested prebuilt Function App packages. Blank uses remote build."
+        description: "Successful GDAL runtime build run ID with tested prebuilt Function App packages. Required except for swa-only deployments."
         required: false
         default: ""
         type: string
@@ -66,7 +66,9 @@ jobs:
 
       - name: Download tested Function App packages
         id: function-packages
-        if: inputs.gdal_package_run_id != ''
+        if: >-
+          inputs.gdal_package_run_id != '' &&
+          inputs.component != 'swa'
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE_RUN_ID: ${{ inputs.gdal_package_run_id }}
@@ -97,12 +99,22 @@ jobs:
           for package in hastefuncapi hastefuncqueues titilerfuncapi; do
             (cd "$package_dir" && sha256sum --check "$package.sha256")
             gh attestation verify "$package_dir/$package.zip" \
-              --repo microsoft/haste \
+              --repo "$GITHUB_REPOSITORY" \
               --signer-workflow \
-                microsoft/haste/.github/workflows/gdal-runtime-build.yml \
+                "$GITHUB_REPOSITORY/.github/workflows/gdal-runtime-build.yml" \
               --source-ref refs/heads/main
           done
           echo "directory=$package_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Require prebuilt packages for Function App deployments
+        if: >-
+          inputs.component != 'swa' &&
+          inputs.gdal_package_run_id == ''
+        run: |
+          echo "::error::Function App deployments require gdal_package_run_id." \
+               "Select the successful GDAL runtime build for this exact source" \
+               "SHA so deployment uses the tested, attested, build-once zip."
+          exit 1
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
