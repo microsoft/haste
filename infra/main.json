@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "15373772247851481484"
+      "templateHash": "13443119327118855326"
     }
   },
   "parameters": {
@@ -1547,7 +1547,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.47.16.16243",
-              "templateHash": "13934699567350286886"
+              "templateHash": "845162239588505564"
             }
           },
           "parameters": {
@@ -1853,6 +1853,10 @@
           "variables": {
             "apimSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('apimSubnetName'))]",
             "gdalHardeningSettings": [
+              {
+                "name": "HASTE_GDAL_RUNTIME_REQUIRED",
+                "value": "true"
+              },
               {
                 "name": "GDAL_VRT_ENABLE_RAWRASTERBAND",
                 "value": "NO"

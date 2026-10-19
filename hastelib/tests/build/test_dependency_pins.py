@@ -1,27 +1,14 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-"""Guards against dependency pins that cannot actually be installed.
-
-PR #153 bumped ``gdal`` to 3.13.3 in ``hastelib/pyproject.toml`` while every
-container kept installing the prebuilt GDAL **3.9.2** wheel. Because the
-Functions images install hastegeo from the local tree (``-e ../../hastelib``),
-pip saw ``gdal==3.13.3`` and ``gdal 3.9.2`` at once and failed with
-``ResolutionImpossible``. Nothing caught it: the image build is skipped when a
-pull request touches ``hastelib/**``, and the wheel build never installs the
-images.
-
-The same bump also set ``rasterio==1.5.1``, which requires Python >= 3.12 while
-all three images run 3.11. That class of break is caught by the dependency
-resolution job in ``.github/workflows/dependency-validation.yml``; the checks
-here are the fast, offline half that needs no network.
-"""
+"""Guard that every consumer requests the shared GDAL binding versions."""
 
 import json
 import re
 import sys
 import tempfile
 import unittest
+from urllib.parse import unquote, urlsplit
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -32,106 +19,152 @@ import check_image_python  # noqa: E402
 import check_protobuf_pin  # noqa: E402
 import check_react_pins  # noqa: E402
 
-# Every requirements file that installs hastegeo from the local tree and so
-# must agree with the pin in pyproject.toml.
+# Every HASTE API or image dependency file that installs the shared runtime.
 REQUIREMENTS_FILES = (
     "api/hastefuncapi/requirements.txt",
     "api/hastefuncqueues/requirements.txt",
     "docker/imageryprep/requirements.txt",
+    "docker/training/env/env.yml",
 )
 
 DOCKERFILES = (
     "api/hastefuncapi/Dockerfile",
     "api/hastefuncqueues/Dockerfile",
     "docker/imageryprep/Dockerfile",
+    "docker/titiler/Dockerfile",
 )
 
 PYPROJECT = "hastelib/pyproject.toml"
 
-# GDAL @ https://.../GDAL-3.9.2-cp311-cp311-manylinux...whl
-_GDAL_WHEEL_RE = re.compile(
-    r"GDAL-(?P<version>\d+\.\d+\.\d+)-cp(?P<py>\d+)-", re.IGNORECASE
-)
-_PYPROJECT_GDAL_RE = re.compile(r'"gdal==(?P<version>\d+\.\d+\.\d+)"')
+_GDAL_PINS = {
+    "gdal": "3.13.3",
+    "rasterio": "1.4.4",
+    "fiona": "1.10.1",
+    "pyogrio": "0.13.0",
+    "pyproj": "3.7.2",
+}
 
 
 def _read(relative_path):
     return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
 
 
-def _pyproject_gdal_version():
-    match = _PYPROJECT_GDAL_RE.search(_read(PYPROJECT))
-    if match is None:
-        raise AssertionError(f"No pinned gdal dependency in {PYPROJECT}")
-    return match.group("version")
-
-
-def _wheel_pins(relative_path):
-    """Return ``(version, cpython_tag)`` for the GDAL wheel, or ``None``."""
-    for line in _read(relative_path).splitlines():
-        match = _GDAL_WHEEL_RE.search(line)
+def _dependency_pins(text):
+    pins = {}
+    for line in text.splitlines():
+        content = line.strip()
+        if content.startswith("- "):
+            content = content[2:].lstrip()
+        match = re.match(r"['\"]?([A-Za-z0-9_.-]+)==([^\s;\\'\"]+)", content)
         if match:
-            return match.group("version"), match.group("py")
-    return None
+            pins[re.sub(r"[-_.]+", "-", match.group(1)).lower()] = match.group(
+                2
+            )
+            continue
+        match = re.match(
+            r"([A-Za-z0-9_.-]+)\s*@\s*https://\S+/([^/\s]+\.whl)",
+            content,
+            re.IGNORECASE,
+        )
+        if match:
+            name = re.sub(r"[-_.]+", "-", match.group(1)).lower()
+            filename = unquote(match.group(2)).lower()
+            wheel_prefix = re.escape(name.replace("-", "_"))
+            version = re.match(
+                rf"{wheel_prefix}-(\d+\.\d+\.\d+)\+haste\.\d+-", filename
+            )
+            if version:
+                pins[name] = version.group(1)
+    return pins
 
 
 class GdalPinConsistencyTests(unittest.TestCase):
-    """The regression PR #153 introduced, expressed as an invariant."""
+    """All GDAL-linked bindings in HASTE must agree on exact versions."""
 
-    def test_gdal_wheel_matches_the_pyproject_pin(self):
-        expected = _pyproject_gdal_version()
-
-        mismatches = []
+    def test_every_consumer_pins_the_shared_binding_set(self):
+        expected = _GDAL_PINS
         for relative_path in REQUIREMENTS_FILES:
-            pins = _wheel_pins(relative_path)
-            if pins is None:
-                mismatches.append(f"{relative_path}: no GDAL wheel pinned")
-                continue
-            version, _ = pins
-            if version != expected:
-                mismatches.append(
-                    f"{relative_path}: wheel GDAL {version} != "
-                    f"{PYPROJECT} gdal=={expected}"
+            actual = _dependency_pins(_read(relative_path))
+            with self.subTest(requirements=relative_path):
+                self.assertEqual(
+                    expected,
+                    {name: actual.get(name) for name in expected},
+                    f"{relative_path} must pin the same GDAL runtime bindings.",
                 )
 
+    def test_hastegeo_metadata_pins_the_same_binding_versions(self):
+        actual = _dependency_pins(_read(PYPROJECT))
         self.assertEqual(
-            [],
-            mismatches,
-            "The GDAL wheel installed by each image must match the gdal pin "
-            "hastegeo declares, or pip cannot resolve the two together.",
+            _GDAL_PINS,
+            {name: actual.get(name) for name in _GDAL_PINS},
         )
 
-    def test_gdal_wheel_targets_the_image_python_version(self):
-        """A cp311 wheel cannot be installed on a 3.12 base image."""
-        image_pythons = {}
+    def test_training_conda_environment_uses_python_311_and_no_conda_gdal(
+        self,
+    ):
+        text = _read("docker/training/env/env.yml")
+        self.assertIn("python=3.11", text)
+        self.assertNotRegex(text, r"(?m)^\s*-\s*gdal\s*[<=>]")
+
+    def test_consumer_wheel_urls_match_the_locked_runtime_build(self):
+        lock = _read("native/gdal-runtime/sources.lock")
+        build_match = re.search(r"(?m)^HASTE_GDAL_BUILD\s+(\d+)\s*$", lock)
+        self.assertIsNotNone(build_match)
+        expected_build = build_match.group(1)
+        all_bindings = {
+            "gdal",
+            "rasterio",
+            "fiona",
+            "pyogrio",
+            "pyproj",
+            "haste-gdal-runtime",
+        }
+        consumer_files = (
+            *REQUIREMENTS_FILES,
+            "api/titilerfuncapi/requirements.txt",
+        )
+        for relative_path in consumer_files:
+            text = _read(relative_path)
+            names = {
+                re.sub(r"[-_.]+", "-", name).lower()
+                for name in re.findall(
+                    r"(?im)^\s*-?\s*([A-Za-z0-9_.-]+)\s*@\s*https://",
+                    text,
+                )
+            }
+            expected = (
+                {"haste-gdal-runtime", "rasterio"}
+                if relative_path.endswith("titilerfuncapi/requirements.txt")
+                else all_bindings
+            )
+            with self.subTest(requirements=relative_path):
+                self.assertEqual(expected, names)
+                self.assertEqual(
+                    {expected_build},
+                    set(re.findall(r"\+haste\.(\d+)", unquote(text))),
+                )
+                filenames = [
+                    Path(unquote(urlsplit(url).path)).name
+                    for url in re.findall(r"https://\S+\.whl", text)
+                ]
+                for filename in filenames:
+                    if filename.startswith("haste_gdal_runtime-"):
+                        self.assertIn(
+                            "py3-none-manylinux_2_28_x86_64.whl", filename
+                        )
+                    else:
+                        self.assertIn(
+                            "cp311-cp311-manylinux_2_28_x86_64.whl",
+                            filename,
+                        )
+
+    def test_function_and_geospatial_images_use_python_311(self):
         for relative_path in DOCKERFILES:
             version = check_image_python.base_python_version(
                 _read(relative_path)
             )
-            if version is not None:
-                image_pythons[relative_path] = version
-
-        self.assertEqual(
-            sorted(image_pythons),
-            sorted(DOCKERFILES),
-            "Could not determine the Python version of every image.",
-        )
-
-        mismatches = []
-        for dockerfile, requirements in zip(DOCKERFILES, REQUIREMENTS_FILES):
-            pins = _wheel_pins(requirements)
-            if pins is None:
-                continue
-            _, wheel_py = pins
-            image_py = image_pythons[dockerfile].replace(".", "")
-            if wheel_py != image_py:
-                mismatches.append(
-                    f"{requirements}: GDAL wheel is cp{wheel_py} but "
-                    f"{dockerfile} runs Python "
-                    f"{image_pythons[dockerfile]}"
-                )
-
-        self.assertEqual([], mismatches)
+            with self.subTest(dockerfile=relative_path):
+                self.assertEqual("3.11", version)
 
 
 def _write(directory, name, payload):

@@ -45,12 +45,10 @@ RUN printf '#!/bin/bash\nexec python -m hastegeo.workflows.prepare_imagery "$@"\
 # Set PYTHONPATH so hastegeo modules can be found at runtime
 ENV PYTHONPATH=/app
 
-# Refuse the GDAL drivers carrying the deferred CVEs (HDF4/HDF-EOS heap
-# overflow CVE-2026-8087 et al.) at the GDAL level, so subprocess CLI tools
-# (gdalwarp/gdal_translate) and the runtime never register them. In-process
-# code additionally enforces a stricter allowlist via hastegeo.core.utils.
-# gdal_security.harden_gdal(). See docs/known-vulnerabilities.md Root Cause C.
+# Refuse the unused GDAL drivers at the GDAL level. In-process code also
+# verifies the shared runtime and enforces its driver/VSI policy.
 ENV GDAL_SKIP="HDF4 HDF4Image HDF5 HDF5Image netCDF"
+ENV HASTE_GDAL_RUNTIME_REQUIRED=true
 ENV GDAL_VRT_ENABLE_RAWRASTERBAND=NO
 ENV GDAL_VRT_ENABLE_PYTHON=NO
 ENV GDAL_DRIVER_PATH=disable

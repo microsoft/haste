@@ -166,6 +166,7 @@ var titilerStorageHost = split(storageAccount.properties.primaryEndpoints.blob, 
 
 // Keep these operator-owned GDAL protections explicit in Azure App Settings.
 var gdalHardeningSettings = [
+  { name: 'HASTE_GDAL_RUNTIME_REQUIRED', value: 'true' }
   { name: 'GDAL_VRT_ENABLE_RAWRASTERBAND', value: 'NO' }
   { name: 'GDAL_VRT_ENABLE_PYTHON', value: 'NO' }
   { name: 'GDAL_DRIVER_PATH', value: 'disable' }

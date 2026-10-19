@@ -24,6 +24,7 @@ class GdalHardeningGuardTests(unittest.TestCase):
             "docker/titiler/Dockerfile",
         )
         settings = (
+            "HASTE_GDAL_RUNTIME_REQUIRED",
             "GDAL_VRT_ENABLE_RAWRASTERBAND",
             "GDAL_VRT_ENABLE_PYTHON",
             "GDAL_DRIVER_PATH",

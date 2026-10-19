@@ -261,6 +261,8 @@ class TestDeployNetworkAccess(unittest.TestCase):
         self.assertIn("GDAL_VRT_ENABLE_RAWRASTERBAND=NO", settings)
         self.assertIn("GDAL_VRT_ENABLE_PYTHON=NO", settings)
         self.assertIn("GDAL_DRIVER_PATH=disable", settings)
+        self.assertIn("GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR", settings)
+        self.assertIn("HASTE_GDAL_RUNTIME_REQUIRED=false", settings)
         self.assertIn(
             "GDAL_SKIP=VRT HDF4 HDF4Image HDF5 HDF5Image netCDF",
             settings,
@@ -283,6 +285,21 @@ class TestDeployNetworkAccess(unittest.TestCase):
             if call.startswith("functionapp config access-restriction set")
         )
         self.assertLess(set_defaults, restart)
+        publish = calls.index(self.publish_line(calls))
+        enable_runtime = next(
+            index
+            for index, call in enumerate(calls)
+            if call.startswith("functionapp config appsettings set")
+            and "HASTE_GDAL_RUNTIME_REQUIRED=true" in call
+        )
+        restarts = [
+            index
+            for index, call in enumerate(calls)
+            if call.startswith("functionapp restart")
+        ]
+        self.assertGreater(len(restarts), 1)
+        self.assertLess(publish, enable_runtime)
+        self.assertLess(enable_runtime, restarts[-1])
 
     def test_titiler_storage_host_is_set_before_restart(self) -> None:
         result, calls, _ = self.run_deploy()

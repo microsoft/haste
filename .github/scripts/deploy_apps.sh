@@ -298,6 +298,9 @@ deploy_function() {
     # collide across apps sharing storage. See data-publishing/rollout.md.
     HOST_ID=$(printf '%s' "$FUNCTION_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-32)
     local gdal_settings=(
+        # Keep the currently running worker available while the replacement
+        # package is built and published. Fail closed after publish succeeds.
+        "HASTE_GDAL_RUNTIME_REQUIRED=false"
         "GDAL_VRT_ENABLE_RAWRASTERBAND=NO"
         "GDAL_VRT_ENABLE_PYTHON=NO"
         "GDAL_DRIVER_PATH=disable"
@@ -431,6 +434,13 @@ deploy_function() {
     )
     close_deploy_access "$FUNCTION_NAME"
     echo "Function deployment completed successfully."
+
+    az functionapp config appsettings set \
+        --name "$FUNCTION_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --settings "HASTE_GDAL_RUNTIME_REQUIRED=true" \
+        --output none
+    az functionapp restart --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP"
 
     # Record the wheel this app actually installed. Nothing else on the app
     # says which hastegeo it is running -- the wheel is pinned into
