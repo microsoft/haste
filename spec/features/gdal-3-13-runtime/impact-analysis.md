@@ -41,6 +41,18 @@ handlers. The network handlers come with libcurl, which label tasks and tile
 serving need. Controls are therefore build-time removal where possible, plus
 HTTPS-only and host allowlisting at the application layer.
 
+### Private-fork implementation status
+
+The current private branch validates the first upload chunk before storing
+it, checks downloaded imagery for TIFF content before processing, and opens
+those rasters with the GTiff driver only. User-supplied footprint GeoPackages
+are checked for GeoPackage content and read with Fiona's GPKG driver
+allowlist. These controls are not yet an audit of every GDAL open site; the
+remaining image, API, and training paths still need review and testing.
+`hastegeo` now activates the shared-runtime self-check on package import, and
+TiTiler has a startup hook that verifies the runtime when installed. Neither
+consumer currently installs the new wheel or sets the required-runtime flag.
+
 ## Blast radius
 
 **Code paths.** Every GDAL read and write path:
