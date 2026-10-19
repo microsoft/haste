@@ -192,6 +192,15 @@ jobs:
           sbom: ${{ runner.temp }}/haste-gdal-runtime/dist/bom.cdx.json
           fail-build: true
           severity-cutoff: medium
+          add-cpes-if-none: true
+          output-format: table
+
+      - name: Scan built wheel artifacts for known vulnerabilities
+        uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
+        with:
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist
+          fail-build: true
+          severity-cutoff: medium
           output-format: table
 
   training-base-smoke:

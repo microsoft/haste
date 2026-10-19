@@ -147,7 +147,7 @@ def inspect_wheel(path: Path, stage_prefix: str) -> WheelInput:
             if member.endswith("/"):
                 continue
             if member.startswith(f"{dist_info}/"):
-                relative = member[len(dist_info) + 1:]
+                relative = member[len(dist_info) + 1 :]
                 if relative not in {"RECORD", "METADATA", "WHEEL"}:
                     result.metadata_files[relative] = archive.read(member)
                 continue
@@ -171,6 +171,34 @@ def read_runtime_package(runtime_package: Path) -> dict[str, bytes]:
             relative = path.relative_to(runtime_package).as_posix()
             payload[f"haste_gdal_runtime/{relative}"] = path.read_bytes()
     return payload
+
+
+def runtime_metadata_files(version: str, tag: str) -> dict[str, bytes]:
+    license_path = Path(__file__).resolve().parents[2] / "LICENSE"
+    if not license_path.is_file():
+        raise FileNotFoundError(
+            f"runtime package license is missing: {license_path}"
+        )
+    metadata = (
+        "Metadata-Version: 2.4\n"
+        f"Name: {RUNTIME_NAME}\n"
+        f"Version: {version}\n"
+        "Summary: HASTE's pinned GDAL native runtime\n"
+        "Requires-Python: >=3.11\n"
+        "License-Expression: MIT\n"
+        "License-File: licenses/LICENSE\n\n"
+    ).encode("utf-8")
+    wheel = (
+        "Wheel-Version: 1.0\n"
+        "Generator: haste-gdal-runtime\n"
+        "Root-Is-Purelib: false\n"
+        f"Tag: {tag}\n"
+    ).encode("utf-8")
+    return {
+        "METADATA": metadata,
+        "WHEEL": wheel,
+        "licenses/LICENSE": license_path.read_bytes(),
+    }
 
 
 def write_wheel(
@@ -253,19 +281,7 @@ def merge_and_repair(
         payload[member] = content
     owners[RUNTIME_NAME] = runtime_members
 
-    metadata = (
-        "Metadata-Version: 2.1\n"
-        f"Name: {RUNTIME_NAME}\n"
-        f"Version: {runtime_version}\n"
-        "Summary: HASTE's pinned GDAL native runtime\n"
-        "Requires-Python: >=3.11\n\n"
-    ).encode("utf-8")
-    wheel_metadata = (
-        "Wheel-Version: 1.0\n"
-        "Generator: haste-gdal-runtime\n"
-        "Root-Is-Purelib: false\n"
-        f"Tag: {STAGING_TAG}\n"
-    ).encode("utf-8")
+    staging_metadata = runtime_metadata_files(runtime_version, STAGING_TAG)
     staging_temp = tempfile.TemporaryDirectory(prefix="haste-gdal-assemble-")
     atexit.register(staging_temp.cleanup)
     staging = Path(staging_temp.name)
@@ -274,8 +290,8 @@ def merge_and_repair(
         f"{normalized_name(RUNTIME_NAME)}-{runtime_version}.dist-info"
     )
     staging_record = f"{staging_dist_info}/RECORD"
-    stage_payload[f"{staging_dist_info}/METADATA"] = metadata
-    stage_payload[f"{staging_dist_info}/WHEEL"] = wheel_metadata
+    for relative, content in staging_metadata.items():
+        stage_payload[f"{staging_dist_info}/{relative}"] = content
     stage_payload[staging_record] = wheel_record(stage_payload, staging_record)
     staging_wheel = staging / (
         f"{normalized_name(RUNTIME_NAME)}-{runtime_version}-{STAGING_TAG}.whl"
@@ -385,15 +401,9 @@ def merge_and_repair(
             for output_member, stage_member in runtime_members.items()
         }
         runtime_contents.update(libraries)
-        runtime_meta = {
-            "METADATA": metadata,
-            "WHEEL": (
-                "Wheel-Version: 1.0\n"
-                "Generator: haste-gdal-runtime\n"
-                "Root-Is-Purelib: false\n"
-                f"Tag: {RUNTIME_WHEEL_TAG}\n"
-            ).encode(),
-        }
+        runtime_meta = runtime_metadata_files(
+            runtime_version, RUNTIME_WHEEL_TAG
+        )
         write_wheel(
             output,
             runtime_contents,

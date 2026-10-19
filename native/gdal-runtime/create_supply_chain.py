@@ -43,6 +43,40 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def wheel_license(
+    expression: str | None,
+    legacy_name: str | None,
+    license_texts: list[bytes],
+) -> tuple[dict[str, object] | None, str | None]:
+    if expression and expression.strip():
+        value = expression.strip()
+        return {"expression": value}, value
+    if not legacy_name or not legacy_name.strip():
+        return None, None
+
+    value = legacy_name.strip()
+    first_line = next(
+        (line.strip() for line in value.splitlines() if line.strip()), ""
+    )
+    normalized = re.sub(r"\s+", " ", value).casefold()
+    if normalized.startswith("mit license") or normalized == "mit":
+        identifier = "MIT"
+    elif normalized in {"bsd", "bsd 3-clause"} or normalized.startswith(
+        "bsd 3-clause "
+    ):
+        text = b"\n".join(license_texts).decode("utf-8", errors="replace")
+        identifier = (
+            "BSD-3-Clause"
+            if "neither the name of" in text.casefold()
+            else None
+        )
+    else:
+        identifier = None
+    if identifier:
+        return {"license": {"id": identifier}}, identifier
+    return {"license": {"name": first_line[:200]}}, first_line[:200]
+
+
 def _notice_path(name: str, path: str) -> str:
     if name in {"", ".", ".."} or "/" in name or "\\" in name or ":" in name:
         raise ValueError(f"unsafe notice component: {name!r}")
@@ -123,15 +157,12 @@ def wheel_inventory(
             }
             license_expression = metadata.get("License-Expression")
             license_name = metadata.get("License")
-            license_value = license_expression or license_name
-            if license_value:
-                component["licenses"] = [{"license": {"name": license_value}}]
-                licenses[name] = license_value
-            else:
-                licenses[name] = (
-                    "No license metadata in wheel; review required"
+            if package_name == "haste-gdal-runtime" and not license_expression:
+                raise ValueError(
+                    f"{path.name}: runtime wheel requires an SPDX "
+                    "License-Expression"
                 )
-            components.append(component)
+            license_texts = []
 
             for member in wheel.namelist():
                 if ".dist-info/licenses/" not in member:
@@ -145,6 +176,22 @@ def wheel_inventory(
                 relative = member.split(".dist-info/licenses/", 1)[1]
                 if relative:
                     notices[_notice_path(name, relative)] = content
+                    license_texts.append(content)
+            license_entry, license_value = wheel_license(
+                license_expression, license_name, license_texts
+            )
+            if package_name == "haste-gdal-runtime" and not license_texts:
+                raise ValueError(
+                    f"{path.name}: runtime wheel must bundle its license text"
+                )
+            if license_entry:
+                component["licenses"] = [license_entry]
+                licenses[name] = license_value or "License metadata present"
+            else:
+                licenses[name] = (
+                    "No license metadata in wheel; review required"
+                )
+            components.append(component)
     return components, notices, licenses
 
 

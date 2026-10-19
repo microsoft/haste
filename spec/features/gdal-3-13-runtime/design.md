@@ -246,7 +246,10 @@ The manifest lists the handlers that remain.
 - SHA-256 sums;
 - a provenance attestation.
 
-A vulnerability scan of the SBOM gates the job.
+Grype scans both the CycloneDX SBOM (with CPE inference for source components)
+and the built wheel artifact directory. Either scan fails the job on
+medium-or-higher findings. The wheel scan supplements SBOM matching; it does
+not replace the required review of the bundled native license notices.
 
 **An approval-gated publisher** uploads the assets to `haste-binaries`. They
 are immutable and are never overwritten.

@@ -7,7 +7,7 @@
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | drafted, not yet run against a real build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private builder all-binding smoke passed; digest-pinned Functions, imageryprep and training CUDA-base smoke jobs added; SBOM/notices/checksums, Grype gate and main-branch attestations added; CI pending |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private run `38955056455` passed build, all-binding smoke, Grype SBOM scan, and Functions/imageryprep/training-base smoke; current unvalidated changes add wheel-path scanning and complete runtime-wheel license metadata; upstream-only attestation job skipped on private fork as intended |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | pending |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | pending |
@@ -48,18 +48,21 @@ What exists:
 
 Next, in order:
 
-1. Complete the digest-pinned Functions, imageryprep and training CUDA-base
-   smoke jobs. The training job creates a temporary Python 3.11 Conda env;
-   integration into the full training env remains pending. The private smoke
-   required fixes for binding-specific versions,
+1. Complete the OSS license review, confirm the immutable publisher target,
+   and publish the verified wheels and evidence. The training job creates a
+   temporary Python 3.11 Conda env; migration of the full training env remains
+   pending. The private smoke required fixes for binding-specific versions,
    source-checkout import shadowing, Pyogrio WKB type, GDAL's documented CA
    setting (`GDAL_CURL_CA_BUNDLE`), and internal-feed rate limiting. The
    builder run `38946439904` passed after those fixes. The build now generates
    a CycloneDX inventory, bundled license text where available, a license
-   inventory that flags missing texts for review, and SHA-256 checksums.
-2. Verify the new Grype vulnerability gate and main-branch attestations, then
-   complete the OSS license review and separate approval-gated immutable
-   publisher.
+   inventory that flags missing texts for review, and SHA-256 checksums. Current
+   unvalidated changes add a Grype scan of built wheel files and correct the
+   runtime wheel and Python binding license metadata; official OSS approval
+   remains pending.
+2. Integrate the published artifact into the runtime self-check, TiTiler/API/
+   queues packages, imageryprep and training image builds; complete the
+   approved dev1 rollout only after those consumers pass their tests.
 
 ## Verified build facts
 
@@ -139,11 +142,14 @@ GDAL CMake options:
   artifact. Smoke-only dependencies are fetched from public PyPI with exact
   hashes to avoid internal-feed throttling. The private fork's CodeQL jobs
   completed analysis but could not upload results because code scanning is
-  disabled for that repository. Target-image run `38951613935` is still
-  running. The builder now emits a CycloneDX inventory, notice bundle and
-  checksums, and a separate Grype job gates on medium-or-higher findings.
-  Scan results, cryptographic provenance, license approval and durable
-  publication remain.
+  disabled for that repository. Private run `38955056455` passed the build,
+  all-binding smoke, medium-or-higher Grype scan, and smoke tests in Functions,
+  imageryprep and the training CUDA base. The current unvalidated changes also
+  scan wheel artifacts alongside the SBOM. Its attestation job was skipped
+  because publication attestations are restricted to upstream `microsoft/haste`
+  main. The private build emits a CycloneDX inventory, notice bundle and
+  checksums; license review, upstream provenance, durable publication,
+  consumer integration and dev rollout remain.
 
 PROJ:
 

@@ -203,6 +203,11 @@ class LockTests(unittest.TestCase):
         self.assertIn("anchore/scan-action@", workflow)
         self.assertIn("fail-build: true", workflow)
         self.assertIn("severity-cutoff: medium", workflow)
+        self.assertIn("add-cpes-if-none: true", workflow)
+        self.assertIn("Scan built wheel artifacts", workflow)
+        self.assertIn(
+            "path: ${{ runner.temp }}/haste-gdal-runtime/dist", workflow
+        )
         self.assertIn("attest:", workflow)
         self.assertIn("github.repository == 'microsoft/haste'", workflow)
         self.assertIn("actions/attest@", workflow)
@@ -263,17 +268,31 @@ class LockTests(unittest.TestCase):
             for filename, name in distributions:
                 wheel_path = wheel_dir / f"{filename}-1.0-py3-none-any.whl"
                 with zipfile.ZipFile(wheel_path, "w") as wheel:
+                    license_field = (
+                        "License-Expression: MIT\n"
+                        if name == "haste-gdal-runtime"
+                        else "License: MIT\n"
+                    )
+                    if name == "pyogrio":
+                        license_field = (
+                            "License: MIT License\n"
+                            " Copyright (c) Pyogrio contributors\n"
+                        )
                     wheel.writestr(
                         f"{filename}-1.0.dist-info/METADATA",
                         "Metadata-Version: 2.1\n"
                         f"Name: {name}\n"
                         "Version: 1.0\n"
-                        "License: MIT\n\n",
+                        f"{license_field}\n",
                     )
-                    if name == "haste-gdal-runtime":
+                    if name in {"haste-gdal-runtime", "pyogrio"}:
                         wheel.writestr(
                             f"{filename}-1.0.dist-info/licenses/LICENSE",
-                            "runtime license text\n",
+                            (
+                                "runtime license text\n"
+                                if name == "haste-gdal-runtime"
+                                else "MIT License\nPermission is granted\n"
+                            ),
                         )
             manifest = root / "manifest.json"
             manifest.write_text('{"gdal_release":"3.13.3"}\n')
@@ -297,8 +316,21 @@ class LockTests(unittest.TestCase):
         self.assertEqual(len(outputs), 4)
         self.assertEqual(bom["bomFormat"], "CycloneDX")
         self.assertEqual(len(bom["components"]), 7)
+        pyogrio = next(
+            component
+            for component in bom["components"]
+            if component["name"] == "pyogrio"
+        )
+        self.assertEqual(pyogrio["licenses"], [{"license": {"id": "MIT"}}])
+        runtime = next(
+            component
+            for component in bom["components"]
+            if component["name"] == "haste-gdal-runtime"
+        )
+        self.assertEqual(runtime["licenses"], [{"expression": "MIT"}])
         self.assertIn("sample license text", notices)
         self.assertIn("runtime license text", notices)
+        self.assertIn("MIT License", notices)
         self.assertIn("haste_gdal_runtime-1.0-py3-none-any.whl", checksums)
         self.assertIn("manifest.json", checksums)
 
@@ -400,6 +432,16 @@ class LockTests(unittest.TestCase):
 
 
 class WheelAssemblyTests(unittest.TestCase):
+    def test_runtime_wheel_declares_and_bundles_the_project_license(self):
+        metadata = assemble_wheels.runtime_metadata_files(
+            "3.13.3+haste.1", assemble_wheels.RUNTIME_WHEEL_TAG
+        )
+        self.assertIn(b"License-Expression: MIT", metadata["METADATA"])
+        self.assertEqual(
+            metadata["licenses/LICENSE"],
+            (ROOT.parents[1] / "LICENSE").read_bytes(),
+        )
+
     def test_runtime_package_payload_is_rooted_in_importable_package(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             package = Path(temp_dir)
