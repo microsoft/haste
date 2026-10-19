@@ -279,7 +279,7 @@ def build_package(
                 "required_bindings=('osgeo.gdal','rasterio','fiona',"
                 "'pyogrio','pyproj')); "
                 "haste_gdal_runtime.configure(policy); "
-                "print(haste_gdal_runtime.verify_or_raise(policy))",
+                "print(haste_gdal_runtime.secure_startup(policy))",
             ],
             check=True,
             env=environment,
