@@ -1,0 +1,7 @@
+# Grype matches by version, so it still reports zlib 1.3.2 even though the
+# runtime build applies the upstream fix (native/gdal-runtime/patches). Remove
+# this entry when sources.lock moves to a zlib release that contains the fix.
+ignore:
+  - vulnerability: CVE-2026-85091
+    package:
+      name: zlib

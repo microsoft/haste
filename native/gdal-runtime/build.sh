@@ -54,6 +54,8 @@ extract() {
 extract zlib
 (
   cd "$WORK"/zlib-*/
+  # Upstream fix for CVE-2026-85091, not yet in a tagged zlib release.
+  patch -p1 --batch < "$ROOT/patches/zlib-CVE-2026-85091.patch"
   ./configure --prefix="$PREFIX" --shared
   make -j"$JOBS"
   make install
