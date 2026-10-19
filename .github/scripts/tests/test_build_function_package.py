@@ -21,6 +21,18 @@ class FunctionPackageRequirementTests(unittest.TestCase):
             )
         return path
 
+    def test_ignores_metadata_of_vendored_distributions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._wheel(Path(temporary), "setuptools", "84.0.0")
+            with zipfile.ZipFile(path, "a") as archive:
+                archive.writestr(
+                    "setuptools/_vendor/other-1.0.dist-info/METADATA",
+                    "Name: other\nVersion: 1.0\n\n",
+                )
+            self.assertEqual(
+                package_builder.wheel_metadata(path), ("setuptools", "84.0.0")
+            )
+
     def test_replaces_legacy_bindings_with_this_builds_runtime_wheels(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

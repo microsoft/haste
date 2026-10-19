@@ -49,7 +49,7 @@ def wheel_metadata(path: Path) -> tuple[str, str]:
         metadata_files = [
             name
             for name in wheel.namelist()
-            if name.endswith(".dist-info/METADATA")
+            if name.count("/") == 1 and name.endswith(".dist-info/METADATA")
         ]
         if len(metadata_files) != 1:
             raise ValueError(f"{path.name}: expected one wheel METADATA file")
