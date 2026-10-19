@@ -7,6 +7,11 @@ import logging
 from typing import Annotated
 
 import attr
+
+from gdal_runtime import secure_gdal_runtime
+
+secure_gdal_runtime()
+
 import azure.functions as func
 import morecantile
 import rasterio
