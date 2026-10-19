@@ -5,6 +5,9 @@ on:
     branches:
       - main
     paths:
+      - "api/hastefuncapi/**"
+      - "api/hastefuncqueues/**"
+      - "hastelib/src/**"
       - "native/gdal-runtime/**"
       - ".github/scripts/publish_gdal_runtime.py"
       - ".github/scripts/tests/test_publish_gdal_runtime.py"
@@ -55,6 +58,9 @@ on:
     branches:
       - main
     paths:
+      - "api/hastefuncapi/**"
+      - "api/hastefuncqueues/**"
+      - "hastelib/src/**"
       - "native/gdal-runtime/**"
       - ".github/scripts/publish_gdal_runtime.py"
       - ".github/scripts/tests/test_publish_gdal_runtime.py"
