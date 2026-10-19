@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -96,6 +97,15 @@ def main(argv: list[str] | None = None) -> int:
         binding_smoke_command(binding_smoke, sys.executable),
         check=True,
         cwd=args.wheel_dir.resolve(),
+    )
+    vrt_smoke = Path(__file__).with_name("titiler_vrt_smoke.py")
+    vrt_environment = os.environ.copy()
+    vrt_environment["GDAL_SKIP"] = "VRT"
+    subprocess.run(
+        binding_smoke_command(vrt_smoke, sys.executable),
+        check=True,
+        cwd=args.wheel_dir.resolve(),
+        env=vrt_environment,
     )
     return 0
 

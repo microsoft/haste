@@ -12,7 +12,7 @@
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | in progress: single-libgdal/libproj checks and startup activation in `hastegeo` are implemented; runtime installation and required-setting wiring remain |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | in progress: uploaded chunk headers, downloaded TIFFs and user GPKG inputs are content-checked; imagery opens are GTiff-only and GPKG reads use Fiona's GPKG allowlist; audit of remaining GDAL opens/configuration paths is pending |
 | 2 | GDAL hardening settings in Bicep, `deploy_apps.sh`, Dockerfiles and compose | `backend-dev` | pending |
-| 3 | TiTiler: hash-locked dependencies on the runtime; startup self-check; VRT driver policy; negative tests | `backend-dev` | in progress: startup verification hook and unit tests added; wheel installation, route restrictions, and runtime VRT tests remain |
+| 3 | TiTiler: hash-locked dependencies on the runtime; startup self-check; VRT driver policy; negative tests | `backend-dev` | in progress: startup hook excludes VRT and a native-runtime smoke tests WarpedVRT with VRT disabled; fresh CI result, wheel installation, request-source restrictions, and `/vsi` negative tests remain |
 | 4 | Build-once Function App packages; `--no-build` deploy; post-deploy verification | `backend-dev` | pending |
 | 5 | imageryprep and training images (training to Python 3.11); local dev and CI test environments | `backend-dev` + `gis` | pending |
 | 6 | Dependency pin guards, forbidden-configuration guard, docs, close the GDAL exception | `backend-dev` | pending |

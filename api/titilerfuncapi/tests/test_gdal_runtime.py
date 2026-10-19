@@ -5,6 +5,9 @@ import gdal_runtime
 
 
 class TestSecureGdalRuntime(unittest.TestCase):
+    def test_titiler_policy_excludes_vrt(self) -> None:
+        self.assertNotIn("VRT", gdal_runtime.ALLOWED_DRIVERS)
+
     def test_missing_required_runtime_fails_closed(self):
         with (
             mock.patch.dict(
