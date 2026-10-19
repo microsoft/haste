@@ -276,10 +276,30 @@ def _check_versions(
             f"installed runtime was built for GDAL "
             f"{manifest.get('gdal_release')}, expected {expected}"
         )
+    binding_versions = manifest.get("binding_versions")
+    if not isinstance(binding_versions, dict):
+        problems.append("runtime manifest has no binding version inventory")
+        binding_versions = {}
     for name in policy.required_bindings:
         if name not in observed["bindings"]:
             problems.append(f"required binding {name} is not installed")
     for name, info in observed["bindings"].items():
+        expected_binding = binding_versions.get(name)
+        if not isinstance(expected_binding, str):
+            problems.append(
+                f"runtime manifest has no expected version for binding {name}"
+            )
+        else:
+            actual_binding = (
+                info.get("gdal", "")
+                if name == "osgeo.gdal"
+                else info.get("version", "").split("+", 1)[0]
+            )
+            if actual_binding != expected_binding:
+                problems.append(
+                    f"{name} reports version {actual_binding!r}, "
+                    f"expected {expected_binding!r}"
+                )
         if "gdal" in info and info["gdal"] != expected:
             problems.append(
                 f"{name} reports GDAL {info['gdal']}, expected {expected}"

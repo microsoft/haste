@@ -35,6 +35,13 @@ EXPECTED_DISTRIBUTIONS = {
     "pyogrio",
     "pyproj",
 }
+BINDING_MODULES = {
+    "gdal": "osgeo.gdal",
+    "rasterio": "rasterio",
+    "fiona": "fiona",
+    "pyogrio": "pyogrio",
+    "pyproj": "pyproj",
+}
 EVIDENCE_FILES = {
     "manifest.json",
     "bom.cdx.json",
@@ -223,6 +230,15 @@ def validate_bundle(directory: Path) -> RuntimeBundle:
                 f"{metadata.get('Name')}: does not pin "
                 f"haste-gdal-runtime=={runtime_version}; found {requirements}"
             )
+
+    expected_binding_versions = {
+        module: wheel_metadata[name].get("Version", "").split("+", 1)[0]
+        for name, module in BINDING_MODULES.items()
+    }
+    if manifest.get("binding_versions") != expected_binding_versions:
+        raise ValueError(
+            "Runtime manifest binding versions do not match the wheels"
+        )
 
     notices_path = directory / "THIRD_PARTY_NOTICES.txt"
     notices = notices_path.read_text(encoding="utf-8")

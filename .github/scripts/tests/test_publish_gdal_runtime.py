@@ -22,7 +22,18 @@ class PublishGdalRuntimeTests(unittest.TestCase):
         directory = root / "dist"
         directory.mkdir()
         (directory / "manifest.json").write_text(
-            json.dumps({"gdal_release": "3.13.3"}),
+            json.dumps(
+                {
+                    "gdal_release": "3.13.3",
+                    "binding_versions": {
+                        "osgeo.gdal": "3.13.3",
+                        "rasterio": "1.4.4",
+                        "fiona": "1.10.1",
+                        "pyogrio": "0.13.0",
+                        "pyproj": "3.7.2",
+                    },
+                }
+            ),
             encoding="utf-8",
         )
         source_lock_path = root / "sources.lock"
@@ -183,6 +194,21 @@ class PublishGdalRuntimeTests(unittest.TestCase):
             bom_path.write_text(json.dumps(bom), encoding="utf-8")
             with self.assertRaisesRegex(
                 ValueError, "unexpected unlocked-native"
+            ):
+                validate_bundle(directory)
+
+    def test_rejects_manifest_binding_version_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = self._bundle_directory(Path(temp_dir))
+            manifest_path = directory / "manifest.json"
+            manifest = json.loads(
+                manifest_path.read_text(encoding="utf-8")
+            )
+            manifest["binding_versions"]["fiona"] = "1.10.0"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                ValueError, "binding versions do not match"
             ):
                 validate_bundle(directory)
 

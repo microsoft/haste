@@ -26,6 +26,13 @@ PROJ_LIB = "/opt/libs/libproj-abc.so.25"
 MANIFEST = {
     "gdal_release": "3.13.3",
     "proj_release": "9.8.1",
+    "binding_versions": {
+        "osgeo.gdal": "3.13.3",
+        "rasterio": "1.4.4",
+        "fiona": "1.10.1",
+        "pyogrio": "0.13.0",
+        "pyproj": "3.7.2",
+    },
     "drivers": [
         "GTiff",
         "COG",
@@ -530,6 +537,34 @@ class WheelAssemblyTests(unittest.TestCase):
         )
         self.assertIn(b"3.13.3", payload["haste_gdal_runtime/manifest.json"])
 
+    def test_binding_versions_are_read_from_wheel_metadata(self):
+        wheels = [
+            assemble_wheels.WheelInput(
+                name=name,
+                version=f"{version}+haste.1",
+                archive=Path(f"{name}.whl"),
+                dist_info=f"{name}.dist-info",
+            )
+            for name, version in (
+                ("GDAL", "3.13.3"),
+                ("rasterio", "1.4.4"),
+                ("fiona", "1.10.1"),
+                ("pyogrio", "0.13.0"),
+                ("pyproj", "3.7.2"),
+            )
+        ]
+
+        self.assertEqual(
+            assemble_wheels.binding_versions(wheels),
+            {
+                "osgeo.gdal": "3.13.3",
+                "rasterio": "1.4.4",
+                "fiona": "1.10.1",
+                "pyogrio": "0.13.0",
+                "pyproj": "3.7.2",
+            },
+        )
+
     def test_maps_binding_data_into_the_combined_wheel(self):
         member = "rasterio-1.4.4.data/platlib/rasterio/_base.so"
         staging = assemble_wheels.rewrite_data_path(
@@ -675,6 +710,22 @@ class EvaluateTests(unittest.TestCase):
         observed = good_report()
         observed["bindings"]["osgeo.gdal"]["gdal"] = "3.9.2"
         self.assertTrue(self.run_eval(observed))
+
+    def test_binding_package_version_mismatch(self):
+        observed = good_report()
+        observed["bindings"]["pyproj"]["version"] = "3.7.1"
+        problems = self.run_eval(observed)
+        self.assertTrue(
+            any("pyproj reports version" in item for item in problems)
+        )
+
+    def test_binding_version_missing_from_manifest_fails_closed(self):
+        manifest = dict(MANIFEST)
+        manifest.pop("binding_versions")
+        problems = self.run_eval(good_report(), manifest)
+        self.assertTrue(
+            any("no binding version inventory" in item for item in problems)
+        )
 
     def test_second_libgdal(self):
         observed = good_report()

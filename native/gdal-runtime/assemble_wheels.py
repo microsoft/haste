@@ -12,6 +12,7 @@ import base64
 import csv
 import hashlib
 import io
+import json
 import os
 import re
 import subprocess
@@ -25,6 +26,13 @@ RUNTIME_WHEEL_TAG = "py3-none-manylinux_2_28_x86_64"
 STAGING_TAG = "cp311-cp311-linux_x86_64"
 TARGET_TAG = "cp311-cp311-manylinux_2_28_x86_64"
 REQUIRED_BINDINGS = {"GDAL", "rasterio", "fiona", "pyogrio", "pyproj"}
+BINDING_MODULES = {
+    "gdal": "osgeo.gdal",
+    "rasterio": "rasterio",
+    "fiona": "fiona",
+    "pyogrio": "pyogrio",
+    "pyproj": "pyproj",
+}
 
 
 def normalized_name(value: str) -> str:
@@ -200,6 +208,21 @@ def read_runtime_package(runtime_package: Path) -> dict[str, bytes]:
     return payload
 
 
+def binding_versions(wheels: list[WheelInput]) -> dict[str, str]:
+    """Return import-module version expectations from the binding wheel set."""
+    versions = {}
+    for wheel in wheels:
+        module = BINDING_MODULES.get(normalized_name(wheel.name))
+        if module is None:
+            continue
+        versions[module] = wheel.version.split("+", 1)[0]
+    if set(versions) != set(BINDING_MODULES.values()):
+        raise ValueError(
+            "binding wheel set does not define every binding version"
+        )
+    return versions
+
+
 def runtime_metadata_files(version: str, tag: str) -> dict[str, bytes]:
     license_path = Path(__file__).resolve().parents[2] / "LICENSE"
     if not license_path.is_file():
@@ -300,6 +323,12 @@ def merge_and_repair(
             payload[stage_member] = content
 
     runtime_payload = read_runtime_package(runtime_package)
+    manifest_member = "haste_gdal_runtime/manifest.json"
+    manifest = json.loads(runtime_payload[manifest_member])
+    manifest["binding_versions"] = binding_versions(inputs)
+    runtime_payload[manifest_member] = (
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
     runtime_members = {member: member for member in runtime_payload}
     for member, content in runtime_payload.items():
         previous = payload.get(member)
