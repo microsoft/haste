@@ -423,15 +423,47 @@ deploy_function() {
 
     echo "Deploying function code..."
     open_deploy_access "$FUNCTION_NAME"
-    # A non-zero exit can represent a package/build/deployment failure. Do not
-    # convert it into a success-shaped warning: set -e propagates the failure.
-    (
-        cd "$FUNCTION_DIR"
-        func azure functionapp publish "$FUNCTION_NAME" \
-            --python \
-            --build remote \
-            --verbose
-    )
+    local PACKAGE_SHA256=""
+    if [ -n "${HASTE_FUNCTION_PACKAGE_DIR:-}" ]; then
+        local PACKAGE_NAME PACKAGE_PATH CHECKSUM_PATH
+        case "$FUNCTION_NAME" in
+            "$FUNCTION_API") PACKAGE_NAME="hastefuncapi" ;;
+            "$FUNCTION_QUEUE_API") PACKAGE_NAME="hastefuncqueues" ;;
+            "$FUNCTION_TITILER_API") PACKAGE_NAME="titilerfuncapi" ;;
+            *)
+                echo "ERROR: No prebuilt package mapping for '$FUNCTION_NAME'." >&2
+                return 1
+                ;;
+        esac
+        PACKAGE_PATH="$HASTE_FUNCTION_PACKAGE_DIR/$PACKAGE_NAME.zip"
+        CHECKSUM_PATH="$HASTE_FUNCTION_PACKAGE_DIR/$PACKAGE_NAME.sha256"
+        if [ ! -f "$PACKAGE_PATH" ] || [ ! -f "$CHECKSUM_PATH" ]; then
+            echo "ERROR: Prebuilt Function App package or checksum is missing for $PACKAGE_NAME." >&2
+            return 1
+        fi
+        (
+            cd "$HASTE_FUNCTION_PACKAGE_DIR"
+            sha256sum --check "$PACKAGE_NAME.sha256"
+        )
+        PACKAGE_SHA256=$(awk '{print $1}' "$CHECKSUM_PATH")
+        echo "Deploying verified prebuilt package $PACKAGE_NAME ($PACKAGE_SHA256)..."
+        az functionapp deployment source config-zip \
+            --name "$FUNCTION_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --src "$PACKAGE_PATH" \
+            --build-remote false \
+            --output none
+    else
+        # A non-zero exit can represent a package/build/deployment failure. Do
+        # not convert it into a success-shaped warning: set -e propagates it.
+        (
+            cd "$FUNCTION_DIR"
+            func azure functionapp publish "$FUNCTION_NAME" \
+                --python \
+                --build remote \
+                --verbose
+        )
+    fi
     close_deploy_access "$FUNCTION_NAME"
     echo "Function deployment completed successfully."
 
@@ -455,6 +487,9 @@ deploy_function() {
     local EXTRA_TAGS=""
     if [ -n "$PINNED_HASTEGEO" ]; then
         EXTRA_TAGS="tags.hastegeo_version=${PINNED_HASTEGEO}"
+    fi
+    if [ -n "$PACKAGE_SHA256" ]; then
+        EXTRA_TAGS="${EXTRA_TAGS:+$EXTRA_TAGS }tags.function_package_sha256=${PACKAGE_SHA256}"
     fi
 
     echo "Setting tags for Function App $FUNCTION_NAME ..."

@@ -1,5 +1,6 @@
 """Keep deployments from widening a function app's inbound access."""
 
+import hashlib
 import json
 import os
 import shutil
@@ -336,6 +337,35 @@ class TestDeployNetworkAccess(unittest.TestCase):
         self.assertEqual(len(runner_rules), 2)
         for call in runner_rules:
             self.assertIn(f"--ip-address {RUNNER_IP}/32", call)
+
+    def test_prebuilt_package_deploys_without_remote_build(self) -> None:
+        with tempfile.TemporaryDirectory() as package_dir:
+            package = Path(package_dir) / "titilerfuncapi.zip"
+            package.write_bytes(b"verified package")
+            digest = hashlib.sha256(package.read_bytes()).hexdigest()
+            (Path(package_dir) / "titilerfuncapi.sha256").write_text(
+                f"{digest}  {package.name}\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            result, calls, final = self.run_deploy(
+                component="titiler",
+                HASTE_FUNCTION_PACKAGE_DIR=package_dir,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        package_deploy = next(
+            call
+            for call in calls
+            if call.startswith("functionapp deployment source config-zip")
+        )
+        self.assertIn("--build-remote false", package_deploy)
+        self.assertIn(package.name, package_deploy)
+        self.assertFalse(any(call.startswith("func ") for call in calls))
+        self.assertIn(
+            f"tags.function_package_sha256={digest}",
+            "\n".join(calls),
+        )
         self.assertEqual(self.rule_names(final), ["AllowSubnet-1"])
 
     def test_failed_publish_still_removes_the_runner_rule(self) -> None:
