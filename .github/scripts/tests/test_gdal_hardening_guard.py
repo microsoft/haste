@@ -64,6 +64,24 @@ class GdalHardeningGuardTests(unittest.TestCase):
 
         self.assertEqual(len(violations), len(values))
 
+    def test_rejects_structured_name_value_records(self) -> None:
+        bicep = "{ name: 'GDAL_VRT_ENABLE_PYTHON', value: 'YES' }\n"
+        arm = (
+            '{\n  "name": "GDAL_VRT_ENABLE_RAWRASTERBAND",\n'
+            '  "value": "YES"\n}\n'
+        )
+        safe = "{ name: 'GDAL_VRT_ENABLE_PYTHON', value: 'NO' }\n"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bicep_path = Path(temp_dir) / "functions.bicep"
+            arm_path = Path(temp_dir) / "main.json"
+            safe_path = Path(temp_dir) / "safe.bicep"
+            bicep_path.write_text(bicep, encoding="utf-8")
+            arm_path.write_text(arm, encoding="utf-8")
+            safe_path.write_text(safe, encoding="utf-8")
+            self.assertEqual(len(find_violations([bicep_path])), 1)
+            self.assertEqual(len(find_violations([arm_path])), 1)
+            self.assertEqual(find_violations([safe_path]), [])
+
     def test_accepts_enforced_values_and_disabled_driver_path(self) -> None:
         lines = (
             "GDAL_VRT_ENABLE_RAWRASTERBAND=NO",

@@ -41,6 +41,10 @@ _ASSIGNMENT = r"""(?ix)
 _CALL = r"""(?ix)
     SetConfigOption\s*\(\s*["']{key}["']\s*,\s*["']?{value}\b
 """
+_RECORD = r"""(?ix)
+    ["']?name["']?\s*:\s*["']{key}["']\s*,\s*
+    ["']?value["']?\s*:\s*["']?{value}\b
+"""
 FORBIDDEN_VALUES = {
     "GDAL_VRT_ENABLE_RAWRASTERBAND": r"(?:YES|TRUE|ON|1)",
     "GDAL_VRT_ENABLE_PYTHON": r"(?:YES|TRUE|ON|1)",
@@ -70,6 +74,11 @@ def _patterns() -> list[tuple[str, re.Pattern[str]]]:
 
 
 PATTERNS = _patterns()
+# Name/value records (Bicep objects, ARM JSON) may span several lines.
+RECORD_PATTERNS = [
+    (key, re.compile(_RECORD.format(key=key, value=value)))
+    for key, value in FORBIDDEN_VALUES.items()
+]
 
 
 def _candidate_files(root: Path) -> list[Path]:
@@ -111,6 +120,12 @@ def find_violations(paths: list[Path]) -> list[str]:
                     violations.append(
                         f"{path}:{line_number}: forbidden {key} override"
                     )
+        for key, pattern in RECORD_PATTERNS:
+            for match in pattern.finditer(content):
+                line_number = content.count("\n", 0, match.start()) + 1
+                violations.append(
+                    f"{path}:{line_number}: forbidden {key} override"
+                )
     return violations
 
 
