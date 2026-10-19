@@ -258,6 +258,7 @@ def build_package(
         application_environment["PYTHONPATH"] = os.pathsep.join(
             [str(target), str(source_dir.resolve())]
         )
+        application_environment.setdefault("DATA_PATH", str(root / "data"))
         subprocess.run(
             [
                 sys.executable,
@@ -273,11 +274,12 @@ def build_package(
                 sys.executable,
                 "-c",
                 "import hastegeo; import haste_gdal_runtime; "
-                "print(haste_gdal_runtime.verify_or_raise("
-                "haste_gdal_runtime.Policy("
+                "policy = haste_gdal_runtime.Policy("
                 "expected_gdal='3.13.3', "
                 "required_bindings=('osgeo.gdal','rasterio','fiona',"
-                "'pyogrio','pyproj'))))",
+                "'pyogrio','pyproj')); "
+                "haste_gdal_runtime.configure(policy); "
+                "print(haste_gdal_runtime.verify_or_raise(policy))",
             ],
             check=True,
             env=environment,
