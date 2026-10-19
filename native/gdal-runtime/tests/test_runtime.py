@@ -202,6 +202,7 @@ class LockTests(unittest.TestCase):
             "Check repository GDAL hardening configuration", workflow
         )
         self.assertIn("infra/modules/functions.bicep", workflow)
+        self.assertIn("infra/main.json", workflow)
         self.assertIn("docker/docker-compose.yml", workflow)
         self.assertIn("docker/training/Dockerfile", workflow)
         self.assertIn("api/titilerfuncapi/**", workflow)
