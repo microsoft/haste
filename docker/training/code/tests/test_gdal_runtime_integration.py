@@ -9,13 +9,12 @@ class TestGdalRuntimeIntegration(unittest.TestCase):
         from hastegeo.core.utils.gdal_security import harden_gdal
 
         harden_gdal()
+        import create_masks
         import geopandas as gpd
         import numpy as np
         import rasterio
         from rasterio.transform import from_origin
         from shapely.geometry import box
-
-        import create_masks
 
         labels = gpd.GeoDataFrame(
             {"class": ["Damaged", "Destroyed"]},
@@ -67,9 +66,8 @@ class TestGdalRuntimeIntegration(unittest.TestCase):
         harden_gdal()
         import numpy as np
         import rasterio
-        from rasterio.transform import from_origin
-
         import run_workflow
+        from rasterio.transform import from_origin
 
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "source.tif"

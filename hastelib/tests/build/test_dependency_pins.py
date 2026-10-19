@@ -8,8 +8,8 @@ import re
 import sys
 import tempfile
 import unittest
-from urllib.parse import unquote, urlsplit
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_ROOT = REPO_ROOT / ".github" / "scripts"

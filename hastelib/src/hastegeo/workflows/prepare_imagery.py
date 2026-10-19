@@ -961,9 +961,9 @@ def main():
         # this subprocess having to raise (which would lose the imagery
         # COGs we have already produced above). Applies equally to the
         # Overture and user-supplied paths.
-        config["building_footprints_error"] = (
-            imagery_workflow.building_footprints_error
-        )
+        config[
+            "building_footprints_error"
+        ] = imagery_workflow.building_footprints_error
         # Valid-area mask is generated as a side-effect of the same AOI
         # extraction. It's surfaced as a downloadable artifact in the UI;
         # a missing mask is logged but not treated as a layer-failure on
@@ -974,9 +974,9 @@ def main():
             if imagery_workflow.valid_area_mask_path
             else ""
         )
-        config["valid_area_mask_error"] = (
-            imagery_workflow.valid_area_mask_error
-        )
+        config[
+            "valid_area_mask_error"
+        ] = imagery_workflow.valid_area_mask_error
 
         log_progress("Finalizing outputs")
         with open(os.path.join(output_dir, "imagery_manifest.json"), "w") as f:
