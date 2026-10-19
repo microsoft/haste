@@ -452,7 +452,7 @@ jobs:
           TRAINING_ENV: ${{ runner.temp }}/haste-gdal-runtime/training-env.yml
           PIP_INDEX_URL: ${{ secrets.PIP_INDEX_URL || 'https://pypi.org/simple' }}
         run: |
-          docker run --rm --entrypoint sh \
+          docker run --rm --user root --entrypoint sh \
             --mount "type=bind,source=$GITHUB_WORKSPACE/native/gdal-runtime,target=/smoke,readonly" \
             --mount "type=bind,source=$GITHUB_WORKSPACE/docker/training/code,target=/training-code,readonly" \
             --mount "type=bind,source=$GITHUB_WORKSPACE/hastelib/src,target=/hastelib-src,readonly" \
