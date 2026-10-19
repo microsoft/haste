@@ -28,6 +28,7 @@ import importlib
 import importlib.util
 import logging
 import os
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,12 @@ ALLOWED_VECTOR_DRIVERS = frozenset({"GPKG", "GeoJSON", "Memory"})
 # These are the CVE-relevant driver families; an allowlist can't be
 # expressed via GDAL_SKIP, so we skip the known-dangerous ones explicitly.
 DISABLED_DRIVERS_ENV = "HDF4 HDF4Image HDF5 HDF5Image netCDF"
+LEGACY_REQUIRED_CONFIG = {
+    "GDAL_VRT_ENABLE_RAWRASTERBAND": "NO",
+    "GDAL_VRT_ENABLE_PYTHON": "NO",
+    "GDAL_DRIVER_PATH": "disable",
+    "CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED": "NO",
+}
 
 # ── Ingestion size caps (env-tunable; generous because satellite COGs are
 # legitimately large — the goal is to bound pathological/hostile inputs). ─
@@ -61,6 +68,45 @@ _hardened = False
 
 
 def _harden_legacy_gdal() -> bool:
+    for key, expected in LEGACY_REQUIRED_CONFIG.items():
+        os.environ.setdefault(key, expected)
+        actual = os.environ[key].strip()
+        if actual.casefold() != expected.casefold():
+            raise RuntimeError(
+                f"{key}={actual!r} weakens GDAL hardening; "
+                f"expected {expected!r}"
+            )
+
+    forbidden = {
+        "GDAL_VRT_RAWRASTERBAND_ALLOWED_SOURCE": "ALL",
+        "GDAL_VRT_PYTHON_TRUSTED_MODULES": None,
+        "GDAL_PYTHON_DRIVER_PATH": None,
+        "GDAL_HTTP_UNSAFESSL": "YES",
+    }
+    for key, forbidden_value in forbidden.items():
+        actual = os.environ.get(key)
+        if actual is None:
+            continue
+        if forbidden_value is None and actual.strip():
+            raise RuntimeError(f"{key} must be unset for GDAL hardening")
+        if (
+            forbidden_value
+            and actual.strip().casefold() == forbidden_value.casefold()
+        ):
+            raise RuntimeError(f"{key}={actual!r} weakens GDAL hardening")
+
+    existing_skip = [
+        name
+        for name in re.split(
+            r"[,\s]+", os.environ.get("GDAL_SKIP", "").strip()
+        )
+        if name
+    ]
+    required_skip = DISABLED_DRIVERS_ENV.split()
+    os.environ["GDAL_SKIP"] = " ".join(
+        dict.fromkeys([*existing_skip, *required_skip])
+    )
+
     try:
         from osgeo import gdal, ogr
     except ModuleNotFoundError as exc:
@@ -73,7 +119,6 @@ def _harden_legacy_gdal() -> bool:
 
     gdal.UseExceptions()
     ogr.UseExceptions()
-    os.environ.setdefault("GDAL_SKIP", DISABLED_DRIVERS_ENV)
     gdal.SetConfigOption("GDAL_SKIP", os.environ["GDAL_SKIP"])
 
     allowed = ALLOWED_RASTER_DRIVERS | ALLOWED_VECTOR_DRIVERS

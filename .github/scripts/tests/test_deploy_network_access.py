@@ -2,12 +2,12 @@
 
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = ROOT / ".github" / "scripts"
@@ -252,6 +252,19 @@ class TestDeployNetworkAccess(unittest.TestCase):
         result, calls, final = self.run_deploy()
 
         self.assertEqual(result.returncode, 0, result.stderr)
+        settings = next(
+            call
+            for call in calls
+            if call.startswith("functionapp config appsettings set")
+            and "GDAL_VRT_ENABLE_RAWRASTERBAND=NO" in call
+        )
+        self.assertIn("GDAL_VRT_ENABLE_RAWRASTERBAND=NO", settings)
+        self.assertIn("GDAL_VRT_ENABLE_PYTHON=NO", settings)
+        self.assertIn("GDAL_DRIVER_PATH=disable", settings)
+        self.assertIn(
+            "GDAL_SKIP=VRT HDF4 HDF4Image HDF5 HDF5Image netCDF",
+            settings,
+        )
         self.assertEqual(final["defaults"], {"main": "Deny", "scm": "Deny"})
         self.assertFalse(final["useMain"])
         self.assertEqual(

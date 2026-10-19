@@ -204,8 +204,75 @@ class TestSharedRuntimeActivation(unittest.TestCase):
                 g.harden_gdal(force=True, require_runtime=True)
 
 
+class TestLegacyGdalConfiguration(unittest.TestCase):
+    def setUp(self):
+        self._saved_settings = {
+            key: os.environ.get(key)
+            for key in (
+                *g.LEGACY_REQUIRED_CONFIG,
+                "GDAL_VRT_RAWRASTERBAND_ALLOWED_SOURCE",
+                "GDAL_VRT_PYTHON_TRUSTED_MODULES",
+                "GDAL_PYTHON_DRIVER_PATH",
+                "GDAL_HTTP_UNSAFESSL",
+                "GDAL_SKIP",
+            )
+        }
+        for key in self._saved_settings:
+            os.environ.pop(key, None)
+        self._was_hardened = g._hardened
+        g._hardened = False
+
+    def tearDown(self):
+        g._hardened = self._was_hardened
+        for key, value in self._saved_settings.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def test_legacy_runtime_sets_required_vrt_and_plugin_config(self):
+        g.harden_gdal(force=True, require_runtime=False)
+        for key, value in g.LEGACY_REQUIRED_CONFIG.items():
+            self.assertEqual(os.environ[key], value)
+
+    def test_legacy_runtime_rejects_relaxed_operator_config(self):
+        os.environ["GDAL_VRT_ENABLE_PYTHON"] = "YES"
+        with self.assertRaisesRegex(RuntimeError, "weakens GDAL hardening"):
+            g.harden_gdal(force=True, require_runtime=False)
+
+    def test_legacy_runtime_merges_required_driver_denylist(self):
+        os.environ["GDAL_SKIP"] = "JPEG,HDF4"
+        g.harden_gdal(force=True, require_runtime=False)
+        skipped = os.environ["GDAL_SKIP"].split()
+        self.assertIn("JPEG", skipped)
+        self.assertEqual(skipped.count("HDF4"), 1)
+        self.assertTrue(set(g.DISABLED_DRIVERS_ENV.split()).issubset(skipped))
+
+
 @unittest.skipUnless(_HAS_GDAL, "requires osgeo/GDAL")
 class TestHardenGdal(unittest.TestCase):
+    def setUp(self):
+        self._saved_settings = {
+            key: os.environ.get(key)
+            for key in (
+                *g.LEGACY_REQUIRED_CONFIG,
+                "GDAL_VRT_RAWRASTERBAND_ALLOWED_SOURCE",
+                "GDAL_VRT_PYTHON_TRUSTED_MODULES",
+                "GDAL_PYTHON_DRIVER_PATH",
+                "GDAL_HTTP_UNSAFESSL",
+                "GDAL_SKIP",
+            )
+        }
+        for key in self._saved_settings:
+            os.environ.pop(key, None)
+
+    def tearDown(self):
+        for key, value in self._saved_settings.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
     def test_disables_vulnerable_drivers_keeps_allowlist(self):
         g.harden_gdal(force=True)
         from osgeo import gdal as _gdal

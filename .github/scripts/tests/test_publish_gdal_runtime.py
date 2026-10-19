@@ -25,6 +25,21 @@ class PublishGdalRuntimeTests(unittest.TestCase):
             json.dumps({"gdal_release": "3.13.3"}),
             encoding="utf-8",
         )
+        source_lock_path = root / "sources.lock"
+        patcher = mock.patch(
+            "publish_gdal_runtime.SOURCE_LOCK_PATH", source_lock_path
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        source_lock_path.write_text(
+            "HASTE_GDAL_BUILD 2\n"
+            "gdal 3.13.3 https://example.test/gdal.tar.gz "
+            + "a" * 64
+            + "\nproj 9.8.1 https://example.test/proj.tar.gz "
+            + "b" * 64
+            + "\n",
+            encoding="utf-8",
+        )
         (directory / "bom.cdx.json").write_text(
             json.dumps(
                 {
@@ -36,6 +51,20 @@ class PublishGdalRuntimeTests(unittest.TestCase):
                             "licenses": [{"license": {"id": "MIT"}}],
                         }
                         for name in sorted(EXPECTED_DISTRIBUTIONS)
+                    ]
+                    + [
+                        {
+                            "name": "gdal",
+                            "version": "3.13.3",
+                            "purl": "pkg:generic/gdal@3.13.3",
+                            "licenses": [{"license": {"id": "MIT"}}],
+                        },
+                        {
+                            "name": "proj",
+                            "version": "9.8.1",
+                            "purl": "pkg:generic/proj@9.8.1",
+                            "licenses": [{"license": {"id": "MIT"}}],
+                        },
                     ],
                 }
             ),
@@ -123,6 +152,80 @@ class PublishGdalRuntimeTests(unittest.TestCase):
             bom_path.write_text(json.dumps(bom), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "lack license metadata"):
                 validate_bundle(directory)
+
+    def test_rejects_sbom_missing_locked_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = self._bundle_directory(Path(temp_dir))
+            bom_path = directory / "bom.cdx.json"
+            bom = json.loads(bom_path.read_text(encoding="utf-8"))
+            bom["components"] = [
+                component
+                for component in bom["components"]
+                if component.get("name") != "proj"
+            ]
+            bom_path.write_text(json.dumps(bom), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "sources.lock"):
+                validate_bundle(directory)
+
+    def test_rejects_unexpected_native_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = self._bundle_directory(Path(temp_dir))
+            bom_path = directory / "bom.cdx.json"
+            bom = json.loads(bom_path.read_text(encoding="utf-8"))
+            bom["components"].append(
+                {
+                    "name": "unlocked-native",
+                    "version": "1.0",
+                    "purl": "pkg:generic/unlocked-native@1.0",
+                    "licenses": [{"license": {"id": "MIT"}}],
+                }
+            )
+            bom_path.write_text(json.dumps(bom), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, "unexpected unlocked-native"
+            ):
+                validate_bundle(directory)
+
+    def test_accepts_folded_runtime_dependency_header(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = self._bundle_directory(Path(temp_dir))
+            wheel_path = next(
+                path
+                for path in directory.glob("*.whl")
+                if "fiona-" in path.name
+            )
+            with zipfile.ZipFile(wheel_path, "r") as source:
+                contents = {
+                    name: source.read(name) for name in source.namelist()
+                }
+            metadata_path = next(
+                name
+                for name in contents
+                if name.endswith(".dist-info/METADATA")
+            )
+            metadata = contents[metadata_path].decode("utf-8")
+            metadata = metadata.replace(
+                "Requires-Dist: haste-gdal-runtime==3.13.3+haste.2",
+                "Requires-Dist: haste-gdal-runtime==\n 3.13.3+haste.2",
+            )
+            contents[metadata_path] = metadata.encode("utf-8")
+            with zipfile.ZipFile(wheel_path, "w") as output:
+                for name, content in contents.items():
+                    output.writestr(name, content)
+            checksum_file = directory / "SHA256SUMS"
+            checksums = []
+            for line in checksum_file.read_text(encoding="utf-8").splitlines():
+                _, asset_name = line.split("  ", 1)
+                checksums.append(
+                    f"{_sha256(directory / asset_name)}  {asset_name}"
+                )
+            checksum_file.write_text(
+                "\n".join(checksums) + "\n", encoding="utf-8"
+            )
+
+            bundle = validate_bundle(directory)
+
+        self.assertEqual(bundle.runtime_version, "3.13.3+haste.2")
 
     def test_rejects_overwrite_before_upload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

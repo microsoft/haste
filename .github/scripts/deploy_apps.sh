@@ -297,6 +297,17 @@ deploy_function() {
     # publishing reconciler TimerTrigger's host-scoped Singleton lock does not
     # collide across apps sharing storage. See data-publishing/rollout.md.
     HOST_ID=$(printf '%s' "$FUNCTION_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-32)
+    local gdal_settings=(
+        "GDAL_VRT_ENABLE_RAWRASTERBAND=NO"
+        "GDAL_VRT_ENABLE_PYTHON=NO"
+        "GDAL_DRIVER_PATH=disable"
+        "CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED=NO"
+    )
+    if [ "$FUNCTION_NAME" = "$FUNCTION_TITILER_API" ]; then
+        gdal_settings+=(
+            "GDAL_SKIP=VRT HDF4 HDF4Image HDF5 HDF5Image netCDF"
+        )
+    fi
 
     if [ "${SET_APPSETTINGS:-true}" = "true" ]; then
         local size_settings=()
@@ -323,6 +334,7 @@ deploy_function() {
 
         az functionapp config appsettings set --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --settings \
             "${size_settings[@]}" \
+            "${gdal_settings[@]}" \
             "env=${ENVIRONMENT}" \
             "IMAGE_QUEUE_NAME=image-layers-queue" \
             "INFERENCE_QUEUE_NAME=inference-queue" \
@@ -376,6 +388,10 @@ deploy_function() {
             "PUBLISH_BLOB_CONTAINER=${PUBLISH_BLOB_CONTAINER}" \
             "PUBLISH_EXPLORER_RENDER_ENABLED=${PUBLISH_EXPLORER_RENDER_ENABLED}" \
             "AzureFunctionsWebHost__hostId=${HOST_ID}" \
+            --output none
+    else
+        az functionapp config appsettings set --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --settings \
+            "${gdal_settings[@]}" \
             --output none
     fi
 

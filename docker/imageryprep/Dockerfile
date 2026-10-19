@@ -51,6 +51,10 @@ ENV PYTHONPATH=/app
 # code additionally enforces a stricter allowlist via hastegeo.core.utils.
 # gdal_security.harden_gdal(). See docs/known-vulnerabilities.md Root Cause C.
 ENV GDAL_SKIP="HDF4 HDF4Image HDF5 HDF5Image netCDF"
+ENV GDAL_VRT_ENABLE_RAWRASTERBAND=NO
+ENV GDAL_VRT_ENABLE_PYTHON=NO
+ENV GDAL_DRIVER_PATH=disable
+ENV CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED=NO
 
 # Ensure /app itself is writable by appuser (for runtime-created dirs like ./logs)
 RUN chown appuser:appgroup /app

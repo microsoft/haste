@@ -2,6 +2,11 @@ FROM mcr.microsoft.com/azure-functions/python:4-python3.11
 
 WORKDIR /home/site/wwwroot
 
+ENV GDAL_VRT_ENABLE_RAWRASTERBAND=NO \
+    GDAL_VRT_ENABLE_PYTHON=NO \
+    GDAL_DRIVER_PATH=disable \
+    CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED=NO
+
 # Create non-root user first so COPY --chown can reference it; Secrets dir is empty so chown is fast
 RUN groupadd -r appgroup && useradd -r -g appgroup appuser \
     && mkdir -p /azure-functions-host/Secrets \

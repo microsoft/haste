@@ -8,6 +8,8 @@ on:
       - "native/gdal-runtime/**"
       - ".github/scripts/publish_gdal_runtime.py"
       - ".github/scripts/tests/test_publish_gdal_runtime.py"
+      - ".github/scripts/check_gdal_hardening.py"
+      - ".github/scripts/tests/test_gdal_hardening_guard.py"
       - "api/titilerfuncapi/**"
       - "hastelib/src/hastegeo/__init__.py"
       - "hastelib/src/hastegeo/core/processors/uploader.py"
@@ -20,6 +22,15 @@ on:
       - "hastelib/tests/core/utils/test_gdal_security.py"
       - "hastelib/tests/core/utils/test_imagery.py"
       - "hastelib/tests/core/utils/test_imagery_runtime.py"
+      - ".github/scripts/deploy_apps.sh"
+      - "infra/modules/functions.bicep"
+      - "api/hastefuncapi/Dockerfile"
+      - "api/hastefuncqueues/Dockerfile"
+      - "docker/docker-compose.yml"
+      - "docker/imageryprep/Dockerfile"
+      - "docker/titiler/Dockerfile"
+      - "docker/training/Dockerfile"
+      - "docs/security-configuration.md"
       - ".github/workflows/gdal-runtime-build.yml"
   push:
     branches:
@@ -28,6 +39,8 @@ on:
       - "native/gdal-runtime/**"
       - ".github/scripts/publish_gdal_runtime.py"
       - ".github/scripts/tests/test_publish_gdal_runtime.py"
+      - ".github/scripts/check_gdal_hardening.py"
+      - ".github/scripts/tests/test_gdal_hardening_guard.py"
       - "api/titilerfuncapi/**"
       - "hastelib/src/hastegeo/__init__.py"
       - "hastelib/src/hastegeo/core/processors/uploader.py"
@@ -40,6 +53,15 @@ on:
       - "hastelib/tests/core/utils/test_gdal_security.py"
       - "hastelib/tests/core/utils/test_imagery.py"
       - "hastelib/tests/core/utils/test_imagery_runtime.py"
+      - ".github/scripts/deploy_apps.sh"
+      - "infra/modules/functions.bicep"
+      - "api/hastefuncapi/Dockerfile"
+      - "api/hastefuncqueues/Dockerfile"
+      - "docker/docker-compose.yml"
+      - "docker/imageryprep/Dockerfile"
+      - "docker/titiler/Dockerfile"
+      - "docker/training/Dockerfile"
+      - "docs/security-configuration.md"
       - ".github/workflows/gdal-runtime-build.yml"
   workflow_dispatch:
 
@@ -64,6 +86,9 @@ jobs:
       - name: Run native runtime unit tests
         working-directory: native/gdal-runtime
         run: python -m unittest discover -s tests -v
+
+      - name: Check repository GDAL hardening configuration
+        run: python .github/scripts/check_gdal_hardening.py
 
   build:
     needs: unit
@@ -344,7 +369,7 @@ jobs:
         run: |
           python -m unittest discover \
             -s .github/scripts/tests \
-            -p test_publish_gdal_runtime.py -v
+            -p "test_*.py" -v
 
   publish:
     needs:
@@ -379,6 +404,18 @@ jobs:
         with:
           name: haste-gdal-runtime-${{ github.sha }}
           path: ${{ runner.temp }}/haste-gdal-runtime/release
+
+      - name: Verify provenance for each release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for asset in "${{ runner.temp }}/haste-gdal-runtime/release/"*; do
+            gh attestation verify "$asset" \
+              --repo microsoft/haste \
+              --signer-workflow \
+                microsoft/haste/.github/workflows/gdal-runtime-build.yml \
+              --source-ref refs/heads/main
+          done
 
       - name: Validate and publish immutable runtime assets
         env:

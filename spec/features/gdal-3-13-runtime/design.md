@@ -258,6 +258,7 @@ not itself constitute OSS approval.
 from the upstream main-branch workflow after both license-review and publish
 gates are enabled and the protected publishing environment is approved. Before
 upload, it validates the six-wheel set, matching runtime pins, notice status,
+all locked native source/version entries in the SBOM, provenance attestations,
 and SHA-256 manifest. Existing release assets are never overwritten.
 
 **Rebuilds** go through the same pipeline and bump the `+haste.N` build

@@ -8,14 +8,14 @@
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | implemented; private run `38955056455` passed real-runtime smoke; current review fixes still need a fresh CI build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
 | 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private run `38955056455` passed build, all-binding smoke, Grype SBOM scan, and Functions/imageryprep/training-base smoke; current changes add wheel-path scanning, SPDX/name metadata for locked sources and wheels, and a protected publisher; fresh CI pending; upstream-only attestation skipped on fork |
-| 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | publisher workflow and immutable-bundle validator drafted in the private fork; blocked on official OSS license approval and upstream confirmation |
+| 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | private publisher verifies provenance, exact source-lock/SBOM match, wheel licenses, checksums and immutable upload; local tests pass; Microsoft OSS approval and upstream confirmation still required |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | in progress: single-libgdal/libproj checks and startup activation in `hastegeo` are implemented; runtime installation and required-setting wiring remain |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | in progress: uploaded chunk headers, downloaded TIFFs and user GPKG inputs are content-checked; imagery opens are GTiff-only and GPKG reads use Fiona's GPKG allowlist; audit of remaining GDAL opens/configuration paths is pending |
-| 2 | GDAL hardening settings in Bicep, `deploy_apps.sh`, Dockerfiles and compose | `backend-dev` | pending |
+| 2 | GDAL hardening settings in Bicep, `deploy_apps.sh`, Dockerfiles and compose | `backend-dev` | in progress: VRT raw-band/Python disablement, plugin disablement, `/vsicurl` header KVP rejection and TiTiler VRT denylist are wired through Function Apps and local/container config; generated template compiles; runtime wheel installation remains pending |
 | 3 | TiTiler: hash-locked dependencies on the runtime; startup self-check; VRT driver policy; negative tests | `backend-dev` | in progress: startup hook excludes VRT and a native-runtime smoke tests WarpedVRT with VRT disabled; fresh CI result, wheel installation, request-source restrictions, and `/vsi` negative tests remain |
 | 4 | Build-once Function App packages; `--no-build` deploy; post-deploy verification | `backend-dev` | pending |
 | 5 | imageryprep and training images (training to Python 3.11); local dev and CI test environments | `backend-dev` + `gis` | pending |
-| 6 | Dependency pin guards, forbidden-configuration guard, docs, close the GDAL exception | `backend-dev` | pending |
+| 6 | Dependency pin guards, forbidden-configuration guard, docs, close the GDAL exception | `backend-dev` | in progress: repo guard rejects weakened GDAL settings across infra, workflows, scripts, API and Docker config; release-package guards added; old dependency pins and exception stay until runtime consumer packages are built and approved |
 | 7 | Dev rollout, runtime evidence, production after approval | `backend-dev` | pending |
 
 Validation for every phase: `backend-validation`. New native dependencies:

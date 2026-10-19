@@ -72,6 +72,12 @@ services:
     image: haste-titiler
     ports:
       - "8000:8000"
+    environment:
+      GDAL_VRT_ENABLE_RAWRASTERBAND: "NO"
+      GDAL_VRT_ENABLE_PYTHON: "NO"
+      GDAL_DRIVER_PATH: "disable"
+      CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED: "NO"
+      GDAL_SKIP: "VRT HDF4 HDF4Image HDF5 HDF5Image netCDF"
     depends_on:
       - azurite
 
@@ -87,6 +93,10 @@ services:
       AzureWebJobsStorage: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret # gitleaks:allow
       ASPNETCORE_URLS: "http://+:8080"
       DATA_PATH: "/app/data"
+      GDAL_VRT_ENABLE_RAWRASTERBAND: "NO"
+      GDAL_VRT_ENABLE_PYTHON: "NO"
+      GDAL_DRIVER_PATH: "disable"
+      CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED: "NO"
       DEVELOPMENT_MODE: "true"
       FUNCTIONS_WORKER_RUNTIME: "python"
       AzureWebJobsFeatureFlags: "EnableWorkerIndexing"
@@ -135,6 +145,10 @@ services:
       AzureWebJobsStorage: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret # gitleaks:allow
       ASPNETCORE_URLS: "http://+:8080"
       DATA_PATH: "/app/data"
+      GDAL_VRT_ENABLE_RAWRASTERBAND: "NO"
+      GDAL_VRT_ENABLE_PYTHON: "NO"
+      GDAL_DRIVER_PATH: "disable"
+      CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED: "NO"
       DEVELOPMENT_MODE: "true"
       FUNCTIONS_WORKER_RUNTIME: "python"
       AzureWebJobsFeatureFlags: "EnableWorkerIndexing"

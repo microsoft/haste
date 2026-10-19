@@ -197,6 +197,13 @@ class LockTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn(".github/scripts/publish_gdal_runtime.py", workflow)
+        self.assertIn(".github/scripts/check_gdal_hardening.py", workflow)
+        self.assertIn(
+            "Check repository GDAL hardening configuration", workflow
+        )
+        self.assertIn("infra/modules/functions.bicep", workflow)
+        self.assertIn("docker/docker-compose.yml", workflow)
+        self.assertIn("docker/training/Dockerfile", workflow)
         self.assertIn("api/titilerfuncapi/**", workflow)
         self.assertIn("target-image-smoke:", workflow)
         self.assertIn("actions/download-artifact@", workflow)
@@ -237,6 +244,11 @@ class LockTests(unittest.TestCase):
         self.assertIn("publish:", workflow)
         self.assertIn("GDAL_RUNTIME_LICENSE_REVIEWED == 'true'", workflow)
         self.assertIn("GDAL_RUNTIME_PUBLISH_ENABLED == 'true'", workflow)
+        self.assertIn("gh attestation verify", workflow)
+        self.assertIn(
+            "microsoft/haste/.github/workflows/gdal-runtime-build.yml",
+            workflow,
+        )
         self.assertIn("gdal-runtime-publish", workflow)
         self.assertIn(".github/scripts/publish_gdal_runtime.py", workflow)
         self.assertIn("training-base-smoke:", workflow)

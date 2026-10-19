@@ -40,6 +40,7 @@ EVIDENCE_FILES = {
     "bom.cdx.json",
     "THIRD_PARTY_NOTICES.txt",
 }
+SOURCE_LOCK_PATH = REPO_ROOT / "native" / "gdal-runtime" / "sources.lock"
 _CHECKSUM_LINE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9_.+-]+)$")
 CommandRunner = Callable[[Sequence[str]], str]
 
@@ -104,6 +105,26 @@ def _read_checksums(path: Path) -> dict[str, str]:
             raise ValueError(f"Duplicate SHA256SUMS entry: {name}")
         checksums[name] = digest
     return checksums
+
+
+def _locked_native_sources(path: Path | None = None) -> dict[str, str]:
+    source_lock_path = SOURCE_LOCK_PATH if path is None else path
+    sources = {}
+    for line in source_lock_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        fields = line.split()
+        if fields[0] == "HASTE_GDAL_BUILD":
+            continue
+        if len(fields) != 4:
+            raise ValueError(f"Invalid native source lock row: {line!r}")
+        name, version, _, _ = fields
+        if name in sources:
+            raise ValueError(f"Duplicate native source lock entry: {name}")
+        sources[name] = version
+    if not sources:
+        raise ValueError("Native source lock has no source entries")
+    return sources
 
 
 def validate_bundle(directory: Path) -> RuntimeBundle:
@@ -182,12 +203,25 @@ def validate_bundle(directory: Path) -> RuntimeBundle:
     for name, metadata in wheel_metadata.items():
         if name == "haste-gdal-runtime":
             continue
-        if f"haste-gdal-runtime=={runtime_version}" not in (
-            metadata.get_all("Requires-Dist", [])
+        required_runtime = (
+            re.sub(
+                r"\s+",
+                "",
+                f"haste-gdal-runtime=={runtime_version}",
+            )
+            .replace("_", "-")
+            .lower()
+        )
+        requirements = [
+            re.sub(r"\s+", "", value).replace("_", "-").lower()
+            for value in metadata.get_all("Requires-Dist", [])
+        ]
+        if not any(
+            required_runtime in requirement for requirement in requirements
         ):
             raise ValueError(
                 f"{metadata.get('Name')}: does not pin "
-                f"haste-gdal-runtime=={runtime_version}"
+                f"haste-gdal-runtime=={runtime_version}; found {requirements}"
             )
 
     notices_path = directory / "THIRD_PARTY_NOTICES.txt"
@@ -211,6 +245,32 @@ def validate_bundle(directory: Path) -> RuntimeBundle:
         raise ValueError(
             "Runtime SBOM components lack license metadata: "
             + ", ".join(unlicensed)
+        )
+    observed_sources = {}
+    for component in components:
+        if not component.get("purl", "").startswith("pkg:generic/"):
+            continue
+        name = component.get("name")
+        if not isinstance(name, str) or name in observed_sources:
+            raise ValueError("Runtime SBOM has an invalid or duplicate source")
+        observed_sources[name] = component.get("version")
+    locked_sources = _locked_native_sources()
+    if observed_sources != locked_sources:
+        missing_sources = {
+            name: version
+            for name, version in locked_sources.items()
+            if observed_sources.get(name) != version
+        }
+        unexpected_sources = sorted(
+            set(observed_sources) - set(locked_sources)
+        )
+        details = [
+            f"{name}=={version}"
+            for name, version in sorted(missing_sources.items())
+        ]
+        details.extend(f"unexpected {name}" for name in unexpected_sources)
+        raise ValueError(
+            "Runtime SBOM does not match sources.lock: " + ", ".join(details)
         )
 
     checksums_path = directory / "SHA256SUMS"

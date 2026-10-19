@@ -175,6 +175,25 @@ class TestDeploymentContract(unittest.TestCase):
             resource for resource in resources
             if resource["name"] == "functions"
         )["properties"]["template"]["resources"]
+        functions_template = next(
+            resource for resource in resources
+            if resource["name"] == "functions"
+        )["properties"]["template"]
+        hardening_settings = (
+            "GDAL_VRT_ENABLE_RAWRASTERBAND",
+            "GDAL_VRT_ENABLE_PYTHON",
+            "GDAL_DRIVER_PATH",
+            "CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED",
+        )
+        hardening_config = json.dumps(
+            functions_template["variables"]["gdalHardeningSettings"]
+        )
+        titiler_config = json.dumps(
+            functions_template["variables"]["titilerGdalHardeningSettings"]
+        )
+        for key in hardening_settings:
+            self.assertIn(key, hardening_config)
+        self.assertIn("GDAL_SKIP", titiler_config)
         for resource in functions:
             name = resource["name"]
             if name not in ("fn-api", "fn-queue", "fn-titiler"):
@@ -183,6 +202,12 @@ class TestDeploymentContract(unittest.TestCase):
             for key in KEYS:
                 owner = "fn-queue" if key == KEYS[1] else "fn-api"
                 self.assertEqual(key in settings, name == owner, (name, key))
+            setting_variable = (
+                "titilerGdalHardeningSettings"
+                if name == "fn-titiler"
+                else "gdalHardeningSettings"
+            )
+            self.assertIn(setting_variable, settings, name)
 
 
 if __name__ == "__main__":
