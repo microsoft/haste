@@ -11,7 +11,8 @@ ENV HASTE_GDAL_RUNTIME_REQUIRED=true \
     GDAL_SKIP="VRT HDF4 HDF4Image HDF5 HDF5Image netCDF"
 
 COPY api/titilerfuncapi/requirements.txt /app/requirements.txt
-RUN python -m pip install --no-cache-dir -r /app/requirements.txt
+RUN python -m pip install --no-cache-dir -r /app/requirements.txt \
+    "uvicorn>=0.34,<1"
 
 COPY api/titilerfuncapi /app
 
