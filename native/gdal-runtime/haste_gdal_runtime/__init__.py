@@ -317,14 +317,28 @@ def _check_inventory(
     unknown = sorted(registered - set(manifest.get("drivers", [])))
     if unknown:
         problems.append(f"drivers not in the build manifest: {unknown}")
+    expected_drivers = set(manifest.get("drivers", []))
     if policy.allowed_drivers is not None:
+        expected_drivers &= policy.allowed_drivers
         extra = sorted(registered - policy.allowed_drivers)
         if extra:
             problems.append(f"drivers outside the policy: {extra}")
+    missing_drivers = sorted(expected_drivers - registered)
+    if missing_drivers:
+        problems.append(
+            f"required drivers are not registered: {missing_drivers}"
+        )
+
     prefixes = set(observed["vsi_prefixes"])
     unknown_vsi = sorted(prefixes - set(manifest.get("vsi_prefixes", [])))
     if unknown_vsi:
         problems.append(f"file systems not in the manifest: {unknown_vsi}")
+    expected_vsi = set(manifest.get("vsi_prefixes", [])) & policy.allowed_vsi
+    missing_vsi = sorted(expected_vsi - prefixes)
+    if missing_vsi:
+        problems.append(
+            f"required file systems are not registered: {missing_vsi}"
+        )
     extra_vsi = sorted(prefixes - policy.allowed_vsi)
     if extra_vsi:
         problems.append(f"file systems outside the policy: {extra_vsi}")

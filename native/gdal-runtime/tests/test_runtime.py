@@ -50,8 +50,8 @@ def good_report():
     return {
         "library": str(LIB),
         "gdal_release": "3.13.3",
-        "drivers": ["GTiff", "VRT", "MEM"],
-        "vsi_prefixes": ["/vsimem/", "/vsicurl/"],
+        "drivers": list(MANIFEST["drivers"]),
+        "vsi_prefixes": list(MANIFEST["vsi_prefixes"]),
         "vrt_raw_band_compiled": False,
         "config": {
             **rt.REQUIRED_CONFIG,
@@ -614,6 +614,15 @@ class EvaluateTests(unittest.TestCase):
         observed["drivers"].append("HDF5")
         observed["vsi_prefixes"].append("/vsis3/")
         self.assertEqual(len(self.run_eval(observed)), 3)
+
+    def test_missing_policy_driver_or_vsi_fails(self):
+        observed = good_report()
+        observed["drivers"].remove("GTiff")
+        observed["vsi_prefixes"].remove("/vsicurl/")
+        problems = self.run_eval(observed)
+        self.assertEqual(len(problems), 2)
+        self.assertTrue(any("GTiff" in problem for problem in problems))
+        self.assertTrue(any("/vsicurl/" in problem for problem in problems))
 
     def test_relaxed_config(self):
         observed = good_report()
