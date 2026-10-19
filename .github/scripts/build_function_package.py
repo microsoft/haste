@@ -273,7 +273,7 @@ def build_package(
             [
                 sys.executable,
                 "-c",
-                "import hastegeo; import haste_gdal_runtime; "
+                "import haste_gdal_runtime; "
                 "policy = haste_gdal_runtime.Policy("
                 "expected_gdal='3.13.3', "
                 "required_bindings=('osgeo.gdal','rasterio','fiona',"
