@@ -227,6 +227,8 @@ def harden_gdal(
     )
     runtime.configure(policy)
     report = runtime.secure_startup(policy)
+    for binding in ("osgeo.gdal", "osgeo.ogr"):
+        importlib.import_module(binding).UseExceptions()
     logger.info("verified HASTE GDAL runtime: %s", report)
     _hardened = True
 
