@@ -7,7 +7,7 @@
 | 1 | Source lock (`native/gdal-runtime/sources.lock`) and verified fetcher | `backend-dev` | done |
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | implemented; private run `38955056455` passed real-runtime smoke; current review fixes still need a fresh CI build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
-| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private run `38955056455` passed build, all-binding smoke, Grype SBOM scan, and Functions/imageryprep/training-base smoke; current unvalidated changes add wheel-path scanning and complete runtime-wheel license metadata; upstream-only attestation job skipped on private fork as intended |
+| 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private run `38955056455` passed build, all-binding smoke, Grype SBOM scan, and Functions/imageryprep/training-base smoke; current changes add wheel-path scanning, SPDX/name metadata for locked sources and wheels, and a protected publisher; fresh CI pending; upstream-only attestation skipped on fork |
 | 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | publisher workflow and immutable-bundle validator drafted in the private fork; blocked on official OSS license approval and upstream confirmation |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | in progress: single-libgdal/libproj checks and startup activation in `hastegeo` are implemented; runtime installation and required-setting wiring remain |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | in progress: uploaded chunk headers, downloaded TIFFs and user GPKG inputs are content-checked; imagery opens are GTiff-only and GPKG reads use Fiona's GPKG allowlist; audit of remaining GDAL opens/configuration paths is pending |
@@ -57,9 +57,10 @@ Next, in order:
    builder run `38946439904` passed after those fixes. The build now generates
    a CycloneDX inventory, bundled license text where available, a license
    inventory that flags missing texts for review, and SHA-256 checksums. Current
-   unvalidated changes add a Grype scan of built wheel files and correct the
-   runtime wheel and Python binding license metadata; official OSS approval
-   remains pending.
+   unvalidated changes add a Grype scan of built wheel files, license metadata
+   and notice references for locked native sources, a SQLite public-domain
+   notice, and a publisher that rejects unlicensed SBOM components. Microsoft
+   OSS approval remains pending.
 2. Integrate the published artifact into the runtime self-check, TiTiler/API/
    queues packages, imageryprep and training image builds; complete the
    approved dev1 rollout only after those consumers pass their tests.

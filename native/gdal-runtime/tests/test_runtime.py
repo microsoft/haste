@@ -84,6 +84,17 @@ class LockTests(unittest.TestCase):
         self.assertTrue(build.isdigit())
         self.assertIn("gdal", {s.name for s in sources})
 
+    def test_every_locked_native_source_has_sbom_license_metadata(self):
+        text = (ROOT / "sources.lock").read_text(encoding="utf-8")
+        _, sources = fetch_sources.parse_lock(text)
+        missing = sorted(
+            source.name
+            for source in sources
+            if source.name.casefold()
+            not in create_supply_chain.SOURCE_LICENSES
+        )
+        self.assertEqual(missing, [])
+
     def test_rejects_plain_http(self):
         line = "HASTE_GDAL_BUILD 1\nx 1 http://a/x.tgz " + "a" * 64
         with self.assertRaises(ValueError):
@@ -138,6 +149,8 @@ class LockTests(unittest.TestCase):
         self.assertIn("environment: gdal-runtime-build", workflow)
         self.assertIn("requirements-smoke.txt", workflow)
         self.assertIn("dnf install -y nasm openssl", workflow)
+        self.assertIn("Validate the complete runtime release bundle", workflow)
+        self.assertIn("publish_gdal_runtime.py", workflow)
         self.assertIn("--require-hashes", workflow)
         self.assertIn("--only-binary=:all:", workflow)
         self.assertIn("--index-url https://pypi.org/simple", workflow)
@@ -263,11 +276,20 @@ class LockTests(unittest.TestCase):
                 member.size = len(content)
                 archive.addfile(member, io.BytesIO(content))
             source_hash = create_supply_chain.sha256(source_archive)
+            sqlite_archive = source_dir / "sqlite-1.0.tar.gz"
+            with tarfile.open(sqlite_archive, "w:gz") as archive:
+                content = b"autosetup license text\n"
+                member = tarfile.TarInfo("sqlite-1.0/autosetup/LICENSE")
+                member.size = len(content)
+                archive.addfile(member, io.BytesIO(content))
+            sqlite_hash = create_supply_chain.sha256(sqlite_archive)
             source_lock = root / "sources.lock"
             source_lock.write_text(
                 "HASTE_GDAL_BUILD 1\n"
                 f"sample 1.0 https://example.test/sample-1.0.tar.gz "
-                f"{source_hash}\n",
+                f"{source_hash}\n"
+                f"sqlite 1.0 https://example.test/sqlite-1.0.tar.gz "
+                f"{sqlite_hash}\n",
                 encoding="utf-8",
             )
 
@@ -329,7 +351,7 @@ class LockTests(unittest.TestCase):
 
         self.assertEqual(len(outputs), 4)
         self.assertEqual(bom["bomFormat"], "CycloneDX")
-        self.assertEqual(len(bom["components"]), 7)
+        self.assertEqual(len(bom["components"]), 8)
         pyogrio = next(
             component
             for component in bom["components"]
@@ -342,8 +364,26 @@ class LockTests(unittest.TestCase):
             if component["name"] == "haste-gdal-runtime"
         )
         self.assertEqual(runtime["licenses"], [{"expression": "MIT"}])
+        sqlite = next(
+            component
+            for component in bom["components"]
+            if component["name"] == "sqlite"
+        )
+        self.assertEqual(
+            sqlite["licenses"],
+            [
+                {
+                    "license": {
+                        "name": "Public Domain",
+                        "url": "https://www.sqlite.org/copyright.html",
+                    }
+                }
+            ],
+        )
         self.assertIn("sample license text", notices)
         self.assertIn("runtime license text", notices)
+        self.assertIn("dedicated to the public domain", notices)
+        self.assertIn("https://www.sqlite.org/copyright.html", notices)
         self.assertIn("MIT License", notices)
         self.assertIn("haste_gdal_runtime-1.0-py3-none-any.whl", checksums)
         self.assertIn("manifest.json", checksums)

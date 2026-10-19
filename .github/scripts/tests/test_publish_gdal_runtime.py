@@ -26,7 +26,19 @@ class PublishGdalRuntimeTests(unittest.TestCase):
             encoding="utf-8",
         )
         (directory / "bom.cdx.json").write_text(
-            json.dumps({"bomFormat": "CycloneDX", "specVersion": "1.6"}),
+            json.dumps(
+                {
+                    "bomFormat": "CycloneDX",
+                    "specVersion": "1.6",
+                    "components": [
+                        {
+                            "name": name,
+                            "licenses": [{"license": {"id": "MIT"}}],
+                        }
+                        for name in sorted(EXPECTED_DISTRIBUTIONS)
+                    ],
+                }
+            ),
             encoding="utf-8",
         )
         (directory / "THIRD_PARTY_NOTICES.txt").write_text(
@@ -100,6 +112,16 @@ class PublishGdalRuntimeTests(unittest.TestCase):
                 "License review required.\n", encoding="utf-8"
             )
             with self.assertRaisesRegex(ValueError, "marked for review"):
+                validate_bundle(directory)
+
+    def test_rejects_unlicensed_sbom_component(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = self._bundle_directory(Path(temp_dir))
+            bom_path = directory / "bom.cdx.json"
+            bom = json.loads(bom_path.read_text(encoding="utf-8"))
+            bom["components"][0].pop("licenses")
+            bom_path.write_text(json.dumps(bom), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "lack license metadata"):
                 validate_bundle(directory)
 
     def test_rejects_overwrite_before_upload(self) -> None:

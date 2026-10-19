@@ -199,6 +199,19 @@ def validate_bundle(directory: Path) -> RuntimeBundle:
     bom = json.loads((directory / "bom.cdx.json").read_text(encoding="utf-8"))
     if bom.get("bomFormat") != "CycloneDX" or bom.get("specVersion") != "1.6":
         raise ValueError("Runtime SBOM must be CycloneDX 1.6")
+    components = bom.get("components")
+    if not isinstance(components, list) or not components:
+        raise ValueError("Runtime SBOM has no components")
+    unlicensed = sorted(
+        component.get("name", "<unnamed>")
+        for component in components
+        if not component.get("licenses")
+    )
+    if unlicensed:
+        raise ValueError(
+            "Runtime SBOM components lack license metadata: "
+            + ", ".join(unlicensed)
+        )
 
     checksums_path = directory / "SHA256SUMS"
     checksums = _read_checksums(checksums_path)

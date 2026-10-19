@@ -250,6 +250,9 @@ Grype scans both the CycloneDX SBOM (with CPE inference for source components)
 and the built wheel artifact directory. Either scan fails the job on
 medium-or-higher findings. The wheel scan supplements SBOM matching; it does
 not replace the required review of the bundled native license notices.
+The SBOM records license identifiers or descriptive names and notice-file
+references for each locked native source and Python wheel; this metadata does
+not itself constitute OSS approval.
 
 **An approval-gated publisher** uploads the assets to `haste-binaries` only
 from the upstream main-branch workflow after both license-review and publish

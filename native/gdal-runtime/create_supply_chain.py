@@ -33,6 +33,44 @@ LICENSE_NAMES = {
     "notice.txt",
 }
 MAX_NOTICE_SIZE = 2 * 1024 * 1024
+SOURCE_LICENSES = {
+    "gdal": {
+        "name": "MIT and bundled third-party licenses",
+        "url": "https://gdal.org/en/stable/copyright.html",
+    },
+    "proj": {
+        "id": "MIT",
+        "url": "https://proj.org/en/stable/about.html#license",
+    },
+    "sqlite": {
+        "name": "Public Domain",
+        "url": "https://www.sqlite.org/copyright.html",
+    },
+    "curl": {
+        "name": "curl License",
+        "url": "https://curl.se/docs/copyright.html",
+    },
+    "openssl": {
+        "id": "Apache-2.0",
+        "url": "https://www.openssl.org/source/license.html",
+    },
+    "zlib": {"id": "Zlib", "url": "https://zlib.net/zlib_license.html"},
+    "libdeflate": {
+        "id": "MIT",
+        "url": "https://github.com/ebiggers/libdeflate/blob/v1.26/COPYING",
+    },
+    "zstd": {
+        "name": "BSD-style or GPL-2.0 licensing",
+        "url": "https://github.com/facebook/zstd/blob/v1.5.7/LICENSE",
+    },
+    "libjpeg-turbo": {
+        "name": "BSD-style, IJG, and zlib licenses",
+        "url": (
+            "https://github.com/libjpeg-turbo/libjpeg-turbo/blob/"
+            "3.1.4.1/LICENSE.md"
+        ),
+    },
+}
 
 
 def sha256(path: Path) -> str:
@@ -223,32 +261,59 @@ def generate(
                 f"{source.filename}: sha256 {actual_digest} "
                 f"does not match sources.lock"
             )
-        components.append(
-            {
-                "type": "library",
-                "name": source.name,
-                "version": source.version,
-                "purl": (
-                    f"pkg:generic/{quote(source.name, safe='-._')}@"
-                    f"{quote(source.version, safe='.+-')}"
-                ),
-                "hashes": [{"alg": "SHA-256", "content": source.sha256}],
-                "externalReferences": [
-                    {
-                        "type": "distribution",
-                        "url": source.url,
-                    }
-                ],
-            }
-        )
         native_notices = extract_native_notices(archive_path, source.name)
+        if source.name.casefold() == "sqlite":
+            native_notices[
+                "licenses/sqlite/SQLITE_PUBLIC_DOMAIN_NOTICE.txt"
+            ] = (
+                b"SQLite's deliverable code and documentation are dedicated "
+                b"to the public domain. See "
+                b"https://www.sqlite.org/copyright.html.\n"
+            )
         notices.update(native_notices)
-        license_status[source.name] = (
-            "Bundled source license file(s): "
-            + ", ".join(sorted(native_notices))
-            if native_notices
-            else "No license file found in source archive; review required"
-        )
+        license_info = SOURCE_LICENSES.get(source.name.casefold())
+        component: dict[str, object] = {
+            "type": "library",
+            "name": source.name,
+            "version": source.version,
+            "purl": (
+                f"pkg:generic/{quote(source.name, safe='-._')}@"
+                f"{quote(source.version, safe='.+-')}"
+            ),
+            "hashes": [{"alg": "SHA-256", "content": source.sha256}],
+            "externalReferences": [
+                {
+                    "type": "distribution",
+                    "url": source.url,
+                }
+            ],
+        }
+        if license_info:
+            license_entry = {"url": license_info["url"]}
+            if "id" in license_info:
+                license_entry["id"] = license_info["id"]
+            else:
+                license_entry["name"] = license_info["name"]
+            component["licenses"] = [{"license": license_entry}]
+            component["properties"] = [
+                {
+                    "name": "gdal_runtime.license_notice_file",
+                    "value": notice_path,
+                }
+                for notice_path in sorted(native_notices)
+            ]
+            license_status[source.name] = (
+                "Bundled source license file(s): "
+                + ", ".join(sorted(native_notices))
+                if native_notices
+                else "No license file found in source archive; review required"
+            )
+        else:
+            license_status[source.name] = (
+                "License identification is missing; review required. "
+                "Bundled notice file(s): " + ", ".join(sorted(native_notices))
+            )
+        components.append(component)
 
     python_components, python_notices, python_licenses = wheel_inventory(
         wheel_paths

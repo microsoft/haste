@@ -89,6 +89,14 @@ jobs:
           BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
         run: bash native/gdal-runtime/build.sh
 
+      - name: Validate the complete runtime release bundle
+        env:
+          BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
+        run: |
+          python3 .github/scripts/publish_gdal_runtime.py \
+            --artifact-dir "$BUILD_ROOT/dist" \
+            --validate-only
+
       - name: Download hash-locked smoke dependencies
         env:
           BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
