@@ -69,22 +69,49 @@ def replace_header(content: bytes, key: str, value: str) -> bytes:
 def update_metadata(
     content: bytes, version: str, runtime_version: str | None
 ) -> bytes:
-    lines = content.decode("utf-8").splitlines()
-    output = []
+    text = content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    header_text, separator, body = text.partition("\n\n")
+    lines = header_text.splitlines()
+    output: list[str] = []
     saw_version = False
-    for line in lines:
-        if line.startswith("Version: "):
-            output.append(f"Version: {version}")
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        field, delimiter, value = line.partition(":")
+        field_name = field.casefold()
+        if delimiter and field_name == "version":
+            output.append(f"{field}: {version}")
             saw_version = True
-        elif line.startswith("Requires-Dist: haste-gdal-runtime"):
+        elif delimiter and field_name == "requires-dist":
+            field_lines = [line]
+            index += 1
+            while index < len(lines) and lines[index][:1] in {" ", "\t"}:
+                field_lines.append(lines[index])
+                index += 1
+            requirement = " ".join(
+                [value.strip(), *(part.strip() for part in field_lines[1:])]
+            )
+            if not re.match(
+                r"haste[-_.]gdal[-_.]runtime(?:\s|[<>=!~;\[]|$)",
+                requirement,
+                re.IGNORECASE,
+            ):
+                output.extend(field_lines)
             continue
         else:
             output.append(line)
+        index += 1
     if not saw_version:
         raise ValueError("wheel METADATA is missing Version")
     if runtime_version:
         output.append(f"Requires-Dist: {RUNTIME_NAME}=={runtime_version}")
-    return ("\n".join(output) + "\n").encode("utf-8")
+    updated_header = "\n".join(output)
+    updated = (
+        f"{updated_header}\n\n{body}"
+        if separator
+        else f"{updated_header}\n"
+    )
+    return updated.encode("utf-8")
 
 
 def rewrite_data_path(path: str, staging_data_prefix: str) -> str:

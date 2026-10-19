@@ -566,6 +566,30 @@ class WheelAssemblyTests(unittest.TestCase):
         self.assertIn(b"Requires-Dist: numpy", updated)
         self.assertNotIn(b"haste-gdal-runtime>=3", updated)
 
+    def test_runtime_pin_stays_in_headers_before_long_description(self):
+        metadata = (
+            b"Metadata-Version: 2.1\n"
+            b"Name: fiona\n"
+            b"Version: 1.10.1\n"
+            b"Requires-Dist: haste-gdal-runtime\n"
+            b"  >=3\n"
+            b"Requires-Dist: attrs>=19.2\n"
+            b"\n"
+            b"Fiona package description.\n"
+        )
+
+        updated = assemble_wheels.update_metadata(
+            metadata, "1.10.1+haste.1", "3.13.3+haste.1"
+        )
+        headers, body = updated.split(b"\n\n", 1)
+
+        self.assertIn(
+            b"Requires-Dist: haste-gdal-runtime==3.13.3+haste.1", headers
+        )
+        self.assertIn(b"Requires-Dist: attrs>=19.2", headers)
+        self.assertNotIn(b"haste-gdal-runtime\n  >=3", headers)
+        self.assertEqual(body, b"Fiona package description.\n")
+
     def test_local_version_discards_any_existing_local_suffix(self):
         self.assertEqual(
             assemble_wheels.local_version("1.2.3+source", "7"),
