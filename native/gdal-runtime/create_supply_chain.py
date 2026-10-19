@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import json
 import re
-import shutil
 import tarfile
 import uuid
 import zipfile
@@ -233,6 +232,62 @@ def wheel_inventory(
     return components, notices, licenses
 
 
+def runtime_manifest(
+    wheel_paths: list[Path], build_manifest: dict[str, object]
+) -> dict[str, object]:
+    runtime_wheels = []
+    for path in wheel_paths:
+        with zipfile.ZipFile(path) as wheel:
+            metadata_names = [
+                name
+                for name in wheel.namelist()
+                if name.endswith(".dist-info/METADATA")
+            ]
+            if len(metadata_names) != 1:
+                continue
+            metadata = BytesParser().parsebytes(wheel.read(metadata_names[0]))
+            name = re.sub(r"[-_.]+", "-", (metadata.get("Name") or "").lower())
+            if name == "haste-gdal-runtime":
+                runtime_wheels.append((path, wheel.namelist()))
+
+    if len(runtime_wheels) != 1:
+        raise ValueError(
+            "expected one haste-gdal-runtime wheel when creating the manifest"
+        )
+    path, members = runtime_wheels[0]
+    manifest_members = [
+        member
+        for member in members
+        if member.endswith("haste_gdal_runtime/manifest.json")
+    ]
+    if len(manifest_members) != 1:
+        raise ValueError(
+            f"{path.name}: expected one installed GDAL runtime manifest"
+        )
+    with zipfile.ZipFile(path) as wheel:
+        installed_manifest = json.loads(
+            wheel.read(manifest_members[0]).decode("utf-8")
+        )
+    if not isinstance(installed_manifest, dict):
+        raise ValueError(
+            f"{path.name}: GDAL runtime manifest is not an object"
+        )
+    mismatched = {
+        key: (value, installed_manifest.get(key))
+        for key, value in build_manifest.items()
+        if installed_manifest.get(key) != value
+    }
+    if mismatched:
+        raise ValueError(
+            "installed GDAL runtime manifest differs from build manifest: "
+            + ", ".join(
+                f"{key}={expected!r} != {actual!r}"
+                for key, (expected, actual) in sorted(mismatched.items())
+            )
+        )
+    return installed_manifest
+
+
 def generate(
     source_lock: Path,
     source_dir: Path,
@@ -241,10 +296,10 @@ def generate(
     output_dir: Path,
 ) -> list[Path]:
     _, sources = parse_lock(source_lock.read_text(encoding="utf-8"))
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     wheel_paths = sorted(wheel_dir.glob("*.whl"))
     if not wheel_paths:
         raise ValueError(f"no wheels found in {wheel_dir}")
+    build_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     components: list[dict[str, object]] = []
     notices: dict[str, bytes] = {}
@@ -337,6 +392,7 @@ def generate(
     components.extend(python_components)
     notices.update(python_notices)
     license_status.update(python_licenses)
+    manifest = runtime_manifest(wheel_paths, build_manifest)
 
     runtime_version = next(
         component["version"]
@@ -368,7 +424,10 @@ def generate(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     artifact_manifest = output_dir / "manifest.json"
-    shutil.copyfile(manifest_path, artifact_manifest)
+    artifact_manifest.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     bom_path = output_dir / "bom.cdx.json"
     bom_path.write_text(
         json.dumps(bom, indent=2, sort_keys=True) + "\n",

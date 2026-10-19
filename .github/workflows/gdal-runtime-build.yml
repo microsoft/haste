@@ -16,6 +16,7 @@ on:
       - ".github/scripts/tests/test_prepare_training_runtime_env.py"
       - ".github/scripts/check_gdal_hardening.py"
       - ".github/scripts/tests/test_gdal_hardening_guard.py"
+      - ".github/scripts/tests/test_deploy_network_access.py"
       - "api/titilerfuncapi/**"
       - "hastelib/src/hastegeo/__init__.py"
       - "hastelib/src/hastegeo/core/processors/uploader.py"
@@ -48,6 +49,7 @@ on:
       - "docker/training/scripts/entrypoint.sh"
       - "docs/security-configuration.md"
       - ".github/workflows/dependency-validation.yml"
+      - ".github/workflows/deploy-apps.yml"
       - ".github/workflows/gdal-runtime-build.yml"
   push:
     branches:
@@ -64,6 +66,7 @@ on:
       - ".github/scripts/tests/test_prepare_training_runtime_env.py"
       - ".github/scripts/check_gdal_hardening.py"
       - ".github/scripts/tests/test_gdal_hardening_guard.py"
+      - ".github/scripts/tests/test_deploy_network_access.py"
       - "api/titilerfuncapi/**"
       - "hastelib/src/hastegeo/__init__.py"
       - "hastelib/src/hastegeo/core/processors/uploader.py"
@@ -96,6 +99,7 @@ on:
       - "docker/training/scripts/entrypoint.sh"
       - "docs/security-configuration.md"
       - ".github/workflows/dependency-validation.yml"
+      - ".github/workflows/deploy-apps.yml"
       - ".github/workflows/gdal-runtime-build.yml"
   workflow_dispatch:
 
@@ -210,7 +214,9 @@ jobs:
           retention-days: 7
 
   target-image-smoke:
-    needs: build
+    needs:
+      - build
+      - function-packages
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -268,6 +274,32 @@ jobs:
                 --build "$build"
             '
 
+      - name: Download imageryprep test package
+        if: matrix.name == 'imageryprep-python311'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-function-packages-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-function-packages
+
+      - name: Import the packaged imageryprep worker in its target image
+        if: matrix.name == 'imageryprep-python311'
+        env:
+          SMOKE_IMAGE: ${{ matrix.image }}
+          PACKAGE_DIR: ${{ runner.temp }}/haste-function-packages
+        run: |
+          docker run --rm --entrypoint sh \
+            --mount "type=bind,source=$PACKAGE_DIR,target=/function-packages,readonly" \
+            "$SMOKE_IMAGE" -ec '
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                libgl1 libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1
+              python -c "import zipfile; \
+                zipfile.ZipFile(\"/function-packages/imageryprep-smoke.zip\").extractall(\"/tmp/haste-imageryprep\")"
+              PYTHONPATH="/tmp/haste-imageryprep/.python_packages/lib/site-packages:/tmp/haste-imageryprep" \
+                HASTE_GDAL_RUNTIME_REQUIRED=true \
+                python -c "import hastegeo.workflows.prepare_imagery"
+            '
+
   function-packages:
     needs: build
     runs-on: ubuntu-latest
@@ -294,7 +326,7 @@ jobs:
         run: |
           python -m pip install --isolated \
             --index-url "$PIP_INDEX_URL" build==1.2.2
-          mkdir -p hastelib/dist
+          mkdir -p dist
           python -m build --wheel --outdir dist
         working-directory: hastelib
 
@@ -322,6 +354,12 @@ jobs:
             --app-name titilerfuncapi \
             --source-dir api/titilerfuncapi \
             --requirements api/titilerfuncapi/requirements.txt \
+            --wheel-dir "$RUNNER_TEMP/haste-gdal-runtime/dist" \
+            --output-dir "$RUNNER_TEMP/haste-function-packages"
+          python .github/scripts/build_function_package.py \
+            --app-name imageryprep-smoke \
+            --source-dir hastelib/src \
+            --requirements docker/imageryprep/requirements.txt \
             --wheel-dir "$RUNNER_TEMP/haste-gdal-runtime/dist" \
             --output-dir "$RUNNER_TEMP/haste-function-packages"
 

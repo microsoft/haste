@@ -27,6 +27,7 @@ FUNCTION_APP_MODULES = {
     "hastefuncapi": "function_app",
     "hastefuncqueues": "function_app",
     "titilerfuncapi": "app",
+    "imageryprep-smoke": "hastegeo.workflows.prepare_imagery",
 }
 HASTEGEO_CONSUMERS = {"hastefuncapi", "hastefuncqueues"}
 

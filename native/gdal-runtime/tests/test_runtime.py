@@ -205,6 +205,10 @@ class LockTests(unittest.TestCase):
 
         self.assertIn(".github/scripts/publish_gdal_runtime.py", workflow)
         self.assertIn(".github/scripts/check_gdal_hardening.py", workflow)
+        self.assertIn(".github/scripts/build_function_package.py", workflow)
+        self.assertIn(
+            ".github/scripts/prepare_training_runtime_env.py", workflow
+        )
         self.assertIn(
             "Check repository GDAL hardening configuration", workflow
         )
@@ -233,6 +237,7 @@ class LockTests(unittest.TestCase):
         self.assertIn("dist/*", workflow)
         self.assertIn("function-packages:", workflow)
         self.assertIn("build_function_package.py", workflow)
+        self.assertIn("--app-name imageryprep-smoke", workflow)
         self.assertIn("haste-function-packages-${{ github.sha }}", workflow)
         self.assertIn("Attest Function App package artifacts", workflow)
         self.assertIn("vulnerability-scan:", workflow)
@@ -264,8 +269,12 @@ class LockTests(unittest.TestCase):
         self.assertIn("gdal-runtime-publish", workflow)
         self.assertIn(".github/scripts/publish_gdal_runtime.py", workflow)
         self.assertIn("training-base-smoke:", workflow)
-        self.assertIn("Smoke-test training-python311 wheels", workflow)
-        self.assertIn("python=3.11 pip", workflow)
+        self.assertIn(
+            "Smoke-test the full Python 3.11 training environment", workflow
+        )
+        self.assertIn("conda env create", workflow)
+        self.assertIn("test_gdal_runtime_integration.py", workflow)
+        self.assertIn("Import the packaged imageryprep worker", workflow)
         self.assertIn(
             "mcr.microsoft.com/azureml/curated/"
             "minimal-py312-cuda12.4-inference@sha256:",
@@ -354,6 +363,22 @@ class LockTests(unittest.TestCase):
                                 else "MIT License\nPermission is granted\n"
                             ),
                         )
+                    if name == "haste-gdal-runtime":
+                        wheel.writestr(
+                            "haste_gdal_runtime/manifest.json",
+                            json.dumps(
+                                {
+                                    "gdal_release": "3.13.3",
+                                    "binding_versions": {
+                                        "osgeo.gdal": "1.0",
+                                        "rasterio": "1.0",
+                                        "fiona": "1.0",
+                                        "pyogrio": "1.0",
+                                        "pyproj": "1.0",
+                                    },
+                                }
+                            ),
+                        )
             manifest = root / "manifest.json"
             manifest.write_text('{"gdal_release":"3.13.3"}\n')
 
@@ -368,6 +393,9 @@ class LockTests(unittest.TestCase):
             bom = json.loads(
                 (output_dir / "bom.cdx.json").read_text(encoding="utf-8")
             )
+            artifact_manifest = json.loads(
+                (output_dir / "manifest.json").read_text(encoding="utf-8")
+            )
             notices = (output_dir / "THIRD_PARTY_NOTICES.txt").read_text(
                 encoding="utf-8"
             )
@@ -376,6 +404,9 @@ class LockTests(unittest.TestCase):
         self.assertEqual(len(outputs), 4)
         self.assertEqual(bom["bomFormat"], "CycloneDX")
         self.assertEqual(len(bom["components"]), 8)
+        self.assertEqual(
+            artifact_manifest["binding_versions"]["pyogrio"], "1.0"
+        )
         pyogrio = next(
             component
             for component in bom["components"]
