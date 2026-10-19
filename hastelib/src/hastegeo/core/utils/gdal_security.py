@@ -21,8 +21,11 @@ This module is import-safe without GDAL: the pure-Python helpers
 (``sniff_file_type``, the size/format helpers) work on any host, and only
 :func:`harden_gdal` needs ``osgeo``.
 """
+
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import logging
 import os
 
@@ -57,38 +60,23 @@ _FORMAT_TO_SNIFF = {
 _hardened = False
 
 
-def harden_gdal(*, force: bool = False) -> None:
-    """Restrict GDAL/OGR to :data:`ALLOWED_RASTER_DRIVERS` +
-    :data:`ALLOWED_VECTOR_DRIVERS` by deregistering every other driver.
-
-    Idempotent: a no-op after the first successful run unless ``force`` is
-    set. Safe to call from many import sites. If ``osgeo`` is unavailable
-    (e.g. a bare host running non-GDAL tests) it logs and returns without
-    error.
-    """
-    global _hardened
-    if _hardened and not force:
-        return
-
+def _harden_legacy_gdal() -> bool:
     try:
         from osgeo import gdal, ogr
-    except ImportError:
-        logger.warning("osgeo (GDAL) not importable; skipping harden_gdal()")
-        return
+    except ModuleNotFoundError as exc:
+        if exc.name != "osgeo":
+            raise
+        logger.warning(
+            "osgeo (GDAL) not importable; skipping legacy hardening"
+        )
+        return False
 
     gdal.UseExceptions()
     ogr.UseExceptions()
-
-    # Belt-and-suspenders: make any later (re)registration or subprocess
-    # honor the denylist too. Respect an operator-provided GDAL_SKIP.
     os.environ.setdefault("GDAL_SKIP", DISABLED_DRIVERS_ENV)
     gdal.SetConfigOption("GDAL_SKIP", os.environ["GDAL_SKIP"])
 
     allowed = ALLOWED_RASTER_DRIVERS | ALLOWED_VECTOR_DRIVERS
-
-    # Collect first — deregistering mutates the driver manager and shifts
-    # indices. In GDAL 3.x the manager is unified (one list for raster +
-    # vector), so a single pass covers OGR drivers too.
     drivers = [
         gdal.GetDriver(i)
         for i in range(gdal.GetDriverCount())
@@ -107,14 +95,73 @@ def harden_gdal(*, force: bool = False) -> None:
                     "harden_gdal: failed to deregister driver %s", name
                 )
 
-    _hardened = True
     logger.info(
-        "harden_gdal: disabled %d GDAL/OGR drivers; kept %s; GDAL_SKIP=%r",
+        "harden_gdal: disabled %d legacy GDAL/OGR drivers; kept %s; "
+        "GDAL_SKIP=%r",
         len(removed),
         sorted(allowed),
         os.environ.get("GDAL_SKIP"),
     )
-    logger.debug("harden_gdal: disabled drivers: %s", sorted(removed))
+    logger.debug("harden_gdal: disabled legacy drivers: %s", sorted(removed))
+    return True
+
+
+def harden_gdal(
+    *, force: bool = False, require_runtime: bool | None = None
+) -> None:
+    """Restrict GDAL/OGR to :data:`ALLOWED_RASTER_DRIVERS` +
+    :data:`ALLOWED_VECTOR_DRIVERS` by deregistering every other driver.
+
+    Idempotent: a no-op after the first successful run unless ``force`` is
+    set. When the shared runtime is installed, verify it before importing
+    any GDAL binding. Set ``require_runtime`` or the
+    HASTE_GDAL_RUNTIME_REQUIRED environment variable to fail closed if the
+    shared runtime is missing.
+    """
+    global _hardened
+    if _hardened and not force:
+        return
+
+    if require_runtime is None:
+        value = (
+            os.environ.get("HASTE_GDAL_RUNTIME_REQUIRED", "").strip().lower()
+        )
+        if value in {"1", "true", "yes"}:
+            require_runtime = True
+        elif value in {"", "0", "false", "no"}:
+            require_runtime = False
+        else:
+            raise ValueError(
+                "HASTE_GDAL_RUNTIME_REQUIRED must be a boolean value"
+            )
+
+    if importlib.util.find_spec("haste_gdal_runtime") is None:
+        if require_runtime:
+            raise RuntimeError(
+                "HASTE_GDAL_RUNTIME_REQUIRED is set but "
+                "haste-gdal-runtime is not installed"
+            )
+        logger.warning(
+            "haste-gdal-runtime is absent; applying legacy GDAL hardening"
+        )
+        if _harden_legacy_gdal():
+            _hardened = True
+        return
+
+    runtime = importlib.import_module("haste_gdal_runtime")
+    manifest = runtime.load_manifest()
+    expected_gdal = manifest.get("gdal_release")
+    if not isinstance(expected_gdal, str) or not expected_gdal:
+        raise RuntimeError("GDAL runtime manifest has no GDAL release")
+    policy = runtime.Policy(
+        expected_gdal=expected_gdal,
+        allowed_drivers=ALLOWED_RASTER_DRIVERS | ALLOWED_VECTOR_DRIVERS,
+        required_bindings=("osgeo.gdal",),
+    )
+    runtime.configure(policy)
+    report = runtime.secure_startup(policy)
+    logger.info("verified HASTE GDAL runtime: %s", report)
+    _hardened = True
 
 
 def sniff_file_type(path: str) -> str | None:

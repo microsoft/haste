@@ -12,6 +12,7 @@ the Docker test image).
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from hastegeo.core.utils import gdal_security as g
 
@@ -149,6 +150,48 @@ class TestSizeEnvHelpers(unittest.TestCase):
         self.assertEqual(g.max_upload_bytes(), 5 * 1024**3)
 
 
+class TestSharedRuntimeActivation(unittest.TestCase):
+    def setUp(self):
+        self._was_hardened = g._hardened
+        g._hardened = False
+
+    def tearDown(self):
+        g._hardened = self._was_hardened
+
+    def test_shared_runtime_is_configured_before_startup_check(self):
+        calls = []
+        runtime = mock.Mock()
+        runtime.load_manifest.return_value = {"gdal_release": "3.13.3"}
+        runtime.Policy.return_value = object()
+        runtime.configure.side_effect = lambda policy: calls.append(
+            "configure"
+        )
+        runtime.secure_startup.side_effect = lambda policy: calls.append(
+            "secure_startup"
+        ) or {"gdal_release": "3.13.3"}
+        with mock.patch.object(
+            g.importlib.util, "find_spec", return_value=object()
+        ), mock.patch.object(
+            g.importlib, "import_module", return_value=runtime
+        ):
+            g.harden_gdal(force=True, require_runtime=True)
+
+        self.assertEqual(calls, ["configure", "secure_startup"])
+        runtime.Policy.assert_called_once_with(
+            expected_gdal="3.13.3",
+            allowed_drivers=g.ALLOWED_RASTER_DRIVERS
+            | g.ALLOWED_VECTOR_DRIVERS,
+            required_bindings=("osgeo.gdal",),
+        )
+
+    def test_required_runtime_missing_fails_closed(self):
+        with mock.patch.object(
+            g.importlib.util, "find_spec", return_value=None
+        ):
+            with self.assertRaisesRegex(RuntimeError, "is not installed"):
+                g.harden_gdal(force=True, require_runtime=True)
+
+
 @unittest.skipUnless(_HAS_GDAL, "requires osgeo/GDAL")
 class TestHardenGdal(unittest.TestCase):
     def test_disables_vulnerable_drivers_keeps_allowlist(self):
@@ -156,24 +199,21 @@ class TestHardenGdal(unittest.TestCase):
         from osgeo import gdal as _gdal
         from osgeo import ogr as _ogr
 
-        # CVE-bearing families must be gone.
         for name in ("HDF4", "HDF4Image", "HDF5", "netCDF"):
             with self.subTest(disabled=name):
                 self.assertIsNone(_gdal.GetDriverByName(name))
 
-        # Allowlisted raster drivers remain.
         for name in ("GTiff", "COG", "VRT", "JPEG", "PNG"):
             with self.subTest(kept=name):
                 self.assertIsNotNone(_gdal.GetDriverByName(name))
 
-        # Allowlisted vector drivers remain.
         for name in ("GPKG", "GeoJSON"):
             with self.subTest(kept_vector=name):
                 self.assertIsNotNone(_ogr.GetDriverByName(name))
 
     def test_idempotent(self):
         g.harden_gdal(force=True)
-        g.harden_gdal()  # second call must not raise or remove allowlisted
+        g.harden_gdal()
         from osgeo import gdal as _gdal
 
         self.assertIsNotNone(_gdal.GetDriverByName("GTiff"))
