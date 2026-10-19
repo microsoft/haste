@@ -29,6 +29,7 @@ import importlib.util
 import logging
 import os
 import re
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -123,23 +124,7 @@ def _harden_legacy_gdal() -> bool:
     gdal.SetConfigOption("GDAL_SKIP", os.environ["GDAL_SKIP"])
 
     allowed = ALLOWED_RASTER_DRIVERS | ALLOWED_VECTOR_DRIVERS
-    drivers = [
-        gdal.GetDriver(i)
-        for i in range(gdal.GetDriverCount())
-        if gdal.GetDriver(i) is not None
-    ]
-
-    removed: list[str] = []
-    for drv in drivers:
-        name = drv.ShortName
-        if name not in allowed:
-            try:
-                drv.Deregister()
-                removed.append(name)
-            except Exception:  # pragma: no cover - defensive
-                logger.warning(
-                    "harden_gdal: failed to deregister driver %s", name
-                )
+    removed = _deregister_disallowed_legacy_drivers(gdal, allowed)
 
     logger.info(
         "harden_gdal: disabled %d legacy GDAL/OGR drivers; kept %s; "
@@ -150,6 +135,42 @@ def _harden_legacy_gdal() -> bool:
     )
     logger.debug("harden_gdal: disabled legacy drivers: %s", sorted(removed))
     return True
+
+
+def _deregister_disallowed_legacy_drivers(
+    gdal: Any, allowed: frozenset[str]
+) -> list[str]:
+    def registered_drivers() -> list[Any]:
+        drivers = []
+        for index in range(gdal.GetDriverCount()):
+            driver = gdal.GetDriver(index)
+            if driver is not None:
+                drivers.append(driver)
+        return drivers
+
+    removed = []
+    for driver in registered_drivers():
+        name = driver.ShortName
+        if name not in allowed:
+            try:
+                driver.Deregister()
+            except Exception as exc:
+                raise RuntimeError(
+                    f"failed to deregister disallowed GDAL driver {name}"
+                ) from exc
+            removed.append(name)
+
+    remaining = sorted(
+        driver.ShortName
+        for driver in registered_drivers()
+        if driver.ShortName not in allowed
+    )
+    if remaining:
+        raise RuntimeError(
+            "disallowed GDAL drivers remain registered: "
+            + ", ".join(remaining)
+        )
+    return removed
 
 
 def harden_gdal(

@@ -248,6 +248,22 @@ class TestLegacyGdalConfiguration(unittest.TestCase):
         self.assertEqual(skipped.count("HDF4"), 1)
         self.assertTrue(set(g.DISABLED_DRIVERS_ENV.split()).issubset(skipped))
 
+    def test_failed_driver_deregistration_aborts_legacy_hardening(self):
+        driver = mock.Mock()
+        driver.ShortName = "HDF4"
+        driver.Deregister.side_effect = OSError("registration manager failed")
+        gdal_module = mock.Mock()
+        gdal_module.GetDriverCount.return_value = 1
+        gdal_module.GetDriver.return_value = driver
+
+        with self.assertRaisesRegex(
+            RuntimeError, "failed to deregister disallowed GDAL driver HDF4"
+        ):
+            g._deregister_disallowed_legacy_drivers(
+                gdal_module,
+                g.ALLOWED_RASTER_DRIVERS | g.ALLOWED_VECTOR_DRIVERS,
+            )
+
 
 @unittest.skipUnless(_HAS_GDAL, "requires osgeo/GDAL")
 class TestHardenGdal(unittest.TestCase):
