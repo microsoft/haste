@@ -189,6 +189,7 @@ class TestSharedRuntimeActivation(unittest.TestCase):
             g.harden_gdal(force=True, require_runtime=True)
 
         self.assertEqual(calls, ["configure", "secure_startup"])
+        self.assertEqual(runtime.UseExceptions.call_count, 2)
         runtime.Policy.assert_called_once_with(
             expected_gdal="3.13.3",
             allowed_drivers=g.ALLOWED_RASTER_DRIVERS
@@ -206,6 +207,11 @@ class TestSharedRuntimeActivation(unittest.TestCase):
 
 class TestLegacyGdalConfiguration(unittest.TestCase):
     def setUp(self):
+        discovery = mock.patch.object(
+            g.importlib.util, "find_spec", return_value=None
+        )
+        discovery.start()
+        self.addCleanup(discovery.stop)
         self._saved_settings = {
             key: os.environ.get(key)
             for key in (
