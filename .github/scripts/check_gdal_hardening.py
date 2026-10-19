@@ -12,6 +12,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCAN_ROOTS = ("infra", ".github/workflows", ".github/scripts", "api", "docker")
+# This checker contains inert GDAL setting names in an environment drift allowlist.
+POLICY_ONLY_FILES = {
+    REPO_ROOT / ".github" / "scripts" / "check_env_drift.py",
+}
 SCAN_SUFFIXES = {
     "",
     ".bicep",
@@ -77,7 +81,7 @@ def _candidate_files(root: Path) -> list[Path]:
                 and not path.name.startswith("Dockerfile")
             ):
                 continue
-            if path == Path(__file__).resolve():
+            if path == Path(__file__).resolve() or path in POLICY_ONLY_FILES:
                 continue
             if (
                 any(
