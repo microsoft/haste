@@ -10,6 +10,17 @@ import filter_dependency_requirements as filter_script  # noqa: E402
 
 
 class FilterDependencyRequirementsTests(unittest.TestCase):
+    def test_titiler_tests_filter_unpublished_runtime_wheels(self):
+        workflow = (
+            SCRIPT_DIR.parent / "workflows" / "titiler-tests.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("filter_dependency_requirements.py", workflow)
+        self.assertIn("/tmp/titiler-test-requirements.txt", workflow)
+        self.assertNotIn(
+            "pip install -r api/titilerfuncapi/requirements.txt", workflow
+        )
+
     def test_removes_runtime_owned_bindings_and_keeps_other_dependencies(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
