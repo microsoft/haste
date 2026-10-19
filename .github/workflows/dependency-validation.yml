@@ -29,6 +29,7 @@ on:
       - "api/hastefuncapi/requirements.txt"
       - "api/hastefuncqueues/requirements.txt"
       - "api/titilerfuncapi/requirements.txt"
+      - "docker/titiler/Dockerfile"
       - "docker/imageryprep/requirements.txt"
       - "api/hastefuncapi/Dockerfile"
       - "api/hastefuncqueues/Dockerfile"
