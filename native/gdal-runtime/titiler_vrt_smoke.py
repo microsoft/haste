@@ -15,6 +15,7 @@ def main() -> int:
         allowed_drivers=frozenset({"GTiff", "COG", "JPEG", "PNG", "MEM"}),
         required_bindings=("rasterio",),
     )
+    runtime.configure(policy)
     runtime.secure_startup(policy)
 
     import numpy as np

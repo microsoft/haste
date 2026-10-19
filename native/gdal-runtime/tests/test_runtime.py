@@ -165,6 +165,11 @@ class LockTests(unittest.TestCase):
         self.assertIn("binding_workflow_smoke.py", smoke_test)
         self.assertIn("titiler_vrt_smoke.py", smoke_test)
         self.assertIn('vrt_environment["GDAL_SKIP"] = "VRT"', smoke_test)
+        titiler_smoke = (ROOT / "titiler_vrt_smoke.py").read_text()
+        self.assertLess(
+            titiler_smoke.index("runtime.configure(policy)"),
+            titiler_smoke.index("runtime.secure_startup(policy)"),
+        )
         binding_smoke = (ROOT / "binding_workflow_smoke.py").read_text()
         for distribution in (
             "haste-gdal-runtime",
