@@ -80,6 +80,7 @@ services:
       GDAL_DISABLE_READDIR_ON_OPEN: "EMPTY_DIR"
       CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED: "NO"
       GDAL_SKIP: "VRT HDF4 HDF4Image HDF5 HDF5Image netCDF"
+      TITILER_DEV_ALLOWED_ORIGINS: "http://azurite:10000"
     depends_on:
       - azurite
 
