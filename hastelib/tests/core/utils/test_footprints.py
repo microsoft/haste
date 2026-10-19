@@ -192,8 +192,8 @@ class TestDownloadBuildingFootprints(unittest.TestCase):
         gdf = MagicMock()
         # gdf[["id", "geometry", "subtype", "class"]] -> filtered_gdf
         filtered = MagicMock()
-        gdf.__getitem__.side_effect = (
-            lambda key: filtered if isinstance(key, list) else gdf
+        gdf.__getitem__.side_effect = lambda key: (
+            filtered if isinstance(key, list) else gdf
         )
         # filtered[mask] returns final gdf with .shape / .set_crs / .to_file
         final = MagicMock()
@@ -634,13 +634,17 @@ class TestClipAndNormalizeUserFootprints(unittest.TestCase):
             },
             crs=None,
         )
+        valid_source = gpd.GeoDataFrame(
+            {
+                "id": ["a"],
+                "geometry": [shapely.geometry.box(1, 1, 2, 2)],
+            },
+            crs="EPSG:4326",
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             input_path = os.path.join(tmp, "in.gpkg")
-            # Just touch the input path so the helper's existence check
-            # (if any) doesn't fire; the read is mocked.
-            with open(input_path, "wb"):
-                pass
+            valid_source.to_file(input_path, driver="GPKG")
             output_path = os.path.join(tmp, "out.gpkg")
             with patch(
                 "hastegeo.core.utils.footprints.gpd.read_file",
@@ -651,6 +655,31 @@ class TestClipAndNormalizeUserFootprints(unittest.TestCase):
                         input_path, self._aoi(), output_path
                     )
             self.assertIn("CRS", str(cm.exception))
+
+    def test_rejects_vrt_content_before_vector_open(self):
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        from hastegeo.core.utils.footprints import (
+            clip_and_normalize_user_footprints,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = os.path.join(tmp, "disguised.gpkg")
+            with open(input_path, "w", encoding="utf-8") as source:
+                source.write("<VRTDataset rasterXSize='1' rasterYSize='1'/>")
+            with patch(
+                "hastegeo.core.utils.footprints.gpd.read_file"
+            ) as read_file:
+                with self.assertRaisesRegex(
+                    ValueError, "does not match the declared format"
+                ):
+                    clip_and_normalize_user_footprints(
+                        input_path, self._aoi(), os.path.join(tmp, "out.gpkg")
+                    )
+
+            read_file.assert_not_called()
 
     def test_overwrite_false_rejects_existing_output(self):
         import os

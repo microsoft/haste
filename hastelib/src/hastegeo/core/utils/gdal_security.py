@@ -177,6 +177,10 @@ def sniff_file_type(path: str) -> str | None:
     except OSError:
         return None
 
+    return _sniff_file_header(head)
+
+
+def _sniff_file_header(head: bytes) -> str | None:
     if len(head) < 4:
         return None
 
@@ -199,6 +203,27 @@ def sniff_file_type(path: str) -> str | None:
     if stripped[:1] in (b"{", b"["):
         return "geojson"
     return None
+
+
+def assert_matches_declared_bytes(data: bytes, declared: str) -> None:
+    """Validate an upload's first chunk before it is persisted.
+
+    GeoPackage detection needs its application identifier at byte offset 68,
+    so the first chunk must contain at least 72 bytes.
+    """
+    norm = assert_allowed_upload_format(declared)
+    expected = _FORMAT_TO_SNIFF[norm]
+    if expected == "gpkg" and len(data) < 72:
+        raise ValueError(
+            "First upload chunk must contain at least 72 bytes to validate "
+            "GeoPackage content."
+        )
+    actual = _sniff_file_header(data[:72])
+    if actual != expected:
+        raise ValueError(
+            f"Uploaded file content ({actual!r}) does not match the "
+            f"declared format {declared!r} (expected {expected!r})."
+        )
 
 
 def assert_allowed_upload_format(declared: str) -> str:

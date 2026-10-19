@@ -3,15 +3,14 @@
 import os
 import traceback
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 import cv2  # type: ignore
 import numpy as np  # type: ignore
-import rasterio
 from osgeo import gdal
 
 from ..utils.logs import Logger
-from .gdal_security import harden_gdal
+from .gdal_security import assert_matches_declared, harden_gdal
 from .source_types import normalize_source_type
 
 # Restrict GDAL to an allowlist of drivers (and enable exceptions) before
@@ -61,6 +60,19 @@ class ImageryUtils:
         return cv2.medianBlur(image, 3)
 
     @staticmethod
+    def open_gtiff(file_path: str) -> Any:
+        """Open only a content-verified TIFF with the GTiff driver."""
+        assert_matches_declared(file_path, "tif")
+        dataset = gdal.OpenEx(
+            file_path,
+            gdal.OF_RASTER | gdal.OF_READONLY,
+            allowed_drivers=["GTiff"],
+        )
+        if dataset is None:
+            raise RuntimeError(f"Unable to open GeoTIFF file: {file_path}")
+        return dataset
+
+    @staticmethod
     def is_gtiff(file_path):
         """
         Check if the given file is a GeoTIFF file.
@@ -75,13 +87,13 @@ class ImageryUtils:
             bool: True if the file is a GeoTIFF, False otherwise.
         """
         try:
-            with gdal.Open(file_path) as dataset:
+            with ImageryUtils.open_gtiff(file_path) as dataset:
                 if dataset is None:
                     return False
                 if dataset.GetDriver().ShortName != "GTiff":
                     return False
                 return True
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             return False
 
     @staticmethod
@@ -98,7 +110,7 @@ class ImageryUtils:
             bool: True if the file is a COG, False otherwise.
         """
         try:
-            with gdal.Open(file_path) as dataset:
+            with ImageryUtils.open_gtiff(file_path) as dataset:
                 if dataset is None:
                     return False
                 metadata = dataset.GetMetadata("IMAGE_STRUCTURE")
@@ -113,7 +125,7 @@ class ImageryUtils:
                 if "LAYOUT" not in metadata or metadata["LAYOUT"] != "COG":
                     return False
                 return True
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             return False
 
     @staticmethod
@@ -128,7 +140,7 @@ class ImageryUtils:
             bool: True if the file is an RGB image, False otherwise.
         """
         try:
-            with gdal.Open(file_path) as dataset:
+            with ImageryUtils.open_gtiff(file_path) as dataset:
                 if dataset is None or dataset.RasterCount < 3:
                     return False
 
@@ -158,7 +170,7 @@ class ImageryUtils:
                     for i in range(1, 4)
                 ]
                 return colors == ["Red", "Green", "Blue"]
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             return False
 
     @staticmethod
@@ -175,7 +187,7 @@ class ImageryUtils:
             bool: True if the operation was successful, False otherwise.
         """
         try:
-            with gdal.Open(file_path) as dataset:
+            with ImageryUtils.open_gtiff(file_path) as dataset:
                 if dataset is None:
                     return False
                 driver = gdal.GetDriverByName("GTiff")
@@ -190,7 +202,7 @@ class ImageryUtils:
                     out_band.WriteArray(data)
                 out_dataset.FlushCache()
                 return True
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             return False
 
     @staticmethod
@@ -219,7 +231,7 @@ class ImageryUtils:
             if output_path is None:
                 output_path = os.path.splitext(tif_path)[0] + ".jpeg"
 
-            with gdal.Open(tif_path) as dataset:
+            with ImageryUtils.open_gtiff(tif_path) as dataset:
                 if not dataset:
                     raise Exception(f"Unable to open TIFF file: {tif_path}")
 
@@ -306,7 +318,7 @@ class ImageryUtils:
 
         Fallback: Use GDAL color interpretation.
         """
-        with gdal.Open(tif_file) as dataset:
+        with ImageryUtils.open_gtiff(tif_file) as dataset:
             if dataset is None:
                 raise RuntimeError(
                     "Failed to open the dataset for band organization."
@@ -473,50 +485,50 @@ class ImageryUtils:
                     os.path.splitext(tif_files[0])[0] + "_out_mosaic.tif"
                 )
 
-            vrt_input_files = []
+            vrt_input_files: list[Any] = []
+            source_datasets: list[Any] = []
             temp_files = []
+            dataset = None
+            warped = None
+            vrt = None
+            result = None
 
             # Process each file with gdalwarp using nearest neighbor resampling
             # This handles rotated geotransforms without changing projection
             for i, tif_file in enumerate(tif_files):
-                with rasterio.open(tif_file) as src:
-                    # Check if the file has a rotated geotransform
-                    geotransform = src.transform
-                    has_rotation = geotransform.b != 0 or geotransform.d != 0
+                dataset = ImageryUtils.open_gtiff(tif_file)
+                source_datasets.append(dataset)
+                geotransform = dataset.GetGeoTransform()
+                has_rotation = geotransform[2] != 0 or geotransform[4] != 0
 
-                    if has_rotation:
-                        logger.info(
-                            f"Processing rotated geotransform for {tif_file}"
+                if has_rotation:
+                    logger.info(
+                        f"Processing rotated geotransform for {tif_file}"
+                    )
+                    temp_file = (
+                        os.path.splitext(tif_file)[0] + f"_temp_warped_{i}.tif"
+                    )
+                    warp_options = gdal.WarpOptions(
+                        resampleAlg="near",
+                        creationOptions=["COMPRESS=DEFLATE", "TILED=YES"],
+                    )
+                    warped = gdal.Warp(
+                        temp_file, dataset, options=warp_options
+                    )
+                    if warped is None:
+                        error_msg = gdal.GetLastErrorMsg()
+                        raise RuntimeError(
+                            f"Failed to warp {tif_file}: {error_msg}"
                         )
-                        temp_file = (
-                            os.path.splitext(tif_file)[0]
-                            + f"_temp_warped_{i}.tif"
-                        )
-
-                        # Use gdalwarp with nearest neighbor to handle rotation
-                        # while preserving original projection
-                        warp_options = gdal.WarpOptions(
-                            resampleAlg="near",  # Nearest neighbor resampling
-                            creationOptions=["COMPRESS=DEFLATE", "TILED=YES"],
-                        )
-
-                        result = gdal.Warp(
-                            temp_file, tif_file, options=warp_options
-                        )
-                        if result is None:
-                            error_msg = gdal.GetLastErrorMsg()
-                            raise RuntimeError(
-                                f"Failed to warp {tif_file}: {error_msg}"
-                            )
-
-                        result.FlushCache()
-                        result = None
-                        temp_files.append(temp_file)
-                        vrt_input_files.append(temp_file)
-                        logger.info(f"Warped file created: {temp_file}")
-                    else:
-                        # File doesn't have rotation, use as-is
-                        vrt_input_files.append(tif_file)
+                    warped.FlushCache()
+                    source_datasets.append(warped)
+                    vrt_input_files.append(warped)
+                    warped = None
+                    temp_files.append(temp_file)
+                    logger.info(f"Warped file created: {temp_file}")
+                else:
+                    vrt_input_files.append(dataset)
+                dataset = None
 
             try:
                 vrt_path = Path(output_file_path).with_suffix(".vrt")
@@ -531,7 +543,6 @@ class ImageryUtils:
                     raise RuntimeError(f"Failed to create VRT: {error_msg}")
 
                 vrt.FlushCache()
-                vrt = None
                 logger.info(f"VRT file created at {vrt_path}")
 
                 # Check if vrt file exists on disk
@@ -555,9 +566,7 @@ class ImageryUtils:
                     ]
                     logger.info(f"Clipping mosaic to AOI bbox {clip_bbox}")
                 warp_options = gdal.WarpOptions(options=warp_option_list)
-                result = gdal.Warp(
-                    output_file_path, str(vrt_path), options=warp_options
-                )
+                result = gdal.Warp(output_file_path, vrt, options=warp_options)
                 if result is None:
                     error_msg = gdal.GetLastErrorMsg()
                     raise RuntimeError(
@@ -566,6 +575,7 @@ class ImageryUtils:
 
                 result.FlushCache()
                 result = None
+                vrt = None
                 logger.info(f"Mosaic COG file created at {output_file_path}")
 
                 # Clean up VRT
@@ -575,6 +585,12 @@ class ImageryUtils:
                     pass
 
             finally:
+                result = None
+                vrt = None
+                warped = None
+                dataset = None
+                vrt_input_files.clear()
+                source_datasets.clear()
                 # Clean up temporary files
                 for temp_file in temp_files:
                     try:
@@ -617,7 +633,7 @@ class ImageryUtils:
             Exception: If there is an error processing the raster image with GDAL.
         """
         try:
-            with gdal.Open(file_path) as dataset:
+            with ImageryUtils.open_gtiff(file_path) as dataset:
                 if dataset is None:
                     return None
                 num_bands = dataset.RasterCount
@@ -759,7 +775,7 @@ class ImageryUtils:
         """
         try:
             normalization_means = []
-            with gdal.Open(file_path) as dataset:
+            with ImageryUtils.open_gtiff(file_path) as dataset:
                 if dataset is None:
                     return None
                 num_bands = dataset.RasterCount
@@ -794,7 +810,7 @@ class ImageryUtils:
         """
         try:
             normalization_stds = []
-            with gdal.Open(file_path) as dataset:
+            with ImageryUtils.open_gtiff(file_path) as dataset:
                 if dataset is None:
                     return None
                 num_bands = dataset.RasterCount

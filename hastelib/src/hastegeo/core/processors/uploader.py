@@ -6,7 +6,11 @@ from hastegeo.core.config import Config
 
 from ..data_layer.unified import UnifiedDataLayer
 from ..models.uploader import FileUploadRequest
-from ..utils.gdal_security import assert_matches_declared, max_upload_bytes
+from ..utils.gdal_security import (
+    assert_matches_declared,
+    assert_matches_declared_bytes,
+    max_upload_bytes,
+)
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 
@@ -75,6 +79,8 @@ class FileUploader:
                 f"Upload chunk exceeds the max upload size of "
                 f"{max_bytes} bytes."
             )
+        if chunk_number == 0:
+            assert_matches_declared_bytes(data, data_format)
         with open(chunk_path, "wb") as chunk_file:
             chunk_file.write(data)
 

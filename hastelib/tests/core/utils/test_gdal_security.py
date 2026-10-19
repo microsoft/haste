@@ -117,6 +117,18 @@ class TestUploadFormatHelpers(unittest.TestCase):
             os.remove(hdf_like)
             os.remove(gpkg)
 
+    def test_chunk_header_validation_rejects_vrt_and_short_gpkg_chunks(self):
+        with self.assertRaises(ValueError):
+            g.assert_matches_declared_bytes(b"<VRTDataset/>", "tif")
+        with self.assertRaisesRegex(ValueError, "at least 72 bytes"):
+            g.assert_matches_declared_bytes(b"SQLite format 3\x00", "gpkg")
+
+    def test_chunk_header_validation_accepts_supported_headers(self):
+        tiff = b"II*\x00" + b"\x00" * 68
+        gpkg = b"SQLite format 3\x00" + b"\x00" * (68 - 16) + b"GPKG"
+        g.assert_matches_declared_bytes(tiff, "tif")
+        g.assert_matches_declared_bytes(gpkg, "gpkg")
+
 
 class TestSizeEnvHelpers(unittest.TestCase):
     def setUp(self):
