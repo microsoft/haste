@@ -590,6 +590,17 @@ class EvaluateTests(unittest.TestCase):
         observed["mapped_libgdal"].append("/x/libgdal.so.36")
         self.assertTrue(self.run_eval(observed))
 
+    def test_missing_libproj(self):
+        observed = good_report()
+        observed["mapped_libproj"] = []
+        problems = self.run_eval(observed)
+        self.assertTrue(
+            any(
+                "expected exactly one runtime libproj" in item
+                for item in problems
+            )
+        )
+
     def test_unknown_driver_and_vsi(self):
         observed = good_report()
         observed["drivers"].append("HDF5")

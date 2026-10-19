@@ -302,8 +302,10 @@ def _check_libraries(observed: dict[str, Any]) -> list[str]:
         )
     libs_dir = os.path.dirname(library)
     proj = sorted({os.path.realpath(p) for p in observed["mapped_libproj"]})
-    if len(proj) > 1 or any(os.path.dirname(p) != libs_dir for p in proj):
-        problems.append(f"expected only the runtime's libproj, found {proj}")
+    if len(proj) != 1 or any(os.path.dirname(p) != libs_dir for p in proj):
+        problems.append(
+            f"expected exactly one runtime libproj in {libs_dir}, found {proj}"
+        )
     return problems
 
 
