@@ -8,7 +8,7 @@
 | 1 | Runtime package `haste_gdal_runtime` (configure, harden, report, verify, CLI) | `backend-dev` | implemented; private run `38955056455` passed real-runtime smoke; current review fixes still need a fresh CI build |
 | 1 | Build scripts and shared runtime packaging | `backend-dev` + `gis` | implemented; six-wheel artifact built and downloaded |
 | 1 | Build workflow: manifest, SBOM, notices, scan gate, attestation, smoke tests | `backend-dev` | private run `38955056455` passed build, all-binding smoke, Grype SBOM scan, and Functions/imageryprep/training-base smoke; current unvalidated changes add wheel-path scanning and complete runtime-wheel license metadata; upstream-only attestation job skipped on private fork as intended |
-| 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | pending |
+| 1 | Approval-gated publish to `haste-binaries`; license review | `backend-dev`, `security` | publisher workflow and immutable-bundle validator drafted in the private fork; blocked on official OSS license approval and upstream confirmation |
 | 2 | hastegeo self-check policy; `harden_gdal()` rework | `backend-dev` | in progress: single-libgdal/libproj checks and startup activation in `hastegeo` are implemented; runtime installation and required-setting wiring remain |
 | 2 | Untrusted-input content check and driver allowlist at open; configuration audit | `gis` | in progress: uploaded chunk headers, downloaded TIFFs and user GPKG inputs are content-checked; imagery opens are GTiff-only and GPKG reads use Fiona's GPKG allowlist; audit of remaining GDAL opens/configuration paths is pending |
 | 2 | GDAL hardening settings in Bicep, `deploy_apps.sh`, Dockerfiles and compose | `backend-dev` | pending |

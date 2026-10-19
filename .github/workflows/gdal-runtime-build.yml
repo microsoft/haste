@@ -278,13 +278,52 @@ jobs:
           name: haste-gdal-runtime-${{ github.sha }}
           path: ${{ runner.temp }}/haste-gdal-runtime/dist
 
-      - name: Attest wheel build provenance
+      - name: Attest runtime bundle provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
-          subject-path: ${{ runner.temp }}/haste-gdal-runtime/dist/*.whl
+          subject-path: ${{ runner.temp }}/haste-gdal-runtime/dist/*
 
       - name: Attest the CycloneDX SBOM
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: ${{ runner.temp }}/haste-gdal-runtime/dist/*.whl
           sbom-path: ${{ runner.temp }}/haste-gdal-runtime/dist/bom.cdx.json
+
+  publish:
+    needs: attest
+    if: >-
+      github.repository == 'microsoft/haste' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      vars.GDAL_RUNTIME_LICENSE_REVIEWED == 'true' &&
+      vars.GDAL_RUNTIME_PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    # Configure this environment with required reviewers before enabling
+    # either repository variable above.
+    environment: gdal-runtime-publish
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout trusted publisher source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Download the attested runtime bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/release
+
+      - name: Validate and publish immutable runtime assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/publish_gdal_runtime.py \
+            --artifact-dir "${{ runner.temp }}/haste-gdal-runtime/release"

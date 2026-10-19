@@ -251,8 +251,11 @@ and the built wheel artifact directory. Either scan fails the job on
 medium-or-higher findings. The wheel scan supplements SBOM matching; it does
 not replace the required review of the bundled native license notices.
 
-**An approval-gated publisher** uploads the assets to `haste-binaries`. They
-are immutable and are never overwritten.
+**An approval-gated publisher** uploads the assets to `haste-binaries` only
+from the upstream main-branch workflow after both license-review and publish
+gates are enabled and the protected publishing environment is approved. Before
+upload, it validates the six-wheel set, matching runtime pins, notice status,
+and SHA-256 manifest. Existing release assets are never overwritten.
 
 **Rebuilds** go through the same pipeline and bump the `+haste.N` build
 number. They happen:
