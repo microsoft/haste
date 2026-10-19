@@ -305,6 +305,9 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/azure-functions/python:4-python3.11@sha256:2c39d8b50750fbec9a91ef33323fadd1b986358fab4f7823db5b11b6e533f479
+    defaults:
+      run:
+        shell: bash
     permissions:
       actions: read
       contents: read
@@ -378,6 +381,13 @@ jobs:
       actions: read
       contents: read
     steps:
+      - name: Checkout scanner configuration
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .grype.yaml
+          sparse-checkout-cone-mode: false
+
       - name: Download build inventory
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -448,7 +458,7 @@ jobs:
             --mount "type=bind,source=$GITHUB_WORKSPACE/hastelib/src,target=/hastelib-src,readonly" \
             --mount "type=bind,source=$WHEEL_DIR,target=$WHEEL_DIR,readonly" \
             --mount "type=bind,source=$SMOKE_WHEEL_DIR,target=/smoke-wheels,readonly" \
-            --mount "type=bind,source=$TRAINING_ENV,target=/smoke/training-env.yml,readonly" \
+            --mount "type=bind,source=$TRAINING_ENV,target=/training-env.yml,readonly" \
             --env PIP_INDEX_URL \
             --env HASTE_GDAL_RUNTIME_REQUIRED=true \
             --env WHEEL_DIR \
@@ -456,7 +466,7 @@ jobs:
             -ec '
               /opt/miniconda/bin/conda env create --yes \
                 --prefix /tmp/gdal-runtime-training \
-                --file /smoke/training-env.yml
+                --file /training-env.yml
               python=/tmp/gdal-runtime-training/bin/python
               PYTHONPATH=/training-code:/hastelib-src \
                 HASTE_GDAL_RUNTIME_REQUIRED=true \
