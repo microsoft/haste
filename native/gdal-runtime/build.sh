@@ -59,8 +59,13 @@ extract zlib
   # bump sources.lock, delete this patch and remove the .grype.yaml ignore.
   patch -p1 --batch < "$ROOT/patches/zlib-CVE-2026-85091.patch"
   ./configure --prefix="$PREFIX" --shared
+  # auditwheel never grafts the manylinux-whitelisted libz.so.1, so a stock
+  # name would make every library load the host zlib instead of this patched
+  # build. Give it a private name so it is bundled.
+  sed -i 's/libz\.so/libhastez.so/g' Makefile
   make -j"$JOBS"
   make install
+  ln -sf libhastez.so.1 "$PREFIX/lib/libz.so"
 )
 
 extract libdeflate

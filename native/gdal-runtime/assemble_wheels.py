@@ -19,7 +19,7 @@ import subprocess
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 RUNTIME_NAME = "haste-gdal-runtime"
 RUNTIME_WHEEL_TAG = "py3-none-manylinux_2_28_x86_64"
@@ -406,6 +406,14 @@ def merge_and_repair(
         }
         if not libraries:
             raise RuntimeError("auditwheel did not graft native libraries")
+        if not any(
+            PurePosixPath(name).name.startswith("libhastez")
+            for name in libraries
+        ):
+            raise RuntimeError(
+                "patched zlib was not bundled; the wheel would load the "
+                "host libz.so.1"
+            )
 
         outputs = []
         for wheel in inputs:

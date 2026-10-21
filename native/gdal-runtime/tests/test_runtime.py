@@ -522,6 +522,13 @@ class LockTests(unittest.TestCase):
         header_file_macro = "CPL_VSIL_CURL_HEADER_FILE_KVP_DISABLED"
         self.assertNotIn(header_file_macro, build_script)
 
+    def test_patched_zlib_has_a_private_name_so_it_is_bundled(self):
+        build_script = (ROOT / "build.sh").read_text(encoding="utf-8")
+        assembler = (ROOT / "assemble_wheels.py").read_text(encoding="utf-8")
+        self.assertIn("libhastez.so", build_script)
+        self.assertIn('ln -sf libhastez.so.1 "$PREFIX/lib/libz.so"', build_script)
+        self.assertIn("libhastez", assembler)
+
     def test_binding_sdists_are_fetched_after_gdal_config_is_available(self):
         build_script = (ROOT / "build.sh").read_text(encoding="utf-8")
         config_created = build_script.index(
