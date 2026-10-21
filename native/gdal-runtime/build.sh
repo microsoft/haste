@@ -54,7 +54,9 @@ extract() {
 extract zlib
 (
   cd "$WORK"/zlib-*/
-  # Upstream fix for CVE-2026-85091, not yet in a tagged zlib release.
+  # Upstream fix (madler/zlib df84af25) for CVE-2026-85091. As of 2026-10-21
+  # the latest release is 1.3.2 and does not contain it. When a release does,
+  # bump sources.lock, delete this patch and remove the .grype.yaml ignore.
   patch -p1 --batch < "$ROOT/patches/zlib-CVE-2026-85091.patch"
   ./configure --prefix="$PREFIX" --shared
   make -j"$JOBS"
