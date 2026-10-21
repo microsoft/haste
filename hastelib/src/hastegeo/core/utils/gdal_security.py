@@ -21,10 +21,15 @@ This module is import-safe without GDAL: the pure-Python helpers
 (``sniff_file_type``, the size/format helpers) work on any host, and only
 :func:`harden_gdal` needs ``osgeo``.
 """
+
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import logging
 import os
+import re
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +45,13 @@ ALLOWED_VECTOR_DRIVERS = frozenset({"GPKG", "GeoJSON", "Memory"})
 # These are the CVE-relevant driver families; an allowlist can't be
 # expressed via GDAL_SKIP, so we skip the known-dangerous ones explicitly.
 DISABLED_DRIVERS_ENV = "HDF4 HDF4Image HDF5 HDF5Image netCDF"
+LEGACY_REQUIRED_CONFIG = {
+    "GDAL_VRT_ENABLE_RAWRASTERBAND": "NO",
+    "GDAL_VRT_ENABLE_PYTHON": "NO",
+    "GDAL_DRIVER_PATH": "disable",
+    "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
+    "CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED": "NO",
+}
 
 # ── Ingestion size caps (env-tunable; generous because satellite COGs are
 # legitimately large — the goal is to bound pathological/hostile inputs). ─
@@ -57,64 +69,168 @@ _FORMAT_TO_SNIFF = {
 _hardened = False
 
 
-def harden_gdal(*, force: bool = False) -> None:
+def _harden_legacy_gdal() -> bool:
+    for key, expected in LEGACY_REQUIRED_CONFIG.items():
+        os.environ.setdefault(key, expected)
+        actual = os.environ[key].strip()
+        if actual.casefold() != expected.casefold():
+            raise RuntimeError(
+                f"{key}={actual!r} weakens GDAL hardening; "
+                f"expected {expected!r}"
+            )
+
+    forbidden = {
+        "GDAL_VRT_RAWRASTERBAND_ALLOWED_SOURCE": "ALL",
+        "GDAL_VRT_PYTHON_TRUSTED_MODULES": None,
+        "GDAL_PYTHON_DRIVER_PATH": None,
+        "GDAL_HTTP_UNSAFESSL": "YES",
+    }
+    for key, forbidden_value in forbidden.items():
+        actual = os.environ.get(key)
+        if actual is None:
+            continue
+        if forbidden_value is None and actual.strip():
+            raise RuntimeError(f"{key} must be unset for GDAL hardening")
+        if (
+            forbidden_value
+            and actual.strip().casefold() == forbidden_value.casefold()
+        ):
+            raise RuntimeError(f"{key}={actual!r} weakens GDAL hardening")
+
+    existing_skip = [
+        name
+        for name in re.split(
+            r"[,\s]+", os.environ.get("GDAL_SKIP", "").strip()
+        )
+        if name
+    ]
+    required_skip = DISABLED_DRIVERS_ENV.split()
+    os.environ["GDAL_SKIP"] = " ".join(
+        dict.fromkeys([*existing_skip, *required_skip])
+    )
+
+    try:
+        from osgeo import gdal, ogr
+    except ModuleNotFoundError as exc:
+        if exc.name != "osgeo":
+            raise
+        logger.warning(
+            "osgeo (GDAL) not importable; skipping legacy hardening"
+        )
+        return False
+
+    gdal.UseExceptions()
+    ogr.UseExceptions()
+    gdal.SetConfigOption("GDAL_SKIP", os.environ["GDAL_SKIP"])
+
+    allowed = ALLOWED_RASTER_DRIVERS | ALLOWED_VECTOR_DRIVERS
+    removed = _deregister_disallowed_legacy_drivers(gdal, allowed)
+
+    logger.info(
+        "harden_gdal: disabled %d legacy GDAL/OGR drivers; kept %s; "
+        "GDAL_SKIP=%r",
+        len(removed),
+        sorted(allowed),
+        os.environ.get("GDAL_SKIP"),
+    )
+    logger.debug("harden_gdal: disabled legacy drivers: %s", sorted(removed))
+    return True
+
+
+def _deregister_disallowed_legacy_drivers(
+    gdal: Any, allowed: frozenset[str]
+) -> list[str]:
+    def registered_drivers() -> list[Any]:
+        drivers = []
+        for index in range(gdal.GetDriverCount()):
+            driver = gdal.GetDriver(index)
+            if driver is not None:
+                drivers.append(driver)
+        return drivers
+
+    removed = []
+    for driver in registered_drivers():
+        name = driver.ShortName
+        if name not in allowed:
+            try:
+                driver.Deregister()
+            except Exception as exc:
+                raise RuntimeError(
+                    f"failed to deregister disallowed GDAL driver {name}"
+                ) from exc
+            removed.append(name)
+
+    remaining = sorted(
+        driver.ShortName
+        for driver in registered_drivers()
+        if driver.ShortName not in allowed
+    )
+    if remaining:
+        raise RuntimeError(
+            "disallowed GDAL drivers remain registered: "
+            + ", ".join(remaining)
+        )
+    return removed
+
+
+def harden_gdal(
+    *, force: bool = False, require_runtime: bool | None = None
+) -> None:
     """Restrict GDAL/OGR to :data:`ALLOWED_RASTER_DRIVERS` +
     :data:`ALLOWED_VECTOR_DRIVERS` by deregistering every other driver.
 
     Idempotent: a no-op after the first successful run unless ``force`` is
-    set. Safe to call from many import sites. If ``osgeo`` is unavailable
-    (e.g. a bare host running non-GDAL tests) it logs and returns without
-    error.
+    set. When the shared runtime is installed, verify it before importing
+    any GDAL binding. Set ``require_runtime`` or the
+    HASTE_GDAL_RUNTIME_REQUIRED environment variable to fail closed if the
+    shared runtime is missing.
     """
     global _hardened
     if _hardened and not force:
         return
 
-    try:
-        from osgeo import gdal, ogr
-    except ImportError:
-        logger.warning("osgeo (GDAL) not importable; skipping harden_gdal()")
+    if require_runtime is None:
+        value = (
+            os.environ.get("HASTE_GDAL_RUNTIME_REQUIRED", "").strip().lower()
+        )
+        if value in {"1", "true", "yes"}:
+            require_runtime = True
+        elif value in {"", "0", "false", "no"}:
+            require_runtime = False
+        else:
+            raise ValueError(
+                "HASTE_GDAL_RUNTIME_REQUIRED must be a boolean value"
+            )
+
+    if importlib.util.find_spec("haste_gdal_runtime") is None:
+        if require_runtime:
+            raise RuntimeError(
+                "HASTE_GDAL_RUNTIME_REQUIRED is set but "
+                "haste-gdal-runtime is not installed"
+            )
+        logger.warning(
+            "haste-gdal-runtime is absent; applying legacy GDAL hardening"
+        )
+        if _harden_legacy_gdal():
+            _hardened = True
         return
 
-    gdal.UseExceptions()
-    ogr.UseExceptions()
-
-    # Belt-and-suspenders: make any later (re)registration or subprocess
-    # honor the denylist too. Respect an operator-provided GDAL_SKIP.
-    os.environ.setdefault("GDAL_SKIP", DISABLED_DRIVERS_ENV)
-    gdal.SetConfigOption("GDAL_SKIP", os.environ["GDAL_SKIP"])
-
-    allowed = ALLOWED_RASTER_DRIVERS | ALLOWED_VECTOR_DRIVERS
-
-    # Collect first — deregistering mutates the driver manager and shifts
-    # indices. In GDAL 3.x the manager is unified (one list for raster +
-    # vector), so a single pass covers OGR drivers too.
-    drivers = [
-        gdal.GetDriver(i)
-        for i in range(gdal.GetDriverCount())
-        if gdal.GetDriver(i) is not None
-    ]
-
-    removed: list[str] = []
-    for drv in drivers:
-        name = drv.ShortName
-        if name not in allowed:
-            try:
-                drv.Deregister()
-                removed.append(name)
-            except Exception:  # pragma: no cover - defensive
-                logger.warning(
-                    "harden_gdal: failed to deregister driver %s", name
-                )
-
-    _hardened = True
-    logger.info(
-        "harden_gdal: disabled %d GDAL/OGR drivers; kept %s; GDAL_SKIP=%r",
-        len(removed),
-        sorted(allowed),
-        os.environ.get("GDAL_SKIP"),
+    runtime = importlib.import_module("haste_gdal_runtime")
+    manifest = runtime.load_manifest()
+    expected_gdal = manifest.get("gdal_release")
+    if not isinstance(expected_gdal, str) or not expected_gdal:
+        raise RuntimeError("GDAL runtime manifest has no GDAL release")
+    policy = runtime.Policy(
+        expected_gdal=expected_gdal,
+        allowed_drivers=ALLOWED_RASTER_DRIVERS | ALLOWED_VECTOR_DRIVERS,
+        required_bindings=("osgeo.gdal",),
     )
-    logger.debug("harden_gdal: disabled drivers: %s", sorted(removed))
+    runtime.configure(policy)
+    report = runtime.secure_startup(policy)
+    for binding in ("osgeo.gdal", "osgeo.ogr"):
+        importlib.import_module(binding).UseExceptions()
+    logger.info("verified HASTE GDAL runtime: %s", report)
+    _hardened = True
 
 
 def sniff_file_type(path: str) -> str | None:
@@ -130,6 +246,10 @@ def sniff_file_type(path: str) -> str | None:
     except OSError:
         return None
 
+    return _sniff_file_header(head)
+
+
+def _sniff_file_header(head: bytes) -> str | None:
     if len(head) < 4:
         return None
 
@@ -152,6 +272,27 @@ def sniff_file_type(path: str) -> str | None:
     if stripped[:1] in (b"{", b"["):
         return "geojson"
     return None
+
+
+def assert_matches_declared_bytes(data: bytes, declared: str) -> None:
+    """Validate an upload's first chunk before it is persisted.
+
+    GeoPackage detection needs its application identifier at byte offset 68,
+    so the first chunk must contain at least 72 bytes.
+    """
+    norm = assert_allowed_upload_format(declared)
+    expected = _FORMAT_TO_SNIFF[norm]
+    if expected == "gpkg" and len(data) < 72:
+        raise ValueError(
+            "First upload chunk must contain at least 72 bytes to validate "
+            "GeoPackage content."
+        )
+    actual = _sniff_file_header(data[:72])
+    if actual != expected:
+        raise ValueError(
+            f"Uploaded file content ({actual!r}) does not match the "
+            f"declared format {declared!r} (expected {expected!r})."
+        )
 
 
 def assert_allowed_upload_format(declared: str) -> str:

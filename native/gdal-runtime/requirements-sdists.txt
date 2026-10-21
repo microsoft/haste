@@ -1,0 +1,14 @@
+# Binding sources use PIP_INDEX_URL, or PyPI when no index is configured,
+# and are verified by pip against these hashes.
+# --no-binary=:all: is supplied by the fetch script; hashes pin the exact
+# sdists and are independent of the package feed URL.
+GDAL==3.13.3 \
+    --hash=sha256:af547af72d2a153d658c1deb2fe595eccb38c18f3d9d298882fbdeee9806a6d2
+rasterio==1.4.4 \
+    --hash=sha256:c95424e2c7f009b8f7df1095d645c52895cd332c0c2e1b4c2e073ea28b930320
+fiona==1.10.1 \
+    --hash=sha256:b00ae357669460c6491caba29c2022ff0acfcbde86a95361ea8ff5cd14a86b68
+pyogrio==0.13.0 \
+    --hash=sha256:9614f27a1891113f80653e0b76b4233ea1fb3beeb1ac46d118ab22e1670f8f13
+pyproj==3.7.2 \
+    --hash=sha256:39a0cf1ecc7e282d1d30f36594ebd55c9fae1fda8a2622cee5d100430628f88c

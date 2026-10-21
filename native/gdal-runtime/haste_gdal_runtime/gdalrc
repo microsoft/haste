@@ -1,0 +1,6 @@
+# GDAL configuration file pinned by the HASTE GDAL runtime.
+#
+# haste_gdal_runtime.configure() points GDAL_CONFIG_FILE here, so GDAL never
+# loads a gdalrc from the user's home or the system configuration directory.
+# Keep this file free of settings: operator-owned GDAL settings belong in the
+# deployment configuration, where the runtime check can see them.

@@ -1,13 +1,14 @@
 """Keep deployments from widening a function app's inbound access."""
 
+import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = ROOT / ".github" / "scripts"
@@ -252,6 +253,21 @@ class TestDeployNetworkAccess(unittest.TestCase):
         result, calls, final = self.run_deploy()
 
         self.assertEqual(result.returncode, 0, result.stderr)
+        settings = next(
+            call
+            for call in calls
+            if call.startswith("functionapp config appsettings set")
+            and "GDAL_VRT_ENABLE_RAWRASTERBAND=NO" in call
+        )
+        self.assertIn("GDAL_VRT_ENABLE_RAWRASTERBAND=NO", settings)
+        self.assertIn("GDAL_VRT_ENABLE_PYTHON=NO", settings)
+        self.assertIn("GDAL_DRIVER_PATH=disable", settings)
+        self.assertIn("GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR", settings)
+        self.assertIn("HASTE_GDAL_RUNTIME_REQUIRED=false", settings)
+        self.assertIn(
+            "GDAL_SKIP=VRT HDF4 HDF4Image HDF5 HDF5Image netCDF",
+            settings,
+        )
         self.assertEqual(final["defaults"], {"main": "Deny", "scm": "Deny"})
         self.assertFalse(final["useMain"])
         self.assertEqual(
@@ -270,6 +286,21 @@ class TestDeployNetworkAccess(unittest.TestCase):
             if call.startswith("functionapp config access-restriction set")
         )
         self.assertLess(set_defaults, restart)
+        publish = calls.index(self.publish_line(calls))
+        enable_runtime = next(
+            index
+            for index, call in enumerate(calls)
+            if call.startswith("functionapp config appsettings set")
+            and "HASTE_GDAL_RUNTIME_REQUIRED=true" in call
+        )
+        restarts = [
+            index
+            for index, call in enumerate(calls)
+            if call.startswith("functionapp restart")
+        ]
+        self.assertGreater(len(restarts), 1)
+        self.assertLess(publish, enable_runtime)
+        self.assertLess(enable_runtime, restarts[-1])
 
     def test_titiler_storage_host_is_set_before_restart(self) -> None:
         result, calls, _ = self.run_deploy()
@@ -306,6 +337,35 @@ class TestDeployNetworkAccess(unittest.TestCase):
         self.assertEqual(len(runner_rules), 2)
         for call in runner_rules:
             self.assertIn(f"--ip-address {RUNNER_IP}/32", call)
+
+    def test_prebuilt_package_deploys_without_remote_build(self) -> None:
+        with tempfile.TemporaryDirectory() as package_dir:
+            package = Path(package_dir) / "titilerfuncapi.zip"
+            package.write_bytes(b"verified package")
+            digest = hashlib.sha256(package.read_bytes()).hexdigest()
+            (Path(package_dir) / "titilerfuncapi.sha256").write_text(
+                f"{digest}  {package.name}\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            result, calls, final = self.run_deploy(
+                component="titiler",
+                HASTE_FUNCTION_PACKAGE_DIR=package_dir,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        package_deploy = next(
+            call
+            for call in calls
+            if call.startswith("functionapp deployment source config-zip")
+        )
+        self.assertIn("--build-remote false", package_deploy)
+        self.assertIn(package.name, package_deploy)
+        self.assertFalse(any(call.startswith("func ") for call in calls))
+        self.assertIn(
+            f"tags.function_package_sha256={digest}",
+            "\n".join(calls),
+        )
         self.assertEqual(self.rule_names(final), ["AllowSubnet-1"])
 
     def test_failed_publish_still_removes_the_runner_rule(self) -> None:
@@ -314,6 +374,19 @@ class TestDeployNetworkAccess(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("scm:haste-ci-77-2", self.publish_line(calls))
         self.assertEqual(self.rule_names(final), ["AllowSubnet-1"])
+        runtime_settings = [
+            index
+            for index, call in enumerate(calls)
+            if call.startswith("functionapp config appsettings set")
+            and "HASTE_GDAL_RUNTIME_REQUIRED=true" in call
+        ]
+        self.assertTrue(runtime_settings)
+        self.assertTrue(
+            any(
+                call.startswith("functionapp restart")
+                for call in calls[runtime_settings[-1] + 1 :]
+            )
+        )
 
     def test_transient_cleanup_failure_is_retried(self) -> None:
         result, _, final = self.run_deploy(fail_removals=1)

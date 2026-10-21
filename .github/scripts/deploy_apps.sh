@@ -90,6 +90,7 @@ DEPLOY_RULE_PREFIX="haste-ci-"
 DEPLOY_RULE_NAME="${DEPLOY_RULE_PREFIX}${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}"
 DEPLOY_RUNNER_IP=""
 DEPLOY_ACCESS_APPS=()
+GDAL_RUNTIME_PENDING_APPS=()
 FIXED_TAGS="project=haste created_by=deploy_apps"
 DYNAMIC_TAGS="env=${ENVIRONMENT} deployed_version=${APP_TAG}"
 EMAIL_SENDER="DoNotReply@notifications.${STATIC_APP_DOMAIN}"
@@ -187,6 +188,18 @@ forget_deploy_access_app() {
     DEPLOY_ACCESS_APPS=("${KEPT[@]}")
 }
 
+forget_gdal_runtime_pending_app() {
+    local APP=$1
+    local APP_PENDING
+    local KEPT=()
+    for APP_PENDING in "${GDAL_RUNTIME_PENDING_APPS[@]}"; do
+        if [ "$APP_PENDING" != "$APP" ]; then
+            KEPT+=("$APP_PENDING")
+        fi
+    done
+    GDAL_RUNTIME_PENDING_APPS=("${KEPT[@]}")
+}
+
 # Rule updates can fail transiently (a concurrent change to the site config,
 # throttling), so a removal is retried before it counts as failed.
 retry_remove_deploy_access() {
@@ -223,6 +236,23 @@ close_deploy_access() {
 cleanup_deploy_access() {
     local STATUS=$?
     local FUNCTION_NAME
+    for FUNCTION_NAME in "${GDAL_RUNTIME_PENDING_APPS[@]}"; do
+        if ! az functionapp config appsettings set \
+            --name "$FUNCTION_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --settings "HASTE_GDAL_RUNTIME_REQUIRED=true" \
+            --output none; then
+            echo "ERROR: Could not restore fail-closed GDAL runtime enforcement on '$FUNCTION_NAME'." >&2
+            STATUS=1
+            continue
+        fi
+        if ! az functionapp restart \
+            --name "$FUNCTION_NAME" \
+            --resource-group "$RESOURCE_GROUP"; then
+            echo "ERROR: Could not restart '$FUNCTION_NAME' after restoring GDAL runtime enforcement." >&2
+            STATUS=1
+        fi
+    done
     for FUNCTION_NAME in "${DEPLOY_ACCESS_APPS[@]}"; do
         if ! retry_remove_deploy_access "$FUNCTION_NAME"; then
             echo "ERROR: Could not remove the temporary deploy rules from '$FUNCTION_NAME'. Remove its access rules named ${DEPLOY_RULE_PREFIX}* by hand." >&2
@@ -297,6 +327,21 @@ deploy_function() {
     # publishing reconciler TimerTrigger's host-scoped Singleton lock does not
     # collide across apps sharing storage. See data-publishing/rollout.md.
     HOST_ID=$(printf '%s' "$FUNCTION_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-32)
+    local gdal_settings=(
+        # Keep the currently running worker available while the replacement
+        # package is built and published. Fail closed after publish succeeds.
+        "HASTE_GDAL_RUNTIME_REQUIRED=false"
+        "GDAL_VRT_ENABLE_RAWRASTERBAND=NO"
+        "GDAL_VRT_ENABLE_PYTHON=NO"
+        "GDAL_DRIVER_PATH=disable"
+        "GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR"
+        "CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED=NO"
+    )
+    if [ "$FUNCTION_NAME" = "$FUNCTION_TITILER_API" ]; then
+        gdal_settings+=(
+            "GDAL_SKIP=VRT HDF4 HDF4Image HDF5 HDF5Image netCDF"
+        )
+    fi
 
     if [ "${SET_APPSETTINGS:-true}" = "true" ]; then
         local size_settings=()
@@ -321,8 +366,10 @@ deploy_function() {
             exit 1
         }
 
+        GDAL_RUNTIME_PENDING_APPS+=("$FUNCTION_NAME")
         az functionapp config appsettings set --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --settings \
             "${size_settings[@]}" \
+            "${gdal_settings[@]}" \
             "env=${ENVIRONMENT}" \
             "IMAGE_QUEUE_NAME=image-layers-queue" \
             "INFERENCE_QUEUE_NAME=inference-queue" \
@@ -377,6 +424,11 @@ deploy_function() {
             "PUBLISH_EXPLORER_RENDER_ENABLED=${PUBLISH_EXPLORER_RENDER_ENABLED}" \
             "AzureFunctionsWebHost__hostId=${HOST_ID}" \
             --output none
+    else
+        GDAL_RUNTIME_PENDING_APPS+=("$FUNCTION_NAME")
+        az functionapp config appsettings set --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --settings \
+            "${gdal_settings[@]}" \
+            --output none
     fi
 
     # TiTiler reads HASTE imagery only from this storage host (plus its
@@ -403,17 +455,57 @@ deploy_function() {
 
     echo "Deploying function code..."
     open_deploy_access "$FUNCTION_NAME"
-    # A non-zero exit can represent a package/build/deployment failure. Do not
-    # convert it into a success-shaped warning: set -e propagates the failure.
-    (
-        cd "$FUNCTION_DIR"
-        func azure functionapp publish "$FUNCTION_NAME" \
-            --python \
-            --build remote \
-            --verbose
-    )
+    local PACKAGE_SHA256=""
+    if [ -n "${HASTE_FUNCTION_PACKAGE_DIR:-}" ]; then
+        local PACKAGE_NAME PACKAGE_PATH CHECKSUM_PATH
+        case "$FUNCTION_NAME" in
+            "$FUNCTION_API") PACKAGE_NAME="hastefuncapi" ;;
+            "$FUNCTION_QUEUE_API") PACKAGE_NAME="hastefuncqueues" ;;
+            "$FUNCTION_TITILER_API") PACKAGE_NAME="titilerfuncapi" ;;
+            *)
+                echo "ERROR: No prebuilt package mapping for '$FUNCTION_NAME'." >&2
+                return 1
+                ;;
+        esac
+        PACKAGE_PATH="$HASTE_FUNCTION_PACKAGE_DIR/$PACKAGE_NAME.zip"
+        CHECKSUM_PATH="$HASTE_FUNCTION_PACKAGE_DIR/$PACKAGE_NAME.sha256"
+        if [ ! -f "$PACKAGE_PATH" ] || [ ! -f "$CHECKSUM_PATH" ]; then
+            echo "ERROR: Prebuilt Function App package or checksum is missing for $PACKAGE_NAME." >&2
+            return 1
+        fi
+        (
+            cd "$HASTE_FUNCTION_PACKAGE_DIR"
+            sha256sum --check "$PACKAGE_NAME.sha256"
+        )
+        PACKAGE_SHA256=$(awk '{print $1}' "$CHECKSUM_PATH")
+        echo "Deploying verified prebuilt package $PACKAGE_NAME ($PACKAGE_SHA256)..."
+        az functionapp deployment source config-zip \
+            --name "$FUNCTION_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --src "$PACKAGE_PATH" \
+            --build-remote false \
+            --output none
+    else
+        # A non-zero exit can represent a package/build/deployment failure. Do
+        # not convert it into a success-shaped warning: set -e propagates it.
+        (
+            cd "$FUNCTION_DIR"
+            func azure functionapp publish "$FUNCTION_NAME" \
+                --python \
+                --build remote \
+                --verbose
+        )
+    fi
     close_deploy_access "$FUNCTION_NAME"
     echo "Function deployment completed successfully."
+
+    az functionapp config appsettings set \
+        --name "$FUNCTION_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --settings "HASTE_GDAL_RUNTIME_REQUIRED=true" \
+        --output none
+    az functionapp restart --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP"
+    forget_gdal_runtime_pending_app "$FUNCTION_NAME"
 
     # Record the wheel this app actually installed. Nothing else on the app
     # says which hastegeo it is running -- the wheel is pinned into
@@ -428,6 +520,9 @@ deploy_function() {
     local EXTRA_TAGS=""
     if [ -n "$PINNED_HASTEGEO" ]; then
         EXTRA_TAGS="tags.hastegeo_version=${PINNED_HASTEGEO}"
+    fi
+    if [ -n "$PACKAGE_SHA256" ]; then
+        EXTRA_TAGS="${EXTRA_TAGS:+$EXTRA_TAGS }tags.function_package_sha256=${PACKAGE_SHA256}"
     fi
 
     echo "Setting tags for Function App $FUNCTION_NAME ..."
