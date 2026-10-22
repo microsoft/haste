@@ -13,6 +13,10 @@ across the whole area.
 Your browser does not support the video tag.
 </video>
 
+For a longer guided demonstration, watch the
+{doc}`Spokane Deep Dive <spokane-deep-dive>`: six captioned videos covering labeling,
+building embeddings, editing predictions, outputs, and the Open Data Catalog.
+
 ## Choose your path
 
 HASTE offers two workflows that both turn imagery into a damage assessment — pick based on

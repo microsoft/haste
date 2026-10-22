@@ -1,0 +1,154 @@
+WEBVTT
+
+00:00.600 --> 00:03.770
+This series takes a closer look at each part of HASTE.
+
+00:04.180 --> 00:07.720
+In this episode: the building embeddings workflow, where you
+
+00:07.740 --> 00:09.380
+click buildings and get instant
+
+00:09.400 --> 00:11.470
+predictions, right in the browser.
+
+00:15.300 --> 00:17.980
+We start in the Spokane project, and add a new
+
+00:18.000 --> 00:20.910
+image layer, with the building labeling workflow.
+
+00:25.273 --> 00:27.183
+Here, we're using Planet data:
+
+00:27.553 --> 00:30.523
+SkySat post-event imagery from August 4th.
+
+00:30.787 --> 00:32.607
+Then, we add pre-event Bing Maps
+
+00:32.627 --> 00:34.837
+aerial imagery, and building footprints.
+
+00:44.733 --> 00:48.313
+Next, we click Embed, and choose DINOv2, a
+
+00:48.333 --> 00:50.943
+vision foundation model, in its small size.
+
+00:52.703 --> 00:55.603
+SkySat pixels are half a meter wide, so we upscale
+
+00:55.623 --> 00:58.773
+each crop two times to give the model more detail.
+
+00:59.513 --> 01:02.073
+For every footprint, HASTE averages DINOv2's
+
+01:02.093 --> 01:04.273
+features inside the building's outline.
+
+01:04.293 --> 01:09.043
+That gives 384 numbers that capture how each building looks.
+
+01:09.933 --> 01:13.573
+About a minute and a half later, all 2,061 buildings
+
+01:13.593 --> 01:17.383
+are embedded. Now we open the interactive labeler.
+
+01:22.133 --> 01:24.903
+A swipe compares pre- and post-event imagery.
+
+01:25.373 --> 01:28.083
+Burned homes are left as pale, ash-gray pads.
+
+01:30.467 --> 01:32.237
+Labeling is just clicking.
+
+01:32.527 --> 01:33.977
+Four burned homes first.
+
+01:34.287 --> 01:37.097
+Then we switch to Intact and click four that survived.
+
+01:39.000 --> 01:40.570
+With only eight labels,
+
+01:40.660 --> 01:43.070
+a classifier trains right in the browser,
+
+01:43.200 --> 01:44.470
+in a fraction of a second,
+
+01:44.520 --> 01:46.510
+and predicts every building in view.
+
+01:47.567 --> 01:49.217
+Zoom out, and it's a start,
+
+01:49.387 --> 01:51.997
+but it flags far too many buildings as damaged.
+
+01:54.067 --> 01:55.577
+So, where is it unsure?
+
+01:55.947 --> 01:57.667
+The uncertainty view shows confident
+
+01:57.687 --> 02:00.677
+buildings in blue and uncertain ones in red.
+
+02:02.167 --> 02:05.537
+We label the most uncertain buildings, ten at a time.
+
+02:05.887 --> 02:09.237
+Each click retrains the model and the map updates instantly.
+
+02:11.733 --> 02:13.943
+Round after round, the uncertainty fades.
+
+02:19.763 --> 02:22.853
+88 labels in all, each one placed where it helps most.
+
+02:29.400 --> 02:32.470
+Zoomed out, the uncertainty has almost vanished,
+
+02:35.600 --> 02:38.010
+and the predictions now trace the burned neighborhoods.
+
+02:39.200 --> 02:42.020
+We save the labels, and one more click predicts
+
+02:42.040 --> 02:45.710
+all 2,061 buildings and saves the results.
+
+02:50.033 --> 02:52.753
+The results viewer colors every footprint by its
+
+02:52.773 --> 02:56.403
+prediction, red for damaged and green for intact.
+
+03:01.923 --> 03:04.373
+Swipe to the pre-event imagery to check its work.
+
+03:10.133 --> 03:12.133
+Download the scored buildings as a
+
+03:12.153 --> 03:14.823
+GeoPackage or open the assessment report.
+
+03:15.393 --> 03:17.943
+Later in the series, we'll dig into these outputs.
+
+03:19.533 --> 03:22.903
+HASTE is open source under the MIT license.
+
+03:23.373 --> 03:26.483
+Deploy it to Azure with a single azd up command,
+
+03:26.573 --> 03:28.783
+or run it locally with Docker Compose.
+
+03:29.233 --> 03:32.163
+Find it on GitHub at microsoft/haste.

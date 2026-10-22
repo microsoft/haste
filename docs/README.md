@@ -29,6 +29,8 @@ After building, open `_build/html/index.html` in your browser.
 - `conf.py` - Extra Sphinx configuration (sys.path, mocks for autodoc)
 - `intro.md` - Main landing page
 - `usage/` - User Guide: how to use the application (overview, projects, image layers, labeling, model training, results, model catalog)
+- `usage/spokane-deep-dive.md` - Six-part Spokane video walkthrough with English captions
+- `_static/usage/spokane-deep-dive/` - Walkthrough MP4 videos (Git LFS) and WebVTT captions
 - `setup/` - Setup guides (`local-dev.md` for the Docker stack)
 - `deployment.md` - One-step azd production deployment guide
 - `security-configuration.md` - Secure configuration guidance

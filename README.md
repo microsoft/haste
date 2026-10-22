@@ -43,6 +43,10 @@ docker compose -f docker/docker-compose.yml up
   <img src="assets/haste-animation.webp" alt="HASTE demo">
 </p>
 
+**[Watch the Spokane deep-dive series](https://microsoft.github.io/haste/usage/spokane-deep-dive.html)**
+— six captioned videos covering labeling, building embeddings, editing predictions,
+understanding outputs, and the Open Data Catalog (about 17 minutes).
+
 ## Documentation
 
 Full documentation is published at **[microsoft.github.io/haste](https://microsoft.github.io/haste)**:
