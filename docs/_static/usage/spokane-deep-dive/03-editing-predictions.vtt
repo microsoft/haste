@@ -1,0 +1,112 @@
+WEBVTT
+
+00:00.600 --> 00:03.790
+This series takes a closer look at each part of HASTE.
+
+00:04.240 --> 00:07.700
+In this episode: editing predictions where you review the
+
+00:07.720 --> 00:10.990
+model's damage map, and correct it before you share it.
+
+00:15.000 --> 00:17.360
+No model is perfect, so before you
+
+00:17.380 --> 00:19.930
+share a damage map, it pays to check it.
+
+00:20.360 --> 00:21.960
+We open the results of the embedding
+
+00:21.980 --> 00:24.390
+model from episode two and click Edit.
+
+00:31.647 --> 00:33.757
+The edit panel counts every class:
+
+00:34.007 --> 00:37.637
+480 damaged and 1,581 not damaged.
+
+00:38.307 --> 00:40.587
+This model gives each building a hard label,
+
+00:40.607 --> 00:42.557
+so there's no threshold to tune.
+
+00:42.787 --> 00:44.437
+We fix mistakes by hand.
+
+00:45.167 --> 00:48.137
+To fix a building, choose a class, and click it.
+
+00:48.687 --> 00:51.107
+These five homes survived, but the model flagged
+
+00:51.127 --> 00:53.877
+them as damaged, so we mark them Not Damaged.
+
+00:54.637 --> 00:56.397
+Each edit gets a blue outline and
+
+00:56.417 --> 00:58.527
+stays a local preview until you save.
+
+00:59.327 --> 01:01.177
+A few streets away, the opposite,
+
+01:01.567 --> 01:03.537
+six burned homes the model missed.
+
+01:04.027 --> 01:05.177
+We mark them Damaged.
+
+01:12.100 --> 01:14.260
+For a whole row, hold Control and
+
+01:14.280 --> 01:16.330
+drag a box to paint them all Damaged.
+
+01:18.407 --> 01:20.747
+To double check the rest, we filter the review
+
+01:20.767 --> 01:23.437
+to damaged and step through with the arrow keys.
+
+01:24.413 --> 01:27.163
+Press 1 for Damaged, or 2 for Not Damaged.
+
+01:32.313 --> 01:34.123
+Two more false alarms, fixed.
+
+01:35.333 --> 01:37.543
+16 buildings changed in all.
+
+01:37.983 --> 01:39.653
+We click Save as new version.
+
+01:41.097 --> 01:44.387
+Each save adds a new version, and earlier versions are kept.
+
+01:51.907 --> 01:54.297
+The raw model output stays untouched,
+
+01:54.467 --> 01:56.697
+so you can switch between the two to compare.
+
+02:03.310 --> 02:06.220
+And the edited version downloads as a GeoPackage.
+
+02:06.880 --> 02:09.330
+Later in the series, we'll dig into these outputs.
+
+02:10.633 --> 02:14.003
+HASTE is open source under the MIT license.
+
+02:14.473 --> 02:17.583
+Deploy it to Azure with a single azd up command,
+
+02:17.673 --> 02:19.883
+or run it locally with Docker Compose.
+
+02:20.333 --> 02:23.263
+Find it on GitHub at microsoft/haste.

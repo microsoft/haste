@@ -12,6 +12,13 @@ conventions are documented in [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+
+- **Spokane deep-dive video series.** Six captioned videos in the
+  [User Guide](docs/usage/spokane-deep-dive.md) cover labeling, building
+  embeddings, editing predictions, understanding outputs, and the Open Data
+  Catalog. The README and documentation navigation link to the series.
+
 ### Security
 
 - **TiTiler accepts traffic only through APIM.** The tile server's Function App

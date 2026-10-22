@@ -1,0 +1,160 @@
+WEBVTT
+
+00:00.600 --> 00:03.770
+This series takes a closer look at each part of HASTE.
+
+00:04.200 --> 00:05.690
+In this bonus episode:
+
+00:06.040 --> 00:08.340
+the Open Data Catalog, where you can find
+
+00:08.360 --> 00:10.560
+free disaster imagery and add it
+
+00:10.580 --> 00:12.550
+to an image layer in a few clicks.
+
+00:16.000 --> 00:18.300
+We start a new image layer in the Spokane
+
+00:18.320 --> 00:21.490
+project and click Browse Open Data Catalog.
+
+00:22.600 --> 00:26.560
+After major disasters, Vantor and Planet release satellite
+
+00:26.580 --> 00:29.770
+imagery for free through their Open Data Programs.
+
+00:30.700 --> 00:34.850
+It lists recent events—wildfires, floods, earthquakes,
+
+00:34.900 --> 00:37.630
+and typhoons—with the provider next to each one.
+
+00:38.507 --> 00:40.177
+We pick the Spokane wildfire.
+
+00:41.267 --> 00:43.677
+Each scene's footprint appears on the map.
+
+00:44.437 --> 00:46.187
+Nine Vantor scenes for Spokane,
+
+00:46.437 --> 00:49.047
+two from before the fire, and seven from after.
+
+00:50.100 --> 00:52.290
+We filter to the post-event scenes.
+
+00:54.267 --> 00:56.657
+Selecting a scene shows its metadata,
+
+00:56.867 --> 00:59.787
+like sensor, resolution, cloud cover,
+
+00:59.807 --> 01:01.767
+and off-nadir angle, and streams a
+
+01:01.787 --> 01:03.857
+full-resolution preview onto the map.
+
+01:05.897 --> 01:07.407
+Zoomed into the burned neighborhoods,
+
+01:07.697 --> 01:10.787
+this August 3 GeoEye image is buried in smoke.
+
+01:15.067 --> 01:18.457
+The WorldView Legion image from August 4 is much clearer.
+
+01:23.417 --> 01:26.307
+Streets, homes, and burn scars are easy to make out.
+
+01:27.467 --> 01:30.397
+Each scene covers hundreds of square kilometers,
+
+01:30.647 --> 01:32.497
+but we only need these neighborhoods.
+
+01:33.437 --> 01:36.807
+Set clip area lets us drag a box around our area of interest,
+
+01:37.077 --> 01:39.627
+and HASTE clips the imagery to it during processing.
+
+01:40.650 --> 01:43.960
+The list now shows only scenes that overlap the box,
+
+01:44.130 --> 01:46.260
+and marks the ones that fully cover it.
+
+01:47.767 --> 01:51.077
+We add the August 4 scene as post-event imagery.
+
+01:52.827 --> 01:56.377
+Over on the Pre tab, the Add button says Pre-event instead.
+
+01:57.227 --> 01:59.177
+It always matches the scene's phase,
+
+01:59.327 --> 02:02.417
+so imagery can't end up on the wrong side of the event.
+
+02:03.523 --> 02:05.513
+Pre-event imagery is optional, though,
+
+02:05.743 --> 02:08.153
+so we'll keep this layer post-event only.
+
+02:09.133 --> 02:12.653
+Back in the form, the scene's URL, capture date,
+
+02:12.673 --> 02:14.803
+and source type are already filled in.
+
+02:15.713 --> 02:18.663
+HASTE also records each scene's source and license,
+
+02:18.873 --> 02:21.643
+so datasets you publish later credit the provider.
+
+02:24.300 --> 02:27.510
+We add our building footprints as usual and submit.
+
+02:30.210 --> 02:32.760
+HASTE downloads the scene and clips it to our box.
+
+02:36.000 --> 02:38.270
+A few minutes later, the layer is ready.
+
+02:38.930 --> 02:41.210
+We open it in the labeling tool, and the clipped
+
+02:41.230 --> 02:43.940
+Vantor imagery loads like any other layer.
+
+02:47.170 --> 02:50.130
+Up close, burned-out foundations sit right next to
+
+02:50.150 --> 02:53.600
+intact homes, some coated in red fire retardant.
+
+02:54.390 --> 02:56.610
+From here, the standard labeling workflow
+
+02:56.630 --> 02:59.260
+continues, just like in episode 1.
+
+03:02.800 --> 03:06.170
+HASTE is open source under the MIT license.
+
+03:06.640 --> 03:09.750
+Deploy it to Azure with a single azd up command,
+
+03:09.840 --> 03:12.050
+or run it locally with Docker Compose.
+
+03:12.500 --> 03:15.430
+Find it on GitHub at microsoft/haste.

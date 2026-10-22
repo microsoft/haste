@@ -1,0 +1,145 @@
+WEBVTT
+
+00:00.600 --> 00:03.790
+This series takes a closer look at each part of HASTE.
+
+00:04.220 --> 00:07.840
+In this episode: the standard labeling workflow, where you
+
+00:07.860 --> 00:09.640
+train a custom damage model from
+
+00:09.660 --> 00:11.430
+a few dozen hand-drawn labels.
+
+00:15.300 --> 00:18.910
+We start in the Spokane project, and add a new image layer.
+
+00:19.907 --> 00:22.957
+This time, we choose the standard labeling workflow.
+
+00:24.213 --> 00:26.123
+Here, we're using Planet data:
+
+00:26.513 --> 00:28.963
+SkySat post-event imagery from August 4th.
+
+00:29.747 --> 00:31.827
+Then we add pre-event Bing Maps aerial
+
+00:31.847 --> 00:33.677
+imagery, and building footprints.
+
+00:38.433 --> 00:40.903
+HASTE prepares the imagery in the background.
+
+00:41.353 --> 00:43.783
+When it's ready, we launch the labeling tool.
+
+00:51.433 --> 00:55.213
+The imagery panel adjusts contrast and color, and toggles
+
+00:55.233 --> 00:59.343
+between pre- and post-event imagery, so damage is easy to see.
+
+01:00.400 --> 01:02.990
+Labels are polygons, each with a class.
+
+01:03.360 --> 01:06.050
+We pick Damaged Building, and outline burned homes.
+
+01:17.633 --> 01:19.643
+Then intact homes, as Building.
+
+01:23.467 --> 01:25.487
+And Background, for everything that isn't
+
+01:25.507 --> 01:28.237
+a building: yards, trees, and the street.
+
+01:30.033 --> 01:32.493
+Then we work across the whole scene, and zoom
+
+01:32.513 --> 01:35.243
+out for forest, the river, and open ground.
+
+01:35.873 --> 01:37.433
+Diverse examples teach the model
+
+01:37.453 --> 01:39.463
+what is, and isn't, a building.
+
+01:40.467 --> 01:43.237
+Burned homes look different under tree cover,
+
+01:43.367 --> 01:46.157
+so we add examples from a second neighborhood, too.
+
+01:59.967 --> 02:03.577
+And intact homes nearby, so the model learns the difference.
+
+02:16.700 --> 02:19.450
+Ninety-two labels are enough to get started.
+
+02:21.000 --> 02:23.890
+Save and Train opens the training settings.
+
+02:24.240 --> 02:26.680
+We train for 10 epochs, at a learning rate of
+
+02:26.700 --> 02:31.600
+0.001. HASTE fine-tunes a U-Net segmentation
+
+02:31.620 --> 02:34.580
+model, with a ResNeXt-50 encoder pre-trained
+
+02:34.600 --> 02:37.010
+on ImageNet, on this imagery alone.
+
+02:40.533 --> 02:43.453
+About 18 minutes later, the model is trained,
+
+02:43.473 --> 02:46.263
+and inference has run across the whole scene.
+
+02:50.967 --> 02:54.167
+The results viewer colors every building footprint by the
+
+02:54.187 --> 02:58.177
+model's prediction: red for damaged, and green for intact.
+
+02:59.937 --> 03:01.757
+The raw model output shows the
+
+03:01.777 --> 03:03.847
+per-pixel segmentation behind it,
+
+03:08.957 --> 03:11.827
+and we can swipe to pre-event imagery to check its work.
+
+03:15.700 --> 03:17.490
+Back on the project page,
+
+03:17.640 --> 03:20.000
+download the scored buildings as a GeoPackage,
+
+03:20.020 --> 03:22.370
+or the training and inference artifacts,
+
+03:22.560 --> 03:24.110
+including the model itself.
+
+03:24.840 --> 03:27.150
+Later in the series, we'll edit these predictions.
+
+03:28.500 --> 03:31.870
+HASTE is open source under the MIT license.
+
+03:32.340 --> 03:35.450
+Deploy it to Azure with a single azd up command,
+
+03:35.540 --> 03:37.750
+or run it locally with Docker Compose.
+
+03:38.200 --> 03:41.130
+Find it on GitHub at microsoft/haste.

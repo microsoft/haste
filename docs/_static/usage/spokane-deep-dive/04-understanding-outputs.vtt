@@ -1,0 +1,157 @@
+WEBVTT
+
+00:00.600 --> 00:03.060
+This series takes a closer look at each part
+
+00:03.080 --> 00:06.000
+of HASTE. In this episode: understanding
+
+00:06.020 --> 00:08.580
+the outputs, from how far to trust the damage
+
+00:08.600 --> 00:11.270
+map, to what you can download and share.
+
+00:15.300 --> 00:18.810
+A damage map is only useful if you know how far to trust it.
+
+00:19.273 --> 00:22.523
+So HASTE builds in an independent check, Building Validation.
+
+00:23.610 --> 00:25.580
+It draws a random sample of buildings,
+
+00:25.670 --> 00:28.120
+200 here, and hides the model's predictions.
+
+00:29.920 --> 00:32.650
+The reviewer judges each building on the imagery alone,
+
+00:32.780 --> 00:34.590
+flipping between before and after.
+
+00:35.323 --> 00:37.013
+This first one is a small shed,
+
+00:37.103 --> 00:38.913
+too hard to make out so it's Unknown.
+
+00:39.730 --> 00:42.900
+The next two are clearer, one standing and one burned.
+
+00:44.813 --> 00:46.003
+Number keys make it quick.
+
+00:47.340 --> 00:49.750
+We'll skip ahead through the rest and save.
+
+00:57.633 --> 01:01.003
+The validation report compares those labels with the model.
+
+01:03.337 --> 01:05.847
+97% of the scored buildings are right.
+
+01:07.153 --> 01:10.663
+41 damaged buildings and 150 intact ones match.
+
+01:12.497 --> 01:14.577
+Three damaged buildings were missed and
+
+01:14.597 --> 01:17.107
+three intact ones were flagged as Damaged.
+
+01:17.847 --> 01:20.507
+None of our 16 edits fell in this random sample,
+
+01:20.527 --> 01:22.657
+so it's still an independent test.
+
+01:23.367 --> 01:25.187
+The assessment report answers the
+
+01:25.207 --> 01:27.017
+question responders ask first.
+
+01:27.367 --> 01:28.717
+How many buildings are damaged?
+
+01:29.547 --> 01:31.977
+The saved map counts 482.
+
+01:33.497 --> 01:35.787
+Separately, from the random sample alone,
+
+01:36.077 --> 01:37.777
+HASTE estimates that 433
+
+01:37.797 --> 01:40.697
+of the 1,937 buildings larger
+
+01:40.717 --> 01:42.847
+than 50 square meters are damaged,
+
+01:43.190 --> 01:47.840
+with a 95 percent confidence interval of 326 to 540.
+
+01:48.510 --> 01:51.040
+The map's count falls inside that range,
+
+01:51.070 --> 01:52.360
+so the two are consistent.
+
+01:54.567 --> 01:58.237
+To use the map outside HASTE, download it as a GeoPackage,
+
+01:58.547 --> 02:00.857
+the raw predictions, or a saved version.
+
+02:05.460 --> 02:07.320
+Each row is one building footprint,
+
+02:07.340 --> 02:09.010
+with its area and its prediction.
+
+02:09.700 --> 02:13.170
+Saved versions add the model's class, any analyst override,
+
+02:13.260 --> 02:14.800
+and the final edited class,
+
+02:14.820 --> 02:17.530
+so every fix from episode three is traceable.
+
+02:17.860 --> 02:21.210
+It opens in QGIS, ArcGIS, or Python.
+
+02:22.667 --> 02:25.167
+Finally, publishing packages the model's
+
+02:25.187 --> 02:27.777
+damage GeoPackage, the building footprints,
+
+02:28.047 --> 02:30.057
+a mask of the valid image area,
+
+02:30.127 --> 02:32.897
+and the processed imagery into a shared dataset.
+
+02:34.970 --> 02:37.700
+HASTE drafts the description from the assessment report.
+
+02:42.210 --> 02:44.060
+Published datasets get their own catalog,
+
+02:44.230 --> 02:47.160
+where your team can find them and download each file.
+
+02:51.967 --> 02:55.337
+HASTE is open source under the MIT license.
+
+02:55.807 --> 02:58.917
+Deploy it to Azure with a single azd up command,
+
+02:59.007 --> 03:01.217
+or run it locally with Docker Compose.
+
+03:01.667 --> 03:04.597
+Find it on GitHub at microsoft/haste.
