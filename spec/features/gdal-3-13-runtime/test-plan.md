@@ -22,7 +22,7 @@ These run in the runtime build workflow, inside each target base image:
 | Area | Test |
 |---|---|
 | hastegeo | VRT bytes disguised as TIFF/GPKG are rejected before GDAL/Fiona opens; TIFF opens use the GTiff allowlist; GPKG reads use the GPKG allowlist; upload chunk 0 is validated before storage; configuration audit; self-check policy |
-| TiTiler | Verify `WarpedVRT` works with the VRT driver disabled; tiles, including reprojected sources, through the app; negative tests for inline VRT, `vrt://`, remote VRT documents (raw band, Python pixel function, local or internal sources) and `/vsi` paths |
+| TiTiler | Tiles render with the VRT driver registered (disabling it breaks reprojection); tiles, including reprojected sources, through the app; negative tests for inline VRT, `vrt://`, remote VRT documents (raw band, Python pixel function, local or internal sources) and `/vsi` paths |
 | Guards | Dependency pins come only from the runtime set and match everywhere; forbidden GDAL settings are rejected across infrastructure, scripts, Dockerfiles and app settings |
 
 ## Deployment evidence

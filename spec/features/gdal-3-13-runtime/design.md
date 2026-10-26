@@ -149,7 +149,7 @@ defaults them:
 | `GDAL_DRIVER_PATH` | `disable` | No plugin loading |
 | `GDAL_DISABLE_READDIR_ON_OPEN` | `EMPTY_DIR` | No sibling-file discovery |
 | `CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED` | `NO` | No `header_file=` in `/vsicurl?` URLs |
-| `GDAL_SKIP` | `VRT` in TiTiler if compatible; otherwise unset | See [VRT policy](#vrt-and-virtual-file-system-policy) |
+| `GDAL_SKIP` | HDF and netCDF drivers in TiTiler; `VRT` is never skipped | See [VRT policy](#vrt-and-virtual-file-system-policy) |
 
 **Settings that are never allowed.** `verify()` fails if any of these is set:
 
@@ -210,7 +210,7 @@ operator-controlled values. A test pins this.
 
 | Runtime | VRT driver | Why |
 |---|---|---|
-| TiTiler | Disabled (`GDAL_SKIP=VRT`), if tile rendering with reprojection passes | No VRT input is legitimate there. If rasterio's `WarpedVRT` needs the driver registered, the fallback keeps it but restricts the reader to GTiff/COG. |
+| TiTiler | Registered | rio-tiler reprojects through in-memory VRTs, and `GDAL_SKIP=VRT` makes tile rendering fail with `Unknown GDAL Error` (verified on a deployed development environment). Raw bands and Python pixel functions stay off, and the reader opens only GTiff/COG, so user-supplied VRT content is still refused by the content check. |
 | imageryprep | Registered | `gdal.BuildVRT` mosaics HASTE's own files; untrusted opens exclude VRT |
 | training | Registered | Inference accepts HASTE-produced `.vrt` inputs; untrusted opens exclude VRT |
 | API, queues | Registered, with untrusted opens restricted | Same library as the workers; no VRT inputs from callers |
@@ -271,7 +271,9 @@ number. They happen:
 
 - [ ] Confirm the CMake option that compiles raw VRT bands out in GDAL 3.13,
       and the full list of drivers GDAL always builds.
-- [ ] Confirm whether rasterio's `WarpedVRT` works with `GDAL_SKIP=VRT`.
+- [x] Confirm whether rasterio's `WarpedVRT` works with `GDAL_SKIP=VRT`.
+      It does not: rio-tiler's `calculate_default_transform` needs the VRT
+      driver, so TiTiler keeps it registered (the documented fallback).
 - [ ] Confirm whether values in a GDAL configuration file take precedence
       over environment variables. If so, ship a read-only `gdalrc` and pin
       `GDAL_CONFIG_FILE` to it.

@@ -138,6 +138,11 @@ as defense in depth. With one shared libgdal, deregistration now reaches
 every binding. Untrusted inputs are opened with an explicit driver allowlist
 that excludes VRT.
 
+TiTiler is the exception to disabling the VRT driver: rio-tiler reprojects
+through in-memory VRTs, so `GDAL_SKIP=VRT` makes tile rendering fail. TiTiler
+keeps the driver registered, with raw bands and Python pixel functions off,
+and still opens only GTiff/COG from untrusted sources.
+
 ### Components Affected
 
 | Component | Path | Change |
