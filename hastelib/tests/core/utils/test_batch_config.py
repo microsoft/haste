@@ -256,6 +256,9 @@ def test_spillover_to_a_second_pool_uses_a_separate_job(monkeypatch):
         pool_id="h100-pool", candidate_pool_ids=["h100-pool", "t4-pool"]
     )
     runner.batch_cluster = MagicMock()
+    not_found = BatchErrorException(lambda *a, **k: None, MagicMock())
+    not_found.error = MagicMock(code="TaskNotFound")
+    runner.batch_cluster.batch_client.task.get.side_effect = not_found
     runner.batch_cluster.select_pool.return_value = "t4-pool"
     runner.batch_cluster.create_job.side_effect = lambda jid: jid
 

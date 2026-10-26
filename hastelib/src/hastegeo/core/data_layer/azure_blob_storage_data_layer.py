@@ -19,6 +19,7 @@ from ..utils.blob_access_policy import ensure_container_read_policy
 from ..utils.metadata import matches_metadata_type
 from ..utils.parallel import parallel_map
 from .abstract_data_layer import AbstractDataLayer
+from .conditional import JsonDocument, read_blob_document, write_blob_document
 from .json_merge import merge_blob_json
 
 _INITIALIZED_CONTAINERS = set()
@@ -181,6 +182,31 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
             raise ValueError(
                 f"{self.__class__.__name__}.save: Unsupported data format. Only json, yaml and bytes are supported."
             )
+
+    def load_json_versioned(
+        self, identifier: str, data_type: str
+    ) -> tuple[JsonDocument, str]:
+        client = self.container_client.get_blob_client(
+            self.get_file_path(identifier, data_type)
+        )
+        return read_blob_document(client)
+
+    def save_json_if_version(
+        self,
+        identifier: str,
+        data_type: str,
+        data: JsonDocument,
+        expected_version: str | None,
+    ) -> None:
+        client = self.container_client.get_blob_client(
+            self.get_file_path(identifier, data_type)
+        )
+        write_blob_document(
+            client,
+            data,
+            expected_version,
+            metadata=self._index_metadata(data_type, data),
+        )
 
     def merge_json(
         self, identifier: str, data_type: str, fields: dict
