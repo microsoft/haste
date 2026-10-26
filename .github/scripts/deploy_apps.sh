@@ -339,7 +339,7 @@ deploy_function() {
     )
     if [ "$FUNCTION_NAME" = "$FUNCTION_TITILER_API" ]; then
         gdal_settings+=(
-            "GDAL_SKIP=VRT HDF4 HDF4Image HDF5 HDF5Image netCDF"
+            "GDAL_SKIP=HDF4 HDF4Image HDF5 HDF5Image netCDF"
         )
     fi
 

@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "13443119327118855326"
+      "templateHash": "14391226588399507420"
     }
   },
   "parameters": {
@@ -1547,7 +1547,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.47.16.16243",
-              "templateHash": "845162239588505564"
+              "templateHash": "13225717067480360024"
             }
           },
           "parameters": {
@@ -1878,7 +1878,7 @@
                 "value": "NO"
               }
             ],
-            "titilerGdalHardeningSettings": "[concat(variables('gdalHardeningSettings'), createArray(createObject('name', 'GDAL_SKIP', 'value', 'VRT HDF4 HDF4Image HDF5 HDF5Image netCDF')))]"
+            "titilerGdalHardeningSettings": "[concat(variables('gdalHardeningSettings'), createArray(createObject('name', 'GDAL_SKIP', 'value', 'HDF4 HDF4Image HDF5 HDF5Image netCDF')))]"
           },
           "resources": [
             {

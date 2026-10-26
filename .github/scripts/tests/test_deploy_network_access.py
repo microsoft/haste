@@ -265,7 +265,7 @@ class TestDeployNetworkAccess(unittest.TestCase):
         self.assertIn("GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR", settings)
         self.assertIn("HASTE_GDAL_RUNTIME_REQUIRED=false", settings)
         self.assertIn(
-            "GDAL_SKIP=VRT HDF4 HDF4Image HDF5 HDF5Image netCDF",
+            "GDAL_SKIP=HDF4 HDF4Image HDF5 HDF5Image netCDF",
             settings,
         )
         self.assertEqual(final["defaults"], {"main": "Deny", "scm": "Deny"})

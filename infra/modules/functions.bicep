@@ -174,7 +174,7 @@ var gdalHardeningSettings = [
   { name: 'CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED', value: 'NO' }
 ]
 var titilerGdalHardeningSettings = concat(gdalHardeningSettings, [
-  { name: 'GDAL_SKIP', value: 'VRT HDF4 HDF4Image HDF5 HDF5Image netCDF' }
+  { name: 'GDAL_SKIP', value: 'HDF4 HDF4Image HDF5 HDF5Image netCDF' }
 ])
 
 // Application settings shared by the api and queues apps. hastegeo's Config()

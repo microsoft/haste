@@ -39,11 +39,11 @@ class GdalHardeningGuardTests(unittest.TestCase):
         titiler_docker = (
             REPO_ROOT / "docker" / "titiler" / "Dockerfile"
         ).read_text(encoding="utf-8")
-        self.assertIn('GDAL_SKIP="VRT ', titiler_docker)
+        self.assertIn('GDAL_SKIP="HDF4 ', titiler_docker)
         compose = (REPO_ROOT / "docker" / "docker-compose.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn('GDAL_SKIP: "VRT ', compose)
+        self.assertIn('GDAL_SKIP: "HDF4 ', compose)
 
     def test_rejects_relaxed_settings(self) -> None:
         values = (

@@ -8,7 +8,7 @@ ENV HASTE_GDAL_RUNTIME_REQUIRED=true \
     GDAL_DRIVER_PATH=disable \
     GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR \
     CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED=NO \
-    GDAL_SKIP="VRT HDF4 HDF4Image HDF5 HDF5Image netCDF"
+    GDAL_SKIP="HDF4 HDF4Image HDF5 HDF5Image netCDF"
 
 COPY api/titilerfuncapi/requirements.txt /app/requirements.txt
 RUN python -m pip install --no-cache-dir -r /app/requirements.txt \

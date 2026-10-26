@@ -10,7 +10,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_DRIVERS = frozenset({"GTiff", "COG", "JPEG", "PNG", "MEM"})
+# rio-tiler reprojects through in-memory VRTs, so the driver stays registered.
+# Raw bands and Python pixel functions are off, and user-supplied VRT content
+# is refused before GDAL opens it.
+ALLOWED_DRIVERS = frozenset({"GTiff", "COG", "JPEG", "PNG", "MEM", "VRT"})
 
 
 def secure_gdal_runtime() -> dict[str, Any] | None:
