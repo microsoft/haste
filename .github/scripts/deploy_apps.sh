@@ -352,13 +352,6 @@ deploy_function() {
             size_settings+=("HASTE_MAX_IMAGERY_DOWNLOAD_BYTES=$HASTE_MAX_IMAGERY_DOWNLOAD_BYTES")
         fi
 
-        # Get storage account connection string with error handling
-        echo "Retrieving storage account connection string..."
-        BLOB_CONNECTION_STRING=$(az storage account show-connection-string --name "$STORAGE_ACCOUNT" --resource-group "$RESOURCE_GROUP" --query connectionString -o tsv) || {
-            echo "ERROR: Failed to retrieve storage account connection string. Ensure service principal has 'Storage Account Key Operator Service Role' or 'Reader and Data Access' role on storage account '$STORAGE_ACCOUNT'." >&2
-            exit 1
-        }
-
         # Get batch account key with error handling
         echo "Retrieving batch account key..."
         AZURE_BATCH_ACCOUNT_KEY=$(az batch account keys list --name "$BATCH_ACCOUNT" --resource-group "$SHARED_RESOURCE_GROUP" --query "primary" -o tsv) || {
@@ -387,7 +380,6 @@ deploy_function() {
             "QUEUE_ACCOUNT_URL=https://${STORAGE_ACCOUNT}.queue.core.windows.net" \
             "BLOB_ACCOUNT_URL=https://${STORAGE_ACCOUNT}.blob.core.windows.net" \
             "BLOB_CONTAINER=data" \
-            "BLOB_CONNECTION_STRING=$BLOB_CONNECTION_STRING" \
             "AZURE_BATCH_ACCOUNT_NAME=$BATCH_ACCOUNT" \
             "AZURE_BATCH_URL=https://${BATCH_ACCOUNT}.${LOCATION}.batch.azure.com" \
             "AZURE_BATCH_ACCOUNT_KEY=$AZURE_BATCH_ACCOUNT_KEY" \
@@ -424,14 +416,18 @@ deploy_function() {
             "PUBLISH_EXPLORER_RENDER_ENABLED=${PUBLISH_EXPLORER_RENDER_ENABLED}" \
             "AzureFunctionsWebHost__hostId=${HOST_ID}" \
             --output none
+        # Blob and queue access is identity-based. Drop the account-key
+        # connection string left behind by earlier deployments.
+        az functionapp config appsettings delete --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" \
+            --setting-names BLOB_CONNECTION_STRING \
+            --output none
     else
         GDAL_RUNTIME_PENDING_APPS+=("$FUNCTION_NAME")
         az functionapp config appsettings set --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --settings \
             "${gdal_settings[@]}" \
             --output none
     fi
-
-    # TiTiler reads HASTE imagery only from this storage host (plus its
+    # HASTE imagery only from this storage host (plus its
     # built-in public open-data hosts). Mirrors functions.bicep; without it
     # HASTE imagery tiles fail closed.
     if [ "$FUNCTION_NAME" = "$FUNCTION_TITILER_API" ]; then
