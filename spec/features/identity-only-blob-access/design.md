@@ -36,20 +36,33 @@ the way tokens signed under it are revoked.
 
 ### Persisted URLs
 
-Records persist URLs that carry a token (`labelsUrl`, `embeddingsGeoJSONUrl`,
-`featuresSidecarUrl`). Browsers never use that token against storage: the UI
-rewrites the host to the managed-identity storage proxy, and the proxy
-authenticates with its own identity. Functions and Batch read by blob path and
-ignore the token. The persisted token therefore only matters in the local docker
-stack, where the browser reads the emulator directly.
+Tokens last an hour, so a token must never be the only way to reach a stored
+blob. Stored image-layer and label-tile URLs are kept unsigned and a fresh
+per-blob token is minted when a URL is handed out:
+
+- Label tile URLs embed the blob URL without a query, and label generation signs
+  only around its own raster read.
+- The label project, labeling workspace, project details (previews) and
+  visualizer responses sign at response time. Signing replaces any older query,
+  so legacy stored URLs that carry a policy token keep working after the policy
+  is deleted.
+- Only blobs in the app's own account and data container are signed; provider
+  and other-account URLs pass through unchanged.
+- The tile service has no grant on the data account, so the nested token in the
+  tile URL is its only access; this is why signing happens per response.
+
+Other persisted URLs (`labelsUrl`, `embeddingsGeoJSONUrl`,
+`featuresSidecarUrl`) are never used with their token in Azure: the UI goes
+through the identity-authenticated storage proxy, and Functions and Batch read
+by blob path.
 
 ## Risks
 
 | Risk | Mitigation |
 |---|---|
 | A caller still needs the key | Tests per path; dev1 run with the setting removed before any other environment |
-| Existing 90-day links stop working once the policy is deleted | Deleted deliberately and only after dev1 validation; clients do not use the token in Azure |
-| Local stack links expire after the token lifetime | Emulator tokens use the shared key and a longer lifetime |
+| Existing 90-day links stop working once the policy is deleted | Deleted deliberately and only after dev1 validation; response-time signing replaces tokens on stored URLs |
+| An endpoint returns a stored URL without signing it | Dev1 exercise of labeling, visualizer and project views before the policy is deleted |
 
 ## Rollout
 
