@@ -28,7 +28,7 @@ import threading
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
 
 _USER_DELEGATION_KEYS = OrderedDict()
 _USER_DELEGATION_KEY_CACHE_SIZE = 8
@@ -240,6 +240,108 @@ async def download_blob_to_tempfile(
             raise
 
     return await asyncio.to_thread(download)
+
+
+def blob_url_without_query(url: Optional[str]) -> Optional[str]:
+    """Return ``url`` without its query string, or ``None`` for a falsy url.
+
+    Stored blob URLs are kept unsigned: tokens are short-lived and minted
+    when a URL is handed out.
+    """
+    if not url:
+        return None
+    return url.split("?", 1)[0]
+
+
+def _internal_blob_client(url: str):
+    """Return the app's blob client when ``url`` points at its own storage."""
+    if not (
+        os.environ.get("BLOB_CONNECTION_STRING")
+        or os.environ.get("BLOB_ACCOUNT_URL")
+    ):
+        return None
+    candidate = urlparse(url)
+    if candidate.scheme not in {"http", "https"} or not candidate.hostname:
+        return None
+    client = get_app_blob_service_client()
+    account = urlparse(client.url)
+    if (candidate.scheme, candidate.hostname.lower(), candidate.port) != (
+        account.scheme,
+        (account.hostname or "").lower(),
+        account.port,
+    ):
+        return None
+    return client
+
+
+def sign_internal_blob_url(url: Optional[str], minutes: int = 60):
+    """Return ``url`` with a fresh read-only token when it is internal.
+
+    Only blobs in the app's own storage account and ``BLOB_CONTAINER`` are
+    signed, with any old query replaced by a token scoped to that one blob.
+    Anything else (provider URLs, other accounts or containers) is returned
+    untouched. An account key (Azurite, dev) signs directly; otherwise the
+    app identity's cached user delegation key does.
+    """
+    if not url:
+        return url
+    client = _internal_blob_client(url)
+    if client is None:
+        return url
+    from .blob_sas import DELEGATION_KEY_MARGIN, blob_read_sas
+
+    container_name, blob_name = split_blob_url(blob_url_without_query(url))
+    if container_name != os.environ.get("BLOB_CONTAINER", "data"):
+        return url
+    blob_name = unquote(blob_name)
+    credential = getattr(client, "credential", None)
+    account_key = getattr(credential, "account_key", None)
+    user_delegation_key = None
+    if not account_key:
+        user_delegation_key = get_cached_user_delegation_key(
+            client, min_remaining=DELEGATION_KEY_MARGIN
+        )
+    token = blob_read_sas(
+        account_name=client.account_name,
+        container_name=container_name,
+        blob_name=blob_name,
+        account_key=account_key,
+        user_delegation_key=user_delegation_key,
+        minutes=minutes,
+    )
+    blob_url = client.get_blob_client(container_name, blob_name).url
+    return f"{blob_url}?{token}"
+
+
+_TILE_SOURCE_PARAM = re.compile(r"(?<=[?&]url=)[^&#]*")
+
+
+def sign_titiler_tile_url(tile_url: Optional[str]) -> Optional[str]:
+    """Sign the blob URL nested in a TiTiler tile URL's ``url`` parameter."""
+    if not tile_url:
+        return tile_url
+
+    def _sign(match: re.Match) -> str:
+        source = unquote(match.group(0))
+        signed = sign_internal_blob_url(source)
+        return quote(signed, safe="") if signed != source else match.group(0)
+
+    return _TILE_SOURCE_PARAM.sub(_sign, tile_url)
+
+
+_LABEL_TILE_FIELDS = ("tileUrl", "preEventTileUrl", "postEventTileUrl")
+
+
+def sign_label_project_urls(label_project: dict) -> dict:
+    """Return a copy of a label project with its tile URLs freshly signed."""
+    imagery = label_project.get("imagery")
+    if not isinstance(imagery, dict):
+        return label_project
+    signed = dict(imagery)
+    for field in _LABEL_TILE_FIELDS:
+        if signed.get(field):
+            signed[field] = sign_titiler_tile_url(signed[field])
+    return {**label_project, "imagery": signed}
 
 
 class BlobRange(NamedTuple):
