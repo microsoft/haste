@@ -21,6 +21,7 @@ from hastegeo.core.utils.blob import (
     clear_blob_client_caches,
     download_blob_to_tempfile,
     fetch_url_text,
+    get_app_blob_service_client,
     get_blob_service_client,
     get_cached_user_delegation_key,
     parse_byte_range,
@@ -109,7 +110,48 @@ class TestBlobServiceClientCache(unittest.TestCase):
         self.assertEqual(clients[-1].get_user_delegation_key.call_count, 1)
 
 
+class TestAppBlobServiceClient(unittest.TestCase):
+    @patch("hastegeo.core.utils.blob.get_blob_service_client")
+    def test_prefers_connection_string(self, factory):
+        env = {
+            "BLOB_CONNECTION_STRING": "emulator",
+            "BLOB_ACCOUNT_URL": "https://account.test",
+        }
+        with patch.dict(os.environ, env):
+            get_app_blob_service_client()
+
+        factory.assert_called_once_with(
+            connection_string="emulator", account_url="https://account.test"
+        )
+
+    @patch("hastegeo.core.utils.blob.get_blob_service_client")
+    def test_falls_back_to_identity_without_connection_string(self, factory):
+        env = {"BLOB_ACCOUNT_URL": "https://account.test"}
+        with patch.dict(os.environ, env, clear=True):
+            get_app_blob_service_client()
+
+        factory.assert_called_once_with(
+            connection_string=None, account_url="https://account.test"
+        )
+
+    def test_names_both_settings_when_unconfigured(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(ValueError) as error:
+                get_app_blob_service_client()
+
+        self.assertIn("BLOB_CONNECTION_STRING", str(error.exception))
+        self.assertIn("BLOB_ACCOUNT_URL", str(error.exception))
+
+
 class TestAsyncBlobHelpers(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        patcher = patch.dict(
+            os.environ,
+            {"BLOB_ACCOUNT_URL": "https://account.blob.core.windows.net"},
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @patch("hastegeo.core.utils.blob.get_blob_service_client")
     async def test_download_blob_to_tempfile_uses_shared_client(self, factory):
         blob_client = (
