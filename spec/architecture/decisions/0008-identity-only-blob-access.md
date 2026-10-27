@@ -24,8 +24,7 @@ identity-based signing cannot reuse this design.
 
 - Each link reads one blob for at most an hour and is signed by the app identity.
 - Revocation comes from the delegation key, so there is no policy to maintain.
-- Persisted tokens no longer outlive their usefulness; browsers already go
-  through the identity-authenticated storage proxy.
+- Persisted URLs stay unsigned; tokens are minted when URLs are served.
 
 ## Decision
 
@@ -37,7 +36,7 @@ emulator. Disable shared-key access on the data account afterwards.
 ## Consequences
 
 - Links minted before the change keep working until their policy is deleted.
-- Tokens are shorter-lived, so anything that stores a token for later use must
-  read by path or go through the proxy.
+- Tokens are shorter-lived, so stored URLs are kept unsigned and signed when
+  served; anything else must read by path or go through the proxy.
 - Deployment config no longer needs the account key.
 - The Azure Files mount keeps its key; this decision does not cover it.
