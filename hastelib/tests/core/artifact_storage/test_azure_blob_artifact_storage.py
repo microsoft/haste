@@ -92,20 +92,20 @@ class TestAzureBlobArtifactStorageFetch(unittest.TestCase):
                 )
 
     @patch(
-        "hastegeo.core.artifact_storage.azure_blob_artifact_storage.generate_container_sas",
+        "hastegeo.core.artifact_storage.azure_blob_artifact_storage.blob_read_sas",
         return_value="sas",
     )
     @patch(
         "hastegeo.core.artifact_storage.azure_blob_artifact_storage.get_cached_user_delegation_key",
         return_value="delegation-key",
     )
-    def test_download_url_fetches_delegation_key_lazily(
-        self, delegation_key, _generate_sas
+    def test_download_url_signs_one_blob_with_the_identity(
+        self, delegation_key, sas
     ) -> None:
-        self.storage.blob_service_client = Mock()
+        identity_client = Mock()
+        self.storage.identity_blob_service_client = identity_client
         self.storage.account_key = None
         self.storage.user_delegation_key = None
-        self.storage.container_read_policy = "policy"
         self.storage.container_client.account_name = "account"
         self.storage.container_client.container_name = "artifacts"
         self.blob_client.url = "https://account.test/artifacts/file.txt"
@@ -113,9 +113,32 @@ class TestAzureBlobArtifactStorageFetch(unittest.TestCase):
         result = self.storage.get_download_url(identifier="file.txt")
 
         self.assertEqual(result, f"{self.blob_client.url}?sas")
-        delegation_key.assert_called_once_with(
-            self.storage.blob_service_client
+        self.assertEqual(delegation_key.call_args.args, (identity_client,))
+        kwargs = sas.call_args.kwargs
+        self.assertEqual(kwargs["blob_name"], "file.txt")
+        self.assertEqual(kwargs["container_name"], "artifacts")
+        self.assertIsNone(kwargs["account_key"])
+
+    @patch(
+        "hastegeo.core.artifact_storage.azure_blob_artifact_storage.blob_read_sas",
+        return_value="sas",
+    )
+    def test_download_url_for_artifact_path_signs_its_own_blob(
+        self, sas
+    ) -> None:
+        self.storage.identity_blob_service_client = None
+        self.storage.account_key = "key"  # pragma: allowlist secret
+        self.storage.user_delegation_key = None
+        self.storage.container_client.account_name = "devstoreaccount1"
+
+        self.storage.get_download_url(
+            artifact_path="http://azurite:10000/devstoreaccount1/data/a/b.tif"
         )
+
+        kwargs = sas.call_args.kwargs
+        self.assertEqual(kwargs["container_name"], "data")
+        self.assertEqual(kwargs["blob_name"], "a/b.tif")
+        self.assertEqual(kwargs["account_key"], "key")
 
     @patch(
         "hastegeo.core.artifact_storage.azure_blob_artifact_storage.generate_blob_sas",
@@ -171,13 +194,7 @@ class TestAzureBlobArtifactStorageClientReuse(unittest.TestCase):
     @patch(
         "hastegeo.core.artifact_storage.azure_blob_artifact_storage.get_blob_service_client"
     )
-    @patch.object(
-        AzureBlobArtifactStorage,
-        "_create_or_update_managed_access_policy",
-    )
-    def test_connection_string_uses_cached_client(
-        self, create_policy, factory
-    ):
+    def test_connection_string_uses_cached_client(self, factory):
         service = Mock(url="https://account.test")
         service.credential.account_key = "key"  # pragma: allowlist secret
         factory.return_value = service
@@ -190,7 +207,6 @@ class TestAzureBlobArtifactStorageClientReuse(unittest.TestCase):
 
         self.assertIs(storage.blob_service_client, service)
         factory.assert_called_once_with(connection_string="connection")
-        create_policy.assert_called_once_with()
 
     @patch(
         "hastegeo.core.artifact_storage.azure_blob_artifact_storage.get_blob_service_client"
@@ -213,11 +229,7 @@ class TestAzureBlobArtifactStorageClientReuse(unittest.TestCase):
     @patch(
         "hastegeo.core.artifact_storage.azure_blob_artifact_storage.get_blob_service_client"
     )
-    @patch.object(
-        AzureBlobArtifactStorage,
-        "_create_or_update_managed_access_policy",
-    )
-    def test_existing_container_is_reused(self, create_policy, factory):
+    def test_existing_container_is_reused(self, factory):
         service = Mock(url="https://account.test")
         service.credential.account_key = "key"  # pragma: allowlist secret
         container = service.get_container_client.return_value
@@ -231,7 +243,6 @@ class TestAzureBlobArtifactStorageClientReuse(unittest.TestCase):
         )
 
         self.assertIs(storage.container_client, container)
-        create_policy.assert_called_once_with()
 
 
 if __name__ == "__main__":
