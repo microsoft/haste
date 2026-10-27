@@ -85,15 +85,20 @@ def get_app_blob_service_client():
 def get_cached_user_delegation_key(
     blob_service_client,
     now: datetime | None = None,
+    min_remaining: timedelta = timedelta(minutes=15),
 ):
-    """Return a reusable user-delegation key with a safe refresh margin."""
+    """Return a reusable user-delegation key with a safe refresh margin.
+
+    ``min_remaining`` is how long the key must still be valid; callers that
+    sign a token must pass at least that token's lifetime.
+    """
     current_time = now or datetime.now(timezone.utc)
     cache_key = blob_service_client
     with _USER_DELEGATION_KEYS_LOCK:
         cached = _USER_DELEGATION_KEYS.get(cache_key)
         if cached is not None:
             delegation_key, expires_at = cached
-            if expires_at > current_time + timedelta(minutes=15):
+            if expires_at > current_time + min_remaining:
                 _USER_DELEGATION_KEYS.move_to_end(cache_key)
                 return delegation_key
 
