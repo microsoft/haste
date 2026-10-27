@@ -61,6 +61,7 @@
 | UI-005 | `PublishedDatasets` | Empty / loading / no-results | mount/search | empty state; overlay spinner; `NoResultsMessage` | US-002 |
 | UI-006 | `PublishedDatasetRow` | Status chips + polling + actions | render | in-progress polls; success enables retrieve; failed shows message/Retry | US-002/005 |
 | UI-007 | `PublishDatasetModal` | Asset checklist: available prechecked, absent grayed, zero-selected blocks Publish | toggle checkboxes | correct list; Publish disabled at zero selected | US-007 |
+| UI-008 | `PublishedDatasets` | Rows-per-page preference | select a page size, then revisit the page | setting is persisted for the user and restored | US-002 |
 
 ### End-to-End Tests (Docker Compose)
 
@@ -107,7 +108,7 @@
 | User Story | Unit | API Integration | Queue | UI | E2E | Performance |
 |---|---|---|---|---|---|---|
 | US-001 | UT-001, UT-009 | IT-002/003/004/005 | QT-001 | UI-001/002/003 | E2E-001 | PERF-001 |
-| US-002 | — | IT-006 | — | UI-005/006 | E2E-002 | PERF-002 |
+| US-002 | — | IT-006 | — | UI-005/006/008 | E2E-002 | PERF-002 |
 | US-003 | UT-004/005/009 | IT-002 | QT-001 | — | E2E-001/003 | PERF-003 |
 | US-004 | UT-006/007/008/010 | — | QT-002/003 | — | E2E-004 | — |
 | US-005 | — | IT-007/008 | — | UI-006 | E2E-003 | — |

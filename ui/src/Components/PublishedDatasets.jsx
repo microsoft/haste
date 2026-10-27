@@ -7,8 +7,9 @@ import {
   SearchBox,
 } from "@fluentui/react-components";
 
+import { updateUserSettings } from "../AppHelper";
 import { AppContext } from "../AppContext";
-import { apiGetResponse } from "../util/api";
+import { apiGet, apiGetResponse } from "../util/api";
 import { FluentIcon } from "../util/icons";
 import {
   buildPublishedDatasetsEndpoint,
@@ -33,7 +34,7 @@ const STATUS_OPTIONS = [
 ];
 
 const PublishedDatasets = () => {
-  const { setIsLoading } = useContext(AppContext);
+  const { setIsLoading, appParams, setAppParams } = useContext(AppContext);
   const [items, setItems] = useState(null);
   const [totalItems, setTotalItems] = useState(0);
   const [error, setError] = useState("");
@@ -46,7 +47,9 @@ const PublishedDatasets = () => {
   const [statusFilter, setStatusFilter] = useState("all");
   const [sort, setSort] = useState({ key: "publishedDate", dir: "desc" });
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(
+    appParams.userSettings.itemsPerPagePublishedDatasets ?? 20
+  );
   const requestRef = useRef(createSingleFlight());
   const etagsRef = useRef(new Map());
   const mountedRef = useRef(true);
@@ -186,6 +189,32 @@ const PublishedDatasets = () => {
         ? { key, dir: previous.dir === "asc" ? "desc" : "asc" }
         : { key, dir: "asc" },
     );
+  }
+
+  async function handlePageSizeChange(newSize) {
+    setPageSize(newSize);
+    setCurrentPage(1);
+    setAppParams((previousParams) => ({
+      ...previousParams,
+      userSettings: {
+        ...previousParams.userSettings,
+        itemsPerPagePublishedDatasets: newSize,
+      },
+    }));
+    setIsLoading(true, "Updating Items Per Page...");
+    try {
+      const response = await apiGet("GetUserById?userId=" + appParams.userId);
+      await updateUserSettings(response, [
+        { itemsPerPagePublishedDatasets: newSize },
+      ]);
+    } catch (saveError) {
+      console.error(
+        "Error saving published datasets page size preference:",
+        saveError,
+      );
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   function sortHeader(key, label) {
@@ -358,8 +387,7 @@ const PublishedDatasets = () => {
                   onOptionSelect={(_, data) => {
                     const selected = Number(data.optionValue);
                     if (selected > 0) {
-                      setPageSize(selected);
-                      setCurrentPage(1);
+                      handlePageSizeChange(selected);
                     }
                   }}
                 >
