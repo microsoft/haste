@@ -151,8 +151,7 @@ param publishBlobContainer string = ''
 @description('Resource tags.')
 param tags object = {}
 
-// Storage account (env RG) — used to derive the blob/queue URLs and the
-// key-based BLOB_CONNECTION_STRING that hastegeo's utils/blob.py path requires.
+// Storage account (env RG) — used to derive the blob and queue URLs.
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
   name: storageAccountName
 }
@@ -167,8 +166,8 @@ var titilerStorageHost = split(storageAccount.properties.primaryEndpoints.blob, 
 // Application settings shared by the api and queues apps. hastegeo's Config()
 // (instantiated at import time) reads these, so they must be present or the
 // worker cannot index function_app.py. Storage/queue access is identity-based
-// (BLOB_ACCOUNT_URL + role grants); only BLOB_CONNECTION_STRING, the Batch key,
-// and the ACS string are key-based (per ADR: no Key Vault, deploy-time values).
+// (BLOB_ACCOUNT_URL + role grants); only the Batch key and the ACS string are
+// key-based (per ADR: no Key Vault, deploy-time values).
 var appConfigSettings = [
   { name: 'env', value: 'prod' }
   { name: 'DEVELOPMENT_MODE', value: developmentMode ? 'true' : 'false' }
@@ -189,10 +188,6 @@ var appConfigSettings = [
   { name: 'BLOB_CONTAINER', value: 'data' }
   { name: 'BLOB_ACCOUNT_URL', value: storageAccount.properties.primaryEndpoints.blob }
   { name: 'QUEUE_ACCOUNT_URL', value: storageAccount.properties.primaryEndpoints.queue }
-  {
-    name: 'BLOB_CONNECTION_STRING'
-    value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
-  }
   { name: 'AZURE_BATCH_ACCOUNT_NAME', value: batchAccountName }
   { name: 'AZURE_BATCH_URL', value: 'https://${batchAccountName}.${batchAccountLocation}.batch.azure.com' }
   { name: 'AZURE_BATCH_ACCOUNT_KEY', value: batchAccountKey }

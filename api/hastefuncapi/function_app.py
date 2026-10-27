@@ -3808,7 +3808,8 @@ async def GetBuildingFootprintsGeoJSON(
             )
 
         # Download via the helper that handles both Azurite and real-Azure
-        # URL shapes and routes through BLOB_CONNECTION_STRING.
+        # URL shapes, using the app's own credential rather than the SAS in
+        # the URL.
         tmp_path = await download_blob_to_tempfile(
             footprints_url, suffix=".gpkg"
         )
