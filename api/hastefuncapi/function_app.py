@@ -123,6 +123,8 @@ from hastegeo.core.utils.async_cache import (
 from hastegeo.core.utils.blob import (
     download_blob_to_tempfile,
     parse_byte_range,
+    sign_label_project_urls,
+    sign_project_preview_urls,
 )
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.errors import exception_diagnostics
@@ -991,7 +993,9 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
             _load_response,
             refresh=_cache_refresh_requested(req.headers.get("Cache-Control")),
         )
-        _payload = cached_response["payload"]
+        _payload = await asyncio.to_thread(
+            sign_project_preview_urls, cached_response["payload"]
+        )
         etag = cached_response["etag"]
         _perf_headers = perf.headers(_perf, _perf_wall)
         cache_headers = {
@@ -1755,6 +1759,9 @@ async def GetLayerLabelingToolData(req: func.HttpRequest) -> func.HttpResponse:
                 "Label project not found.", status_code=404
             )
 
+        match_label_projects = await asyncio.to_thread(
+            sign_label_project_urls, match_label_projects
+        )
         return func.HttpResponse(
             json.dumps(match_label_projects), status_code=200
         )
@@ -1796,8 +1803,12 @@ async def GetLabelingWorkspace(req: func.HttpRequest) -> func.HttpResponse:
             image_layer_id=image_layer_id,
             config=config,
         ).load()
+        payload = workspace.model_dump(mode="json")
+        payload["labelProject"] = await asyncio.to_thread(
+            sign_label_project_urls, payload["labelProject"]
+        )
         return func.HttpResponse(
-            json.dumps(workspace.model_dump(mode="json")),
+            json.dumps(payload),
             status_code=200,
             mimetype="application/json",
         )
