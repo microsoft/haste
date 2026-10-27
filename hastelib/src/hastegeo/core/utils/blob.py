@@ -59,6 +59,29 @@ def get_blob_service_client(
     raise ValueError("A connection string or account URL is required")
 
 
+def get_app_blob_service_client():
+    """Return the shared client for the app's own storage account.
+
+    ``BLOB_CONNECTION_STRING`` wins when set because the docker dev stack
+    points it at the emulator. In Azure it is absent and the app's managed
+    identity is used through ``BLOB_ACCOUNT_URL``.
+
+    Raises:
+        ValueError: If neither setting exists, so the error names both.
+    """
+    connection_string = os.environ.get("BLOB_CONNECTION_STRING", "")
+    account_url = os.environ.get("BLOB_ACCOUNT_URL", "")
+    if not connection_string and not account_url:
+        raise ValueError(
+            "Neither BLOB_CONNECTION_STRING nor BLOB_ACCOUNT_URL is set; "
+            "cannot reach blob storage."
+        )
+    return get_blob_service_client(
+        connection_string=connection_string or None,
+        account_url=account_url or None,
+    )
+
+
 def get_cached_user_delegation_key(
     blob_service_client,
     now: datetime | None = None,
@@ -169,15 +192,13 @@ async def download_blob_to_tempfile(
 ) -> str:
     """Download the blob at ``url`` to a NamedTemporaryFile and return the path.
 
-    Routes the download through the function-app-internal
-    ``BLOB_CONNECTION_STRING`` (so requests stay on the docker network in
-    dev) regardless of the container/blob URL the caller hands in. The
-    caller is responsible for unlinking the returned path when done — use
-    ``try/finally``.
+    Routes the download through the function app's own credential (see
+    :func:`get_app_blob_service_client`) regardless of the container/blob URL
+    the caller hands in. The caller is responsible for unlinking the returned
+    path when done — use ``try/finally``.
     """
-    conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
     container_name, blob_name = split_blob_url(url)
-    bsc = get_blob_service_client(connection_string=conn_str)
+    bsc = get_app_blob_service_client()
     if max_bytes is not None and max_bytes < 1:
         raise ValueError("max_bytes must be positive")
 
@@ -262,18 +283,16 @@ async def read_blob_range(
 ) -> BlobRange:
     """Read ``length`` bytes from ``offset`` of the blob at ``url``.
 
-    Routes the read through the function-app-internal
-    ``BLOB_CONNECTION_STRING`` (so it stays on the docker network in dev
-    and on the Azure backbone in prod); only the container/blob path is
+    Routes the read through the function app's own credential (see
+    :func:`get_app_blob_service_client`); only the container/blob path is
     taken from ``url`` — its host and SAS are ignored. ``length=None``
     reads to EOF. ``data`` is clamped to the blob size; an ``offset`` at
     or past EOF yields empty ``data`` (callers should answer ``416``).
     """
-    conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
     container_name, blob_name = split_blob_url(url)
 
     def _read() -> BlobRange:
-        bsc = get_blob_service_client(connection_string=conn_str)
+        bsc = get_app_blob_service_client()
         blob_client = bsc.get_container_client(container_name).get_blob_client(
             blob_name
         )
