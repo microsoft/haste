@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
 import os
 import re
 import tempfile
@@ -330,6 +331,24 @@ def sign_titiler_tile_url(tile_url: Optional[str]) -> Optional[str]:
 
 
 _LABEL_TILE_FIELDS = ("tileUrl", "preEventTileUrl", "postEventTileUrl")
+_PREVIEW_FIELDS = ("preEventPreviewUrls", "postEventPreviewUrls")
+
+
+def sign_project_preview_urls(payload: str) -> str:
+    """Sign image-layer preview URLs in a serialized project-details payload.
+
+    Returns the input string untouched when no layer has previews.
+    """
+    project = json.loads(payload)
+    layers = project.get("imageLayer") or []
+    changed = False
+    for layer in layers:
+        for field in _PREVIEW_FIELDS:
+            urls = layer.get(field)
+            if urls:
+                layer[field] = [sign_internal_blob_url(url) for url in urls]
+                changed = True
+    return json.dumps(project) if changed else payload
 
 
 def sign_label_project_urls(label_project: dict) -> dict:
