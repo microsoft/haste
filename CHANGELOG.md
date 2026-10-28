@@ -19,6 +19,12 @@ conventions are documented in [RELEASING.md](RELEASING.md).
   embeddings, editing predictions, understanding outputs, and the Open Data
   Catalog. The README and documentation navigation link to the series.
 
+### Fixed
+
+- **Spokane video links in GitHub.** Episode titles now open the recordings
+  directly instead of jumping to sections where GitHub hides the embedded
+  players. A notice links to the documentation site for captioned playback.
+
 ### Security
 
 - **TiTiler accepts traffic only through APIM.** The tile server's Function App

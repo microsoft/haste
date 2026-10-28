@@ -8,16 +8,21 @@ Allow about 17 minutes for the full series. Watch the episodes in order for the
 complete walkthrough, or choose a topic below. Each video includes English
 captions, available through the player's caption controls.
 
+**Reading this on GitHub?** GitHub's Markdown preview does not display the
+embedded video players. [Watch the series with English captions on the
+documentation site](https://microsoft.github.io/haste/usage/spokane-deep-dive.html),
+or select an episode title below to open its video directly.
+
 ## Episodes
 
 | Episode | Topic | Duration |
 |---------|-------|----------|
-| 0 | [Introduction](#introduction) | 0:34 |
-| 1 | [Standard labeling](#standard-labeling) | 3:43 |
-| 2 | [Building embeddings](#building-embeddings) | 3:34 |
-| 3 | [Editing predictions](#editing-predictions) | 2:25 |
-| 4 | [Understanding outputs](#understanding-outputs) | 3:06 |
-| Bonus | [Open Data Catalog](#bonus-open-data-catalog) | 3:17 |
+| 0 | [Introduction](https://microsoft.github.io/haste/_static/usage/spokane-deep-dive/00-introduction.mp4) | 0:34 |
+| 1 | [Standard labeling](https://microsoft.github.io/haste/_static/usage/spokane-deep-dive/01-standard-labeling.mp4) | 3:43 |
+| 2 | [Building embeddings](https://microsoft.github.io/haste/_static/usage/spokane-deep-dive/02-building-embeddings.mp4) | 3:34 |
+| 3 | [Editing predictions](https://microsoft.github.io/haste/_static/usage/spokane-deep-dive/03-editing-predictions.mp4) | 2:25 |
+| 4 | [Understanding outputs](https://microsoft.github.io/haste/_static/usage/spokane-deep-dive/04-understanding-outputs.mp4) | 3:06 |
+| Bonus | [Open Data Catalog](https://microsoft.github.io/haste/_static/usage/spokane-deep-dive/05-bonus-open-data-catalog.mp4) | 3:17 |
 
 ## Introduction
 
