@@ -27,10 +27,7 @@ export default function useVisualizerTileRefresh(ids, results) {
       ),
       applyCredentials: (next) => {
         if (!sameTileSource(results, next)) throw new Error("The prediction source changed.");
-        setOverride({
-          source: { predictionVersion: results.predictionVersion, predictionRevision: results.predictionRevision },
-          layers: pickTileLayers(next),
-        });
+        setOverride({ base: results, layers: pickTileLayers(next) });
       },
       onError: () => setFailed(true),
       onSuccess: () => setFailed(false),
@@ -43,7 +40,8 @@ export default function useVisualizerTileRefresh(ids, results) {
     };
   }, [endpoint, results]);
 
-  const layers = override && sameTileSource(override.source, results) ? override.layers : null;
+  // An override only applies to the snapshot it refreshed; a newer snapshot carries fresher URLs.
+  const layers = override && override.base === results ? override.layers : null;
   return {
     tileLayers: layers,
     tileRefreshFailed: failed && !!results,
