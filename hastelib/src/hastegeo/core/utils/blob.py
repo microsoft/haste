@@ -274,6 +274,17 @@ def _internal_blob_client(url: str):
     return client
 
 
+def unsigned_internal_blob_url(url: Optional[str]) -> Optional[str]:
+    """Strip the query from HASTE-owned blob URLs only.
+
+    Provider and other-account URLs may carry credentials in their query,
+    so they are kept intact.
+    """
+    if url and _internal_blob_client(url) is not None:
+        return blob_url_without_query(url)
+    return url or None
+
+
 def sign_internal_blob_url(url: Optional[str], minutes: int = 60):
     """Return ``url`` with a fresh read-only token when it is internal.
 
@@ -331,8 +342,19 @@ def sign_titiler_tile_url(tile_url: Optional[str]) -> Optional[str]:
 
 _LABEL_TILE_FIELDS = ("tileUrl", "preEventTileUrl", "postEventTileUrl")
 _PREVIEW_FIELDS = ("preEventPreviewUrls", "postEventPreviewUrls")
-_LAYER_DOWNLOAD_FIELDS = ("labelsUrl",)
+_LAYER_DOWNLOAD_FIELDS = (
+    "labelsUrl",
+    "buildingFootprintsUrl",
+    "validAreaMaskUrl",
+)
 _MODEL_DOWNLOAD_FIELDS = ("labelsUrl", "trainingZipUrl", "inferenceZipUrl")
+_ARTIFACT_DOWNLOAD_FIELDS = ("trainingZipUrl", "inferenceZipUrl", "zipUrl")
+
+
+def _sign_fields(item: dict, fields) -> None:
+    for field in fields:
+        if item.get(field):
+            item[field] = sign_internal_blob_url(item[field])
 
 
 def sign_project_details_urls(project: dict) -> dict:
@@ -348,13 +370,11 @@ def sign_project_details_urls(project: dict) -> dict:
                 layer[field] = [
                     sign_internal_blob_url(url) for url in layer[field]
                 ]
-        for field in _LAYER_DOWNLOAD_FIELDS:
-            if layer.get(field):
-                layer[field] = sign_internal_blob_url(layer[field])
+        _sign_fields(layer, _LAYER_DOWNLOAD_FIELDS)
         for model in layer.get("models") or []:
-            for field in _MODEL_DOWNLOAD_FIELDS:
-                if model.get(field):
-                    model[field] = sign_internal_blob_url(model[field])
+            _sign_fields(model, _MODEL_DOWNLOAD_FIELDS)
+            if isinstance(model.get("artifacts"), dict):
+                _sign_fields(model["artifacts"], _ARTIFACT_DOWNLOAD_FIELDS)
     return project
 
 

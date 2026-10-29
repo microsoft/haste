@@ -15,7 +15,7 @@ from ..models.projects import (
     LabelingImagery,
     LabelProject,
 )
-from ..utils.blob import blob_url_without_query, sign_internal_blob_url
+from ..utils.blob import sign_internal_blob_url, unsigned_internal_blob_url
 from ..utils.gdal_security import harden_gdal
 from ..utils.metadata import MetadataUtils
 
@@ -77,7 +77,7 @@ class LabelTaskGenerator:
     def get_xyz_url(self, imagery_url: str) -> str:
         """Generate XYZ URL for the url of a TIF file."""
         xyz_url = ""
-        imagery_url = blob_url_without_query(imagery_url)
+        imagery_url = unsigned_internal_blob_url(imagery_url)
         if imagery_url:
             urlencoded_imagery_url = requests.utils.quote(imagery_url, safe="")
             xyz_url = f"{self.titiler_endpoint}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={urlencoded_imagery_url}"

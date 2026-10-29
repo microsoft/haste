@@ -11,6 +11,7 @@ from hastegeo.core.utils.blob import (
     sign_label_project_urls,
     sign_internal_blob_url,
     sign_titiler_tile_url,
+    unsigned_internal_blob_url,
 )
 
 ACCOUNT_URL = "https://acct.blob.core.windows.net"
@@ -66,6 +67,14 @@ class TestSignInternalBlobUrl(unittest.TestCase):
         )
         self.generate = self.sas.start()
         self.addCleanup(self.sas.stop)
+
+    def test_unsigned_strips_only_internal_queries(self):
+        external = "https://provider.example.com/a.tif?token=keep"
+        self.assertEqual(
+            unsigned_internal_blob_url(f"{BLOB_URL}?sig=old"), BLOB_URL
+        )
+        self.assertEqual(unsigned_internal_blob_url(external), external)
+        self.assertIsNone(unsigned_internal_blob_url(""))
 
     def test_signs_internal_url_replacing_old_query(self):
         signed = sign_internal_blob_url(f"{BLOB_URL}?sv=old&sig=stale")
@@ -128,8 +137,17 @@ class TestSignTilerUrls(unittest.TestCase):
                 {
                     "preEventPreviewUrls": [BLOB_URL],
                     "labelsUrl": BLOB_URL,
+                    "buildingFootprintsUrl": BLOB_URL,
+                    "validAreaMaskUrl": BLOB_URL,
                     "models": [
-                        {"trainingZipUrl": BLOB_URL, "inferenceZipUrl": None}
+                        {
+                            "trainingZipUrl": BLOB_URL,
+                            "inferenceZipUrl": None,
+                            "artifacts": {
+                                "trainingZipUrl": BLOB_URL,
+                                "zipUrl": BLOB_URL,
+                            },
+                        }
                     ],
                 },
                 {},
@@ -142,6 +160,16 @@ class TestSignTilerUrls(unittest.TestCase):
         self.assertEqual(layer["labelsUrl"], signed)
         self.assertEqual(layer["models"][0]["trainingZipUrl"], signed)
         self.assertIsNone(layer["models"][0]["inferenceZipUrl"])
+        self.assertEqual(layer["buildingFootprintsUrl"], signed)
+        self.assertEqual(layer["validAreaMaskUrl"], signed)
+        artifacts = layer["models"][0]["artifacts"]
+        self.assertEqual(artifacts["trainingZipUrl"], signed)
+        self.assertEqual(artifacts["zipUrl"], signed)
+        self.assertEqual(layer["buildingFootprintsUrl"], signed)
+        self.assertEqual(layer["validAreaMaskUrl"], signed)
+        artifacts = layer["models"][0]["artifacts"]
+        self.assertEqual(artifacts["trainingZipUrl"], signed)
+        self.assertEqual(artifacts["zipUrl"], signed)
         self.assertEqual(result["imageLayer"][1], {})
 
     def test_label_project_fields_signed_without_mutation(self):
