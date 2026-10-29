@@ -14,6 +14,13 @@ CLOCK_SKEW_MINUTES = 5
 DELEGATION_KEY_MARGIN = timedelta(minutes=READ_TOKEN_MINUTES + 5)
 
 
+def read_token_expires_at() -> str:
+    """Return when tokens signed now stop working, as an ISO 8601 string."""
+    return (
+        datetime.now(timezone.utc) + timedelta(minutes=READ_TOKEN_MINUTES)
+    ).isoformat()
+
+
 def blob_read_sas(
     account_name: str,
     container_name: str,
