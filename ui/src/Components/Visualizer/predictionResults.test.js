@@ -8,9 +8,10 @@ import { PMTiles } from "pmtiles";
 import { normalizeAttrs, indexById, classifyAll } from "./predictionClassify.js";
 import {
   buildRawGpkgUrl, buildVisualizerResultsUrl, canViewResults, DEFAULT_THRESHOLD,
-  DEFAULT_UNKNOWN_THRESHOLD, describeFootprintStatus, hasRasterLayer,
-  predictionRenderKey, protectedArtifactEndpoint, readinessDetail,
-  resolveFootprintStatus, resolvePredictionArtifacts, visualizerLayerOptions,
+  DEFAULT_UNKNOWN_THRESHOLD, describeFootprintStatus, hasRasterLayer, pickTileLayers,
+  predictionRenderKey, protectedArtifactEndpoint, readinessDetail, sameTileSource,
+  resolveFootprintStatus, resolvePredictionArtifacts, stableTileUrl, visualizerLayerOptions,
+  visualizerSceneKey,
 } from "./predictionResults.js";
 import {
   dividerPositionForKey, isMobileResultsLayout, RESULTS_DESKTOP_MIN_WIDTH, swipeLeftPaneLabel,
@@ -306,4 +307,33 @@ test("shared artifact hooks stay read-only while the results page gains an edito
   assert.match(menu, /onDownload: \(\) => setModal\("download"\)/);
   assert.match(menu, /DownloadPredictionsDialog/);
   assert.doesNotMatch(menu, /fileDownload|model\.gpkgUrl|buildRawGpkgUrl|buildVisualizerResultsUrl|createModelResultsDownload/);
+});
+
+const tile = (token) => `/tiles/{z}/{x}/{y}.png?url=${encodeURIComponent(`https://acct.blob.core.windows.net/c/a.tif?sig=${token}`)}&rescale=0,1`;
+
+test("a credential refresh does not change the scene identity", () => {
+  const make = (token) => ({
+    preDisasterImagery: { url: tile(token), bounds: [0, 0, 1, 1] },
+    postDisasterImagery: { url: tile(token), bounds: [0, 0, 1, 1] }, studyArea: [],
+  });
+  assert.equal(visualizerSceneKey(make("a"), "r"), visualizerSceneKey(make("b"), "r"));
+  assert.notEqual(stableTileUrl(tile("a")), "");
+  assert.equal(stableTileUrl(tile("a")), stableTileUrl(tile("b")));
+  assert.notEqual(
+    visualizerSceneKey(make("a"), "r"),
+    visualizerSceneKey({ ...make("a"), postDisasterImagery: { url: "/other", bounds: [] } }, "r"),
+  );
+});
+
+test("tile refresh only applies to the same prediction source", () => {
+  const source = { predictionVersion: 2, predictionRevision: "g1" };
+  assert.equal(sameTileSource(source, { ...source, extra: 1 }), true);
+  assert.equal(sameTileSource(source, { ...source, predictionVersion: 3 }), false);
+  assert.equal(sameTileSource(source, { ...source, predictionRevision: "g2" }), false);
+  assert.equal(sameTileSource(source, null), false);
+  const picked = pickTileLayers({ preDisasterImagery: { url: "x" }, buildingCount: 4 });
+  assert.deepEqual(Object.keys(picked).sort(), [
+    "predictedDamageLayer", "postDisasterImagery", "preDisasterImagery", "predictionsLayer",
+  ].sort());
+  assert.equal(picked.predictionsLayer, null);
 });
