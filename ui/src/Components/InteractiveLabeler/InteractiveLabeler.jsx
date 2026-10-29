@@ -40,6 +40,9 @@ import { isOptionalAzureBasemapAuthError } from "../../util/azureMapsErrors.js";
 import { toBrowserTitilerUrl } from "../../util/blobUrl";
 import { AppContext } from "../../AppContext.jsx";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
+import { resolveImageryTileUrl } from "../LabelingTool/labelingToolLoading.js";
+import { useTileCredentialRefresh } from "../../util/useTileCredentialRefresh.js";
+import TileCredentialRefreshMessage from "../OtherComponents/TileCredentialRefreshMessage.jsx";
 import {
   initGuidedTourState,
   setGuidedTourState,
@@ -465,6 +468,12 @@ function fmtMetric(m, asPercent) {
   return `${m.mean.toFixed(2)} ± ${m.std.toFixed(2)}`;
 }
 
+// Keeps an imagery layer's URL valid when refreshed credentials arrive,
+// including the satellite fallback used when there is no pre-event imagery.
+function browserImageryTileUrl(tileUrl) {
+  return resolveImageryTileUrl(tileUrl ? toBrowserTitilerUrl(tileUrl) : "");
+}
+
 const InteractiveLabeler = () => {
   const styles = useStyles();
   const { projectId, imageLayerId, modelId } = useParams();
@@ -551,7 +560,43 @@ const InteractiveLabeler = () => {
   const swipePreMapRef = useRef(null);
   const swipeRef = useRef(null);
   const layerImageryRef = useRef(null);
+  const layerDataRef = useRef(null);
+  const preImageryRef = useRef(null);
+  const postImageryRef = useRef(null);
+  const swipePreImageryRef = useRef(null);
   const swipePmtilesUrlRef = useRef(null);
+  // Tile URLs carry read tokens that expire, so refresh them in place. Only
+  // the imagery URLs of existing layers change; labels and the selected
+  // prediction version are left alone.
+  const {
+    tileRefreshFailed,
+    startTileCredentialRefresh,
+    retryTileCredentialRefresh,
+  } = useTileCredentialRefresh({
+    projectId,
+    imageLayerId,
+    dataRef: layerDataRef,
+    layerBindings: [
+      {
+        layerRef: preImageryRef,
+        imageryKey: "preEventTileUrl",
+        transformTileUrl: browserImageryTileUrl,
+      },
+      {
+        layerRef: postImageryRef,
+        imageryKey: "postEventTileUrl",
+        transformTileUrl: browserImageryTileUrl,
+      },
+      {
+        layerRef: swipePreImageryRef,
+        imageryKey: "preEventTileUrl",
+        transformTileUrl: browserImageryTileUrl,
+      },
+    ],
+    onApplied: (data) => {
+      layerImageryRef.current = data.imagery || null;
+    },
+  });
   // The pre map has its own renderer. Feature-state and paint expressions
   // are per-renderer, so anything applied to the labeler map has to be
   // mirrored here or the left pane stays unlabeled-colored.
@@ -740,6 +785,8 @@ const InteractiveLabeler = () => {
     // pre-event tiles onto its secondary map (falls back to satellite when
     // the layer has no pre-event imagery).
     layerImageryRef.current = metadata.layerData?.imagery || null;
+    layerDataRef.current = metadata.layerData || null;
+    startTileCredentialRefresh(metadata.layerData);
 
     // The features sidecar is per model, so it still comes from
     // GetLayerModelsDetails. The footprint tiles do not: geometry belongs
@@ -872,7 +919,7 @@ const InteractiveLabeler = () => {
         loadImagery(
           toBrowserTitilerUrl(metadata.layerData.imagery.preEventTileUrl),
           map,
-          { current: null },
+          preImageryRef,
           "preEventImageryLayer",
           false
         );
@@ -881,7 +928,7 @@ const InteractiveLabeler = () => {
         loadImagery(
           toBrowserTitilerUrl(metadata.layerData.imagery.postEventTileUrl),
           map,
-          { current: null },
+          postImageryRef,
           "postEventImageryLayer",
           true
         );
@@ -1971,7 +2018,7 @@ const InteractiveLabeler = () => {
       loadImagery(
         toBrowserTitilerUrl(preUrl),
         preMap,
-        { current: null },
+        swipePreImageryRef,
         "swipePreEventLayer",
         true
       );
@@ -2114,6 +2161,7 @@ const InteractiveLabeler = () => {
           console.warn("swipe pre map dispose failed:", e);
         }
         swipePreMapRef.current = null;
+        swipePreImageryRef.current = null;
       }
       // SwipeMap.dispose() does NOT clear the inline `clip` it set on the
       // SECONDARY (labeler) map's container, so clear it here or the labeler
@@ -2484,6 +2532,10 @@ const InteractiveLabeler = () => {
       data-route-map="interactive-labeler"
       data-map-ready={isMapReady ? "true" : "false"}
     >
+      <TileCredentialRefreshMessage
+        visible={tileRefreshFailed}
+        onRetry={retryTileCredentialRefresh}
+      />
       <InteractiveLabelerLoader
         loadState={initialLoad}
         error={loadError}

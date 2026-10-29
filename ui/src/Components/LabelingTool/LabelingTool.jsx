@@ -21,8 +21,11 @@ import { waitForMapReady } from "../InteractiveLabeler/interactiveLabelerLoading
 import {
   getWorkspaceCameraOptions,
   getWorkspaceBounds,
+  resolveImageryTileUrl,
   waitForMapIdle,
 } from "./labelingToolLoading.js";
+import { useTileCredentialRefresh } from "../../util/useTileCredentialRefresh.js";
+import TileCredentialRefreshMessage from "../OtherComponents/TileCredentialRefreshMessage.jsx";
 import "../../assets/css/drawingToolbar.css";
 
 const LabelingTool = ({
@@ -51,6 +54,36 @@ const LabelingTool = ({
   const preImageryRef = useRef(null);
   const postImageryRef = useRef(null);
   const labelingToolDataRef = useRef([]);
+  // Tile URLs carry read tokens that expire; refresh them in place so a long
+  // session keeps its imagery without touching drawn labels.
+  const {
+    tileRefreshFailed,
+    startTileCredentialRefresh,
+    retryTileCredentialRefresh,
+  } = useTileCredentialRefresh({
+    projectId,
+    imageLayerId,
+    dataRef: labelingToolDataRef,
+    layerBindings: [
+      {
+        layerRef: preImageryRef,
+        imageryKey: "preEventTileUrl",
+        transformTileUrl: (url) =>
+          resolveImageryTileUrl(url, {
+            allowFallback: !isAzureMapsPlaceholder,
+          }) || "",
+      },
+      {
+        layerRef: postImageryRef,
+        imageryKey: "postEventTileUrl",
+        transformTileUrl: (url) =>
+          resolveImageryTileUrl(url, {
+            allowFallback: !isAzureMapsPlaceholder,
+            required: true,
+          }),
+      },
+    ],
+  });
   const [primaryClasses, setPrimaryClasses] = useState([]);
   const [drawingCount, setDrawingCount] = useState(0);
   const [isMapReady, setIsMapReady] = useState(false);
@@ -201,6 +234,9 @@ const LabelingTool = ({
   async function createMap(abortSignal) {
     const labelProject = workspace.labelProject;
     labelingToolDataRef.current = labelProject;
+    startTileCredentialRefresh({
+      tileCredentialExpiresAt: workspace.tileCredentialExpiresAt,
+    });
     setEventTypes(workspace.eventTypes || []);
     setImageLayer(workspace.imageLayer || null);
     const workspaceBounds = getWorkspaceBounds(window.atlas, labelProject);
@@ -313,6 +349,10 @@ const LabelingTool = ({
           isMapReady && drawingManager !== null ? "true" : "false"
         }
       >
+        <TileCredentialRefreshMessage
+          visible={tileRefreshFailed}
+          onRetry={retryTileCredentialRefresh}
+        />
         {isMapReady && drawingManager !== null ? (
 
           <>
