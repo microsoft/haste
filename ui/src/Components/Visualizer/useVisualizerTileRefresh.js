@@ -13,7 +13,7 @@ import { requestPredictionJson } from "./predictionHttp.js";
  * The controller lives as long as one results snapshot: switching versions
  * disposes it, which also drops any refresh still in flight.
  */
-export default function useVisualizerTileRefresh(ids, results) {
+export default function useVisualizerTileRefresh(ids, results, applierRef) {
   const [override, setOverride] = useState(null);
   const [failed, setFailed] = useState(false);
   const controllerRef = useRef(null);
@@ -27,7 +27,11 @@ export default function useVisualizerTileRefresh(ids, results) {
       ),
       applyCredentials: (next) => {
         if (!sameTileSource(results, next)) throw new Error("The prediction source changed.");
-        setOverride({ base: results, layers: pickTileLayers(next) });
+        const layers = pickTileLayers(next);
+        // Apply to the live layers first so a failure reaches the retry path.
+        if (!applierRef?.current) throw new Error("The maps are not ready.");
+        applierRef.current(layers);
+        setOverride({ base: results, layers });
       },
       onError: () => setFailed(true),
       onSuccess: () => setFailed(false),
@@ -38,7 +42,7 @@ export default function useVisualizerTileRefresh(ids, results) {
       controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, [endpoint, results]);
+  }, [endpoint, results, applierRef]);
 
   // An override only applies to the snapshot it refreshed; a newer snapshot carries fresher URLs.
   const layers = override && override.base === results ? override.layers : null;
