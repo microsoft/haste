@@ -11,6 +11,7 @@ from ..models.prediction_results import ResultsRequest
 from ..models.projects import ImageLayer, LabelProject, Model, Project
 from ..models.visualizer import Imagery, Visualizer
 from ..utils.blob import blob_url_without_query, sign_internal_blob_url
+from ..utils.blob_sas import read_token_expires_at
 from ..utils.prediction_readiness import artifact_api_url
 from .metadata import MetadataProcessor
 from .prediction_results import PredictionResultsProcessor
@@ -122,6 +123,7 @@ def build_visualizer(
         sourceTypePostEvent=layer.sourceTypePostEvent,
         imageryCaptureDatePreEvent=layer.imageryCaptureDatePreEvent,
         imageryCaptureDatePostEvent=layer.imageryCaptureDatePostEvent,
+        tileCredentialExpiresAt=read_token_expires_at(),
     )
 
 
