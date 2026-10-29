@@ -48,6 +48,17 @@ per-blob token is minted when a URL is handed out:
   is deleted.
 - Only blobs in the app's own account and data container are signed; provider
   and other-account URLs pass through unchanged.
+
+### Long sessions
+
+Tile URLs stop working when their token expires. Label responses include
+`tileCredentialExpiresAt`, and the labeling tool, interactive labeler and
+building validation re-request the labeling data shortly before that time (and
+when the tab regains focus). Only the imagery URLs of the existing map layers
+are replaced, so drawn labels, selections and the loaded model are untouched.
+A failed refresh keeps the current imagery, retries, and shows a banner with
+retry and reload actions. The visualizer is not covered yet: its tile URLs are
+minted per prediction version and expire after an hour.
 - The tile service has no grant on the data account, so the nested token in the
   tile URL is its only access; this is why signing happens per response.
 
