@@ -120,21 +120,29 @@ class TestSignTilerUrls(unittest.TestCase):
         tile = self._tile("https://provider.example.com/a.tif")
         self.assertEqual(sign_titiler_tile_url(tile), tile)
 
-    def test_preview_urls_signed_in_project_payload(self):
-        import json
+    def test_project_details_urls_signed(self):
+        from hastegeo.core.utils.blob import sign_project_details_urls
 
-        from hastegeo.core.utils.blob import sign_project_preview_urls
-
-        payload = json.dumps(
-            {"imageLayer": [{"preEventPreviewUrls": [BLOB_URL]}, {}]}
-        )
-        result = json.loads(sign_project_preview_urls(payload))
-        self.assertEqual(
-            result["imageLayer"][0]["preEventPreviewUrls"],
-            [f"{BLOB_URL}?sig=fresh"],
-        )
-        empty = json.dumps({"imageLayer": [{}]})
-        self.assertEqual(sign_project_preview_urls(empty), empty)
+        project = {
+            "imageLayer": [
+                {
+                    "preEventPreviewUrls": [BLOB_URL],
+                    "labelsUrl": BLOB_URL,
+                    "models": [
+                        {"trainingZipUrl": BLOB_URL, "inferenceZipUrl": None}
+                    ],
+                },
+                {},
+            ]
+        }
+        result = sign_project_details_urls(project)
+        signed = f"{BLOB_URL}?sig=fresh"
+        layer = result["imageLayer"][0]
+        self.assertEqual(layer["preEventPreviewUrls"], [signed])
+        self.assertEqual(layer["labelsUrl"], signed)
+        self.assertEqual(layer["models"][0]["trainingZipUrl"], signed)
+        self.assertIsNone(layer["models"][0]["inferenceZipUrl"])
+        self.assertEqual(result["imageLayer"][1], {})
 
     def test_label_project_fields_signed_without_mutation(self):
         original = {

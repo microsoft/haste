@@ -124,7 +124,7 @@ from hastegeo.core.utils.blob import (
     download_blob_to_tempfile,
     parse_byte_range,
     sign_label_project_urls,
-    sign_project_preview_urls,
+    sign_project_details_urls,
 )
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.errors import exception_diagnostics
@@ -975,6 +975,9 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
             project = await ProjectDetailsProcessor(
                 project_id=project_id, config=config
             ).load(include_models=include_models)
+            # Signed inside the cached load so the ETag covers the tokens the
+            # client holds and a 304 can never revive an expired one.
+            await asyncio.to_thread(sign_project_details_urls, project)
             payload = json.dumps(project)
             return {
                 "payload": payload,
@@ -993,9 +996,7 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
             _load_response,
             refresh=_cache_refresh_requested(req.headers.get("Cache-Control")),
         )
-        _payload = await asyncio.to_thread(
-            sign_project_preview_urls, cached_response["payload"]
-        )
+        _payload = cached_response["payload"]
         etag = cached_response["etag"]
         _perf_headers = perf.headers(_perf, _perf_wall)
         cache_headers = {
