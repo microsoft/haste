@@ -416,18 +416,13 @@ deploy_function() {
             "PUBLISH_EXPLORER_RENDER_ENABLED=${PUBLISH_EXPLORER_RENDER_ENABLED}" \
             "AzureFunctionsWebHost__hostId=${HOST_ID}" \
             --output none
-        # Blob and queue access is identity-based. Drop the account-key
-        # connection string left behind by earlier deployments.
-        az functionapp config appsettings delete --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" \
-            --setting-names BLOB_CONNECTION_STRING \
-            --output none
     else
         GDAL_RUNTIME_PENDING_APPS+=("$FUNCTION_NAME")
         az functionapp config appsettings set --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" --settings \
             "${gdal_settings[@]}" \
             --output none
     fi
-    # HASTE imagery only from this storage host (plus its
+    # TiTiler reads HASTE imagery only from this storage host (plus its
     # built-in public open-data hosts). Mirrors functions.bicep; without it
     # HASTE imagery tiles fail closed.
     if [ "$FUNCTION_NAME" = "$FUNCTION_TITILER_API" ]; then
@@ -502,6 +497,15 @@ deploy_function() {
         --output none
     az functionapp restart --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP"
     forget_gdal_runtime_pending_app "$FUNCTION_NAME"
+
+    # Blob and queue access is identity-based. Drop the account-key
+    # connection string left behind by earlier deployments, only once code
+    # that no longer needs it is running.
+    if [ "${SET_APPSETTINGS:-true}" = "true" ]; then
+        az functionapp config appsettings delete --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" \
+            --setting-names BLOB_CONNECTION_STRING \
+            --output none
+    fi
 
     # Record the wheel this app actually installed. Nothing else on the app
     # says which hastegeo it is running -- the wheel is pinned into
