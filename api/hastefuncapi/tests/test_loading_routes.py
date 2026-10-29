@@ -90,6 +90,7 @@ class TestLabelingWorkspaceRoute(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn("tileCredentialExpiresAt", response_json(response))
         self.assertEqual(response_json(response)["eventTypes"], ["Wildfire"])
         self.assertEqual(
             response_json(response)["imageLayer"]["imageLayerId"], LAYER_ID

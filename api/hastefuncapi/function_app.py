@@ -126,6 +126,7 @@ from hastegeo.core.utils.blob import (
     sign_label_project_urls,
     sign_project_details_urls,
 )
+from hastegeo.core.utils.blob_sas import read_token_expires_at
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.errors import exception_diagnostics
 from hastegeo.core.utils.gdal_security import (
@@ -1763,6 +1764,9 @@ async def GetLayerLabelingToolData(req: func.HttpRequest) -> func.HttpResponse:
         match_label_projects = await asyncio.to_thread(
             sign_label_project_urls, match_label_projects
         )
+        match_label_projects["tileCredentialExpiresAt"] = (
+            read_token_expires_at()
+        )
         return func.HttpResponse(
             json.dumps(match_label_projects), status_code=200
         )
@@ -1808,6 +1812,7 @@ async def GetLabelingWorkspace(req: func.HttpRequest) -> func.HttpResponse:
         payload["labelProject"] = await asyncio.to_thread(
             sign_label_project_urls, payload["labelProject"]
         )
+        payload["tileCredentialExpiresAt"] = read_token_expires_at()
         return func.HttpResponse(
             json.dumps(payload),
             status_code=200,
