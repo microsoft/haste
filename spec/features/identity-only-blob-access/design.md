@@ -57,8 +57,12 @@ building validation re-request the labeling data shortly before that time (and
 when the tab regains focus). Only the imagery URLs of the existing map layers
 are replaced, so drawn labels, selections and the loaded model are untouched.
 A failed refresh keeps the current imagery, retries, and shows a banner with
-retry and reload actions. The visualizer is not covered yet: its tile URLs are
-minted per prediction version and expire after an hour.
+retry and reload actions. The visualizer does the same for the displayed
+prediction version: `GetVisualizerResults` returns `tileCredentialExpiresAt`,
+and shortly before it the page re-requests that same version and swaps only
+the four tile layers' URLs on both maps. The map is not rebuilt (the scene key
+ignores the token), results and edits are untouched, and switching versions
+discards any refresh still in flight.
 - The tile service has no grant on the data account, so the nested token in the
   tile URL is its only access; this is why signing happens per response.
 
