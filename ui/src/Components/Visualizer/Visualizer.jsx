@@ -15,6 +15,8 @@ import Labels from "./Labels";
 import PredictionStatusNote from "./PredictionStatusNote";
 import useVisualizerResults from "./useVisualizerResults";
 import useVisualizerMaps, { validBounds } from "./useVisualizerMaps";
+import useVisualizerTileRefresh from "./useVisualizerTileRefresh";
+import TileCredentialRefreshMessage from "../OtherComponents/TileCredentialRefreshMessage.jsx";
 import usePredictionArtifacts from "./usePredictionArtifacts";
 import usePredictionFootprints from "./usePredictionFootprints";
 import { findGlMap } from "./predictionFootprintMap.js";
@@ -81,7 +83,8 @@ export default function Visualizer({ setModalComponent }) {
     predictedDamageLayer: false, predictionsLayer: false, footprints: true,
   });
   const { results, preloaded, error: resultsError, retry, loadVersion, switchState } = useVisualizerResults(ids);
-  const scene = useVisualizerMaps({ results, routeKey, primaryContainerRef, secondaryContainerRef });
+  const { tileLayers, tileRefreshFailed, retryTileRefresh } = useVisualizerTileRefresh(ids, results);
+  const scene = useVisualizerMaps({ results, routeKey, primaryContainerRef, secondaryContainerRef, tileLayers });
   const artifacts = usePredictionArtifacts(results, preloaded);
   const footprints = usePredictionFootprints({
     maps: scene.maps, registerCleanup: scene.registerCleanup, artifacts, visible: visibility.footprints,
@@ -287,6 +290,7 @@ export default function Visualizer({ setModalComponent }) {
       <div id="primaryMap" ref={primaryContainerRef} className="map" aria-label="Pre-event results map" />
       <div id="secondaryMap" ref={secondaryContainerRef} className="map" aria-label="Post-event results map" />
       <div ref={selectionBoxRef} className={styles.selectBox} />
+      <TileCredentialRefreshMessage visible={tileRefreshFailed} onRetry={retryTileRefresh} />
       <Labels
         visualizerResults={results || {}}
         resetMapPosition={resetMapPosition}
