@@ -131,6 +131,7 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
             # It's a cleaner separation of metaphors
             blob_client = BlobClient.from_blob_url(artifact_path)
             container_name, blob_name = split_blob_url(artifact_path)
+            blob_name = unquote(blob_name)
         else:
             blob_name = self.get_file_path(
                 identifier, extra_partition_keys=extra_partition_keys
