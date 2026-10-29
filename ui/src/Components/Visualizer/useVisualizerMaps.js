@@ -22,7 +22,7 @@ export function validBounds(bounds) {
 }
 
 export default function useVisualizerMaps({
-  results, routeKey, primaryContainerRef, secondaryContainerRef, tileLayers = null,
+  results, routeKey, primaryContainerRef, secondaryContainerRef, tileLayers = null, tileApplierRef = null,
 }) {
   const [state, setState] = useState(null);
   const [attempt, setAttempt] = useState(0);
@@ -139,17 +139,48 @@ export default function useVisualizerMaps({
   const maps = state?.key === key ? state.maps : null;
   const damage = tileLayers?.predictedDamageLayer ?? results?.predictedDamageLayer;
   const predictions = tileLayers?.predictionsLayer ?? results?.predictionsLayer;
-  const preUrl = tileLayers?.preDisasterImagery?.url;
-  const postUrl = tileLayers?.postDisasterImagery?.url;
+  const preUrl = (tileLayers?.preDisasterImagery ?? results?.preDisasterImagery)?.url;
+  const postUrl = (tileLayers?.postDisasterImagery ?? results?.postDisasterImagery)?.url;
+  // Lets the credential refresh swap every tile URL in one step and learn if it failed.
   useEffect(() => {
-    if (!maps) return;
+    if (!tileApplierRef) return undefined;
+    if (!maps) { tileApplierRef.current = null; return undefined; }
+    const applier = (layers) => {
+      const done = [];
+      try {
+        for (const [map, imageryId] of [[maps[0], "preDisasterImagery"], [maps[1], "postDisasterImagery"]]) {
+          for (const id of [imageryId, "predictedDamageLayer", "predictionsLayer"]) {
+            const url = layers?.[id]?.url;
+            const layer = url ? map.layers.getLayerById(id) : null;
+            if (!layer) continue;
+            done.push({ layer, previous: layer.getOptions?.().tileUrl });
+            layer.setOptions({ tileUrl: url });
+          }
+        }
+      } catch (error) {
+        for (const { layer, previous } of done.reverse()) {
+          try { if (previous) layer.setOptions({ tileUrl: previous }); } catch { /* best effort */ }
+        }
+        throw error;
+      }
+    };
+    tileApplierRef.current = applier;
+    return () => { if (tileApplierRef.current === applier) tileApplierRef.current = null; };
+  }, [maps, tileApplierRef]);
+  // A new results snapshot (e.g. a version switch) carries fresher URLs than the layers hold.
+  useEffect(() => {
+    if (!maps) return undefined;
+    let active = true;
     try {
       [[maps[0], "preDisasterImagery", preUrl], [maps[1], "postDisasterImagery", postUrl]].forEach(([map, id, url]) => {
         const layer = url ? map.layers.getLayerById(id) : null;
-        if (layer) layer.setOptions({ tileUrl: url });
+        if (layer && layer.getOptions?.().tileUrl !== url) layer.setOptions({ tileUrl: url });
       });
-    } catch { /* the next scheduled refresh retries */ }
-  }, [maps, preUrl, postUrl]);
+    } catch (error) {
+      queueMicrotask(() => { if (active) setState({ key, error: error.message }); });
+    }
+    return () => { active = false; };
+  }, [maps, preUrl, postUrl, key]);
   useEffect(() => {
     if (!maps) return;
     let active = true;

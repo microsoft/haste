@@ -83,8 +83,11 @@ export default function Visualizer({ setModalComponent }) {
     predictedDamageLayer: false, predictionsLayer: false, footprints: true,
   });
   const { results, preloaded, error: resultsError, retry, loadVersion, switchState } = useVisualizerResults(ids);
-  const { tileLayers, tileRefreshFailed, retryTileRefresh } = useVisualizerTileRefresh(ids, results);
-  const scene = useVisualizerMaps({ results, routeKey, primaryContainerRef, secondaryContainerRef, tileLayers });
+  const tileApplierRef = useRef(null);
+  const { tileLayers, tileRefreshFailed, retryTileRefresh } = useVisualizerTileRefresh(ids, results, tileApplierRef);
+  const scene = useVisualizerMaps({
+    results, routeKey, primaryContainerRef, secondaryContainerRef, tileLayers, tileApplierRef,
+  });
   const artifacts = usePredictionArtifacts(results, preloaded);
   const footprints = usePredictionFootprints({
     maps: scene.maps, registerCleanup: scene.registerCleanup, artifacts, visible: visibility.footprints,
