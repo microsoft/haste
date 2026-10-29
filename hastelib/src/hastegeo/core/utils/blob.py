@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import json
 import os
 import re
 import tempfile
@@ -332,23 +331,31 @@ def sign_titiler_tile_url(tile_url: Optional[str]) -> Optional[str]:
 
 _LABEL_TILE_FIELDS = ("tileUrl", "preEventTileUrl", "postEventTileUrl")
 _PREVIEW_FIELDS = ("preEventPreviewUrls", "postEventPreviewUrls")
+_LAYER_DOWNLOAD_FIELDS = ("labelsUrl",)
+_MODEL_DOWNLOAD_FIELDS = ("labelsUrl", "trainingZipUrl", "inferenceZipUrl")
 
 
-def sign_project_preview_urls(payload: str) -> str:
-    """Sign image-layer preview URLs in a serialized project-details payload.
+def sign_project_details_urls(project: dict) -> dict:
+    """Sign blob URLs in a project-details dict in place and return it.
 
-    Returns the input string untouched when no layer has previews.
+    Covers layer previews and label downloads, and each model's label and
+    zip downloads. Stored values are never written back; callers sign the
+    response copy only.
     """
-    project = json.loads(payload)
-    layers = project.get("imageLayer") or []
-    changed = False
-    for layer in layers:
+    for layer in project.get("imageLayer") or []:
         for field in _PREVIEW_FIELDS:
-            urls = layer.get(field)
-            if urls:
-                layer[field] = [sign_internal_blob_url(url) for url in urls]
-                changed = True
-    return json.dumps(project) if changed else payload
+            if layer.get(field):
+                layer[field] = [
+                    sign_internal_blob_url(url) for url in layer[field]
+                ]
+        for field in _LAYER_DOWNLOAD_FIELDS:
+            if layer.get(field):
+                layer[field] = sign_internal_blob_url(layer[field])
+        for model in layer.get("models") or []:
+            for field in _MODEL_DOWNLOAD_FIELDS:
+                if model.get(field):
+                    model[field] = sign_internal_blob_url(model[field])
+    return project
 
 
 def sign_label_project_urls(label_project: dict) -> dict:
