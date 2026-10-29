@@ -51,3 +51,4 @@ class Visualizer(BaseModel):
     sourceTypePostEvent: Optional[str] = Field(default=None)
     imageryCaptureDatePreEvent: Optional[str] = Field(default=None)
     imageryCaptureDatePostEvent: Optional[str] = Field(default=None)
+    tileCredentialExpiresAt: Optional[str] = Field(default=None)
