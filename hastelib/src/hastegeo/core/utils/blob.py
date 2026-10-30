@@ -281,7 +281,10 @@ def unsigned_internal_blob_url(url: Optional[str]) -> Optional[str]:
     so they are kept intact.
     """
     if url and _internal_blob_client(url) is not None:
-        return blob_url_without_query(url)
+        stripped = blob_url_without_query(url)
+        container_name, _ = split_blob_url(stripped)
+        if container_name == os.environ.get("BLOB_CONTAINER", "data"):
+            return stripped
     return url or None
 
 
