@@ -10,6 +10,8 @@ from ..models.prediction_edits import PredictionSelectionRequest
 from ..models.prediction_results import ResultsRequest
 from ..models.projects import ImageLayer, LabelProject, Model, Project
 from ..models.visualizer import Imagery, Visualizer
+from ..utils.blob import sign_internal_blob_url, unsigned_internal_blob_url
+from ..utils.blob_sas import read_token_expires_at
 from ..utils.prediction_readiness import artifact_api_url
 from .metadata import MetadataProcessor
 from .prediction_results import PredictionResultsProcessor
@@ -35,9 +37,11 @@ def build_visualizer(
     bounds = labels.features[0].bbox or [] if labels.features else []
 
     def raster(url: str | None, colormap: str = "") -> Imagery:
+        url = unsigned_internal_blob_url(url)
         tile_url = (
             f"{titiler_endpoint}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}"
-            f"?scale=1&url={quote(url, safe='')}{colormap}"
+            f"?scale=1&url={quote(sign_internal_blob_url(url), safe='')}"
+            f"{colormap}"
             if url
             else ""
         )
@@ -88,20 +92,24 @@ def build_visualizer(
         preDisasterImagery=raster(layer.preEventProcessedImageryUrl),
         postDisasterImagery=raster(layer.postEventProcessedImageryUrl),
         predictedDamageLayer=raster(predicted_url) if predicted_url else None,
-        predictionsLayer=raster(classified_url, colormap)
-        if classified_url
-        else None,
-        footprintTilesUrl=artifact_api_url(model, "footprint_pmtiles")
-        if layer.footprintPmtilesUrl
-        else None,
-        predictionAttrsUrl=prediction_source_url(
-            model, source, "prediction_attrs"
-        )
-        if source.predictionAttrsUrl
-        else None,
-        gpkgUrl=prediction_source_url(model, source, "gpkg")
-        if source.gpkgUrl
-        else None,
+        predictionsLayer=(
+            raster(classified_url, colormap) if classified_url else None
+        ),
+        footprintTilesUrl=(
+            artifact_api_url(model, "footprint_pmtiles")
+            if layer.footprintPmtilesUrl
+            else None
+        ),
+        predictionAttrsUrl=(
+            prediction_source_url(model, source, "prediction_attrs")
+            if source.predictionAttrsUrl
+            else None
+        ),
+        gpkgUrl=(
+            prediction_source_url(model, source, "gpkg")
+            if source.gpkgUrl
+            else None
+        ),
         **source.descriptor(),
         predictionVersions=prediction_versions(model, layer),
         supportsThreshold=flavor == "inference",
@@ -115,6 +123,7 @@ def build_visualizer(
         sourceTypePostEvent=layer.sourceTypePostEvent,
         imageryCaptureDatePreEvent=layer.imageryCaptureDatePreEvent,
         imageryCaptureDatePostEvent=layer.imageryCaptureDatePostEvent,
+        tileCredentialExpiresAt=read_token_expires_at(),
     )
 
 

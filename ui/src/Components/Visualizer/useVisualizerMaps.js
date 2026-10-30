@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 // Map lifecycle extracted from PR136: distinct DOM/map references, two ready
 // events, optional rasters and SwipeMap disposal before disposing either map.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getAzureMapsAuthOptions, isAzureMapsPlaceholder } from "../../util/azureMapsAuth";
 import { isOptionalAzureBasemapAuthError } from "../../util/azureMapsErrors.js";
 import { waitForMapReady } from "../InteractiveLabeler/interactiveLabelerLoading.js";
@@ -21,10 +21,18 @@ export function validBounds(bounds) {
     bounds.every(Number.isFinite) && bounds[0] <= bounds[2] && bounds[1] <= bounds[3];
 }
 
-export default function useVisualizerMaps({ results, routeKey, primaryContainerRef, secondaryContainerRef }) {
+export default function useVisualizerMaps({
+  results, routeKey, primaryContainerRef, secondaryContainerRef, tileLayers = null, tileApplierRef = null,
+}) {
   const [state, setState] = useState(null);
   const [attempt, setAttempt] = useState(0);
   const retryScene = useCallback(() => setAttempt((value) => value + 1), []);
+  // Rasters added late must carry the newest signed URL, not the one the scene key was built from.
+  const latestTilesRef = useRef({});
+  latestTilesRef.current = {
+    preDisasterImagery: tileLayers?.preDisasterImagery ?? results?.preDisasterImagery,
+    postDisasterImagery: tileLayers?.postDisasterImagery ?? results?.postDisasterImagery,
+  };
   const baseKey = visualizerSceneKey(results, routeKey);
   const key = baseKey ? JSON.stringify([baseKey, attempt]) : "";
   // Only scene data participates: selecting prediction versions is not a new map.
@@ -95,8 +103,8 @@ export default function useVisualizerMaps({ results, routeKey, primaryContainerR
                 pinchZoomInteraction: true, pinchRotateInteraction: false,
               });
               map.setCamera({ bearing: 0 });
-              addRaster(atlas, map, index === 0 ? scene.preDisasterImagery : scene.postDisasterImagery,
-                index === 0 ? "preDisasterImagery" : "postDisasterImagery");
+              const rasterId = index === 0 ? "preDisasterImagery" : "postDisasterImagery";
+              addRaster(atlas, map, latestTilesRef.current[rasterId] ?? scene[rasterId], rasterId);
               if (Array.isArray(scene.studyArea) && scene.studyArea.length) {
                 const source = new atlas.source.DataSource();
                 map.sources.add(source);
@@ -129,8 +137,51 @@ export default function useVisualizerMaps({ results, routeKey, primaryContainerR
   }, [scene, key, primaryContainerRef, secondaryContainerRef]);
 
   const maps = state?.key === key ? state.maps : null;
-  const damage = results?.predictedDamageLayer;
-  const predictions = results?.predictionsLayer;
+  // An override may carry explicit nulls (rasters unavailable for this version); keep them.
+  const damage = tileLayers ? tileLayers.predictedDamageLayer : results?.predictedDamageLayer;
+  const predictions = tileLayers ? tileLayers.predictionsLayer : results?.predictionsLayer;
+  const preUrl = (tileLayers?.preDisasterImagery ?? results?.preDisasterImagery)?.url;
+  const postUrl = (tileLayers?.postDisasterImagery ?? results?.postDisasterImagery)?.url;
+  // Lets the credential refresh swap every tile URL in one step and learn if it failed.
+  useEffect(() => {
+    if (!tileApplierRef) return undefined;
+    if (!maps) { tileApplierRef.current = null; return undefined; }
+    const applier = (layers) => {
+      const done = [];
+      try {
+        for (const [map, imageryId] of [[maps[0], "preDisasterImagery"], [maps[1], "postDisasterImagery"]]) {
+          for (const id of [imageryId, "predictedDamageLayer", "predictionsLayer"]) {
+            const url = layers?.[id]?.url;
+            const layer = url ? map.layers.getLayerById(id) : null;
+            if (!layer) continue;
+            done.push({ layer, previous: layer.getOptions?.().tileUrl });
+            layer.setOptions({ tileUrl: url });
+          }
+        }
+      } catch (error) {
+        for (const { layer, previous } of done.reverse()) {
+          try { if (previous) layer.setOptions({ tileUrl: previous }); } catch { /* best effort */ }
+        }
+        throw error;
+      }
+    };
+    tileApplierRef.current = applier;
+    return () => { if (tileApplierRef.current === applier) tileApplierRef.current = null; };
+  }, [maps, tileApplierRef]);
+  // A new results snapshot (e.g. a version switch) carries fresher URLs than the layers hold.
+  useEffect(() => {
+    if (!maps) return undefined;
+    let active = true;
+    try {
+      [[maps[0], "preDisasterImagery", preUrl], [maps[1], "postDisasterImagery", postUrl]].forEach(([map, id, url]) => {
+        const layer = url ? map.layers.getLayerById(id) : null;
+        if (layer && layer.getOptions?.().tileUrl !== url) layer.setOptions({ tileUrl: url });
+      });
+    } catch (error) {
+      queueMicrotask(() => { if (active) setState({ key, error: error.message }); });
+    }
+    return () => { active = false; };
+  }, [maps, preUrl, postUrl, key]);
   useEffect(() => {
     if (!maps) return;
     let active = true;

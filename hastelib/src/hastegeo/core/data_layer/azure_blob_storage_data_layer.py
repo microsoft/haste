@@ -9,13 +9,12 @@ from threading import Lock
 import yaml
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.storage.blob import BlobBlock  # type: ignore
-from azure.storage.blob import generate_container_sas
 
 from ..utils.blob import (
     get_blob_service_client,
     get_cached_user_delegation_key,
 )
-from ..utils.blob_access_policy import ensure_container_read_policy
+from ..utils.blob_sas import DELEGATION_KEY_MARGIN, blob_read_sas
 from ..utils.metadata import matches_metadata_type
 from ..utils.parallel import parallel_map
 from .abstract_data_layer import AbstractDataLayer
@@ -41,22 +40,28 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
             )
             self.user_delegation_key = None
             self.account_key = self.blob_service_client.credential.account_key
+            # On real Azure, sign with the app identity so the account key is
+            # never needed to mint tokens. Azurite keeps the account key.
+            self.identity_blob_service_client = (
+                get_blob_service_client(account_url=account_url)
+                if str(account_url or "").startswith("https://")
+                else None
+            )
         else:
             self.blob_service_client = get_blob_service_client(
                 account_url=account_url
             )
             self.user_delegation_key = None
             self.account_key = None
+            self.identity_blob_service_client = self.blob_service_client
 
+        # Kept for call compatibility; no container policy is maintained, so
+        # deleting the legacy one revokes old tokens for good.
         self.container_read_policy = container_read_policy_name
         self.container_client = self.blob_service_client.get_container_client(
             container
         )
-        cache_key = (
-            self.blob_service_client.url,
-            container,
-            self.container_read_policy,
-        )
+        cache_key = (self.blob_service_client.url, container)
         with _INITIALIZED_CONTAINERS_LOCK:
             if cache_key not in _INITIALIZED_CONTAINERS:
                 try:
@@ -66,15 +71,7 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
                     )
                 except ResourceExistsError:
                     logging.info(f"Container '{container}' already exists.")
-                self._create_or_update_managed_access_policy()
                 _INITIALIZED_CONTAINERS.add(cache_key)
-
-    def _create_or_update_managed_access_policy(self) -> None:
-        ensure_container_read_policy(
-            self.container_client,
-            self.container_read_policy,
-            expiration_days=90,
-        )
 
     def get_file_path(
         self,
@@ -121,21 +118,23 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
 
         # ``check_exists=False`` skips the per-blob existence HEAD request. Use
         # it when the caller has already confirmed presence in bulk (e.g. via
-        # ``list_identifiers``) — the container read SAS is identical for every
-        # blob, so building the URL is a purely local operation.
+        # ``list_identifiers``) — the token is signed locally for this blob,
+        # so building the URL needs no request.
         if not check_exists or blob_client.exists():
+            account_key = self.account_key
             user_delegation_key = self.user_delegation_key
-            if self.account_key is None:
+            if self.identity_blob_service_client is not None:
+                account_key = None
                 user_delegation_key = get_cached_user_delegation_key(
-                    self.blob_service_client
+                    self.identity_blob_service_client,
+                    min_remaining=DELEGATION_KEY_MARGIN,
                 )
-            # Generate SAS token with the policy
-            sas_token = generate_container_sas(
+            sas_token = blob_read_sas(
                 account_name=self.container_client.account_name,
                 container_name=self.container_client.container_name,
-                policy_id=self.container_read_policy,
+                blob_name=blob_name,
+                account_key=account_key,
                 user_delegation_key=user_delegation_key,
-                account_key=self.account_key,
             )
 
             sas_url = f"{blob_client.url}?{sas_token}"

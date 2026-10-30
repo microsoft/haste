@@ -123,7 +123,10 @@ from hastegeo.core.utils.async_cache import (
 from hastegeo.core.utils.blob import (
     download_blob_to_tempfile,
     parse_byte_range,
+    sign_label_project_urls,
+    sign_project_details_urls,
 )
+from hastegeo.core.utils.blob_sas import read_token_expires_at
 from hastegeo.core.utils.data import convert_json_to_geojson, filter_roles
 from hastegeo.core.utils.errors import exception_diagnostics
 from hastegeo.core.utils.gdal_security import (
@@ -973,6 +976,9 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
             project = await ProjectDetailsProcessor(
                 project_id=project_id, config=config
             ).load(include_models=include_models)
+            # Signed inside the cached load so the ETag covers the tokens the
+            # client holds and a 304 can never revive an expired one.
+            await asyncio.to_thread(sign_project_details_urls, project)
             payload = json.dumps(project)
             return {
                 "payload": payload,
@@ -1755,6 +1761,12 @@ async def GetLayerLabelingToolData(req: func.HttpRequest) -> func.HttpResponse:
                 "Label project not found.", status_code=404
             )
 
+        match_label_projects = await asyncio.to_thread(
+            sign_label_project_urls, match_label_projects
+        )
+        match_label_projects["tileCredentialExpiresAt"] = (
+            read_token_expires_at()
+        )
         return func.HttpResponse(
             json.dumps(match_label_projects), status_code=200
         )
@@ -1796,8 +1808,13 @@ async def GetLabelingWorkspace(req: func.HttpRequest) -> func.HttpResponse:
             image_layer_id=image_layer_id,
             config=config,
         ).load()
+        payload = workspace.model_dump(mode="json")
+        payload["labelProject"] = await asyncio.to_thread(
+            sign_label_project_urls, payload["labelProject"]
+        )
+        payload["tileCredentialExpiresAt"] = read_token_expires_at()
         return func.HttpResponse(
-            json.dumps(workspace.model_dump(mode="json")),
+            json.dumps(payload),
             status_code=200,
             mimetype="application/json",
         )
@@ -3808,7 +3825,8 @@ async def GetBuildingFootprintsGeoJSON(
             )
 
         # Download via the helper that handles both Azurite and real-Azure
-        # URL shapes and routes through BLOB_CONNECTION_STRING.
+        # URL shapes, using the app's own credential rather than the SAS in
+        # the URL.
         tmp_path = await download_blob_to_tempfile(
             footprints_url, suffix=".gpkg"
         )

@@ -307,13 +307,6 @@ deploy_function() {
             size_settings+=("HASTE_MAX_IMAGERY_DOWNLOAD_BYTES=$HASTE_MAX_IMAGERY_DOWNLOAD_BYTES")
         fi
 
-        # Get storage account connection string with error handling
-        echo "Retrieving storage account connection string..."
-        BLOB_CONNECTION_STRING=$(az storage account show-connection-string --name "$STORAGE_ACCOUNT" --resource-group "$RESOURCE_GROUP" --query connectionString -o tsv) || {
-            echo "ERROR: Failed to retrieve storage account connection string. Ensure service principal has 'Storage Account Key Operator Service Role' or 'Reader and Data Access' role on storage account '$STORAGE_ACCOUNT'." >&2
-            exit 1
-        }
-
         # Get batch account key with error handling
         echo "Retrieving batch account key..."
         AZURE_BATCH_ACCOUNT_KEY=$(az batch account keys list --name "$BATCH_ACCOUNT" --resource-group "$SHARED_RESOURCE_GROUP" --query "primary" -o tsv) || {
@@ -340,7 +333,6 @@ deploy_function() {
             "QUEUE_ACCOUNT_URL=https://${STORAGE_ACCOUNT}.queue.core.windows.net" \
             "BLOB_ACCOUNT_URL=https://${STORAGE_ACCOUNT}.blob.core.windows.net" \
             "BLOB_CONTAINER=data" \
-            "BLOB_CONNECTION_STRING=$BLOB_CONNECTION_STRING" \
             "AZURE_BATCH_ACCOUNT_NAME=$BATCH_ACCOUNT" \
             "AZURE_BATCH_URL=https://${BATCH_ACCOUNT}.${LOCATION}.batch.azure.com" \
             "AZURE_BATCH_ACCOUNT_KEY=$AZURE_BATCH_ACCOUNT_KEY" \
@@ -414,6 +406,15 @@ deploy_function() {
     )
     close_deploy_access "$FUNCTION_NAME"
     echo "Function deployment completed successfully."
+
+    # Blob and queue access is identity-based. Drop the account-key
+    # connection string left behind by earlier deployments, only once code
+    # that no longer needs it is running.
+    if [ "${SET_APPSETTINGS:-true}" = "true" ]; then
+        az functionapp config appsettings delete --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" \
+            --setting-names BLOB_CONNECTION_STRING \
+            --output none
+    fi
 
     # Record the wheel this app actually installed. Nothing else on the app
     # says which hastegeo it is running -- the wheel is pinned into

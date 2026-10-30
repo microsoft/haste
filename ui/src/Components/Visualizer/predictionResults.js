@@ -108,10 +108,44 @@ export function readinessDetail(results) {
 }
 
 /** Prediction-only changes must not recreate the imagery maps or move the camera. */
+export const TILE_LAYER_KEYS = [
+  "preDisasterImagery", "postDisasterImagery", "predictedDamageLayer", "predictionsLayer",
+];
+
+// A tile URL embeds a signed blob URL whose token changes on every response.
+// Identity comparisons use the URL without that token, so a credential refresh
+// is never mistaken for a different scene.
+export function stableTileUrl(url) {
+  if (typeof url !== "string" || !url) return "";
+  try {
+    const parsed = new URL(url, "https://haste.invalid/");
+    const source = parsed.searchParams.get("url");
+    if (source) parsed.searchParams.set("url", source.split("?")[0]);
+    return parsed.pathname + parsed.search;
+  } catch {
+    return url;
+  }
+}
+
+export function sameTileSource(a, b) {
+  return !!a && !!b
+    && (a.predictionVersion ?? 0) === (b.predictionVersion ?? 0)
+    && a.predictionRevision === b.predictionRevision;
+}
+
+// Only the credential-bearing layers are taken from a refresh; everything
+// else the page holds (selection, edits, attributes) stays as it is.
+export function pickTileLayers(results) {
+  const picked = {};
+  for (const key of TILE_LAYER_KEYS) picked[key] = results?.[key] ?? null;
+  return picked;
+}
+
 export function visualizerSceneKey(results, routeKey = "") {
   if (!results) return "";
+  const stable = (imagery) => (imagery ? { ...imagery, url: stableTileUrl(imagery.url) } : imagery);
   return JSON.stringify([
-    routeKey, results.preDisasterImagery, results.postDisasterImagery, results.studyArea,
+    routeKey, stable(results.preDisasterImagery), stable(results.postDisasterImagery), results.studyArea,
   ]);
 }
 

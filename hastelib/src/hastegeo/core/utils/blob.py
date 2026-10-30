@@ -28,7 +28,7 @@ import threading
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
 
 _USER_DELEGATION_KEYS = OrderedDict()
 _USER_DELEGATION_KEY_CACHE_SIZE = 8
@@ -59,18 +59,46 @@ def get_blob_service_client(
     raise ValueError("A connection string or account URL is required")
 
 
+def get_app_blob_service_client():
+    """Return the shared client for the app's own storage account.
+
+    ``BLOB_CONNECTION_STRING`` wins when set because the docker dev stack
+    points it at the emulator. In Azure it is absent and the app's managed
+    identity is used through ``BLOB_ACCOUNT_URL``.
+
+    Raises:
+        ValueError: If neither setting exists, so the error names both.
+    """
+    connection_string = os.environ.get("BLOB_CONNECTION_STRING", "")
+    account_url = os.environ.get("BLOB_ACCOUNT_URL", "")
+    if not connection_string and not account_url:
+        raise ValueError(
+            "Neither BLOB_CONNECTION_STRING nor BLOB_ACCOUNT_URL is set; "
+            "cannot reach blob storage."
+        )
+    return get_blob_service_client(
+        connection_string=connection_string or None,
+        account_url=account_url or None,
+    )
+
+
 def get_cached_user_delegation_key(
     blob_service_client,
     now: datetime | None = None,
+    min_remaining: timedelta = timedelta(minutes=15),
 ):
-    """Return a reusable user-delegation key with a safe refresh margin."""
+    """Return a reusable user-delegation key with a safe refresh margin.
+
+    ``min_remaining`` is how long the key must still be valid; callers that
+    sign a token must pass at least that token's lifetime.
+    """
     current_time = now or datetime.now(timezone.utc)
     cache_key = blob_service_client
     with _USER_DELEGATION_KEYS_LOCK:
         cached = _USER_DELEGATION_KEYS.get(cache_key)
         if cached is not None:
             delegation_key, expires_at = cached
-            if expires_at > current_time + timedelta(minutes=15):
+            if expires_at > current_time + min_remaining:
                 _USER_DELEGATION_KEYS.move_to_end(cache_key)
                 return delegation_key
 
@@ -169,15 +197,13 @@ async def download_blob_to_tempfile(
 ) -> str:
     """Download the blob at ``url`` to a NamedTemporaryFile and return the path.
 
-    Routes the download through the function-app-internal
-    ``BLOB_CONNECTION_STRING`` (so requests stay on the docker network in
-    dev) regardless of the container/blob URL the caller hands in. The
-    caller is responsible for unlinking the returned path when done — use
-    ``try/finally``.
+    Routes the download through the function app's own credential (see
+    :func:`get_app_blob_service_client`) regardless of the container/blob URL
+    the caller hands in. The caller is responsible for unlinking the returned
+    path when done — use ``try/finally``.
     """
-    conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
     container_name, blob_name = split_blob_url(url)
-    bsc = get_blob_service_client(connection_string=conn_str)
+    bsc = get_app_blob_service_client()
     if max_bytes is not None and max_bytes < 1:
         raise ValueError("max_bytes must be positive")
 
@@ -214,6 +240,157 @@ async def download_blob_to_tempfile(
             raise
 
     return await asyncio.to_thread(download)
+
+
+def blob_url_without_query(url: Optional[str]) -> Optional[str]:
+    """Return ``url`` without its query string, or ``None`` for a falsy url.
+
+    Stored blob URLs are kept unsigned: tokens are short-lived and minted
+    when a URL is handed out.
+    """
+    if not url:
+        return None
+    return url.split("?", 1)[0]
+
+
+def _internal_blob_client(url: str):
+    """Return the app's blob client when ``url`` points at its own storage."""
+    if not (
+        os.environ.get("BLOB_CONNECTION_STRING")
+        or os.environ.get("BLOB_ACCOUNT_URL")
+    ):
+        return None
+    candidate = urlparse(url)
+    if candidate.scheme not in {"http", "https"} or not candidate.hostname:
+        return None
+    client = get_app_blob_service_client()
+    account = urlparse(client.url)
+    if (candidate.scheme, candidate.hostname.lower(), candidate.port) != (
+        account.scheme,
+        (account.hostname or "").lower(),
+        account.port,
+    ):
+        return None
+    return client
+
+
+def unsigned_internal_blob_url(url: Optional[str]) -> Optional[str]:
+    """Strip the query from HASTE-owned blob URLs only.
+
+    Provider and other-account URLs may carry credentials in their query,
+    so they are kept intact.
+    """
+    if url and _internal_blob_client(url) is not None:
+        stripped = blob_url_without_query(url)
+        container_name, _ = split_blob_url(stripped)
+        if container_name == os.environ.get("BLOB_CONTAINER", "data"):
+            return stripped
+    return url or None
+
+
+def sign_internal_blob_url(url: Optional[str], minutes: int = 60):
+    """Return ``url`` with a fresh read-only token when it is internal.
+
+    Only blobs in the app's own storage account and ``BLOB_CONTAINER`` are
+    signed, with any old query replaced by a token scoped to that one blob.
+    Anything else (provider URLs, other accounts or containers) is returned
+    untouched. An account key (Azurite, dev) signs directly; otherwise the
+    app identity's cached user delegation key does.
+    """
+    if not url:
+        return url
+    client = _internal_blob_client(url)
+    if client is None:
+        return url
+    from .blob_sas import DELEGATION_KEY_MARGIN, blob_read_sas
+
+    container_name, blob_name = split_blob_url(blob_url_without_query(url))
+    if container_name != os.environ.get("BLOB_CONTAINER", "data"):
+        return url
+    blob_name = unquote(blob_name)
+    credential = getattr(client, "credential", None)
+    account_key = getattr(credential, "account_key", None)
+    user_delegation_key = None
+    if not account_key:
+        user_delegation_key = get_cached_user_delegation_key(
+            client, min_remaining=DELEGATION_KEY_MARGIN
+        )
+    token = blob_read_sas(
+        account_name=client.account_name,
+        container_name=container_name,
+        blob_name=blob_name,
+        account_key=account_key,
+        user_delegation_key=user_delegation_key,
+        minutes=minutes,
+    )
+    blob_url = client.get_blob_client(container_name, blob_name).url
+    return f"{blob_url}?{token}"
+
+
+_TILE_SOURCE_PARAM = re.compile(r"(?<=[?&]url=)[^&#]*")
+
+
+def sign_titiler_tile_url(tile_url: Optional[str]) -> Optional[str]:
+    """Sign the blob URL nested in a TiTiler tile URL's ``url`` parameter."""
+    if not tile_url:
+        return tile_url
+
+    def _sign(match: re.Match) -> str:
+        source = unquote(match.group(0))
+        signed = sign_internal_blob_url(source)
+        return quote(signed, safe="") if signed != source else match.group(0)
+
+    return _TILE_SOURCE_PARAM.sub(_sign, tile_url)
+
+
+_LABEL_TILE_FIELDS = ("tileUrl", "preEventTileUrl", "postEventTileUrl")
+_PREVIEW_FIELDS = ("preEventPreviewUrls", "postEventPreviewUrls")
+_LAYER_DOWNLOAD_FIELDS = (
+    "labelsUrl",
+    "buildingFootprintsUrl",
+    "validAreaMaskUrl",
+)
+_MODEL_DOWNLOAD_FIELDS = ("labelsUrl", "trainingZipUrl", "inferenceZipUrl")
+_ARTIFACT_DOWNLOAD_FIELDS = ("trainingZipUrl", "inferenceZipUrl", "zipUrl")
+
+
+def _sign_fields(item: dict, fields) -> None:
+    for field in fields:
+        if item.get(field):
+            item[field] = sign_internal_blob_url(item[field])
+
+
+def sign_project_details_urls(project: dict) -> dict:
+    """Sign blob URLs in a project-details dict in place and return it.
+
+    Covers layer previews and label downloads, and each model's label and
+    zip downloads. Stored values are never written back; callers sign the
+    response copy only.
+    """
+    for layer in project.get("imageLayer") or []:
+        for field in _PREVIEW_FIELDS:
+            if layer.get(field):
+                layer[field] = [
+                    sign_internal_blob_url(url) for url in layer[field]
+                ]
+        _sign_fields(layer, _LAYER_DOWNLOAD_FIELDS)
+        for model in layer.get("models") or []:
+            _sign_fields(model, _MODEL_DOWNLOAD_FIELDS)
+            if isinstance(model.get("artifacts"), dict):
+                _sign_fields(model["artifacts"], _ARTIFACT_DOWNLOAD_FIELDS)
+    return project
+
+
+def sign_label_project_urls(label_project: dict) -> dict:
+    """Return a copy of a label project with its tile URLs freshly signed."""
+    imagery = label_project.get("imagery")
+    if not isinstance(imagery, dict):
+        return label_project
+    signed = dict(imagery)
+    for field in _LABEL_TILE_FIELDS:
+        if signed.get(field):
+            signed[field] = sign_titiler_tile_url(signed[field])
+    return {**label_project, "imagery": signed}
 
 
 class BlobRange(NamedTuple):
@@ -262,18 +439,16 @@ async def read_blob_range(
 ) -> BlobRange:
     """Read ``length`` bytes from ``offset`` of the blob at ``url``.
 
-    Routes the read through the function-app-internal
-    ``BLOB_CONNECTION_STRING`` (so it stays on the docker network in dev
-    and on the Azure backbone in prod); only the container/blob path is
+    Routes the read through the function app's own credential (see
+    :func:`get_app_blob_service_client`); only the container/blob path is
     taken from ``url`` — its host and SAS are ignored. ``length=None``
     reads to EOF. ``data`` is clamped to the blob size; an ``offset`` at
     or past EOF yields empty ``data`` (callers should answer ``416``).
     """
-    conn_str = os.environ.get("BLOB_CONNECTION_STRING", "")
     container_name, blob_name = split_blob_url(url)
 
     def _read() -> BlobRange:
-        bsc = get_blob_service_client(connection_string=conn_str)
+        bsc = get_app_blob_service_client()
         blob_client = bsc.get_container_client(container_name).get_blob_client(
             blob_name
         )

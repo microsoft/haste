@@ -15,6 +15,7 @@ from ..models.projects import (
     LabelingImagery,
     LabelProject,
 )
+from ..utils.blob import sign_internal_blob_url, unsigned_internal_blob_url
 from ..utils.gdal_security import harden_gdal
 from ..utils.metadata import MetadataUtils
 
@@ -76,6 +77,7 @@ class LabelTaskGenerator:
     def get_xyz_url(self, imagery_url: str) -> str:
         """Generate XYZ URL for the url of a TIF file."""
         xyz_url = ""
+        imagery_url = unsigned_internal_blob_url(imagery_url)
         if imagery_url:
             urlencoded_imagery_url = requests.utils.quote(imagery_url, safe="")
             xyz_url = f"{self.titiler_endpoint}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={urlencoded_imagery_url}"
@@ -84,7 +86,9 @@ class LabelTaskGenerator:
     def generate_task_files(self):
         """Generate task files."""
         self.logger.info("Generating task file")
-        with rasterio.open(self.input_image_fn_post_event) as f:
+        with rasterio.open(
+            sign_internal_blob_url(self.input_image_fn_post_event)
+        ) as f:
             bounds = shapely.geometry.box(*f.bounds)
             geom = shapely.geometry.mapping(bounds)
             if f.crs.to_epsg() != 4326:

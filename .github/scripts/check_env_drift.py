@@ -53,6 +53,10 @@ ENV_HELPER = re.compile(r"^_get_[a-z0-9_]*env$")
 # be emitted by both deploy paths.
 ALLOWLIST = {
     "AzureFunctionsWebHost__hostId": "consumed by the Functions host runtime",
+    # Local/emulator fallback. Azure deployments authenticate with the app
+    # identity through BLOB_ACCOUNT_URL and deploy_apps.sh removes any
+    # leftover setting.
+    "BLOB_CONNECTION_STRING": "local/emulator only",
     # Alternative metadata/storage backends. Azure deployments use blob storage
     # (METADATA_STORAGE_TYPE=blob), so these are never read there.
     "COSMOS_ENDPOINT": "cosmos backend only",

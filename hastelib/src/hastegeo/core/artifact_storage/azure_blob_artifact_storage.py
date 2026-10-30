@@ -17,16 +17,16 @@ from azure.storage.blob import BlobClient  # type: ignore
 from azure.storage.blob import (
     BlobSasPermissions,
     generate_blob_sas,
-    generate_container_sas,
 )
 from hastegeo.core.utils.blob import (
     get_blob_service_client,
     get_cached_user_delegation_key,
+    split_blob_url,
 )
+from hastegeo.core.utils.blob_sas import DELEGATION_KEY_MARGIN, blob_read_sas
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.parallel import configured_worker_count, parallel_map
 
-from ..utils.blob_access_policy import ensure_container_read_policy
 from .abstract_artifact_storage import AbstractArtifactStorage
 
 _INITIALIZED_CONTAINERS = set()
@@ -47,8 +47,8 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
         super().__init__(partition_key)
         self.logger = Logger.get_logger(__name__)
         # A write-only target (e.g. the PC publish container) doesn't mint read
-        # SAS, so it skips the user-delegation key and the stored read policy —
-        # which need Storage Blob Delegator / Owner. Write access alone suffices.
+        # SAS, so it needs no delegation key (Storage Blob Delegator / Owner).
+        # Write access alone suffices.
         self.serves_read_sas = serves_read_sas
         if connection_string:
             self.blob_service_client = get_blob_service_client(
@@ -69,17 +69,14 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
             self.user_delegation_key = None
             self.account_key = None
 
+        # Kept for call compatibility; no container policy is maintained, so
+        # deleting the legacy one revokes old tokens for good.
         self.container_read_policy = container_read_policy_name
         self.blob_read_policy = blob_read_policy_name
-        self.sas_expiration_days = 90
         self.container_client = self.blob_service_client.get_container_client(
             container
         )
-        cache_key = (
-            self.blob_service_client.url,
-            container,
-            self.container_read_policy,
-        )
+        cache_key = (self.blob_service_client.url, container)
         with _INITIALIZED_CONTAINERS_LOCK:
             if cache_key not in _INITIALIZED_CONTAINERS:
                 try:
@@ -91,16 +88,7 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
                     self.logger.info(
                         f"Container '{container}' already exists."
                     )
-                if self.serves_read_sas:
-                    self._create_or_update_managed_access_policy()
                 _INITIALIZED_CONTAINERS.add(cache_key)
-
-    def _create_or_update_managed_access_policy(self) -> None:
-        ensure_container_read_policy(
-            self.container_client,
-            self.container_read_policy,
-            expiration_days=self.sas_expiration_days,
-        )
 
     def get_file_path(
         self, identifier: str, extra_partition_keys: list | str = None
@@ -142,28 +130,34 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
             # and use the container_client and blob name to get the blob client
             # It's a cleaner separation of metaphors
             blob_client = BlobClient.from_blob_url(artifact_path)
+            container_name, blob_name = split_blob_url(artifact_path)
+            blob_name = unquote(blob_name)
         else:
             blob_name = self.get_file_path(
                 identifier, extra_partition_keys=extra_partition_keys
             )
             blob_client = self.container_client.get_blob_client(blob_name)
+            container_name = self.container_client.container_name
 
         if not include_sas:
             return str(blob_client.url)
 
-        # Otherwise generate SAS token
-
+        # One blob, read-only, one hour: these URLs reach clients, so the
+        # token must be worth no more than the object it points at.
+        account_key = self.account_key
         user_delegation_key = self.user_delegation_key
-        if self.account_key is None:
+        if self.identity_blob_service_client is not None:
+            account_key = None
             user_delegation_key = get_cached_user_delegation_key(
-                self.blob_service_client
+                self.identity_blob_service_client,
+                min_remaining=DELEGATION_KEY_MARGIN,
             )
 
-        sas_token = generate_container_sas(
+        sas_token = blob_read_sas(
             account_name=self.container_client.account_name,
-            container_name=self.container_client.container_name,
-            policy_id=self.container_read_policy,
-            account_key=self.account_key,
+            container_name=container_name,
+            blob_name=blob_name,
+            account_key=account_key,
             user_delegation_key=user_delegation_key,
         )
         return str(f"{blob_client.url}?{sas_token}")
