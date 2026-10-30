@@ -55,6 +55,13 @@ ENV GDAL_DRIVER_PATH=disable
 ENV GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR
 ENV CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED=NO
 
+# Fail the build unless every GDAL binding runs on the one shared runtime.
+RUN python -c "from hastegeo.core.utils.gdal_security import harden_gdal; harden_gdal(); \
+    from osgeo import gdal; import fiona, pyogrio, rasterio; \
+    v = gdal.VersionInfo('RELEASE_NAME'); \
+    assert v.startswith('3.13.'), v; \
+    assert {rasterio.__gdal_version__, fiona.__gdal_version__, pyogrio.__gdal_version_string__} == {v}, v"
+
 # Ensure /app itself is writable by appuser (for runtime-created dirs like ./logs)
 RUN chown appuser:appgroup /app
 
