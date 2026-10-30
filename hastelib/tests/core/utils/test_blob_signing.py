@@ -75,6 +75,10 @@ class TestSignInternalBlobUrl(unittest.TestCase):
         )
         self.assertEqual(unsigned_internal_blob_url(external), external)
         self.assertIsNone(unsigned_internal_blob_url(""))
+        other_container = f"{ACCOUNT_URL}/provider/a.tif?sig=keep"
+        self.assertEqual(
+            unsigned_internal_blob_url(other_container), other_container
+        )
 
     def test_signs_internal_url_replacing_old_query(self):
         signed = sign_internal_blob_url(f"{BLOB_URL}?sv=old&sig=stale")
