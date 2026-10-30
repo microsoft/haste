@@ -57,7 +57,7 @@ ENV CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED=NO
 
 # Fail the build unless every GDAL binding runs on the one shared runtime.
 RUN python -c "from hastegeo.core.utils.gdal_security import harden_gdal; harden_gdal(); \
-    from osgeo import gdal; import fiona, pyogrio, rasterio; \
+    import fiona, pyogrio, rasterio; from osgeo import gdal; \
     v = gdal.VersionInfo('RELEASE_NAME'); \
     assert v.startswith('3.13.'), v; \
     assert {rasterio.__gdal_version__, fiona.__gdal_version__, pyogrio.__gdal_version_string__} == {v}, v"
