@@ -10,6 +10,7 @@ extensions through the blob-path construction.
 """
 
 import unittest
+from io import BytesIO
 from unittest.mock import patch
 
 
@@ -109,6 +110,20 @@ class TestUploadSizeAndContentChecks(unittest.TestCase):
         u = self._uploader_with_tmpdir()
         # No chunk_0 staged → skip rather than block a legitimate finalize.
         u._assert_content_matches_declared("absent", "tif")  # no raise
+
+    def test_first_chunk_is_validated_before_storage(self):
+        u = self._uploader_with_tmpdir()
+        chunk = BytesIO(b"<VRTDataset/>")
+        with self.assertRaises(ValueError):
+            u.save_chunk(
+                chunk_number=0,
+                chunk_data=chunk,
+                file_id="f5",
+                total_chunks=2,
+                data_format="tif",
+            )
+
+        u.storage.save_chunk.assert_not_called()
 
 
 if __name__ == "__main__":

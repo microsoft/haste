@@ -28,6 +28,8 @@ on:
     paths:
       - "api/hastefuncapi/requirements.txt"
       - "api/hastefuncqueues/requirements.txt"
+      - "api/titilerfuncapi/requirements.txt"
+      - "docker/titiler/Dockerfile"
       - "docker/imageryprep/requirements.txt"
       - "api/hastefuncapi/Dockerfile"
       - "api/hastefuncqueues/Dockerfile"
@@ -39,6 +41,8 @@ on:
       - ".github/scripts/check_image_python.py"
       - ".github/scripts/check_protobuf_pin.py"
       - ".github/scripts/check_react_pins.py"
+      - ".github/scripts/filter_dependency_requirements.py"
+      - ".github/scripts/tests/test_filter_dependency_requirements.py"
   workflow_dispatch:
 
 permissions: {}
@@ -57,14 +61,22 @@ jobs:
         include:
           - name: hastefuncapi
             requirements: api/hastefuncapi/requirements.txt
+            dockerfile: api/hastefuncapi/Dockerfile
             python: "3.11"
             functions_worker: true
           - name: hastefuncqueues
             requirements: api/hastefuncqueues/requirements.txt
+            dockerfile: api/hastefuncqueues/Dockerfile
             python: "3.11"
             functions_worker: true
+          - name: titilerfuncapi
+            requirements: api/titilerfuncapi/requirements.txt
+            dockerfile: docker/titiler/Dockerfile
+            python: "3.11"
+            functions_worker: false
           - name: imageryprep
             requirements: docker/imageryprep/requirements.txt
+            dockerfile: docker/imageryprep/Dockerfile
             python: "3.11"
             functions_worker: false
     steps:
@@ -81,25 +93,22 @@ jobs:
       - name: Confirm the image Python version matches this job
         run: |
           python .github/scripts/check_image_python.py \
-            "$(dirname "${{ matrix.requirements }}")/Dockerfile" \
+            "${{ matrix.dockerfile }}" \
             "${{ matrix.python }}"
 
       - name: Resolve dependencies
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          # Run from the requirements file's own directory: the Functions
-          # images pull hastegeo in with `-e ../../hastelib`, and pip
-          # resolves relative paths against the working directory rather
-          # than the file's location.
-          cd "$(dirname "${{ matrix.requirements }}")"
-          # --dry-run resolves the full graph and reports conflicts without
-          # installing, which is all we need and keeps the job quick. Both
-          # failure modes from #153 surface here: an unsatisfiable pin pair
-          # raises ResolutionImpossible, and a release that requires a newer
-          # Python raises "No matching distribution found".
+          # The HASTE GDAL wheels are not on the public index until the
+          # approval-gated publisher runs. Their full dependency closure is
+          # resolved and installed from the built wheel artifact by
+          # gdal-runtime-build.yml; this job checks the remaining public-index
+          # dependencies without falling back to a PyPI GDAL sdist.
+          python .github/scripts/filter_dependency_requirements.py \
+            "${{ matrix.requirements }}" /tmp/requirements-resolve.txt
           pip install --dry-run --report /tmp/report.json \
-            -r "$(basename "${{ matrix.requirements }}")"
+            -r /tmp/requirements-resolve.txt
 
       - name: Check protobuf stays compatible with the Functions worker
         if: matrix.functions_worker

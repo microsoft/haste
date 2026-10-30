@@ -158,6 +158,8 @@ class ImageryWorkflow:
             dst_directory=self.dst_directory,
         )
         if preevent_tif_files:
+            if not _are_all_valid_tif_files(preevent_tif_files):
+                raise RuntimeError("Invalid pre-event imagery files found.")
             raw_prefix = self.generate_prefix(PRE_EVENT_RAW_PREFIX)
             (
                 self.pre_event_raw_paths,

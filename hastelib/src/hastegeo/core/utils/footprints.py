@@ -28,7 +28,7 @@ import pyarrow.dataset as ds
 import pyarrow.fs as fs
 from geopandas import GeoDataFrame
 
-from .gdal_security import harden_gdal
+from .gdal_security import assert_matches_declared, harden_gdal
 from .validation_config import clamp_validation_sample
 
 logger = logging.getLogger(__name__)
@@ -364,8 +364,8 @@ def clip_and_normalize_user_footprints(
 ):
     """Clip a user-supplied building-footprint GPKG to an AOI polygon.
 
-    Reads ``input_path`` (any GDAL-supported vector format readable by
-    geopandas), reprojects to EPSG:4326 if needed, filters to polygonal
+    Reads ``input_path`` as a content-verified GeoPackage, reprojects to
+    EPSG:4326 if needed, filters to polygonal
     geometries, clips to ``aoi_polygon`` (EPSG:4326), normalizes the
     schema to ``(id, geometry, subtype, class)`` synthesizing any
     missing non-geometry column, and writes a GeoPackage to
@@ -377,8 +377,7 @@ def clip_and_normalize_user_footprints(
     interchangeably.
 
     Args:
-        input_path: Path to a local building-footprint GPKG (or any
-            geopandas-readable vector file).
+        input_path: Path to a local building-footprint GPKG.
         aoi_polygon: ``shapely.geometry.Polygon`` (or any geometry)
             describing the AOI, **in EPSG:4326**. Typically the output
             of :func:`hastegeo.core.utils.aoi.extract_aoi_polygon`.
@@ -405,7 +404,8 @@ def clip_and_normalize_user_footprints(
             )
         os.remove(output_path)
 
-    gdf = gpd.read_file(input_path)
+    assert_matches_declared(input_path, "gpkg")
+    gdf = gpd.read_file(input_path, engine="fiona", enabled_drivers=["GPKG"])
     if gdf.crs is None:
         raise ValueError(
             "Input GPKG is missing a CRS; embed one (e.g. EPSG:4326) and retry."

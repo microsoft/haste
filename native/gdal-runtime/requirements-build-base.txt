@@ -1,0 +1,12 @@
+# Install from PIP_INDEX_URL, or PyPI when no index is configured. Every
+# dependency remains hash-locked regardless of the selected package index.
+setuptools==84.0.0 \
+    --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670
+wheel==0.48.0 \
+    --hash=sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab
+packaging==26.3 \
+    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+numpy==2.4.6 \
+    --hash=sha256:89cd468399cfd2504718f0ba50e410dca55a170b61a02ad92bb18c8a65186e93
+versioneer[toml]==0.28 \
+    --hash=sha256:11ffc09427ac99db4ce61bdc85785dae819618d0de28153adfce3085956125a8

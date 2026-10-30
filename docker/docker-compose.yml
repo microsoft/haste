@@ -72,6 +72,15 @@ services:
     image: haste-titiler
     ports:
       - "8000:8000"
+    environment:
+      HASTE_GDAL_RUNTIME_REQUIRED: "true"
+      GDAL_VRT_ENABLE_RAWRASTERBAND: "NO"
+      GDAL_VRT_ENABLE_PYTHON: "NO"
+      GDAL_DRIVER_PATH: "disable"
+      GDAL_DISABLE_READDIR_ON_OPEN: "EMPTY_DIR"
+      CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED: "NO"
+      GDAL_SKIP: "HDF4 HDF4Image HDF5 HDF5Image netCDF"
+      TITILER_DEV_ALLOWED_ORIGINS: "http://azurite:10000"
     depends_on:
       - azurite
 
@@ -84,9 +93,15 @@ services:
       context: ..
       dockerfile: ./api/hastefuncapi/Dockerfile
     environment:
+      HASTE_GDAL_RUNTIME_REQUIRED: "true"
       AzureWebJobsStorage: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret # gitleaks:allow
       ASPNETCORE_URLS: "http://+:8080"
       DATA_PATH: "/app/data"
+      GDAL_VRT_ENABLE_RAWRASTERBAND: "NO"
+      GDAL_VRT_ENABLE_PYTHON: "NO"
+      GDAL_DRIVER_PATH: "disable"
+      GDAL_DISABLE_READDIR_ON_OPEN: "EMPTY_DIR"
+      CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED: "NO"
       DEVELOPMENT_MODE: "true"
       FUNCTIONS_WORKER_RUNTIME: "python"
       AzureWebJobsFeatureFlags: "EnableWorkerIndexing"
@@ -132,9 +147,15 @@ services:
       context: ..
       dockerfile: ./api/hastefuncqueues/Dockerfile
     environment:
+      HASTE_GDAL_RUNTIME_REQUIRED: "true"
       AzureWebJobsStorage: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"  # pragma: allowlist secret # gitleaks:allow
       ASPNETCORE_URLS: "http://+:8080"
       DATA_PATH: "/app/data"
+      GDAL_VRT_ENABLE_RAWRASTERBAND: "NO"
+      GDAL_VRT_ENABLE_PYTHON: "NO"
+      GDAL_DRIVER_PATH: "disable"
+      GDAL_DISABLE_READDIR_ON_OPEN: "EMPTY_DIR"
+      CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED: "NO"
       DEVELOPMENT_MODE: "true"
       FUNCTIONS_WORKER_RUNTIME: "python"
       AzureWebJobsFeatureFlags: "EnableWorkerIndexing"

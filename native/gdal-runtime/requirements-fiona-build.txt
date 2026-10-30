@@ -1,0 +1,5 @@
+# Fiona 1.10.1 requires Cython ~=3.0.2; it cannot share the 3.1.x
+# toolchain used by rasterio, pyogrio and pyproj.
+-r requirements-build-base.txt
+Cython==3.0.12 \
+    --hash=sha256:563de1728c8e48869d2380a1b76bbc1b1b1d01aba948480d68c1d05e52d20c92

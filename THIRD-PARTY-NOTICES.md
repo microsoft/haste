@@ -26,6 +26,37 @@ This software includes third-party packages and libraries. The complete list of 
 - **Source**: https://gdal.org/
 - **Usage**: Geospatial data processing and format conversion
 
+### HASTE GDAL Runtime (`haste-gdal-runtime`)
+
+HASTE builds and redistributes a shared native GDAL runtime from the pinned
+sources in `native/gdal-runtime/sources.lock`. Each runtime release also
+ships the license and NOTICE texts extracted from these sources
+(`licenses/<component>/`) plus an SBOM; see `native/gdal-runtime/`.
+
+| Component | Version | License |
+|---|---|---|
+| GDAL (includes bundled libtiff, libgeotiff, libpng and json-c) | 3.13.3 | MIT/X and bundled third-party licenses (https://gdal.org/en/stable/copyright.html) |
+| PROJ | 9.8.1 | MIT |
+| SQLite | 3.53.4 | Public Domain (https://www.sqlite.org/copyright.html) |
+| curl | 8.22.0 | curl License |
+| OpenSSL | 3.5.9 | Apache-2.0 |
+| zlib | 1.3.2 | Zlib; HASTE applies the upstream fix for CVE-2026-85091 (`native/gdal-runtime/patches/`) |
+| libdeflate | 1.26 | MIT |
+| Zstandard | 1.5.7 | BSD-3-Clause (the project is dual-licensed with GPL-2.0; HASTE uses it under BSD) |
+| libjpeg-turbo | 3.1.4.1 | BSD-3-Clause, IJG and Zlib |
+
+The Python bindings built against this runtime are:
+
+| Package | Version | License |
+|---|---|---|
+| GDAL Python bindings (`osgeo`) | 3.13.3 | MIT/X |
+| rasterio | 1.4.4 | BSD-3-Clause |
+| fiona | 1.10.1 | BSD-3-Clause |
+| pyogrio | 0.13.0 | MIT |
+| pyproj | 3.7.2 | MIT |
+
+System libraries that `auditwheel` bundles into the wheels (for example the C++ runtime) keep their own licenses, which are recorded in the runtime SBOM and license bundle.
+
 ### React
 - **License**: MIT License
 - **Source**: https://reactjs.org/

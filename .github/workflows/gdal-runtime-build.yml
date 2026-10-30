@@ -1,0 +1,614 @@
+name: Build GDAL native runtime
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "api/hastefuncapi/**"
+      - "api/hastefuncqueues/**"
+      - "hastelib/src/**"
+      - "native/gdal-runtime/**"
+      - ".github/scripts/publish_gdal_runtime.py"
+      - ".github/scripts/tests/test_publish_gdal_runtime.py"
+      - ".github/scripts/build_function_package.py"
+      - ".github/scripts/filter_dependency_requirements.py"
+      - ".github/scripts/prepare_training_runtime_env.py"
+      - ".github/scripts/tests/test_build_function_package.py"
+      - ".github/scripts/tests/test_filter_dependency_requirements.py"
+      - ".github/scripts/tests/test_prepare_training_runtime_env.py"
+      - ".github/scripts/check_gdal_hardening.py"
+      - ".github/scripts/tests/test_gdal_hardening_guard.py"
+      - ".github/scripts/tests/test_deploy_network_access.py"
+      - "api/titilerfuncapi/**"
+      - "hastelib/src/hastegeo/__init__.py"
+      - "hastelib/src/hastegeo/core/processors/uploader.py"
+      - "hastelib/src/hastegeo/core/utils/footprints.py"
+      - "hastelib/src/hastegeo/core/utils/gdal_security.py"
+      - "hastelib/src/hastegeo/core/utils/imagery.py"
+      - "hastelib/src/hastegeo/workflows/prepare_imagery.py"
+      - "hastelib/pyproject.toml"
+      - "hastelib/tests/build/test_dependency_pins.py"
+      - "hastelib/tests/core/processors/test_uploader_format.py"
+      - "hastelib/tests/core/utils/test_footprints.py"
+      - "hastelib/tests/core/utils/test_gdal_security.py"
+      - "hastelib/tests/core/utils/test_imagery.py"
+      - "hastelib/tests/core/utils/test_imagery_runtime.py"
+      - ".github/scripts/deploy_apps.sh"
+      - "infra/modules/functions.bicep"
+      - "infra/main.json"
+      - "api/hastefuncapi/Dockerfile"
+      - "api/hastefuncapi/requirements.txt"
+      - "api/hastefuncqueues/Dockerfile"
+      - "api/hastefuncqueues/requirements.txt"
+      - "api/titilerfuncapi/requirements.txt"
+      - "docker/docker-compose.yml"
+      - "docker/imageryprep/Dockerfile"
+      - "docker/imageryprep/requirements.txt"
+      - "docker/titiler/Dockerfile"
+      - "docker/training/Dockerfile"
+      - "docker/training/env/env.yml"
+      - "docker/training/code/**"
+      - "docker/training/scripts/entrypoint.sh"
+      - "docs/security-configuration.md"
+      - ".github/workflows/dependency-validation.yml"
+      - ".github/workflows/deploy-apps.yml"
+      - ".github/workflows/gdal-runtime-build.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "api/hastefuncapi/**"
+      - "api/hastefuncqueues/**"
+      - "hastelib/src/**"
+      - "native/gdal-runtime/**"
+      - ".github/scripts/publish_gdal_runtime.py"
+      - ".github/scripts/tests/test_publish_gdal_runtime.py"
+      - ".github/scripts/build_function_package.py"
+      - ".github/scripts/filter_dependency_requirements.py"
+      - ".github/scripts/prepare_training_runtime_env.py"
+      - ".github/scripts/tests/test_build_function_package.py"
+      - ".github/scripts/tests/test_filter_dependency_requirements.py"
+      - ".github/scripts/tests/test_prepare_training_runtime_env.py"
+      - ".github/scripts/check_gdal_hardening.py"
+      - ".github/scripts/tests/test_gdal_hardening_guard.py"
+      - ".github/scripts/tests/test_deploy_network_access.py"
+      - "api/titilerfuncapi/**"
+      - "hastelib/src/hastegeo/__init__.py"
+      - "hastelib/src/hastegeo/core/processors/uploader.py"
+      - "hastelib/src/hastegeo/core/utils/footprints.py"
+      - "hastelib/src/hastegeo/core/utils/gdal_security.py"
+      - "hastelib/src/hastegeo/core/utils/imagery.py"
+      - "hastelib/src/hastegeo/workflows/prepare_imagery.py"
+      - "hastelib/pyproject.toml"
+      - "hastelib/tests/build/test_dependency_pins.py"
+      - "hastelib/tests/core/processors/test_uploader_format.py"
+      - "hastelib/tests/core/utils/test_footprints.py"
+      - "hastelib/tests/core/utils/test_gdal_security.py"
+      - "hastelib/tests/core/utils/test_imagery.py"
+      - "hastelib/tests/core/utils/test_imagery_runtime.py"
+      - ".github/scripts/deploy_apps.sh"
+      - "infra/modules/functions.bicep"
+      - "infra/main.json"
+      - "api/hastefuncapi/Dockerfile"
+      - "api/hastefuncapi/requirements.txt"
+      - "api/hastefuncqueues/Dockerfile"
+      - "api/hastefuncqueues/requirements.txt"
+      - "api/titilerfuncapi/requirements.txt"
+      - "docker/docker-compose.yml"
+      - "docker/imageryprep/Dockerfile"
+      - "docker/imageryprep/requirements.txt"
+      - "docker/titiler/Dockerfile"
+      - "docker/training/Dockerfile"
+      - "docker/training/env/env.yml"
+      - "docker/training/code/**"
+      - "docker/training/scripts/entrypoint.sh"
+      - "docs/security-configuration.md"
+      - ".github/workflows/dependency-validation.yml"
+      - ".github/workflows/deploy-apps.yml"
+      - ".github/workflows/gdal-runtime-build.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Run native runtime unit tests
+        working-directory: native/gdal-runtime
+        run: python -m unittest discover -s tests -v
+
+      - name: Check repository GDAL hardening configuration
+        run: python .github/scripts/check_gdal_hardening.py
+
+  build:
+    needs: unit
+    runs-on: ubuntu-latest
+    environment: gdal-runtime-build
+    env:
+      PIP_INDEX_URL: ${{ secrets.PIP_INDEX_URL || 'https://pypi.org/simple' }}
+    permissions:
+      contents: read
+    container:
+      image: quay.io/pypa/manylinux_2_28_x86_64@sha256:1e102f2e9ed9b7fd8d64b29f798c76078c3fa8f14d34914d7a4045e39419d8e0
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install native build tools
+        run: dnf install -y nasm openssl perl perl-IPC-Cmd perl-Text-Template sqlite
+
+      - name: Build native runtime and binding wheels
+        env:
+          BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
+        run: bash native/gdal-runtime/build.sh
+
+      - name: Validate the complete runtime release bundle
+        env:
+          BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
+        run: |
+          python3 .github/scripts/publish_gdal_runtime.py \
+            --artifact-dir "$BUILD_ROOT/dist" \
+            --validate-only
+
+      - name: Download hash-locked smoke dependencies
+        env:
+          BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
+        run: |
+          mkdir -p "$BUILD_ROOT/smoke-wheels"
+          "$BUILD_ROOT/venv/bin/python" -m pip download \
+            --isolated \
+            --index-url https://pypi.org/simple \
+            --only-binary=:all: \
+            --no-deps \
+            --require-hashes \
+            --dest "$BUILD_ROOT/smoke-wheels" \
+            -r native/gdal-runtime/requirements-smoke.txt
+
+      - name: Install hash-locked binding smoke dependencies
+        env:
+          BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
+        run: |
+          "$BUILD_ROOT/venv/bin/python" -m pip install \
+            --isolated \
+            --no-index \
+            --find-links "$BUILD_ROOT/smoke-wheels" \
+            --only-binary=:all: \
+            --no-deps \
+            --require-hashes \
+            -r native/gdal-runtime/requirements-smoke.txt
+
+      - name: Smoke-test the native runtime and GDAL binding wheels offline
+        working-directory: native/gdal-runtime
+        env:
+          BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
+        run: |
+          build="$(python3 fetch_sources.py --print-build)"
+          "$BUILD_ROOT/venv/bin/python" smoke_test.py \
+            --wheel-dir "$BUILD_ROOT/dist" \
+            --build "$build"
+
+      - name: Upload immutable build artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload hash-locked smoke dependency wheels
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: haste-gdal-smoke-deps-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/smoke-wheels/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  target-image-smoke:
+    needs:
+      - build
+      - function-packages
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: functions-python311
+            image: mcr.microsoft.com/azure-functions/python:4-python3.11@sha256:2c39d8b50750fbec9a91ef33323fadd1b986358fab4f7823db5b11b6e533f479
+          - name: imageryprep-python311
+            image: mcr.microsoft.com/azureml/curated/minimal-py311-inference:59@sha256:89a46a46b71b4692731654d0523f53c8d14929e41ea8129293dc4e39fcabb14c
+    name: smoke-${{ matrix.name }}
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Download build wheels
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist
+
+      - name: Download hash-locked smoke dependencies
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-smoke-deps-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/smoke-wheels
+
+      - name: Smoke-test wheels in ${{ matrix.name }}
+        env:
+          SMOKE_IMAGE: ${{ matrix.image }}
+          WHEEL_DIR: ${{ runner.temp }}/haste-gdal-runtime/dist
+          SMOKE_WHEEL_DIR: ${{ runner.temp }}/haste-gdal-runtime/smoke-wheels
+        run: |
+          docker run --rm --entrypoint sh \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/native/gdal-runtime,target=/smoke,readonly" \
+            --mount "type=bind,source=$WHEEL_DIR,target=/wheels,readonly" \
+            --mount "type=bind,source=$SMOKE_WHEEL_DIR,target=/smoke-wheels,readonly" \
+            "$SMOKE_IMAGE" -ec '
+              cd /tmp
+              python -m pip install \
+                --isolated \
+                --no-index \
+                --find-links /smoke-wheels \
+                --only-binary=:all: \
+                --no-deps \
+                --require-hashes \
+                -r /smoke/requirements-smoke.txt
+              build="$(python /smoke/fetch_sources.py --print-build)"
+              python /smoke/smoke_test.py \
+                --wheel-dir /wheels \
+                --build "$build"
+            '
+
+      - name: Download imageryprep test package
+        if: matrix.name == 'imageryprep-python311'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-function-packages-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-function-packages
+
+      - name: Import the packaged imageryprep worker in its target image
+        if: matrix.name == 'imageryprep-python311'
+        env:
+          SMOKE_IMAGE: ${{ matrix.image }}
+          PACKAGE_DIR: ${{ runner.temp }}/haste-function-packages
+        run: |
+          docker run --rm --user root --entrypoint sh \
+            --mount "type=bind,source=$PACKAGE_DIR,target=/function-packages,readonly" \
+            "$SMOKE_IMAGE" -ec '
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                libgl1 libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1
+              python -c "import zipfile; \
+                zipfile.ZipFile(\"/function-packages/imageryprep-smoke.zip\").extractall(\"/tmp/haste-imageryprep\")"
+              PYTHONPATH="/tmp/haste-imageryprep/.python_packages/lib/site-packages:/tmp/haste-imageryprep" \
+                HASTE_GDAL_RUNTIME_REQUIRED=true \
+                python -c "import hastegeo.workflows.prepare_imagery"
+            '
+
+  function-packages:
+    needs: build
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/azure-functions/python:4-python3.11@sha256:2c39d8b50750fbec9a91ef33323fadd1b986358fab4f7823db5b11b6e533f479
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      actions: read
+      contents: read
+    env:
+      PIP_INDEX_URL: ${{ secrets.PIP_INDEX_URL || 'https://pypi.org/simple' }}
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Download native runtime wheels
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist
+
+      - name: Build the matching hastegeo wheel
+        run: |
+          python -m pip install --isolated \
+            --index-url "$PIP_INDEX_URL" build==1.2.2
+          mkdir -p dist
+          python -m build --wheel --outdir dist
+        working-directory: hastelib
+
+      - name: Build and smoke-test API and queues packages
+        run: |
+          set -euo pipefail
+          hastegeo_wheel=$(find hastelib/dist -maxdepth 1 \
+            -name 'hastegeo-*.whl' -print -quit)
+          test -n "$hastegeo_wheel"
+          python .github/scripts/build_function_package.py \
+            --app-name hastefuncapi \
+            --source-dir api/hastefuncapi \
+            --requirements api/hastefuncapi/requirements.txt \
+            --wheel-dir "$RUNNER_TEMP/haste-gdal-runtime/dist" \
+            --hastegeo-wheel "$hastegeo_wheel" \
+            --output-dir "$RUNNER_TEMP/haste-function-packages"
+          python .github/scripts/build_function_package.py \
+            --app-name hastefuncqueues \
+            --source-dir api/hastefuncqueues \
+            --requirements api/hastefuncqueues/requirements.txt \
+            --wheel-dir "$RUNNER_TEMP/haste-gdal-runtime/dist" \
+            --hastegeo-wheel "$hastegeo_wheel" \
+            --output-dir "$RUNNER_TEMP/haste-function-packages"
+          python .github/scripts/build_function_package.py \
+            --app-name titilerfuncapi \
+            --source-dir api/titilerfuncapi \
+            --requirements api/titilerfuncapi/requirements.txt \
+            --wheel-dir "$RUNNER_TEMP/haste-gdal-runtime/dist" \
+            --output-dir "$RUNNER_TEMP/haste-function-packages"
+          python .github/scripts/build_function_package.py \
+            --app-name imageryprep-smoke \
+            --source-dir hastelib/src \
+            --requirements docker/imageryprep/requirements.txt \
+            --wheel-dir "$RUNNER_TEMP/haste-gdal-runtime/dist" \
+            --output-dir "$RUNNER_TEMP/haste-function-packages"
+
+      - name: Upload build-once Function App packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: haste-function-packages-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-function-packages/*
+          if-no-files-found: error
+          retention-days: 7
+
+  vulnerability-scan:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout scanner configuration
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .grype.yaml
+          sparse-checkout-cone-mode: false
+
+      - name: Download build inventory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist
+
+      - name: Scan the CycloneDX inventory for known vulnerabilities
+        uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
+        with:
+          sbom: ${{ runner.temp }}/haste-gdal-runtime/dist/bom.cdx.json
+          fail-build: true
+          severity-cutoff: medium
+          add-cpes-if-none: true
+          output-format: table
+
+      - name: Scan built wheel artifacts for known vulnerabilities
+        uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
+        with:
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist
+          fail-build: true
+          severity-cutoff: medium
+          output-format: table
+
+  training-base-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    env:
+      PIP_INDEX_URL: ${{ secrets.PIP_INDEX_URL || 'https://pypi.org/simple' }}
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Download build wheels
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist
+
+      - name: Download hash-locked smoke dependencies
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-smoke-deps-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/smoke-wheels
+
+      - name: Point the full training environment at this build's wheels
+        env:
+          WHEEL_DIR: ${{ runner.temp }}/haste-gdal-runtime/dist
+          TRAINING_ENV: ${{ runner.temp }}/haste-gdal-runtime/training-env.yml
+        run: |
+          python .github/scripts/prepare_training_runtime_env.py \
+            docker/training/env/env.yml "$WHEEL_DIR" "$TRAINING_ENV"
+
+      - name: Smoke-test the full Python 3.11 training environment
+        env:
+          WHEEL_DIR: ${{ runner.temp }}/haste-gdal-runtime/dist
+          SMOKE_WHEEL_DIR: ${{ runner.temp }}/haste-gdal-runtime/smoke-wheels
+          TRAINING_ENV: ${{ runner.temp }}/haste-gdal-runtime/training-env.yml
+          PIP_INDEX_URL: ${{ secrets.PIP_INDEX_URL || 'https://pypi.org/simple' }}
+        run: |
+          docker run --rm --user root --entrypoint sh \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/native/gdal-runtime,target=/smoke,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/docker/training/code,target=/training-code,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/hastelib/src,target=/hastelib-src,readonly" \
+            --mount "type=bind,source=$WHEEL_DIR,target=$WHEEL_DIR,readonly" \
+            --mount "type=bind,source=$SMOKE_WHEEL_DIR,target=/smoke-wheels,readonly" \
+            --mount "type=bind,source=$TRAINING_ENV,target=/training-env.yml,readonly" \
+            --env PIP_INDEX_URL \
+            --env HASTE_GDAL_RUNTIME_REQUIRED=true \
+            --env WHEEL_DIR \
+            mcr.microsoft.com/azureml/curated/minimal-py312-cuda12.4-inference@sha256:171ee0f9b43d2295c0266c55b2974d1ab300ca2dbec081bdd0fb2604f75644b3 \
+            -ec '
+              apt-get update
+              apt-get install -y --no-install-recommends libgl1-mesa-glx
+              /opt/miniconda/bin/conda env create --yes \
+                --prefix /tmp/gdal-runtime-training \
+                --file /training-env.yml
+              python=/tmp/gdal-runtime-training/bin/python
+              PYTHONPATH=/training-code:/hastelib-src \
+                HASTE_GDAL_RUNTIME_REQUIRED=true \
+                "$python" -m unittest discover \
+                  -s /training-code/tests \
+                  -p test_gdal_runtime_integration.py -v
+              "$python" -m pip install \
+                --isolated \
+                --no-index \
+                --find-links /smoke-wheels \
+                --only-binary=:all: \
+                --no-deps \
+                --require-hashes \
+                -r /smoke/requirements-smoke.txt
+              build="$("$python" /smoke/fetch_sources.py --print-build)"
+              "$python" /smoke/smoke_test.py \
+                --wheel-dir "$WHEEL_DIR" \
+                --build "$build"
+            '
+
+  attest:
+    needs:
+      - target-image-smoke
+      - function-packages
+      - vulnerability-scan
+      - training-base-smoke
+    if: >-
+      github.repository == 'microsoft/haste' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Download verified runtime artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist
+
+      - name: Attest runtime bundle provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ runner.temp }}/haste-gdal-runtime/dist/*
+
+      - name: Attest the CycloneDX SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ runner.temp }}/haste-gdal-runtime/dist/*.whl
+          sbom-path: ${{ runner.temp }}/haste-gdal-runtime/dist/bom.cdx.json
+
+      - name: Download build-once Function App packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-function-packages-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-function-packages
+
+      - name: Attest Function App package artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ runner.temp }}/haste-function-packages/*.zip
+
+  publisher-unit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Test immutable publisher validation
+        run: |
+          python -m unittest discover \
+            -s .github/scripts/tests \
+            -p "test_*.py" -v
+
+  publish:
+    needs:
+      - attest
+      - publisher-unit
+    if: >-
+      github.repository == 'microsoft/haste' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      vars.GDAL_RUNTIME_LICENSE_REVIEWED == 'true' &&
+      vars.GDAL_RUNTIME_PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    # Configure this environment with required reviewers before enabling
+    # either repository variable above.
+    environment: gdal-runtime-publish
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout trusted publisher source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Download the attested runtime bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/release
+
+      - name: Verify provenance for each release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for asset in "${{ runner.temp }}/haste-gdal-runtime/release/"*; do
+            gh attestation verify "$asset" \
+              --repo microsoft/haste \
+              --signer-workflow \
+                microsoft/haste/.github/workflows/gdal-runtime-build.yml \
+              --source-ref refs/heads/main
+          done
+
+      - name: Validate and publish immutable runtime assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/publish_gdal_runtime.py \
+            --artifact-dir "${{ runner.temp }}/haste-gdal-runtime/release"
