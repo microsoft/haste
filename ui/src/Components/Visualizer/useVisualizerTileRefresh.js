@@ -15,7 +15,8 @@ import { requestPredictionJson } from "./predictionHttp.js";
  */
 export default function useVisualizerTileRefresh(ids, results, applierRef) {
   const [override, setOverride] = useState(null);
-  const [failed, setFailed] = useState(false);
+  // The snapshot whose refresh failed; a newer snapshot has fresh credentials.
+  const [failed, setFailed] = useState(null);
   const controllerRef = useRef(null);
   const endpoint = buildVisualizerResultsUrl(ids);
 
@@ -33,8 +34,8 @@ export default function useVisualizerTileRefresh(ids, results, applierRef) {
         applierRef.current(layers);
         setOverride({ base: results, layers });
       },
-      onError: () => setFailed(true),
-      onSuccess: () => setFailed(false),
+      onError: () => setFailed(results),
+      onSuccess: () => setFailed(null),
     });
     controllerRef.current = controller;
     controller.start(results);
@@ -48,7 +49,7 @@ export default function useVisualizerTileRefresh(ids, results, applierRef) {
   const layers = override && override.base === results ? override.layers : null;
   return {
     tileLayers: layers,
-    tileRefreshFailed: failed && !!results,
+    tileRefreshFailed: !!results && failed === results,
     retryTileRefresh: () => controllerRef.current?.refresh() || Promise.resolve(false),
   };
 }
