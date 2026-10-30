@@ -137,8 +137,9 @@ export default function useVisualizerMaps({
   }, [scene, key, primaryContainerRef, secondaryContainerRef]);
 
   const maps = state?.key === key ? state.maps : null;
-  const damage = tileLayers?.predictedDamageLayer ?? results?.predictedDamageLayer;
-  const predictions = tileLayers?.predictionsLayer ?? results?.predictionsLayer;
+  // An override may carry explicit nulls (rasters unavailable for this version); keep them.
+  const damage = tileLayers ? tileLayers.predictedDamageLayer : results?.predictedDamageLayer;
+  const predictions = tileLayers ? tileLayers.predictionsLayer : results?.predictionsLayer;
   const preUrl = (tileLayers?.preDisasterImagery ?? results?.preDisasterImagery)?.url;
   const postUrl = (tileLayers?.postDisasterImagery ?? results?.postDisasterImagery)?.url;
   // Lets the credential refresh swap every tile URL in one step and learn if it failed.
