@@ -7,3 +7,5 @@
 5ca8ae6adb13dc7e8ef6bd3dfe5b4f8528847a22:docker/README.md:generic-api-key:259
 5ca8ae6adb13dc7e8ef6bd3dfe5b4f8528847a22:docker/README.md:generic-api-key:367
 5ca8ae6adb13dc7e8ef6bd3dfe5b4f8528847a22:hastelib/pyproject.toml:generic-api-key:94
+# Mock Cosmos item/partition assertion, not an authentication credential.
+dab7ad874e0e9b92817b13f4fe9baf1fc1a05dc2:hastelib/tests/core/data_layer/test_conditional_metadata.py:generic-api-key:163

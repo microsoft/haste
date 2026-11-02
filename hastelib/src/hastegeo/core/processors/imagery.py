@@ -4,6 +4,10 @@ import json
 import os
 from typing import NamedTuple, Optional
 
+from hastegeo.core.runners.submission import (
+    TaskSubmissionPendingError,
+    submit_task,
+)
 from hastegeo.core.runners.unified_runner import UnifiedRunner
 
 from ..config import ArtifactTypes, Config
@@ -15,50 +19,33 @@ from ..utils.gdal_security import max_download_bytes
 from ..utils.logs import Logger
 from ..utils.metadata import MetadataUtils
 from ..utils.queues import AzureQueueHandler
-from .footprint_tiles import (
-    FOOTPRINT_TILE_FIELDS,
-    layer_needs_footprint_tiles,
-    request_preparation,
-)
+from .footprint_tiles import layer_needs_footprint_tiles, request_preparation
+from .job_state import Workload, persist_and_enqueue
 from .metadata import MetadataProcessor
 
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 IMAGERY_PREFIX = "img"
 
 
-def save_imagery_layer(
-    image_layer: ImageLayer,
-    config: Optional[Config] = None,
-    prepare_footprints: bool = False,
+def prepare_footprint_tiles(
+    image_layer: ImageLayer, config: Optional[Config] = None
 ) -> None:
-    """Persist imagery/label work without overwriting footprint job state.
+    """Request derived footprint tiles after imagery completion is committed.
 
-    Only the final successful save may publish footprint work. Nothing in
-    the imagery handler saves a stale footprint snapshot after publication.
-    Other imagery saves (including error handling/redelivery) also exclude
-    footprint-owned fields, using MetadataProcessor's top-level merge.
+    The fenced imagery commit never writes footprint-owned fields; this reads
+    the stored layer so a duplicate completion cannot reset footprint work.
     """
     if config is None:
         config = Config()
-    metadata = MetadataProcessor(
-        data_type=config.get_metadata_types().IMAGELAYER.value,
-        partition_key=image_layer.projectId,
-        config=config,
-    )
-    metadata.save(
-        image_layer.imageLayerId,
-        image_layer.model_dump(exclude=FOOTPRINT_TILE_FIELDS),
-    )
-    if (
-        not prepare_footprints
-        or image_layer.status != config.get_status_types().COMPLETED.value
-    ):
+    if image_layer.status != config.get_status_types().COMPLETED.value:
         return
     try:
-        # Reload so a duplicate imagery delivery does not reset a running
-        # or completed footprint job with its stale queue snapshot.
         current = ImageLayer.model_validate(
-            metadata.load(image_layer.imageLayerId)
+            MetadataProcessor(
+                data_type=config.get_metadata_types().IMAGELAYER.value,
+                partition_key=image_layer.projectId,
+                config=config,
+            ).load(image_layer.imageLayerId)
         )
         if layer_needs_footprint_tiles(current):
             request_preparation(current, config=config)
@@ -204,7 +191,9 @@ class ImageryPreProcessor:
         self.image_data.statusMessage = MetadataUtils.append_status_message(
             self.image_data.statusMessage, "Queued for processing"
         )
-        self.queue.put_message(json.dumps(self.image_data.dict()), 0)
+        self.image_data = persist_and_enqueue(
+            self.image_data, Workload.IMAGERY, self.config, self.queue
+        )
         self.logger.info(
             f"Image data queued for processing for project: {self.image_data.projectId} and image layer id: {self.image_data.imageLayerId}"
         )
@@ -238,11 +227,6 @@ class ImageryPostProcessor:
             candidate_pool_ids=self.config.get_azure_batch_config()[
                 "imageryprep_pool_ids"
             ],
-        )
-        self.queue = AzureQueueHandler(
-            config.queue_config["queue_connection_string"],
-            config.queue_config["image_queue_name"],
-            config.queue_config["queue_account_url"],
         )
 
     def process(self):
@@ -301,7 +285,10 @@ class ImageryPostProcessor:
                     task_id=self.image_data.preprocessJob.taskId,
                 )
 
-            elif task_status == self.config.get_status_types().FAILED.value:
+            elif task_status in {
+                self.config.get_status_types().FAILED.value,
+                self.config.get_status_types().CANCELLED.value,
+            }:
                 self.image_data.preprocessJob.status = task_status
                 self.image_data.preprocessJob.completedDate = (
                     MetadataUtils.get_timestamp()
@@ -329,7 +316,6 @@ class ImageryPostProcessor:
             else:
                 self.image_data.status = task_status
                 self.image_data.preprocessJob.status = task_status
-                self.queue.put_message(json.dumps(self.image_data.dict()))
 
         return self.image_data
 
@@ -386,39 +372,62 @@ class ImageryPostProcessor:
             f'&& prepare-imagery --config ${BATCH_JOB_WORKDIR}/{imagery_input_files["config"]["file_path"]}'
             '"'
         )
-        job_id = self.config.get_azure_batch_config()[
-            "imageryprep_batch_job_id"
-        ]
+        pending_job = self.image_data.preprocessJob
+        job_id = (
+            pending_job.jobId if pending_job else None
+        ) or self.config.get_azure_batch_config()["imageryprep_batch_job_id"]
         # Trim job_id to 64 characters to comply with Azure Batch limits
         job_id = job_id[:64]
-        task_id = f"{IMAGERY_PREFIX}-{MetadataUtils.generate_id()}"
+        task_id = (
+            pending_job.taskId if pending_job else None
+        ) or f"{IMAGERY_PREFIX}-{MetadataUtils.generate_id()}"
         imagery_output_prefix = (
             f"{MetadataUtils.hash_string(self.image_data.projectId)}/{task_id}"
         )
-        job_id, task_id = self.runner.add_task(
-            job_id=job_id,
-            task_id=task_id,
-            output_prefix=imagery_output_prefix,
-            resource_files_for_upload=imagery_input_files,
-            file_pattern=[
-                f"${BATCH_JOB_WORKDIR}/outputs/*.*",
-                # Progress log, so it survives the node being deallocated or
-                # preempted once the task completes.
-                f"${BATCH_JOB_WORKDIR}/logs/*.*",
-            ],
-            command=command,
-            # The remote imagery fetch happens inside this Batch container, not
-            # in the Function App, so the cap has to travel with the task.
-            # Without this the container always falls back to the code default
-            # and tuning the app setting would silently do nothing.
-            env_vars={
-                "HASTE_MAX_IMAGERY_DOWNLOAD_BYTES": str(max_download_bytes()),
-            },
-            # TODO: maybe this needs to be encapsulated in the batch runner and not be part of the processor
-            image_name=self.config.get_azure_batch_config()[
-                "imageprep_docker_image"
-            ],
-        )
+        try:
+            job_id, task_id = submit_task(
+                self.runner,
+                job_id=job_id,
+                task_id=task_id,
+                output_prefix=imagery_output_prefix,
+                resource_files_for_upload=imagery_input_files,
+                file_pattern=[
+                    f"${BATCH_JOB_WORKDIR}/outputs/*.*",
+                    # Progress log, so it survives the node being deallocated or
+                    # preempted once the task completes.
+                    f"${BATCH_JOB_WORKDIR}/logs/*.*",
+                ],
+                command=command,
+                # The remote imagery fetch happens inside this Batch container,
+                # not in the Function App, so the cap has to travel with the
+                # task. Without this the container always falls back to the
+                # code default and tuning the app setting would do nothing.
+                env_vars={
+                    "HASTE_MAX_IMAGERY_DOWNLOAD_BYTES": str(
+                        max_download_bytes()
+                    ),
+                },
+                # TODO: maybe this needs to be encapsulated in the batch runner and not be part of the processor
+                image_name=self.config.get_azure_batch_config()[
+                    "imageprep_docker_image"
+                ],
+            )
+        except TaskSubmissionPendingError:
+            raise
+        except Exception as error:
+            self.logger.error(
+                "Image preprocessing submission failed for %s (%s)",
+                self.image_data.imageLayerId,
+                type(error).__name__,
+            )
+            self.image_data.status = (
+                self.config.get_status_types().FAILED.value
+            )
+            self._update_imagery_progress(
+                f"Image preprocessing failed to start ({type(error).__name__})",
+                step=self.image_data.currentStep,
+            )
+            return self.image_data
         self.logger.info(
             f"Completed add task {task_id} to job id {job_id} for preprocessing image layer {self.image_data.imageLayerId}"
         )
@@ -435,10 +444,6 @@ class ImageryPostProcessor:
         )
         self._update_imagery_progress(
             f"Image preprocessing submitted with task id {task_id}", step=0
-        )
-        self.queue.put_message(json.dumps(self.image_data.dict()))
-        self.logger.info(
-            f"InProgress message sent to queue for image layer {self.image_data.imageLayerId}"
         )
         return self.image_data
 

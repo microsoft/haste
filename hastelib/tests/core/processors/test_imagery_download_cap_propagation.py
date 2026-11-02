@@ -15,24 +15,34 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 
-class _StopAfterAddTask(Exception):
-    pass
-
-
 class TestImageryDownloadCapPropagation(unittest.TestCase):
     def _add_task_kwargs(self):
-        from hastegeo.core.models.projects import ImageLayer
+        from hastegeo.core.config import Config
+        from hastegeo.core.models.projects import (
+            ImageLayer,
+            ImageryPreprocessJob,
+        )
 
-        image_data = MagicMock(spec=ImageLayer)
-        image_data.projectId = "proj-1"
-        image_data.imageLayerId = "layer-9"
-        image_data.preEventImageryUrls = ["https://example/pre.tif"]
-        image_data.postEventImageryUrls = ["https://example/post.tif"]
-        image_data.sourceTypePreEvent = "url"
-        image_data.sourceTypePostEvent = "url"
-        image_data.autoFineTune = False
-        image_data.userBuildingFootprintsUrl = None
-        image_data.clipBbox = None
+        statuses = Config.get_status_types()
+        image_data = ImageLayer(
+            projectId="proj-1",
+            imageLayerId="layer-9",
+            preEventImageryUrls=["https://example/pre.tif"],
+            postEventImageryUrls=["https://example/post.tif"],
+            sourceTypePreEvent="url",
+            sourceTypePostEvent="url",
+            autoFineTune=False,
+            userBuildingFootprintsUrl=None,
+            clipBbox=None,
+            totalSteps=4,
+            preprocessJob=ImageryPreprocessJob(
+                jobId="pending-job",
+                taskId="pending-task",
+                projectId="proj-1",
+                imageLayerId="layer-9",
+                status=statuses.PENDING.value,
+            ),
+        )
 
         with patch(
             "hastegeo.core.processors.imagery.UnifiedDataLayer",
@@ -59,19 +69,15 @@ class TestImageryDownloadCapPropagation(unittest.TestCase):
                 "imagery_config.yaml?sv=x&sig=y"
             )
         )
-        # Stop at the submission boundary: everything after add_task writes
-        # job bookkeeping onto the spec'd ImageLayer mock and is not under test.
         captured = {}
 
         def fake_add_task(**kwargs):
             captured.update(kwargs)
-            raise _StopAfterAddTask()
+            return kwargs["job_id"], kwargs["task_id"]
 
         processor.runner.add_task = MagicMock(side_effect=fake_add_task)
-        try:
-            processor._execute_image_preprocess()
-        except _StopAfterAddTask:
-            pass
+        processor._execute_image_preprocess()
+        processor.runner.add_task.assert_called_once()
         return captured
 
     def test_forwards_the_configured_cap_to_the_batch_task(self):
