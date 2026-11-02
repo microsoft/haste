@@ -40,7 +40,7 @@ on:
         default: ""
         type: string
       gdal_package_run_id:
-        description: "Successful GDAL runtime build run ID with tested prebuilt Function App packages. Required except for swa-only deployments."
+        description: "Successful GDAL runtime build run ID with tested prebuilt Function App packages. Blank = the successful build for the deployed commit. Unused for swa."
         required: false
         default: ""
         type: string
@@ -66,15 +66,30 @@ jobs:
 
       - name: Download tested Function App packages
         id: function-packages
-        if: >-
-          inputs.gdal_package_run_id != '' &&
-          inputs.component != 'swa'
+        if: inputs.component != 'swa'
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE_RUN_ID: ${{ inputs.gdal_package_run_id }}
           EXPECTED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          if [[ -z "$PACKAGE_RUN_ID" ]]; then
+            PACKAGE_RUN_ID="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow gdal-runtime-build.yml \
+              --commit "$EXPECTED_SHA" \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty')"
+            if [[ -z "$PACKAGE_RUN_ID" ]]; then
+              echo "::error::No successful GDAL runtime build exists for" \
+                   "$EXPECTED_SHA. Run that workflow on this commit, or pass" \
+                   "gdal_package_run_id."
+              exit 1
+            fi
+            echo "Using GDAL runtime build run $PACKAGE_RUN_ID for $EXPECTED_SHA"
+          fi
           if [[ ! "$PACKAGE_RUN_ID" =~ ^[0-9]+$ ]]; then
             echo "::error::gdal_package_run_id must be a numeric Actions run ID"
             exit 1
@@ -106,16 +121,6 @@ jobs:
           done
           echo "directory=$package_dir" >> "$GITHUB_OUTPUT"
 
-      - name: Require prebuilt packages for Function App deployments
-        if: >-
-          inputs.component != 'swa' &&
-          inputs.gdal_package_run_id == ''
-        run: |
-          echo "::error::Function App deployments require gdal_package_run_id." \
-               "Select the successful GDAL runtime build for this exact source" \
-               "SHA so deployment uses the tested, attested, build-once zip."
-          exit 1
-
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -134,7 +139,7 @@ jobs:
       - name: Resolve hastegeo wheel URL
         id: hastegeo
         if: >-
-          inputs.gdal_package_run_id == '' &&
+          steps.function-packages.outputs.directory == '' &&
           (inputs.component == 'all' ||
           inputs.component == 'funcapi' ||
           inputs.component == 'funcqueue')
