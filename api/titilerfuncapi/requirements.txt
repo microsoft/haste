@@ -4,3 +4,5 @@
 
 azure-functions
 titiler.application==0.21.1
+haste-gdal-runtime @ https://github.com/microsoft/haste/releases/download/haste-binaries/haste_gdal_runtime-3.13.3%2Bhaste.1-py3-none-manylinux_2_28_x86_64.whl
+rasterio @ https://github.com/microsoft/haste/releases/download/haste-binaries/rasterio-1.4.4%2Bhaste.1-cp311-cp311-manylinux_2_28_x86_64.whl

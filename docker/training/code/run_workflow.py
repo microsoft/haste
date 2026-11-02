@@ -11,6 +11,7 @@ import argparse
 import glob
 import os
 import re
+import shlex
 import subprocess
 import sys
 import traceback
@@ -69,6 +70,65 @@ def run_subprocess(command, step_name):
             stderr=result.stderr,
         )
     return result
+
+
+def gdal_translate_creation_options(parameters: str | None) -> list[str]:
+    """Parse the supported GDAL_TRANSLATE_PARAMS creation-option syntax."""
+    tokens = shlex.split(parameters or "")
+    if not tokens:
+        return []
+    if not any(token in {"-co", "-of"} for token in tokens):
+        if any(token.startswith("-") for token in tokens):
+            raise ValueError(
+                "GDAL_TRANSLATE_PARAMS accepts creation options, not GDAL "
+                "command-line switches"
+            )
+        return tokens
+
+    options = []
+    index = 0
+    while index < len(tokens):
+        option = tokens[index]
+        if option not in {"-co", "-of"} or index + 1 >= len(tokens):
+            raise ValueError(
+                "GDAL_TRANSLATE_PARAMS accepts creation options and '-of COG'"
+            )
+        value = tokens[index + 1]
+        if value.startswith("-"):
+            raise ValueError(
+                "GDAL_TRANSLATE_PARAMS creation option is missing its value"
+            )
+        if option == "-co":
+            options.append(value)
+        elif value.upper() != "COG":
+            raise ValueError(
+                "GDAL_TRANSLATE_PARAMS must keep output format COG"
+            )
+        index += 2
+    return options
+
+
+def translate_to_cog(
+    source_path: str, destination_path: str, parameters: str | None
+) -> None:
+    """Convert a raster to COG using the shared in-process GDAL runtime."""
+    from hastegeo.core.utils.gdal_security import harden_gdal
+
+    harden_gdal()
+    from osgeo import gdal
+
+    gdal.UseExceptions()
+    options = gdal.TranslateOptions(
+        format="COG",
+        creationOptions=gdal_translate_creation_options(parameters),
+    )
+    output = gdal.Translate(destination_path, source_path, options=options)
+    if output is None:
+        raise RuntimeError(
+            f"GDAL could not translate {source_path} to {destination_path}: "
+            f"{gdal.GetLastErrorMsg()}"
+        )
+    output = None
 
 
 def main():
@@ -238,24 +298,10 @@ def main():
 
         log_progress("Converting results to COG")
 
-        gdal_translate_params = os.getenv("GDAL_TRANSLATE_PARAMS")
-        formatted_gdal_params = []
-        if gdal_translate_params:
-            if "-co" in gdal_translate_params:
-                formatted_gdal_params = gdal_translate_params.split()
-            else:
-                for op in gdal_translate_params.split():
-                    formatted_gdal_params += ["-co", op]
-        run_subprocess(
-            [
-                "gdal_translate",
-                "-of",
-                "COG",
-                *formatted_gdal_params,
-                temp_vis_fn,
-                visualizer_cog_fn,
-            ],
-            "gdal_translate",
+        translate_to_cog(
+            temp_vis_fn,
+            visualizer_cog_fn,
+            os.getenv("GDAL_TRANSLATE_PARAMS"),
         )
 
 

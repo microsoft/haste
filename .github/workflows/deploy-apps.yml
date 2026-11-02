@@ -39,6 +39,11 @@ on:
         required: false
         default: ""
         type: string
+      gdal_package_run_id:
+        description: "Successful GDAL runtime build run ID with tested prebuilt Function App packages. Required except for swa-only deployments."
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: haste-settings-${{ inputs.environment }}
@@ -49,6 +54,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     permissions:
+      actions: read
+      attestations: read
       id-token: write
       contents: read
       pull-requests: read
@@ -56,6 +63,58 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
+
+      - name: Download tested Function App packages
+        id: function-packages
+        if: >-
+          inputs.gdal_package_run_id != '' &&
+          inputs.component != 'swa'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_RUN_ID: ${{ inputs.gdal_package_run_id }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$PACKAGE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::gdal_package_run_id must be a numeric Actions run ID"
+            exit 1
+          fi
+          read -r status conclusion head_sha < <(gh run view "$PACKAGE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json status,conclusion,headSha \
+            --jq '[.status, .conclusion, .headSha] | @tsv')
+          if [[ "$status" != "completed" || "$conclusion" != "success" ]]; then
+            echo "::error::GDAL package run must have completed successfully"
+            exit 1
+          fi
+          if [[ "$head_sha" != "$EXPECTED_SHA" ]]; then
+            echo "::error::GDAL package run was built from a different source SHA"
+            exit 1
+          fi
+          package_dir="$RUNNER_TEMP/haste-function-packages"
+          gh run download "$PACKAGE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "haste-function-packages-$EXPECTED_SHA" \
+            --dir "$package_dir"
+          for package in hastefuncapi hastefuncqueues titilerfuncapi; do
+            (cd "$package_dir" && sha256sum --check "$package.sha256")
+            gh attestation verify "$package_dir/$package.zip" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow \
+                "$GITHUB_REPOSITORY/.github/workflows/gdal-runtime-build.yml" \
+              --source-ref refs/heads/main
+          done
+          echo "directory=$package_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Require prebuilt packages for Function App deployments
+        if: >-
+          inputs.component != 'swa' &&
+          inputs.gdal_package_run_id == ''
+        run: |
+          echo "::error::Function App deployments require gdal_package_run_id." \
+               "Select the successful GDAL runtime build for this exact source" \
+               "SHA so deployment uses the tested, attested, build-once zip."
+          exit 1
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -75,9 +134,10 @@ jobs:
       - name: Resolve hastegeo wheel URL
         id: hastegeo
         if: >-
-          inputs.component == 'all' ||
+          inputs.gdal_package_run_id == '' &&
+          (inputs.component == 'all' ||
           inputs.component == 'funcapi' ||
-          inputs.component == 'funcqueue'
+          inputs.component == 'funcqueue')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -208,6 +268,7 @@ jobs:
           # reads it back yet -- a blank hastegeo_version still resolves to
           # latest stable.
           HASTEGEO_VERSION: ${{ steps.hastegeo.outputs.version }}
+          HASTE_FUNCTION_PACKAGE_DIR: ${{ steps.function-packages.outputs.directory }}
           # Batch pool wiring. All optional: unset reproduces the legacy
           # single-pool behavior. Stored as environment *secrets* (not
           # variables) so the values are masked in this repo's public

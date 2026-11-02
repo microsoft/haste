@@ -7,7 +7,7 @@
 pair left over from an earlier run silently joins the new training set. Two
 paths can leave one behind: ``--overwrite`` only replaced the pairs the
 current run regenerates, and a cluster skipped mid-write left partial files
-plus intermediates that would trip the next attempt's ``ogr2ogr``.
+plus intermediates from a previous rasterization.
 """
 
 import os
@@ -100,7 +100,7 @@ class TestRemovePreviousOutputs(unittest.TestCase):
             self.assertFalse(os.path.exists(path), path)
 
     def test_removes_leftover_intermediates(self):
-        """Aborted runs leave these, and ogr2ogr won't overwrite the GeoJSON."""
+        """Aborted runs leave these projected-label and raster intermediates."""
         stale = [
             self._touch("scene_cluster_0_labels_warped.geojson"),
             self._touch("scene_cluster_0_mask.tif"),

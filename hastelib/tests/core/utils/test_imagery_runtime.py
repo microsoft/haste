@@ -94,6 +94,18 @@ class ImageryRuntimeTests(unittest.TestCase):
                 dataset.read()[:, :, 64:], right_pixels
             )
 
+    def test_mosaic_rejects_vrt_bytes_disguised_as_tiff(self) -> None:
+        disguised = self.directory / "disguised.tif"
+        disguised.write_text("<VRTDataset/>", encoding="utf-8")
+        with self.assertRaisesRegex(
+            ValueError, "does not match the declared format"
+        ):
+            ImageryUtils.mosaic_imagery(
+                [str(disguised)],
+                str(self.directory / "rejected.tif"),
+                gdal_warp_params="-of COG",
+            )
+
     def test_mosaic_reprojects_using_native_proj_data(self) -> None:
         output = self.directory / "projected.tif"
         result = ImageryUtils.mosaic_imagery(

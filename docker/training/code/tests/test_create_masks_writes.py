@@ -201,28 +201,19 @@ class TestWorkflowBigTiffProfiles(unittest.TestCase):
 
     def test_raw_mask_rasterizer_uses_bigtiff(self):
         with open(CREATE_MASKS_PATH) as source_file:
-            tree = ast.parse(source_file.read())
+            source = source_file.read()
+        tree = ast.parse(source)
 
-        rasterize_commands = [
-            node.value
+        rasterize_calls = [
+            ast.unparse(node.func)
             for node in ast.walk(tree)
-            if isinstance(node, ast.Assign)
-            and isinstance(node.value, ast.List)
-            and node.value.elts
-            and isinstance(node.value.elts[0], ast.Constant)
-            and node.value.elts[0].value == "gdal_rasterize"
+            if isinstance(node, ast.Call)
         ]
 
-        self.assertTrue(
-            any(
-                any(
-                    isinstance(argument, ast.Constant)
-                    and argument.value == "BIGTIFF=YES"
-                    for argument in command.elts
-                )
-                for command in rasterize_commands
-            )
-        )
+        self.assertIn("rasterio.features.rasterize", rasterize_calls)
+        self.assertIn('BIGTIFF="YES"', source)
+        self.assertNotIn("gdal_rasterize", source)
+        self.assertNotIn("ogr2ogr", source)
 
 
 if __name__ == "__main__":

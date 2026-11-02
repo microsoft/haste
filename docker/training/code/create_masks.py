@@ -19,14 +19,15 @@ import argparse
 import glob
 import os
 import shutil
-import subprocess
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import cv2
 import fiona
 import fiona.transform
+import geopandas as gpd
 import numpy as np
 import rasterio
+import rasterio.features
 import rasterio.mask
 import shapely  # shapely>=2 (via geopandas) for STRtree
 import shapely.geometry
@@ -99,26 +100,6 @@ class CropGeometryOutsideRasterError(RuntimeError):
     """
 
 
-def _run(command: List[str], what: str) -> None:
-    """Runs a subprocess, raising with captured output when it fails.
-
-    Args:
-        command (List[str]): The command to run.
-        what (str): Human-readable description used in the error message.
-
-    Raises:
-        RuntimeError: If the command exits non-zero.
-    """
-    result = subprocess.run(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"{what} failed with exit code {result.returncode}.\n"
-            f"Command: {' '.join(command)}\n"
-            f"stderr: {result.stderr}\n"
-            f"stdout: {result.stdout}"
-        )
-
-
 def write_training_raster(
     output_fn: str,
     data: np.ndarray,
@@ -139,6 +120,58 @@ def write_training_raster(
             output.write(data)
         else:
             output.write(data, band)
+
+
+def rasterize_class_mask(
+    labels: gpd.GeoDataFrame,
+    class_names: List[str],
+    class_name_to_idx_map: Dict[str, int],
+    profile: dict,
+    output_fn: str,
+) -> None:
+    """Rasterize projected label polygons without invoking GDAL CLI tools."""
+    height = profile["height"]
+    width = profile["width"]
+    transform = profile["transform"]
+    mask = np.zeros((height, width), dtype=np.uint8)
+
+    for class_name in class_names:
+        class_value = class_name_to_idx_map[class_name]
+        shapes = [
+            (geometry, class_value)
+            for geometry, label in zip(labels.geometry, labels["class"])
+            if label == class_name
+            and geometry is not None
+            and not geometry.is_empty
+        ]
+        if not shapes:
+            continue
+        burned = rasterio.features.rasterize(
+            shapes,
+            out_shape=(height, width),
+            fill=0,
+            transform=transform,
+            dtype="uint8",
+        )
+        selected = burned != 0
+        mask[selected] = burned[selected]
+
+    mask_profile = profile.copy()
+    mask_profile.update(
+        driver="GTiff",
+        count=1,
+        dtype="uint8",
+        nodata=0,
+        tiled=True,
+        blockxsize=512,
+        blockysize=512,
+        interleave="pixel",
+        compress="LZW",
+        predictor=2,
+        BIGTIFF="YES",
+    )
+    with rasterio.open(output_fn, "w", **mask_profile) as output:
+        output.write(mask, 1)
 
 
 def get_class_names_from_labels(labels_fn: str, key: str = "class") -> set:
@@ -424,8 +457,6 @@ def create_mask_for_labels(
     output_cropped_image_fn = paths["image"]
     output_buffered_mask_fn = paths["mask"]
 
-    # ogr2ogr refuses to write over an existing GeoJSON, so a leftover from an
-    # aborted run would fail this cluster on every retry.
     remove_files([output_warped_label_fn, output_mask_fn])
 
     ##########
@@ -436,16 +467,16 @@ def create_mask_for_labels(
 
     ##########
     # Warp the labels to the CRS of the input image
-    command = [
-        "ogr2ogr",
-        "-f",
-        "GeoJSON",
-        "-t_srs",
-        dst_crs,
+    warped_labels = gpd.read_file(input_label_fn)
+    if warped_labels.crs is None:
+        warped_labels = warped_labels.set_crs("EPSG:4326")
+    warped_labels = warped_labels.to_crs(dst_crs)
+    warped_labels.to_file(
         output_warped_label_fn,
-        input_label_fn,
-    ]
-    _run(command, "ogr2ogr")
+        driver="GeoJSON",
+        engine="fiona",
+        index=False,
+    )
 
     ##########
     # Crop the input image to the given extent, or to the extent of the labels
@@ -509,80 +540,14 @@ def create_mask_for_labels(
     # Create mask
     with rasterio.open(output_cropped_image_fn) as f:
         profile = f.profile
-        left, bottom, right, top = f.bounds
-        width = f.width
-        height = f.height
-        dst_crs = f.crs.to_string()
 
-    command = [
-        "gdal_rasterize",
-        "-q",  # be quiet about it
-        "-ot",
-        "Byte",  # the output dtype of the raster should be uint8
-        "-a_nodata",
-        "0",  # the nodata value should be "0", this value will represent not-labeled in our training process
-        "-init",
-        "0",  # initialize all values to 0
-        "-burn",
-        str(
-            class_name_to_idx_map[class_names[0]]
-        ),  # we will burn in the first class value to all polygons in the GeoJSON that match the first class label
-        "-of",
-        "GTiff",  # the output should be a GeoTIFF
-        "-co",
-        "TILED=YES",  # the output should be tiled, similar to COGs -- https://www.cogeo.org/ -- this is important for fast windowed reads
-        "-co",
-        "BLOCKXSIZE=512",  # this is important for fast windowed reads
-        "-co",
-        "BLOCKYSIZE=512",  # this is important for fast windowed reads
-        "-co",
-        "INTERLEAVE=PIXEL",  # this is important for fast windowed reads
-        "-where",
-        f"class='{class_names[0]}'",  # burn in values for polygons where the class label is the first class label
-        "-te",
-        str(left),
-        str(bottom),
-        str(right),
-        str(
-            top
-        ),  # the output GeoTIFF should cover the same bounds as the input image
-        "-ts",
-        str(width),
-        str(
-            height
-        ),  # the output GeoTIFF should have the same height and width as the input image
-        "-co",
-        "COMPRESS=LZW",  # compress it
-        "-co",
-        "PREDICTOR=2",  # compress it good
-        "-co",
-        "BIGTIFF=YES",  # just incase the image is bigger than 4GB
-        output_warped_label_fn,
+    rasterize_class_mask(
+        warped_labels,
+        class_names,
+        class_name_to_idx_map,
+        profile,
         output_mask_fn,
-    ]
-    _run(command, "gdal_rasterize")
-
-    for i in range(1, len(class_names)):
-        command = [
-            "gdal_rasterize",
-            "-q",
-            "-b",
-            "1",
-            "-burn",
-            str(class_name_to_idx_map[class_names[i]]),
-            "-where",
-            f"class='{class_names[i]}'",
-            # The WARPED labels, matching the first class above. Burning from
-            # the original EPSG:4326 file relies on gdal_rasterize
-            # reprojecting on the fly; where it does not, every polygon lands
-            # outside a projected raster's extent and classes 2..N are
-            # silently dropped, leaving masks of just {0, 1}. Upstream
-            # measured exactly that. Reading from the file already in the
-            # target CRS removes the dependency either way.
-            output_warped_label_fn,
-            output_mask_fn,
-        ]
-        _run(command, f"gdal_rasterize for class '{class_names[i]}'")
+    )
 
     ##########
     # Buffer mask around buildings
@@ -647,7 +612,7 @@ def main() -> None:
     # classes, whose names are unconstrained -- a project spelling them
     # "building"/"background" would otherwise silently lose buffering
     # entirely. This maps config values onto other config values, so it does
-    # not affect how label-file class strings are matched by gdal_rasterize.
+    # not affect how label-file class strings are matched.
     buffer_value = find_class_value(class_names, class_to_buffer)
     buffer_by_value = find_class_value(class_names, class_to_buffer_by)
 
@@ -825,13 +790,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    # GDAL CVE compensating control (docs/known-vulnerabilities.md Root
-    # Cause C): restrict GDAL drivers in-process. The GDAL_SKIP env in the
-    # training image also covers this; soft-fail if hastegeo is absent.
-    try:
-        from hastegeo.core.utils.gdal_security import harden_gdal
+    from hastegeo.core.utils.gdal_security import harden_gdal
 
-        harden_gdal()
-    except Exception:
-        pass
+    harden_gdal()
     main()

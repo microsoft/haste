@@ -7,31 +7,38 @@ import logging
 from typing import Annotated
 
 import attr
-import azure.functions as func
-import morecantile
-import rasterio
-from fastapi import FastAPI, HTTPException, Query
-from rio_tiler.io import Reader
-from starlette.middleware.cors import CORSMiddleware
-from starlette_cramjam.middleware import CompressionMiddleware
-from titiler.application import __version__ as titiler_version
-from titiler.application.settings import ApiSettings
-from titiler.core.errors import DEFAULT_STATUS_CODES, add_exception_handlers
-from titiler.core.factory import TilerFactory
-from titiler.core.middleware import (
+from gdal_runtime import secure_gdal_runtime
+
+secure_gdal_runtime()
+
+import azure.functions as func  # noqa: E402
+import morecantile  # noqa: E402
+import rasterio  # noqa: E402
+from fastapi import FastAPI, HTTPException, Query  # noqa: E402
+from rio_tiler.io import Reader  # noqa: E402
+from starlette.middleware.cors import CORSMiddleware  # noqa: E402
+from starlette_cramjam.middleware import CompressionMiddleware  # noqa: E402
+from titiler.application import __version__ as titiler_version  # noqa: E402
+from titiler.application.settings import ApiSettings  # noqa: E402
+from titiler.core.errors import (  # noqa: E402
+    DEFAULT_STATUS_CODES,
+    add_exception_handlers,
+)
+from titiler.core.factory import TilerFactory  # noqa: E402
+from titiler.core.middleware import (  # noqa: E402
     CacheControlMiddleware,
     LoggerMiddleware,
     LowerCaseQueryStringMiddleware,
     TotalTimeMiddleware,
 )
 
-from .dataset_url import (
+from .dataset_url import (  # noqa: E402
     DatasetUrlError,
     DatasetUrlPolicy,
     DestinationChecker,
     validate_dataset_url,
 )
-from .gdal_config import apply_gdal_hardening, gdal_environment
+from .gdal_config import apply_gdal_hardening, gdal_environment  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

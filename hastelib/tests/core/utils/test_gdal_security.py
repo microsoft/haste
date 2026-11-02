@@ -12,6 +12,7 @@ the Docker test image).
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from hastegeo.core.utils import gdal_security as g
 
@@ -116,6 +117,18 @@ class TestUploadFormatHelpers(unittest.TestCase):
             os.remove(hdf_like)
             os.remove(gpkg)
 
+    def test_chunk_header_validation_rejects_vrt_and_short_gpkg_chunks(self):
+        with self.assertRaises(ValueError):
+            g.assert_matches_declared_bytes(b"<VRTDataset/>", "tif")
+        with self.assertRaisesRegex(ValueError, "at least 72 bytes"):
+            g.assert_matches_declared_bytes(b"SQLite format 3\x00", "gpkg")
+
+    def test_chunk_header_validation_accepts_supported_headers(self):
+        tiff = b"II*\x00" + b"\x00" * 68
+        gpkg = b"SQLite format 3\x00" + b"\x00" * (68 - 16) + b"GPKG"
+        g.assert_matches_declared_bytes(tiff, "tif")
+        g.assert_matches_declared_bytes(gpkg, "gpkg")
+
 
 class TestSizeEnvHelpers(unittest.TestCase):
     def setUp(self):
@@ -149,31 +162,159 @@ class TestSizeEnvHelpers(unittest.TestCase):
         self.assertEqual(g.max_upload_bytes(), 5 * 1024**3)
 
 
+class TestSharedRuntimeActivation(unittest.TestCase):
+    def setUp(self):
+        self._was_hardened = g._hardened
+        g._hardened = False
+
+    def tearDown(self):
+        g._hardened = self._was_hardened
+
+    def test_shared_runtime_is_configured_before_startup_check(self):
+        calls = []
+        runtime = mock.Mock()
+        runtime.load_manifest.return_value = {"gdal_release": "3.13.3"}
+        runtime.Policy.return_value = object()
+        runtime.configure.side_effect = lambda policy: calls.append(
+            "configure"
+        )
+        runtime.secure_startup.side_effect = lambda policy: calls.append(
+            "secure_startup"
+        ) or {"gdal_release": "3.13.3"}
+        with mock.patch.object(
+            g.importlib.util, "find_spec", return_value=object()
+        ), mock.patch.object(
+            g.importlib, "import_module", return_value=runtime
+        ):
+            g.harden_gdal(force=True, require_runtime=True)
+
+        self.assertEqual(calls, ["configure", "secure_startup"])
+        self.assertEqual(runtime.UseExceptions.call_count, 2)
+        runtime.Policy.assert_called_once_with(
+            expected_gdal="3.13.3",
+            allowed_drivers=g.ALLOWED_RASTER_DRIVERS
+            | g.ALLOWED_VECTOR_DRIVERS,
+            required_bindings=("osgeo.gdal",),
+        )
+
+    def test_required_runtime_missing_fails_closed(self):
+        with mock.patch.object(
+            g.importlib.util, "find_spec", return_value=None
+        ):
+            with self.assertRaisesRegex(RuntimeError, "is not installed"):
+                g.harden_gdal(force=True, require_runtime=True)
+
+
+class TestLegacyGdalConfiguration(unittest.TestCase):
+    def setUp(self):
+        discovery = mock.patch.object(
+            g.importlib.util, "find_spec", return_value=None
+        )
+        discovery.start()
+        self.addCleanup(discovery.stop)
+        self._saved_settings = {
+            key: os.environ.get(key)
+            for key in (
+                *g.LEGACY_REQUIRED_CONFIG,
+                "GDAL_VRT_RAWRASTERBAND_ALLOWED_SOURCE",
+                "GDAL_VRT_PYTHON_TRUSTED_MODULES",
+                "GDAL_PYTHON_DRIVER_PATH",
+                "GDAL_HTTP_UNSAFESSL",
+                "GDAL_SKIP",
+            )
+        }
+        for key in self._saved_settings:
+            os.environ.pop(key, None)
+        self._was_hardened = g._hardened
+        g._hardened = False
+
+    def tearDown(self):
+        g._hardened = self._was_hardened
+        for key, value in self._saved_settings.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def test_legacy_runtime_sets_required_vrt_and_plugin_config(self):
+        g.harden_gdal(force=True, require_runtime=False)
+        for key, value in g.LEGACY_REQUIRED_CONFIG.items():
+            self.assertEqual(os.environ[key], value)
+
+    def test_legacy_runtime_rejects_relaxed_operator_config(self):
+        os.environ["GDAL_VRT_ENABLE_PYTHON"] = "YES"
+        with self.assertRaisesRegex(RuntimeError, "weakens GDAL hardening"):
+            g.harden_gdal(force=True, require_runtime=False)
+
+    def test_legacy_runtime_merges_required_driver_denylist(self):
+        os.environ["GDAL_SKIP"] = "JPEG,HDF4"
+        g.harden_gdal(force=True, require_runtime=False)
+        skipped = os.environ["GDAL_SKIP"].split()
+        self.assertIn("JPEG", skipped)
+        self.assertEqual(skipped.count("HDF4"), 1)
+        self.assertTrue(set(g.DISABLED_DRIVERS_ENV.split()).issubset(skipped))
+
+    def test_failed_driver_deregistration_aborts_legacy_hardening(self):
+        driver = mock.Mock()
+        driver.ShortName = "HDF4"
+        driver.Deregister.side_effect = OSError("registration manager failed")
+        gdal_module = mock.Mock()
+        gdal_module.GetDriverCount.return_value = 1
+        gdal_module.GetDriver.return_value = driver
+
+        with self.assertRaisesRegex(
+            RuntimeError, "failed to deregister disallowed GDAL driver HDF4"
+        ):
+            g._deregister_disallowed_legacy_drivers(
+                gdal_module,
+                g.ALLOWED_RASTER_DRIVERS | g.ALLOWED_VECTOR_DRIVERS,
+            )
+
+
 @unittest.skipUnless(_HAS_GDAL, "requires osgeo/GDAL")
 class TestHardenGdal(unittest.TestCase):
+    def setUp(self):
+        self._saved_settings = {
+            key: os.environ.get(key)
+            for key in (
+                *g.LEGACY_REQUIRED_CONFIG,
+                "GDAL_VRT_RAWRASTERBAND_ALLOWED_SOURCE",
+                "GDAL_VRT_PYTHON_TRUSTED_MODULES",
+                "GDAL_PYTHON_DRIVER_PATH",
+                "GDAL_HTTP_UNSAFESSL",
+                "GDAL_SKIP",
+            )
+        }
+        for key in self._saved_settings:
+            os.environ.pop(key, None)
+
+    def tearDown(self):
+        for key, value in self._saved_settings.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
     def test_disables_vulnerable_drivers_keeps_allowlist(self):
         g.harden_gdal(force=True)
         from osgeo import gdal as _gdal
         from osgeo import ogr as _ogr
 
-        # CVE-bearing families must be gone.
         for name in ("HDF4", "HDF4Image", "HDF5", "netCDF"):
             with self.subTest(disabled=name):
                 self.assertIsNone(_gdal.GetDriverByName(name))
 
-        # Allowlisted raster drivers remain.
         for name in ("GTiff", "COG", "VRT", "JPEG", "PNG"):
             with self.subTest(kept=name):
                 self.assertIsNotNone(_gdal.GetDriverByName(name))
 
-        # Allowlisted vector drivers remain.
         for name in ("GPKG", "GeoJSON"):
             with self.subTest(kept_vector=name):
                 self.assertIsNotNone(_ogr.GetDriverByName(name))
 
     def test_idempotent(self):
         g.harden_gdal(force=True)
-        g.harden_gdal()  # second call must not raise or remove allowlisted
+        g.harden_gdal()
         from osgeo import gdal as _gdal
 
         self.assertIsNotNone(_gdal.GetDriverByName("GTiff"))

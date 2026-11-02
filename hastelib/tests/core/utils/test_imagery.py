@@ -3,7 +3,9 @@
 
 """Tests for imagery utility source-specific behavior."""
 
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -20,10 +22,7 @@ class TestGetScaleImageryParams(unittest.TestCase):
         )
 
         with (
-            patch(
-                "hastegeo.core.utils.imagery.gdal.Open",
-                return_value=dataset,
-            ),
+            patch.object(ImageryUtils, "open_gtiff", return_value=dataset),
             patch(
                 "hastegeo.core.utils.imagery.np.percentile",
                 side_effect=lambda _, percentile: percentile,
@@ -63,10 +62,7 @@ class TestGetRgbBandIndexes(unittest.TestCase):
         dataset.__enter__.return_value = dataset
         dataset.RasterCount = num_bands
 
-        with patch(
-            "hastegeo.core.utils.imagery.gdal.Open",
-            return_value=dataset,
-        ):
+        with patch.object(ImageryUtils, "open_gtiff", return_value=dataset):
             return ImageryUtils.get_rgb_band_indexes("image.tif", source_type)
 
     def test_vantor_matches_legacy_maxar_for_supported_band_counts(self):
@@ -88,6 +84,37 @@ class TestGetRgbBandIndexes(unittest.TestCase):
         self.assertEqual(self._band_indexes("maxar", 3), [1, 2, 3])
         self.assertEqual(self._band_indexes("maxar", 4), [3, 2, 1])
         self.assertEqual(self._band_indexes("maxar", 8), [4, 3, 1])
+
+
+class TestOpenGtiff(unittest.TestCase):
+    def test_vrt_bytes_disguised_as_tiff_are_rejected_before_gdal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "disguised.tif"
+            path.write_text("<VRTDataset/>", encoding="utf-8")
+            with patch("hastegeo.core.utils.imagery.gdal.OpenEx") as open_ex:
+                with self.assertRaisesRegex(
+                    ValueError, "does not match the declared format"
+                ):
+                    ImageryUtils.open_gtiff(str(path))
+
+        open_ex.assert_not_called()
+
+    def test_tiff_open_is_limited_to_gtiff_driver(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "image.tif"
+            path.write_bytes(b"II*\x00" + b"\x00" * 68)
+            dataset = MagicMock()
+            dataset.__enter__.return_value = dataset
+            with patch(
+                "hastegeo.core.utils.imagery.gdal.OpenEx",
+                return_value=dataset,
+            ) as open_ex:
+                with ImageryUtils.open_gtiff(str(path)) as actual:
+                    self.assertIs(actual, dataset)
+
+        self.assertEqual(
+            open_ex.call_args.kwargs["allowed_drivers"], ["GTiff"]
+        )
 
 
 if __name__ == "__main__":

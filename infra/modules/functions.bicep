@@ -164,12 +164,25 @@ var apimSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetN
 // Bare hostname of the blob endpoint HASTE imagery tiles are served from.
 var titilerStorageHost = split(storageAccount.properties.primaryEndpoints.blob, '/')[2]
 
+// Keep these operator-owned GDAL protections explicit in Azure App Settings.
+var gdalHardeningSettings = [
+  { name: 'HASTE_GDAL_RUNTIME_REQUIRED', value: 'true' }
+  { name: 'GDAL_VRT_ENABLE_RAWRASTERBAND', value: 'NO' }
+  { name: 'GDAL_VRT_ENABLE_PYTHON', value: 'NO' }
+  { name: 'GDAL_DRIVER_PATH', value: 'disable' }
+  { name: 'GDAL_DISABLE_READDIR_ON_OPEN', value: 'EMPTY_DIR' }
+  { name: 'CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED', value: 'NO' }
+]
+var titilerGdalHardeningSettings = concat(gdalHardeningSettings, [
+  { name: 'GDAL_SKIP', value: 'HDF4 HDF4Image HDF5 HDF5Image netCDF' }
+])
+
 // Application settings shared by the api and queues apps. hastegeo's Config()
 // (instantiated at import time) reads these, so they must be present or the
 // worker cannot index function_app.py. Storage/queue access is identity-based
 // (BLOB_ACCOUNT_URL + role grants); only BLOB_CONNECTION_STRING, the Batch key,
 // and the ACS string are key-based (per ADR: no Key Vault, deploy-time values).
-var appConfigSettings = [
+var appConfigSettings = concat(gdalHardeningSettings, [
   { name: 'env', value: 'prod' }
   { name: 'DEVELOPMENT_MODE', value: developmentMode ? 'true' : 'false' }
   { name: 'IMAGE_QUEUE_NAME', value: 'image-layers-queue' }
@@ -237,7 +250,7 @@ var appConfigSettings = [
   { name: 'PUBLISH_STORAGE_ACCOUNT_URL', value: publishStorageAccountUrl }
   { name: 'PUBLISH_BLOB_CONTAINER', value: publishBlobContainer }
   { name: 'PUBLISH_EXPLORER_RENDER_ENABLED', value: publishExplorerRenderEnabled ? 'true' : 'false' }
-]
+])
 
 module apiApp 'functionApp.bicep' = {
   name: 'fn-api'
@@ -294,11 +307,11 @@ module titilerApp 'functionApp.bicep' = {
     ]
     restrictMainSite: true
     restrictScmSite: true
-    // The only storage host TiTiler may read from besides the built-in
-    // public open-data hosts. Unset means HASTE imagery tiles fail closed.
-    appSettings: [
+    // Keep the GDAL policy and the dataset-host allowlist in one settings
+    // array so neither control is lost during deployment.
+    appSettings: concat(titilerGdalHardeningSettings, [
       { name: 'TITILER_ALLOWED_HOSTS', value: titilerStorageHost }
-    ]
+    ])
     tags: tags
   }
   // All three apps integrate with the same func-subnet. A subnet's
