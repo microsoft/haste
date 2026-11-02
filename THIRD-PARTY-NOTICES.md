@@ -55,7 +55,7 @@ The Python bindings built against this runtime are:
 | pyogrio | 0.13.0 | MIT |
 | pyproj | 3.7.2 | MIT |
 
-System libraries that `auditwheel` bundles into the wheels (for example the C++ runtime) keep their own licenses, which are recorded in the runtime SBOM and license bundle.
+The `haste-gdal-runtime` wheel bundles only the shared libraries of the components in the first table (GDAL, PROJ, SQLite, curl, OpenSSL, zlib, libdeflate, Zstandard and libjpeg-turbo). The binding wheels bundle no native libraries of their own and link to that runtime. Any system library that `auditwheel` adds in a future build keeps its own license and is recorded in the runtime SBOM and license bundle.
 
 ### React
 - **License**: MIT License
