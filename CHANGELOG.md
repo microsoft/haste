@@ -21,6 +21,9 @@ conventions are documented in [RELEASING.md](RELEASING.md).
 
 ### Fixed
 
+- **Spokane video previews and new-tab links.** Each embedded player shows an
+  episode thumbnail before playback, and episode links open in a new tab on
+  the documentation site.
 - **Spokane video links in GitHub.** Episode titles now open the recordings
   directly instead of jumping to sections where GitHub hides the embedded
   players. A notice links to the documentation site for captioned playback.
