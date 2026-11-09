@@ -9,10 +9,16 @@ from hastegeo.core.artifact_storage.unified_artifact_storage import (
 )
 from hastegeo.core.config import Config
 from hastegeo.core.models.projects import Model, ModelArtifacts, ZipJob
+from hastegeo.core.runners.submission import (
+    TaskSubmissionPendingError,
+    submit_task,
+)
 from hastegeo.core.runners.unified_runner import UnifiedRunner
 from hastegeo.core.utils.logs import Logger
 from hastegeo.core.utils.metadata import MetadataUtils
 from hastegeo.core.utils.queues import AzureQueueHandler
+
+from .job_state import Workload, persist_and_enqueue
 
 BATCH_JOB_WORKDIR = "AZ_BATCH_TASK_WORKING_DIR"
 ZIP_PREFIX = "zip"
@@ -54,11 +60,7 @@ class ArtifactProcessor:
             **self.config.artifact_storage_config,
         )
         self.logger = Logger.get_logger(__name__)
-        self.queue_client = AzureQueueHandler(
-            self.config.queue_config["queue_connection_string"],
-            self.config.queue_config["zip_queue_name"],
-            self.config.queue_config["queue_account_url"],
-        )
+        self._queue_client: AzureQueueHandler | None = None
         self.model_data = model
         self.runner = UnifiedRunner(
             runner_type=self.config.runner_type,
@@ -81,6 +83,16 @@ class ArtifactProcessor:
                 modelName=safe_name
             )
 
+    @property
+    def queue_client(self) -> AzureQueueHandler:
+        if self._queue_client is None:
+            self._queue_client = AzureQueueHandler(
+                self.config.queue_config["queue_connection_string"],
+                self.config.queue_config["zip_queue_name"],
+                self.config.queue_config["queue_account_url"],
+            )
+        return self._queue_client
+
     def get_download_url(
         self,
         identifier=None,
@@ -96,7 +108,7 @@ class ArtifactProcessor:
             extra_partition_keys=extra_partition_keys,
         )
 
-    def send_to_zip_queue(self):
+    def send_to_zip_queue(self, *, request_id: str = None):
         """
         Put a message to the queue.
         """
@@ -107,16 +119,12 @@ class ArtifactProcessor:
             MetadataUtils.append_status_message("", "Queued for zipping")
         )
         self.model_artifacts.zipUrl = None
-        self.model_artifacts.currentZipJobUid = None
-        # Earlier zip jobs keep their status and dates but not their logs.
-        # Each copy is a finished run's history that nothing reads, and the
-        # whole record is queued now and on every poll: keeping one per run
-        # would let repeated zips outgrow the 64 KiB queue message limit.
-        for previous_job in self.model_artifacts.zipJobs:
-            previous_job.logs = ""
-        # Setting visibility timeout to 0 to make sure the message is processed immediately
-        self.queue_client.put_message(
-            self._queue_payload(), visibility_timeout=0
+        self.model_artifacts = persist_and_enqueue(
+            self.model_artifacts,
+            Workload.ZIP,
+            self.config,
+            self.queue_client,
+            request_id=request_id,
         )
         return self.model_artifacts
 
@@ -216,7 +224,10 @@ class ArtifactProcessor:
                     task_id=self.model_artifacts.zipJobs[idx].taskId,
                 )
 
-            elif task_status == self.config.get_status_types().FAILED.value:
+            elif task_status in {
+                self.config.get_status_types().FAILED.value,
+                self.config.get_status_types().CANCELLED.value,
+            }:
                 self.model_artifacts.zipStatus = task_status
                 self.model_artifacts.zipJobs[idx].status = task_status
                 self.model_artifacts.zipJobs[
@@ -243,7 +254,6 @@ class ArtifactProcessor:
                 self.model_artifacts.zipJobs[
                     idx
                 ].logs = self.model_artifacts.zipStatusMessage
-                self.queue_client.put_message(self._queue_payload())
         else:
             self.model_artifacts.zipStatus = (
                 self.config.get_status_types().FAILED.value
@@ -315,15 +325,26 @@ class ArtifactProcessor:
             )
             zip_input_files = self.prepare_zip_job()
             command = '"python -m hastegeo.workflows.zip_artifacts"'
-            job_id = self.config.get_azure_batch_config()[
-                "artifact_batch_job_id"
-            ]
+            pending_job = next(
+                (
+                    job
+                    for job in self.model_artifacts.zipJobs
+                    if job.taskId == self.model_artifacts.currentZipJobUid
+                ),
+                None,
+            )
+            job_id = (
+                pending_job.jobId if pending_job else None
+            ) or self.config.get_azure_batch_config()["artifact_batch_job_id"]
             # Trim job_id to 64 characters to comply with Azure Batch limits
             job_id = job_id[:64]
-            task_id = f"{ZIP_PREFIX}-{MetadataUtils.generate_id()}"
+            task_id = (
+                pending_job.taskId if pending_job else None
+            ) or f"{ZIP_PREFIX}-{MetadataUtils.generate_id()}"
             zip_output_prefix = f"{MetadataUtils.hash_string(self.model_artifacts.projectId)}/{task_id}"
 
-            job_id, task_id = self.runner.add_task(
+            job_id, task_id = submit_task(
+                self.runner,
                 job_id=job_id,
                 task_id=task_id,
                 output_prefix=zip_output_prefix,
@@ -347,7 +368,11 @@ class ArtifactProcessor:
                 srcArtifactPaths.append(self.model_data.trainingOutputPath)
             if self.model_data.inferenceOutputPath:
                 srcArtifactPaths.append(self.model_data.inferenceOutputPath)
-            self.model_artifacts.zipJobs.append(
+            self.model_artifacts.zipJobs = [
+                job
+                for job in self.model_artifacts.zipJobs
+                if job.taskId != task_id
+            ] + [
                 ZipJob(
                     projectId=self.model_artifacts.projectId,
                     imageLayerId=self.model_artifacts.imageLayerId,
@@ -359,7 +384,7 @@ class ArtifactProcessor:
                     dstZipPath=zip_output_prefix,
                     creationDate=MetadataUtils.get_timestamp(),
                 )
-            )
+            ]
             self.model_artifacts.currentZipJobUid = task_id
             self.model_artifacts.zipStatus = (
                 self.config.get_status_types().IN_PROGRESS.value
@@ -367,10 +392,8 @@ class ArtifactProcessor:
             self._update_zip_progress(
                 f"Zipping submitted with task id {task_id}"
             )
-            self.queue_client.put_message(self._queue_payload())
-            self.logger.info(
-                f"InProgress message to queue sent for model {self.model_artifacts.modelId}"
-            )
+        except TaskSubmissionPendingError:
+            raise
         except Exception as e:
             self.logger.error(
                 f"Error processing model {self.model_artifacts.modelId}: {e}",
@@ -392,22 +415,6 @@ class ArtifactProcessor:
         )
         data = blob_client.download_blob().readall()
         return json.loads(data)
-
-    def _queue_payload(self) -> str:
-        """Serialize the artifacts record for the zip queue within its limit.
-
-        Finished zip jobs' logs are left out of the queued copy, since only
-        the current job's logs are read. The status history and the current
-        job's copy of it share the room the rest of the record leaves.
-        """
-        record = self.model_artifacts.dict()
-        histories = [(record, "zipStatusMessage")]
-        for job in record["zipJobs"]:
-            if job["taskId"] == record["currentZipJobUid"]:
-                histories.append((job, "logs"))
-            else:
-                job["logs"] = ""
-        return MetadataUtils.fit_queue_payload(record, histories)
 
     def _update_zip_progress(
         self, message: str, timestamp: str = None, replace_prefix: str = None

@@ -9,6 +9,20 @@ echo "[CONTAINER-ENTRYPOINT] Command to execute: $*"
 export PYTHONPATH=/app:$PYTHONPATH
 echo "[CONTAINER-ENTRYPOINT] Updated PYTHONPATH: $PYTHONPATH"
 
+if [ "${HASTE_LOCAL_SHARED_WORKSPACE:-0}" = "1" ]; then
+    finish_local_workspace() {
+        local exit_code=$?
+        trap - EXIT
+        if ! (cd /app && python -m hastegeo.core.utils.local_permissions \
+            "${HASTE_JOB_WORKDIR:-${AZ_BATCH_TASK_WORKING_DIR:-}}"); then
+            echo "[CONTAINER-ENTRYPOINT] Local output permissions could not be prepared" >&2
+            if [ "$exit_code" -eq 0 ]; then exit_code=1; fi
+        fi
+        exit "$exit_code"
+    }
+    trap finish_local_workspace EXIT
+fi
+
 # Store the original working directory (task directory)
 TASK_DIR=$(pwd)
 echo "[CONTAINER-ENTRYPOINT] Task directory: $TASK_DIR"
@@ -52,4 +66,9 @@ FULL_COMMAND="$*"
 echo "[CONTAINER-ENTRYPOINT] Full command: $FULL_COMMAND"
 
 # Execute using bash so directory changes work properly
-exec /bin/bash -c "$FULL_COMMAND"
+if [ "${HASTE_LOCAL_SHARED_WORKSPACE:-0}" = "1" ]; then
+    /bin/bash -c "$FULL_COMMAND"
+    exit "$?"
+else
+    exec /bin/bash -c "$FULL_COMMAND"
+fi

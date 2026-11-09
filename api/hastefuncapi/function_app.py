@@ -1246,19 +1246,18 @@ async def PutLayer(req: func.HttpRequest) -> func.HttpResponse:
             for field in FOOTPRINT_TILE_FIELDS:
                 setattr(image_data, field, getattr(stored_layer, field))
             output = image_data
+            await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().IMAGELAYER.value,
+                    partition_key=output.projectId,
+                ).save,
+                output.imageLayerId,
+                output.model_dump(exclude=FOOTPRINT_TILE_FIELDS),
+            )
         else:
             output = await asyncio.to_thread(
                 ImageryPreProcessor(image_data=image_data).queue_for_processing
             )
-
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().IMAGELAYER.value,
-                partition_key=output.projectId,
-            ).save,
-            output.imageLayerId,
-            output.model_dump(exclude=FOOTPRINT_TILE_FIELDS),
-        )
 
         # Repeating the check because we want to save stats after the image layer, if new, is saved
 
@@ -2509,15 +2508,6 @@ async def PutRunModelQueueMessage(req: func.HttpRequest) -> func.HttpResponse:
             TrainPreprocessor(output).send_to_queue
         )
 
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=output.projectId,
-            ).save,
-            output.modelId,
-            output.dict(),
-        )
-
         request = StatsPreProcessor(
             request=StatsRequest(
                 action="add",
@@ -2558,6 +2548,7 @@ async def PutRunInferenceQueueMessage(
         output = await asyncio.to_thread(
             InferencePreprocessor(output).send_to_queue
         )
+
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
     except FileNotFoundError:
@@ -2623,15 +2614,6 @@ async def PutRunEmbeddingQueueMessage(
 
         output = await asyncio.to_thread(
             EmbeddingPreprocessor(output).send_to_queue
-        )
-
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=output.projectId,
-            ).save,
-            output.modelId,
-            output.dict(),
         )
 
         request = StatsPreProcessor(
@@ -3040,15 +3022,6 @@ async def PutArtifactsZipQueueMessage(
             ).send_to_zip_queue
         )
 
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL_ARTIFACTS.value,
-                partition_key=output.projectId,
-            ).save,
-            output.modelId,
-            output.dict(),
-        )
-
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
     except ValidationError as e:
@@ -3092,6 +3065,7 @@ async def PutCancelModelQueueMessage(
             return func.HttpResponse(json.dumps({}), status_code=200)
         existing_model_data = Model(**existing_model_data)
 
+        no_effect = None
         if (
             existing_model_data.status
             == config.get_status_types().COMPLETED.value
@@ -3124,9 +3098,9 @@ async def PutCancelModelQueueMessage(
             logger.info(
                 f"Training for model {model_cancel_req['modelId']} already failed, no action taken"
             )
-            output = existing_model_data
-            output.statusMessage = MetadataUtils.append_status_message(
-                output.statusMessage,
+            no_effect = (
+                {"status": config.get_status_types().FAILED.value},
+                "statusMessage",
                 "Training already failed, Cancel action has no effect",
             )
         elif (
@@ -3136,12 +3110,10 @@ async def PutCancelModelQueueMessage(
             logger.info(
                 f"Inference for model {model_cancel_req['modelId']} already completed, no action taken"
             )
-            output = existing_model_data
-            output.inferenceStatusMessage = (
-                MetadataUtils.append_status_message(
-                    output.inferenceStatusMessage,
-                    "Inference already completed, Cancel action has no effect",
-                )
+            no_effect = (
+                {"inferenceStatus": config.get_status_types().COMPLETED.value},
+                "inferenceStatusMessage",
+                "Inference already completed, Cancel action has no effect",
             )
         elif (
             existing_model_data.inferenceStatus
@@ -3150,12 +3122,10 @@ async def PutCancelModelQueueMessage(
             logger.info(
                 f"Inference for model {model_cancel_req['modelId']} already failed, no action taken"
             )
-            output = existing_model_data
-            output.inferenceStatusMessage = (
-                MetadataUtils.append_status_message(
-                    output.inferenceStatusMessage,
-                    "Inference already failed, Cancel action has no effect",
-                )
+            no_effect = (
+                {"inferenceStatus": config.get_status_types().FAILED.value},
+                "inferenceStatusMessage",
+                "Inference already failed, Cancel action has no effect",
             )
         else:
             output = await asyncio.to_thread(
@@ -3165,15 +3135,24 @@ async def PutCancelModelQueueMessage(
                 status=config.get_status_types().CANCELLED.value,
             )
 
-        await asyncio.to_thread(
-            MetadataProcessor(
-                data_type=config.get_metadata_types().MODEL.value,
-                partition_key=output.projectId,
-                config=config,
-            ).save,
-            output.modelId,
-            output.dict(),
-        )
+        if no_effect is not None:
+            # Record the notice without re-saving the loaded snapshot, which
+            # could undo a concurrent update; the queue producers above
+            # persist their own state.
+            expected, field, message = no_effect
+            stored = await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().MODEL.value,
+                    partition_key=existing_model_data.projectId,
+                ).append_status_message,
+                existing_model_data.modelId,
+                field,
+                message,
+                expected,
+            )
+            output = (
+                Model(**stored) if stored is not None else existing_model_data
+            )
 
         return func.HttpResponse(json.dumps(output.dict()), status_code=200)
 
