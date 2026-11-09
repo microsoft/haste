@@ -19,6 +19,10 @@ conventions are documented in [RELEASING.md](RELEASING.md).
   embeddings, editing predictions, understanding outputs, and the Open Data
   Catalog. The README and documentation navigation link to the series.
 
+### Changed
+
+- **Training and inference use less GPU energy for the same results** — `fine_tune.py` now keeps the U-Net in channels-last memory format with cuDNN autotuning and steps it with PyTorch's fused AdamW kernel; `inference.py` runs its forward pass under bf16 autocast on GPUs with native bf16 (Ampere and later), in channels-last with pinned, non-blocking host-to-device copies. The arithmetic of the training update is unchanged, and every lever is gated on the device, so CPU and pre-Ampere GPUs (T4) behave exactly as before. On the LA-fires Damage Mapping job (mask creation, one training epoch, inference, merge, scoring) on an RTX 6000 Ada, the GPU-energy ratio of the unmodified code to this branch is 1.292 (95% CI 1.277 to 1.300, four paired runs, Palisades) and 1.289 (1.288 to 1.289, two paired runs, the hidden Eaton job), with wall time 1.20x faster and building accuracy, damaged-building F1 and pixel mIoU within the run-to-run spread; the source kernel found by the GPU green-loop search (`c1_cl_fused_bf16inf`, energy-pipeline workspace 015) measured 1.299 to 1.307 and a judged port of three of the four levers (workspace 012) 1.277 on the same job.
+
 ### Fixed
 
 - **Spokane video previews and new-tab links.** Each embedded player shows an
