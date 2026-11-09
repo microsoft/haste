@@ -94,6 +94,9 @@ def main() -> None:
     # Use TF32 tensor cores for fp32 matmuls where the GPU has them (Ampere
     # and later). A no-op elsewhere.
     torch.set_float32_matmul_precision("high")
+    # Training patches are a fixed size, so let cuDNN benchmark its
+    # convolution algorithms once and reuse the fastest. No-op on CPU.
+    torch.backends.cudnn.benchmark = True
 
     experiment_dir = args["experiment_dir"]
     assert os.path.exists(os.path.join(experiment_dir, "images/"))
@@ -228,6 +231,12 @@ def main() -> None:
             f"Loading {len(compatible_state_dict)}/{len(checkpoint_state_dict)} layers from checkpoint"
         )
         task.load_state_dict(compatible_state_dict, strict=False)
+
+    # Channels-last (NHWC) weights let the convolutions run on tensor cores
+    # without layout transposes; the training steps convert their inputs to
+    # match (bda.trainers.channels_last_if_cuda). Only the memory layout
+    # changes, not the arithmetic, and CPU behaviour is unaffected.
+    task.model = task.model.to(memory_format=torch.channels_last)
 
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",

@@ -10,7 +10,49 @@ import torch
 import torch.nn.functional as F
 from lightning.pytorch.callbacks import Callback
 from torch import Tensor
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchgeo.trainers import SemanticSegmentationTask
+
+
+def channels_last_if_cuda(x: Tensor) -> Tensor:
+    """Return a 4-D CUDA tensor in channels-last (NHWC) memory format.
+
+    ``fine_tune.py`` converts the model to channels-last so its convolutions
+    run on tensor cores without layout transposes; feeding it NCHW inputs
+    would put a transpose back in front of the first convolution of every
+    step. CPU tensors and tensors that are not 4-D are returned unchanged, so
+    CPU training behaves exactly as before.
+
+    Args:
+        x: An input batch.
+
+    Returns:
+        ``x`` in channels-last format when it is a 4-D CUDA tensor, otherwise
+        ``x`` itself.
+    """
+    if x.is_cuda and x.dim() == 4:
+        return x.contiguous(memory_format=torch.channels_last)
+    return x
+
+
+def fused_adamw_supported(params: list[Tensor]) -> bool:
+    """Return whether every parameter can be stepped by the fused AdamW kernel.
+
+    PyTorch's fused AdamW implementation requires every parameter to be a
+    floating-point CUDA tensor (it raises otherwise), so this is the exact
+    precondition rather than a device heuristic.
+
+    Args:
+        params: The parameters the optimizer will own.
+
+    Returns:
+        ``True`` when the fused kernel can be used, ``False`` on CPU, for an
+        empty parameter list, or when any parameter is non-floating.
+    """
+    return bool(params) and all(
+        p.is_cuda and torch.is_floating_point(p) for p in params
+    )
 
 
 def supervised_logits(y_hat: Tensor, no_damage_index: int) -> Tensor:
@@ -207,6 +249,37 @@ class CustomSemanticSegmentationTask(SemanticSegmentationTask):
         """
         return []
 
+    def configure_optimizers(self) -> Any:
+        """Initialize the optimizer and learning rate scheduler.
+
+        Same as torchgeo's ``BaseTask.configure_optimizers`` (AdamW at
+        ``hparams["lr"]``, ``ReduceLROnPlateau`` with ``hparams["patience"]``
+        monitoring ``self.monitor``), except that on CUDA the optimizer uses
+        PyTorch's fused AdamW kernel, which steps every parameter in one
+        launch instead of one per tensor. The update is mathematically the
+        same; only the kernel differs. On CPU, or whenever a parameter is not
+        a floating CUDA tensor, the base behaviour is returned unchanged.
+
+        Returns:
+            Optimizer and learning rate scheduler.
+        """
+        config = super().configure_optimizers()
+        params = list(self.parameters())
+        if not fused_adamw_supported(params):
+            return config
+
+        base_optimizer = config["optimizer"]
+        optimizer = AdamW(params, **{**base_optimizer.defaults, "fused": True})
+        # Re-create the scheduler against the new optimizer so the dict shape,
+        # monitor key and patience match the base implementation exactly.
+        scheduler = ReduceLROnPlateau(
+            optimizer, patience=self.hparams["patience"]
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "monitor": self.monitor},
+        }
+
     def training_step(
         self, batch: Any, batch_idx: int, dataloader_idx: int = 0
     ) -> Tensor:
@@ -221,7 +294,7 @@ class CustomSemanticSegmentationTask(SemanticSegmentationTask):
             The loss tensor.
         """
         batch = self.train_augs(batch)
-        x = batch["image"]
+        x = channels_last_if_cuda(batch["image"])
         y = batch["mask"]
 
         batch_size = x.shape[0]
@@ -262,6 +335,7 @@ class CustomSemanticSegmentationTask(SemanticSegmentationTask):
             batch_idx: Integer displaying index of this batch.
             dataloader_idx: Index of the current dataloader.
         """
+        batch["image"] = channels_last_if_cuda(batch["image"])
         if not self.use_constraint_loss:
             return super().validation_step(batch, batch_idx, dataloader_idx)
 
@@ -290,6 +364,7 @@ class CustomSemanticSegmentationTask(SemanticSegmentationTask):
             batch_idx: Integer displaying index of this batch.
             dataloader_idx: Index of the current dataloader.
         """
+        batch["image"] = channels_last_if_cuda(batch["image"])
         if not self.use_constraint_loss:
             return super().test_step(batch, batch_idx, dataloader_idx)
 

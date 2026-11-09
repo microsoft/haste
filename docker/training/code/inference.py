@@ -4,9 +4,11 @@
 """Script for running inference on a satellite image with a torchgeo segmentation model."""
 
 import argparse
+import contextlib
 import math
 import os
 import time
+from typing import Optional
 
 import numpy as np
 import rasterio
@@ -64,6 +66,32 @@ def add_inference_parser(
     return parser
 
 
+def inference_autocast_dtype(device: torch.device) -> Optional[torch.dtype]:
+    """Return the autocast dtype for the inference forward pass, if any.
+
+    Inference is a pure forward pass whose output is an argmax, so bf16
+    activations change the predicted class on vanishingly few pixels while
+    roughly halving the memory traffic of every convolution. bf16 needs
+    Ampere or later: HASTE's Batch pools are not homogeneous (T4s are Turing
+    and have no bf16 tensor cores), so ask the device rather than assuming.
+
+    Args:
+        device: The device inference will run on.
+
+    Returns:
+        ``torch.bfloat16`` on a CUDA device with native bf16 support,
+        otherwise ``None`` (keep fp32: CPU and pre-Ampere GPUs behave as
+        before).
+    """
+    if device.type != "cuda":
+        return None
+    if torch.cuda.get_device_capability(device)[0] < 8:
+        return None
+    if not torch.cuda.is_bf16_supported():
+        return None
+    return torch.bfloat16
+
+
 def main() -> None:
     """Main function for the inference.py script."""
     args = get_args(description=__doc__, add_extra_parser=add_inference_parser)
@@ -111,6 +139,16 @@ def main() -> None:
     task.freeze()
     model = task.model
     model = model.eval().to(device)
+    # Fixed patch size: let cuDNN benchmark its convolution algorithms once.
+    torch.backends.cudnn.benchmark = True
+    use_cuda = device.type == "cuda"
+    if use_cuda:
+        # NHWC weights and inputs keep the convolutions on tensor cores
+        # without layout transposes.
+        model = model.to(memory_format=torch.channels_last)
+    autocast_dtype = inference_autocast_dtype(device)
+    if autocast_dtype is not None:
+        print(f"Running the forward pass under {autocast_dtype} autocast")
 
     preprocess = Preprocessor(
         training_mode=False,
@@ -157,6 +195,8 @@ def main() -> None:
         batch_size=args["inference"]["batch_size"],
         num_workers=12,
         collate_fn=stack_samples,
+        # Pinned host buffers make the non-blocking copies below asynchronous.
+        pin_memory=use_cuda,
     )
 
     # A constraint-loss model has one fewer output channel ("No Damage" gets
@@ -177,11 +217,18 @@ def main() -> None:
     dl_enumerator = tqdm.tqdm(dataloader)
 
     for batch in dl_enumerator:
-        images = batch["image"].to(device)
+        images = batch["image"].to(device, non_blocking=True)
+        if use_cuda:
+            images = images.contiguous(memory_format=torch.channels_last)
         x_coords = batch["x"]
         y_coords = batch["y"]
         batch_size = images.shape[0]
-        with torch.inference_mode():
+        autocast = (
+            torch.autocast(device_type=device.type, dtype=autocast_dtype)
+            if autocast_dtype is not None
+            else contextlib.nullcontext()
+        )
+        with torch.inference_mode(), autocast:
             predictions = task(images)
             if use_constraint_loss:
                 # Channel 0 ("Unlabeled") is emitted but never supervised
