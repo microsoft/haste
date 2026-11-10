@@ -86,10 +86,17 @@ this branch as a pair on the same RTX 6000 Ada, measuring GPU energy per
 run. The ratio is `main` divided by this branch, so values above 1 favour
 this branch; intervals are 95% confidence intervals over the paired runs.
 
-| Job | Paired runs | GPU-energy ratio | Wall-time ratio | Quality |
-|---|---|---|---|---|
-| LA fires, Palisades | 4 | 1.292 [1.277, 1.300] | 1.20 | within run-to-run spread |
-| LA fires, Eaton (hidden job, held out from the search) | 2 | 1.289 [1.288, 1.289] | 1.19 | within run-to-run spread |
+| Job | Image | Paired runs | GPU-energy ratio | Wall-time ratio | Quality |
+|---|---|---|---|---|---|
+| LA fires, Palisades | Python 3.11, current Dockerfile | 4 | 1.300 [1.291, 1.303] | 1.20 | within run-to-run spread |
+| LA fires, Eaton (hidden job, held out from the search) | Python 3.11, current Dockerfile | 2 | 1.304 [1.302, 1.307] | 1.20 | within run-to-run spread |
+| LA fires, Palisades | Python 3.10, earlier image | 4 | 1.292 [1.277, 1.300] | 1.20 | within run-to-run spread |
+| LA fires, Eaton (hidden job) | Python 3.10, earlier image | 2 | 1.289 [1.288, 1.289] | 1.19 | within run-to-run spread |
+
+The Python 3.11 rows pair the current `main` (0dde080) against this branch
+in an image built from this branch's `docker/training/Dockerfile`; the
+Python 3.10 rows are the earlier measurement against the fork's `main` in
+the image the search itself used. The two agree within their intervals.
 
 "Within run-to-run spread" means building-level accuracy, damaged-building
 F1 and pixel mIoU of this branch fell inside the spread of repeated,
@@ -152,12 +159,10 @@ bit-reproducible training would need to set `cudnn.benchmark = False` and
 
 ## 7. Remaining verification
 
-Measured so far: RTX 6000 Ada, single GPU, one training epoch, in an image
-whose conda environment is Python 3.10. Still to do in dev:
+Measured so far: RTX 6000 Ada, single GPU, one training epoch, in the
+Python 3.11 image built from the current Dockerfile (and earlier in a
+Python 3.10 image). Still to do in dev:
 
-- **Full image build on Python 3.11.** `docker/training/env/env.yml` pins
-  Python 3.11 and torch 2.5.1+cu124; the suite and a job should run in an
-  image built from the current Dockerfile.
 - **T4 node.** A Damage Mapping job end to end on a Turing pool, confirming
   fp32 inference is selected and recording the channels-last fp32 timing.
 - **Multi-GPU DDP.** `--training.gpu_ids 0 1`: the fused optimizer and
