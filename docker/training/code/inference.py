@@ -71,12 +71,16 @@ def inference_autocast_dtype(
 ) -> Optional[torch.dtype]:
     """Return the autocast dtype for the inference forward pass, if any.
 
-    Inference is a pure forward pass whose output is an argmax, so bf16
-    activations change the predicted class on vanishingly few pixels while
-    roughly halving the memory traffic of every convolution. bf16 needs
-    Ampere or later: HASTE's Batch pools are not homogeneous (T4s are Turing
-    and have no bf16 tensor cores), so ask the device rather than assuming.
-    Like ``bda.config.select_precision``, this asks for *native* support
+    Inference is a pure forward pass whose output is an argmax. bf16
+    activations roughly halve the memory traffic of every convolution and
+    do change the argmax on some pixels: measured against fp32, about 1% of
+    pixels flipped class on a one-epoch checkpoint and 3% on a randomly
+    initialised network, while building-level accuracy, damaged-building F1
+    and pixel mIoU stayed within the run-to-run spread of HASTE's unseeded
+    training on both the Palisades and the Eaton job. bf16 needs Ampere or
+    later: HASTE's Batch pools are not homogeneous (T4s are Turing and have
+    no bf16 tensor cores), so ask the device rather than assuming. Like
+    ``bda.config.select_precision``, this asks for *native* support
     (``including_emulation=False``); the default ``is_bf16_supported()`` is
     also true for emulated bf16 on a T4.
 
@@ -87,8 +91,9 @@ def inference_autocast_dtype(
 
     Returns:
         ``torch.bfloat16`` on a CUDA device with native bf16 support,
-        otherwise ``None`` (keep fp32: CPU and pre-Ampere GPUs behave as
-        before).
+        otherwise ``None``: CPU and pre-Ampere GPUs keep fp32. Only the
+        dtype is gated here; a Turing GPU still gets channels-last and cuDNN
+        autotuning from ``main()``.
     """
     if device.type != "cuda":
         return None

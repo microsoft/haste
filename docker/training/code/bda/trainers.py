@@ -293,6 +293,19 @@ class CustomSemanticSegmentationTask(SemanticSegmentationTask):
         if not fused_adamw_supported(params):
             return config
 
+        # Two constraints come with `fused=True`:
+        #
+        # * Lightning refuses gradient clipping with a fused optimizer under
+        #   mixed precision (it raises if `gradient_clip_val` is set).
+        #   fine_tune.py sets no clipping today; anyone adding it must drop
+        #   `fused` here.
+        # * A checkpoint written by this code resumes with full optimizer
+        #   state only under this code: the saved param group carries
+        #   `fused` and the moment tensors are channels-last, so they do not
+        #   match pre-change NCHW parameters. Weight-only loading (inference,
+        #   fine_tune.py's initial weights, run_workflow.py's checkpoint
+        #   glob) is unaffected in both directions. HASTE has no
+        #   optimizer-state resume path today.
         base_optimizer = config["optimizer"]
         optimizer = AdamW(params, **{**base_optimizer.defaults, "fused": True})
         # Re-create the scheduler against the new optimizer so the dict shape,

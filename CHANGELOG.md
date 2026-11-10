@@ -21,7 +21,35 @@ conventions are documented in [RELEASING.md](RELEASING.md).
 
 ### Changed
 
-- **Training and inference use less GPU energy for the same results** — `fine_tune.py` now keeps the U-Net in channels-last memory format with cuDNN autotuning and steps it with PyTorch's fused AdamW kernel; `inference.py` runs its forward pass under bf16 autocast on GPUs with native bf16 (Ampere and later), in channels-last with pinned, non-blocking host-to-device copies. The arithmetic of the training update is unchanged, and every lever is gated on the device, so CPU and pre-Ampere GPUs (T4) behave exactly as before. On the LA-fires Damage Mapping job (mask creation, one training epoch, inference, merge, scoring) on an RTX 6000 Ada, the GPU-energy ratio of the unmodified code to this branch is 1.292 (95% CI 1.277 to 1.300, four paired runs, Palisades) and 1.289 (1.288 to 1.289, two paired runs, the hidden Eaton job), with wall time 1.20x faster and building accuracy, damaged-building F1 and pixel mIoU within the run-to-run spread; the source kernel found by the GPU green-loop search (`c1_cl_fused_bf16inf`, energy-pipeline workspace 015) measured 1.299 to 1.307 and a judged port of three of the four levers (workspace 012) 1.277 on the same job.
+- **Training and inference use less GPU energy for the same results.**
+  `fine_tune.py` keeps the U-Net in channels-last (NHWC) memory format,
+  lets cuDNN autotune its convolution algorithms, and steps the weights
+  with PyTorch's fused AdamW kernel; `inference.py` runs the forward pass in
+  channels-last with pinned, non-blocking host-to-device copies and, on GPUs
+  with native bf16 (Ampere and later), under bf16 autocast. The training
+  update is the same arithmetic as before (only the memory layout and the
+  optimizer kernel change); bf16 is used for inference only. Measured on an
+  RTX 6000 Ada against the unmodified code, GPU energy per Damage Mapping
+  job (mask creation, one training epoch, inference, merge, scoring) fell by
+  about 22 to 23% and wall time by about 17% (four paired runs on Palisades,
+  two on the Eaton hidden job), with building-level accuracy, damaged-building
+  F1 and pixel mIoU within the run-to-run spread of HASTE's unseeded
+  training. bf16 inference flips the predicted class on about 1% of pixels on
+  a one-epoch checkpoint (3% on a randomly initialised network); the
+  building-level metrics above absorb that. Every lever is gated on the
+  device: on CPU nothing changes, weights stay NCHW and inference stays fp32.
+  On pre-Ampere GPUs (T4, Turing) channels-last, cuDNN autotuning and fused
+  AdamW do engage and only bf16 inference is skipped; channels-last fp32 on
+  Turing was not measured. Two constraints: PyTorch's fused AdamW is
+  incompatible with Lightning's gradient clipping under mixed precision
+  (Lightning raises if `gradient_clip_val` is set), so anyone adding clipping
+  to `fine_tune.py` must drop `fused`; and a checkpoint written by this code
+  resumes with full optimizer state only under this code, because the saved
+  fused param group and channels-last moment tensors do not match pre-change
+  NCHW parameters. Weight-only loading (`inference.py`, `fine_tune.py`'s
+  initial weights, `run_workflow.py`'s checkpoint glob) is unaffected in both
+  directions, and HASTE has no optimizer-state resume path today. See the
+  [energy-aware-training spec](spec/features/energy-aware-training/).
 
 ### Fixed
 
