@@ -16,7 +16,7 @@ from bda.config import (
     select_precision,
 )
 from bda.datamodules import SegmentationDataModule
-from bda.trainers import CustomSemanticSegmentationTask
+from bda.trainers import CustomSemanticSegmentationTask, maybe_channels_last
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
 
@@ -232,11 +232,13 @@ def main() -> None:
         )
         task.load_state_dict(compatible_state_dict, strict=False)
 
-    # Channels-last (NHWC) weights let the convolutions run on tensor cores
-    # without layout transposes; the training steps convert their inputs to
-    # match (bda.trainers.channels_last_if_cuda). Only the memory layout
-    # changes, not the arithmetic, and CPU behaviour is unaffected.
-    task.model = task.model.to(memory_format=torch.channels_last)
+    # On CUDA, channels-last (NHWC) weights let the convolutions run on
+    # tensor cores without layout transposes; the training steps convert
+    # their inputs to match (bda.trainers.channels_last_if_cuda). Gated on
+    # the GPU list (already empty when CUDA is unavailable) because on CPU
+    # the conversion would change the weight strides and the convolution
+    # numerics for no gain.
+    task.model = maybe_channels_last(task.model, bool(gpu_ids))
 
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",

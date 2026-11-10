@@ -36,6 +36,31 @@ def channels_last_if_cuda(x: Tensor) -> Tensor:
     return x
 
 
+def maybe_channels_last(
+    model: torch.nn.Module, use_cuda: bool
+) -> torch.nn.Module:
+    """Convert ``model`` to channels-last (NHWC) weights when it runs on CUDA.
+
+    Channels-last weights let cuDNN run the convolutions on tensor cores
+    without layout transposes. The conversion is layout-only on the GPU, but
+    on CPU it changes the weight strides and so the summation order of the
+    convolutions (about 6e-6 in the logits), and gains nothing. The caller
+    passes whether CUDA is in use so the decision is made in one place and
+    CPU weights stay NCHW-contiguous.
+
+    Args:
+        model: The network whose parameters and buffers to convert.
+        use_cuda: Whether the model will run on a CUDA device.
+
+    Returns:
+        ``model`` in channels-last format when ``use_cuda`` is true, otherwise
+        ``model`` untouched.
+    """
+    if use_cuda:
+        return model.to(memory_format=torch.channels_last)
+    return model
+
+
 def fused_adamw_supported(params: list[Tensor]) -> bool:
     """Return whether every parameter can be stepped by the fused AdamW kernel.
 
@@ -79,7 +104,7 @@ def supervised_logits(y_hat: Tensor, no_damage_index: int) -> Tensor:
     if no_damage_index != num_channels:
         raise ValueError(
             f"no_damage_index ({no_damage_index}) must equal the number of"
-            f" output channels ({num_channels}); 'No Damage' is a weak label"
+            f" output channels ({num_channels}). 'No Damage' is a weak label"
             " that must be the final mask value and carry no output channel"
             " of its own."
         )

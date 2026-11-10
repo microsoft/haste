@@ -18,7 +18,7 @@ from bda.config import get_args
 from bda.datasets import TileDataset, stack_samples
 from bda.preprocess import Preprocessor
 from bda.samplers import GridGeoSampler
-from bda.trainers import CustomSemanticSegmentationTask
+from bda.trainers import CustomSemanticSegmentationTask, maybe_channels_last
 from rasterio.enums import ColorInterp
 from torch.utils.data import DataLoader
 
@@ -66,7 +66,9 @@ def add_inference_parser(
     return parser
 
 
-def inference_autocast_dtype(device: torch.device) -> Optional[torch.dtype]:
+def inference_autocast_dtype(
+    device: torch.device, cuda
+) -> Optional[torch.dtype]:
     """Return the autocast dtype for the inference forward pass, if any.
 
     Inference is a pure forward pass whose output is an argmax, so bf16
@@ -74,9 +76,14 @@ def inference_autocast_dtype(device: torch.device) -> Optional[torch.dtype]:
     roughly halving the memory traffic of every convolution. bf16 needs
     Ampere or later: HASTE's Batch pools are not homogeneous (T4s are Turing
     and have no bf16 tensor cores), so ask the device rather than assuming.
+    Like ``bda.config.select_precision``, this asks for *native* support
+    (``including_emulation=False``); the default ``is_bf16_supported()`` is
+    also true for emulated bf16 on a T4.
 
     Args:
         device: The device inference will run on.
+        cuda: The ``torch.cuda`` module, passed in so the Turing and Ampere
+            branches can be tested without that hardware.
 
     Returns:
         ``torch.bfloat16`` on a CUDA device with native bf16 support,
@@ -85,9 +92,9 @@ def inference_autocast_dtype(device: torch.device) -> Optional[torch.dtype]:
     """
     if device.type != "cuda":
         return None
-    if torch.cuda.get_device_capability(device)[0] < 8:
+    if cuda.get_device_capability(device)[0] < 8:
         return None
-    if not torch.cuda.is_bf16_supported():
+    if not cuda.is_bf16_supported(including_emulation=False):
         return None
     return torch.bfloat16
 
@@ -142,11 +149,10 @@ def main() -> None:
     # Fixed patch size: let cuDNN benchmark its convolution algorithms once.
     torch.backends.cudnn.benchmark = True
     use_cuda = device.type == "cuda"
-    if use_cuda:
-        # NHWC weights and inputs keep the convolutions on tensor cores
-        # without layout transposes.
-        model = model.to(memory_format=torch.channels_last)
-    autocast_dtype = inference_autocast_dtype(device)
+    # On CUDA, NHWC weights and inputs keep the convolutions on tensor cores
+    # without layout transposes; CPU weights stay NCHW.
+    model = maybe_channels_last(model, use_cuda)
+    autocast_dtype = inference_autocast_dtype(device, torch.cuda)
     if autocast_dtype is not None:
         print(f"Running the forward pass under {autocast_dtype} autocast")
 
