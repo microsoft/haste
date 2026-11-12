@@ -7,6 +7,22 @@
 | Validate inline placement, navigation, media errors, and build | `ui-validation` | done |
 | Add lightweight previews to all seven existing help videos | `ui` | done |
 | Validate legacy poster coverage and preview rendering | `ui-validation` | done |
+| Allow hosted recordings, captions, and posters in the deployed CSP | `ui` | done |
+| Validate CSP asset permissions and preserve default/script restrictions | `ui-validation` | done |
+
+## Deployed CSP Validation
+
+Commands run from `ui/`:
+
+- `node --test src\Components\HelpDocs\spokaneDeepDive.test.js src\Components\HelpDocs\videoPosters.test.js`: 8 tests passed.
+- `npx eslint src\Components\HelpDocs\spokaneDeepDive.test.js --max-warnings 0`: passed.
+- `npm run build`: passed.
+
+The regression test checks CSP permissions for all 18 hosted episode assets
+and requires the exact Spokane directory source with a trailing slash instead
+of a host-wide permission. It retains local media access and verifies unchanged
+default and script source restrictions. Production playback on Azure Static
+Web Apps has not been tested.
 
 ## Legacy Video Preview Validation
 

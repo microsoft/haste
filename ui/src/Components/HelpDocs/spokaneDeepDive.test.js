@@ -60,3 +60,47 @@ test("episode media uses the existing HTTPS documentation host", () => {
     "https://microsoft.github.io/haste/_static/usage/spokane-deep-dive"
   );
 });
+
+test("deployed CSP permits only the Spokane folder for hosted media and posters", () => {
+  const mediaSource =
+    "https://microsoft.github.io/haste/_static/usage/spokane-deep-dive/";
+  const config = JSON.parse(
+    readFileSync(
+      new URL("../../../public/staticwebapp.config.json", import.meta.url),
+      "utf8"
+    )
+  );
+  const directives = new Map(
+    config.globalHeaders["Content-Security-Policy"]
+      .split(";")
+      .map((directive) => directive.trim().split(/\s+/))
+      .map(([name, ...sources]) => [name, sources])
+  );
+
+  for (const episode of spokaneDeepDiveEpisodes) {
+    for (const [extension, directive] of [
+      ["mp4", "media-src"],
+      ["vtt", "media-src"],
+      ["jpg", "img-src"],
+    ]) {
+      const asset = new URL(`${spokaneDeepDiveMediaBase}/${episode.file}.${extension}`);
+      assert.ok(
+        directives.get(directive)?.includes(mediaSource) &&
+          asset.href.startsWith(mediaSource),
+        `${directive} must allow ${asset.href}`
+      );
+    }
+  }
+
+  assert.deepEqual(directives.get("media-src"), ["'self'", mediaSource]);
+  assert.deepEqual(
+    directives.get("img-src").filter((source) =>
+      source.startsWith("https://microsoft.github.io")
+    ),
+    [mediaSource]
+  );
+  assert.deepEqual(directives.get("default-src"), ["'self'"]);
+  assert.deepEqual(directives.get("script-src"), ["'self'", "https://atlas.microsoft.com"]);
+  assert.ok(directives.get("img-src").includes("'self'"));
+  assert.ok(!directives.get("img-src").includes("*"));
+});

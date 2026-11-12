@@ -11,8 +11,9 @@
 
 Render the video series inside HelpDocsOverview, immediately after the existing
 overview video and before the workflow cards. Use an H2 for the series and H3
-headings for its episodes. No backend, authentication, or deployment changes
-are required.
+headings for its episodes. No backend or authentication changes are required.
+The deployed UI's Content Security Policy must allow the hosted documentation
+media.
 
 ## Navigation
 
@@ -30,6 +31,12 @@ the [published guide](../../../docs/usage/spokane-deep-dive.md).
 Players use native controls, `preload="none"`, `playsInline`, accessible labels,
 and `crossOrigin="anonymous"` so hosted English captions can load.
 
+Allow only `https://microsoft.github.io/haste/_static/usage/spokane-deep-dive/`
+in `media-src` for MP4 recordings and WebVTT tracks, and in `img-src` for JPEG
+posters in `ui/public/staticwebapp.config.json`. The trailing slash scopes the
+permission to this directory, not the entire documentation host. Retain `'self'`
+for local media and keep the existing default and script restrictions unchanged.
+
 Keep an always-visible new-tab video link below each player. Display a
 `role="alert"` message if playback fails. Do not autoplay or copy large assets
 into the UI bundle.
@@ -42,6 +49,7 @@ so displaying a preview does not download the recording.
 
 ## Validation
 
-Use Node's existing test runner to check episode metadata and local assets. Run a
+Use Node's existing test runner to check episode metadata, local assets, and
+deployed CSP permissions for all episode assets. Run a
 production build and targeted ESLint. Use Playwright to verify desktop/mobile
 navigation, inline placement, direct episode URLs, captions, and playback errors.
