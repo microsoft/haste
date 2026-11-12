@@ -6,6 +6,9 @@ import { useEffect } from 'react';
 import createANewProjectVideo from '../../assets/helpDocs/projects/projects-create-a-new-project.mp4';
 import editAProjectVideo from '../../assets/helpDocs/projects/projects-edit-a-project.mp4';
 import deleteAProjectVideo from '../../assets/helpDocs/projects/projects-delete-a-project.mp4';
+import createANewProjectPoster from '../../assets/helpDocs/projects/projects-create-a-new-project.jpg';
+import editAProjectPoster from '../../assets/helpDocs/projects/projects-edit-a-project.jpg';
+import deleteAProjectPoster from '../../assets/helpDocs/projects/projects-delete-a-project.jpg';
 
 const HelpDocsProjects = ({ anchor }) => {
   useEffect(() => {
@@ -53,7 +56,7 @@ const HelpDocsProjects = ({ anchor }) => {
       </ul>
       <p>These classes are provided by default on the project creation form. You can keep the default colors or change them to suit your need.</p>
 
-      <video src={createANewProjectVideo} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
+      <video src={createANewProjectVideo} poster={createANewProjectPoster} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
         Your browser does not support the video tag.
       </video>
 
@@ -66,7 +69,7 @@ const HelpDocsProjects = ({ anchor }) => {
       <p>From the Projects page, you can update a project&apos;s name, description, event date, and affected countries after creation. Event types and primary classes cannot be changed after the project is created, so review them carefully before creating the project.
 
 
-      <video src={editAProjectVideo} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
+      <video src={editAProjectVideo} poster={editAProjectPoster} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
         Your browser does not support the video tag.
       </video>
 
@@ -79,7 +82,7 @@ const HelpDocsProjects = ({ anchor }) => {
 
       <p>You can delete a project using the ellipse menu on the Projects page. Deleting a project will delete all associated artifacts such as image layers, labels and training results.
 
-      <video src={deleteAProjectVideo} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
+      <video src={deleteAProjectVideo} poster={deleteAProjectPoster} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
         Your browser does not support the video tag.
       </video>
 

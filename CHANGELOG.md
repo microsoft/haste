@@ -14,6 +14,10 @@ conventions are documented in [RELEASING.md](RELEASING.md).
 
 ### Added
 
+- **Spokane walkthrough in the app's Introduction.** The six captioned
+  deep-dive videos now appear below the overview recording in Help Docs,
+  with episode previews, durations, and new-tab links. Episode anchors and
+  browser history stay synchronized with the displayed help content.
 - **Spokane deep-dive video series.** Six captioned videos in the
   [User Guide](docs/usage/spokane-deep-dive.md) cover labeling, building
   embeddings, editing predictions, understanding outputs, and the Open Data
@@ -21,6 +25,9 @@ conventions are documented in [RELEASING.md](RELEASING.md).
 
 ### Fixed
 
+- **Previews for existing Help Docs videos.** The seven Overview, Projects,
+  and Image Layers recordings now show lightweight title-frame thumbnails
+  without preloading the videos.
 - **Spokane video previews and new-tab links.** Each embedded player shows an
   episode thumbnail before playback, and episode links open in a new tab on
   the documentation site.

@@ -3,6 +3,9 @@
 import createANewImageLayerVideo from '../../assets/helpDocs/imageLayers/image-layers-create-a-new-layer.mp4';
 import editAnImageLayerVideo from '../../assets/helpDocs/imageLayers/image-layers-edit-a-layer.mp4';
 import deleteAnImageLayerVideo from '../../assets/helpDocs/imageLayers/image-layers-delete-a-layer.mp4';
+import createANewImageLayerPoster from '../../assets/helpDocs/imageLayers/image-layers-create-a-new-layer.jpg';
+import editAnImageLayerPoster from '../../assets/helpDocs/imageLayers/image-layers-edit-a-layer.jpg';
+import deleteAnImageLayerPoster from '../../assets/helpDocs/imageLayers/image-layers-delete-a-layer.jpg';
 
 import PropTypes from 'prop-types';
 import { useEffect } from 'react';
@@ -63,7 +66,7 @@ const HelpDocsImageLayers = ({ anchor }) => {
 
       <p>Add imagery files by providing publicly accessible URLs or uploading files from a local directory that show the Area of Interest (AOI). You can also combine files from both a URL and a local directory. If multiple files are provided in a section, they will be merged into a single GeoTIFF image; therefore, all files in each section must correspond to the same AOI. All files must be valid GeoTIFF (.tif) files. </p>
 
-      <video src={createANewImageLayerVideo} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
+      <video src={createANewImageLayerVideo} poster={createANewImageLayerPoster} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
         Your browser does not support the video tag.
       </video>
 
@@ -74,7 +77,7 @@ const HelpDocsImageLayers = ({ anchor }) => {
       <p>You can update the name and description for an image layer after it was created from the Projects page. </p>
 
 
-      <video src={editAnImageLayerVideo} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
+      <video src={editAnImageLayerVideo} poster={editAnImageLayerPoster} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
         Your browser does not support the video tag.
       </video>
 
@@ -85,7 +88,7 @@ const HelpDocsImageLayers = ({ anchor }) => {
       <p>You can delete an image layer using the ellipse menu on the Projects page.</p>
       <p>Deleting an image layer also deletes all its artifacts such as labels, model training checkpoints and predictions </p>
 
-      <video src={deleteAnImageLayerVideo} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
+      <video src={deleteAnImageLayerVideo} poster={deleteAnImageLayerPoster} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
         Your browser does not support the video tag.
       </video>
 
