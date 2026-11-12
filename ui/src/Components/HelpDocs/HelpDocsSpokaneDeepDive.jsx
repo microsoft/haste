@@ -67,7 +67,7 @@ const HelpDocsSpokaneDeepDive = () => {
           </video>
           {failedEpisodes.includes(episode.id) && (
             <p role="alert">
-              This video could not be loaded. Try opening it in a new tab using
+              {episode.title} video could not be loaded. Try opening it in a new tab using
               the link below.
             </p>
           )}

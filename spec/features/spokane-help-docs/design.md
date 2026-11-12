@@ -22,6 +22,10 @@ Spokane group or page. The series is available at
 `/help-docs/overview#spokane-deep-dive`, with episode anchors
 `#spokane-<episode-slug>` to avoid colliding with the Introduction anchor.
 Keep browser history and direct URLs synchronized with React Router.
+Normalize `/help-docs` and `/help-docs/` to `/help-docs/overview` with a
+replace-style redirect, preserving the query and hash. Select Introduction
+for the overview page, series anchor, and all Spokane episode anchors without
+changing the hash used for scrolling.
 
 ## Media
 
@@ -38,7 +42,7 @@ permission to this directory, not the entire documentation host. Retain `'self'`
 for local media and keep the existing default and script restrictions unchanged.
 
 Keep an always-visible new-tab video link below each player. Display a
-`role="alert"` message if playback fails. Do not autoplay or copy large assets
+`role="alert"` message including the episode title if playback fails. Do not autoplay or copy large assets
 into the UI bundle.
 
 The seven existing Overview, Projects, and Image Layers videos also use local

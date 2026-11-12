@@ -9,6 +9,31 @@
 | Validate legacy poster coverage and preview rendering | `ui-validation` | done |
 | Allow hosted recordings, captions, and posters in the deployed CSP | `ui` | done |
 | Validate CSP asset permissions and preserve default/script restrictions | `ui-validation` | done |
+| Restore canonical Help Docs URLs and Introduction selection for Spokane anchors | `ui` | done |
+| Identify failed episodes in accessible playback alerts | `ui` | done |
+| Replace URL substring checks flagged by CodeQL with parsed URL and exact source checks | `ui` | done |
+
+## PR Review Follow-up Validation
+
+Commands run from `ui/`:
+
+- `node --test src\Components\HelpDocs\spokaneDeepDive.test.js src\Components\HelpDocs\videoPosters.test.js`: 8 tests passed.
+- `npx eslint src\Components\HelpDocs.jsx src\Components\HelpDocs\HelpDocsSpokaneDeepDive.jsx src\Components\HelpDocs\spokaneDeepDive.test.js --max-warnings 0`: passed.
+- `npm run build`: passed.
+
+Playwright verified canonical redirects for both bare URL forms, preserved
+queries and hashes, and confirmed that Back skips the replaced bare URL.
+All seven Spokane anchors select Introduction on desktop without rewriting
+the anchor. All five Read More URLs remain within Help Docs, and activating
+the Projects link loads the Projects documentation. At a 390 px viewport, the
+dropdown marks Introduction as selected for a direct Spokane episode URL.
+Simulated failures in two episodes produce separate alerts containing their
+respective titles.
+
+Browser-tool pointer/keyboard actions timed out or did not activate controls.
+DOM clicks verified the link and dropdown handlers; error events verified both
+the video and source error handlers. This does not certify pointer/keyboard
+interaction or production playback.
 
 ## Deployed CSP Validation
 

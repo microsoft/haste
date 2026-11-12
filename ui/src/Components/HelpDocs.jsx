@@ -11,6 +11,7 @@ import HelpDocsLabeling from "./HelpDocs/HelpDocsLabeling.jsx";
 import HelpDocsModelTraining from "./HelpDocs/HelpDocsModelTraining.jsx";
 import HelpDocsResults from "./HelpDocs/HelpDocsResults.jsx";
 import HelpDocsModelCatalog from "./HelpDocs/HelpDocsModelCatalog.jsx";
+import { spokaneDeepDiveEpisodes } from "./HelpDocs/spokaneDeepDiveEpisodes.js";
 
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -22,9 +23,30 @@ const HelpDocs = () => {
   const currentHelpDocSection =
     (location.pathname.replace(/^\/help-docs\/?/, "") || "overview") +
     location.hash;
-  const selectedKey = currentHelpDocSection.replace("#", "-");
+  const isIntroduction =
+    currentHelpDocSection === "overview" ||
+    currentHelpDocSection === "overview#spokane-deep-dive" ||
+    spokaneDeepDiveEpisodes.some(
+      ({ id }) => currentHelpDocSection === `overview#spokane-${id}`
+    );
+  const selectedKey = isIntroduction
+    ? "overview-introduction"
+    : currentHelpDocSection.replace("#", "-");
   const setCurrentHelpDocSection = (section) =>
     navigate(`/help-docs/${section}`);
+
+  useEffect(() => {
+    if (location.pathname === "/help-docs" || location.pathname === "/help-docs/") {
+      navigate(
+        {
+          pathname: "/help-docs/overview",
+          search: location.search,
+          hash: location.hash,
+        },
+        { replace: true }
+      );
+    }
+  }, [location.pathname, location.search, location.hash, navigate]);
 
   useEffect(() => {
     setAppParams((prevParams) => ({

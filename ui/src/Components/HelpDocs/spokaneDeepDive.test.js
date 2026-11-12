@@ -64,6 +64,7 @@ test("episode media uses the existing HTTPS documentation host", () => {
 test("deployed CSP permits only the Spokane folder for hosted media and posters", () => {
   const mediaSource =
     "https://microsoft.github.io/haste/_static/usage/spokane-deep-dive/";
+  const mediaLocation = new URL(mediaSource);
   const config = JSON.parse(
     readFileSync(
       new URL("../../../public/staticwebapp.config.json", import.meta.url),
@@ -84,9 +85,13 @@ test("deployed CSP permits only the Spokane folder for hosted media and posters"
       ["jpg", "img-src"],
     ]) {
       const asset = new URL(`${spokaneDeepDiveMediaBase}/${episode.file}.${extension}`);
+      assert.equal(asset.origin, mediaLocation.origin);
+      assert.equal(
+        asset.pathname.slice(0, asset.pathname.lastIndexOf("/") + 1),
+        mediaLocation.pathname
+      );
       assert.ok(
-        directives.get(directive)?.includes(mediaSource) &&
-          asset.href.startsWith(mediaSource),
+        directives.get(directive)?.some((source) => source === mediaSource),
         `${directive} must allow ${asset.href}`
       );
     }
@@ -94,10 +99,18 @@ test("deployed CSP permits only the Spokane folder for hosted media and posters"
 
   assert.deepEqual(directives.get("media-src"), ["'self'", mediaSource]);
   assert.deepEqual(
-    directives.get("img-src").filter((source) =>
-      source.startsWith("https://microsoft.github.io")
-    ),
-    [mediaSource]
+    directives.get("img-src"),
+    [
+      "'self'",
+      "data:",
+      "blob:",
+      "https://atlas.microsoft.com",
+      "https://*.atlas.microsoft.com",
+      "https://*.tile.openstreetmap.org",
+      "https://vantor-opendata.s3.amazonaws.com",
+      "https://data.source.coop",
+      mediaSource,
+    ]
   );
   assert.deepEqual(directives.get("default-src"), ["'self'"]);
   assert.deepEqual(directives.get("script-src"), ["'self'", "https://atlas.microsoft.com"]);
