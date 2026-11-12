@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect } from "react";
 import { AppContext } from "../AppContext";
 import HelpDocsNav from "./HelpDocs/HelpDocsNav.jsx";
 
@@ -11,25 +11,42 @@ import HelpDocsLabeling from "./HelpDocs/HelpDocsLabeling.jsx";
 import HelpDocsModelTraining from "./HelpDocs/HelpDocsModelTraining.jsx";
 import HelpDocsResults from "./HelpDocs/HelpDocsResults.jsx";
 import HelpDocsModelCatalog from "./HelpDocs/HelpDocsModelCatalog.jsx";
+import { spokaneDeepDiveEpisodes } from "./HelpDocs/spokaneDeepDiveEpisodes.js";
 
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 const HelpDocs = () => {
 
   const { setIsLoading, setAppParams } = useContext(AppContext);
-  const [currentHelpDocSection, setCurrentHelpDocSection] = useState(() => {
-    // Get the section from the URL path and hash
-    let path = window.location.pathname.replace(/^\/help-docs\/?/, "");
-    const hash = window.location.hash ? window.location.hash.substring(1) : "";
-    // If path is empty (i.e., just /help-docs or /help-docs/), default to "overview"
-    if (!path) {
-      return "overview";
+  const location = useLocation();
+  const navigate = useNavigate();
+  const currentHelpDocSection =
+    (location.pathname.replace(/^\/help-docs\/?/, "") || "overview") +
+    location.hash;
+  const isIntroduction =
+    currentHelpDocSection === "overview" ||
+    currentHelpDocSection === "overview#spokane-deep-dive" ||
+    spokaneDeepDiveEpisodes.some(
+      ({ id }) => currentHelpDocSection === `overview#spokane-${id}`
+    );
+  const selectedKey = isIntroduction
+    ? "overview-introduction"
+    : currentHelpDocSection.replace("#", "-");
+  const setCurrentHelpDocSection = (section) =>
+    navigate(`/help-docs/${section}`);
+
+  useEffect(() => {
+    if (location.pathname === "/help-docs" || location.pathname === "/help-docs/") {
+      navigate(
+        {
+          pathname: "/help-docs/overview",
+          search: location.search,
+          hash: location.hash,
+        },
+        { replace: true }
+      );
     }
-    if (hash) {
-      return `${path}#${hash}`;
-    }
-    return path;
-  });
+  }, [location.pathname, location.search, location.hash, navigate]);
 
   useEffect(() => {
     setAppParams((prevParams) => ({
@@ -37,11 +54,7 @@ const HelpDocs = () => {
       appTitle: "HASTE Docs",
     }));
     setIsLoading(false);
-  }, []);
-
-  useEffect(() => {
-    setSelectedKey(currentHelpDocSection.replace('#', '-'));
-  }, [currentHelpDocSection]);
+  }, [setAppParams, setIsLoading]);
 
   const navLinkGroups = [
     {
@@ -206,25 +219,10 @@ const HelpDocs = () => {
     }
   ];
 
-  const [selectedKey, setSelectedKey] = useState(navLinkGroups[0].links[0].key);
-
-
-  const navigate = useNavigate();
-
   function getCurrentHelpDocSection() {
 
     const section = currentHelpDocSection ? currentHelpDocSection.split("#")[0] : "overview";
     const anchor = currentHelpDocSection ? currentHelpDocSection.split("#")[1] : null;
-
-    // Update the URL when currentHelpDocSection changes
-    useEffect(() => {
-      if (currentHelpDocSection) {
-        navigate(`/help-docs/${currentHelpDocSection}`);
-      } else {
-        navigate(`/help-docs/overview`);
-      }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentHelpDocSection]);
 
     switch (section) {
       case "overview":
@@ -242,7 +240,7 @@ const HelpDocs = () => {
       case "modelCatalog":
         return <HelpDocsModelCatalog anchor={anchor} />;  
       default:
-        return <HelpDocsOverview anchor={anchor} />;
+        return <HelpDocsOverview anchor={anchor} setCurrentHelpDocSection={setCurrentHelpDocSection} />;
     }
   }
 

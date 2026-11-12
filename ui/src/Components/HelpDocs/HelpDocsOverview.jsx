@@ -3,13 +3,16 @@
 import PropTypes from 'prop-types';
 import { useEffect } from 'react';
 import HelpDocsOverviewBubble from './HelpDocsOverviewBubble';
+import HelpDocsSpokaneDeepDive from "./HelpDocsSpokaneDeepDive";
 import endToEndExampleVideo from '../../assets/helpDocs/overview/overview-end-to-end-example.mp4';
+import endToEndExamplePoster from '../../assets/helpDocs/overview/overview-end-to-end-example.jpg';
 
 
 const HelpDocsOverview = ({ anchor, setCurrentHelpDocSection }) => {
   useEffect(() => {
     if (anchor) {
-      const element = document.getElementsByName(anchor)[0];
+      const element = document.getElementById(anchor) ||
+        document.getElementsByName(anchor)[0];
       if (element) {
         element.scrollIntoView({ behavior: "smooth", block: "start" });
       }
@@ -31,9 +34,11 @@ const HelpDocsOverview = ({ anchor, setCurrentHelpDocSection }) => {
       <p>Leveraging advanced image analysis and machine learning, it empowers emergency responders and authorities to prioritize critical areas, accelerate recovery efforts, and enhance safety assessments.</p>
       <p>The basic workflow is to add imagery to a project, label a small area of the imagery with some classification labels and use this to train the model. The model will apply these learnings to generate damage predictions across the entire imagery. </p>
 
-      <video src={endToEndExampleVideo} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
+      <video src={endToEndExampleVideo} poster={endToEndExamplePoster} controls preload="none" className='w-100 mt-5 mb-3 help-docs-video-wrapper'>
         Your browser does not support the video tag.
       </video>
+
+      <HelpDocsSpokaneDeepDive />
 
       <hr className="mt-5 pb-4" />
 
