@@ -10,7 +10,11 @@ from ..models.prediction_edits import PredictionSelectionRequest
 from ..models.prediction_results import ResultsRequest
 from ..models.projects import ImageLayer, LabelProject, Model, Project
 from ..models.visualizer import Imagery, Visualizer
-from ..utils.blob import sign_internal_blob_url, unsigned_internal_blob_url
+from ..utils.blob import (
+    project_blob_prefix,
+    sign_internal_blob_url,
+    unsigned_internal_blob_url,
+)
 from ..utils.blob_sas import read_token_expires_at
 from ..utils.prediction_readiness import artifact_api_url
 from .metadata import MetadataProcessor
@@ -38,9 +42,12 @@ def build_visualizer(
 
     def raster(url: str | None, colormap: str = "") -> Imagery:
         url = unsigned_internal_blob_url(url)
+        signed = sign_internal_blob_url(
+            url, required_blob_prefix=project_blob_prefix(project.projectId)
+        )
         tile_url = (
             f"{titiler_endpoint}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}"
-            f"?scale=1&url={quote(sign_internal_blob_url(url), safe='')}"
+            f"?scale=1&url={quote(signed, safe='')}"
             f"{colormap}"
             if url
             else ""

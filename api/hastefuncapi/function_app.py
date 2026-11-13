@@ -54,6 +54,7 @@ from hastegeo.core.processors.embedding import EmbeddingPreprocessor
 from hastegeo.core.processors.footprint_tiles import FOOTPRINT_TILE_FIELDS
 from hastegeo.core.processors.imagery import ImageryPreProcessor
 from hastegeo.core.processors.inference import InferencePreprocessor
+from hastegeo.core.processors.labels import materialize_label_project_urls
 from hastegeo.core.processors.loading import (
     ActiveJobsProcessor,
     LabelingWorkspaceProcessor,
@@ -123,7 +124,6 @@ from hastegeo.core.utils.async_cache import (
 from hastegeo.core.utils.blob import (
     download_blob_to_tempfile,
     parse_byte_range,
-    sign_label_project_urls,
     sign_project_details_urls,
 )
 from hastegeo.core.utils.blob_sas import read_token_expires_at
@@ -978,7 +978,9 @@ async def GetProjectDetails(req: func.HttpRequest) -> func.HttpResponse:
             ).load(include_models=include_models)
             # Signed inside the cached load so the ETag covers the tokens the
             # client holds and a 304 can never revive an expired one.
-            await asyncio.to_thread(sign_project_details_urls, project)
+            await asyncio.to_thread(
+                sign_project_details_urls, project, project_id
+            )
             payload = json.dumps(project)
             return {
                 "payload": payload,
@@ -1761,12 +1763,30 @@ async def GetLayerLabelingToolData(req: func.HttpRequest) -> func.HttpResponse:
                 "Label project not found.", status_code=404
             )
 
+        image_layer = ImageLayer(
+            **await asyncio.to_thread(
+                MetadataProcessor(
+                    data_type=config.get_metadata_types().IMAGELAYER.value,
+                    partition_key=project_id,
+                    config=config,
+                ).load,
+                image_layer_id,
+            )
+        )
+        if (
+            image_layer.projectId != project_id
+            or image_layer.imageLayerId != image_layer_id
+        ):
+            raise ValueError("Image layer does not match the request.")
         match_label_projects = await asyncio.to_thread(
-            sign_label_project_urls, match_label_projects
+            materialize_label_project_urls,
+            match_label_projects,
+            image_layer,
+            config.titiler_endpoint,
         )
-        match_label_projects["tileCredentialExpiresAt"] = (
-            read_token_expires_at()
-        )
+        match_label_projects[
+            "tileCredentialExpiresAt"
+        ] = read_token_expires_at()
         return func.HttpResponse(
             json.dumps(match_label_projects), status_code=200
         )
@@ -1809,9 +1829,6 @@ async def GetLabelingWorkspace(req: func.HttpRequest) -> func.HttpResponse:
             config=config,
         ).load()
         payload = workspace.model_dump(mode="json")
-        payload["labelProject"] = await asyncio.to_thread(
-            sign_label_project_urls, payload["labelProject"]
-        )
         payload["tileCredentialExpiresAt"] = read_token_expires_at()
         return func.HttpResponse(
             json.dumps(payload),

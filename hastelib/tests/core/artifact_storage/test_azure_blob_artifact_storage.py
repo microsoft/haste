@@ -130,6 +130,10 @@ class TestAzureBlobArtifactStorageFetch(unittest.TestCase):
         self.storage.account_key = "key"  # pragma: allowlist secret
         self.storage.user_delegation_key = None
         self.storage.container_client.account_name = "devstoreaccount1"
+        self.storage.container_client.container_name = "data"
+        self.storage.container_client.url = (
+            "http://azurite:10000/devstoreaccount1/data"
+        )
 
         self.storage.get_download_url(
             artifact_path="http://azurite:10000/devstoreaccount1/data/a/b.tif"
@@ -139,6 +143,14 @@ class TestAzureBlobArtifactStorageFetch(unittest.TestCase):
         self.assertEqual(kwargs["container_name"], "data")
         self.assertEqual(kwargs["blob_name"], "a/b.tif")
         self.assertEqual(kwargs["account_key"], "key")
+
+    def test_download_url_rejects_another_project(self) -> None:
+        self.storage.partition_key = "project1"
+        self.storage.container_client.url = "https://account.test/container"
+        with self.assertRaises(ValueError):
+            self.storage.get_download_url(
+                artifact_path="https://account.test/container/project2/a.tif"
+            )
 
     @patch(
         "hastegeo.core.artifact_storage.azure_blob_artifact_storage.generate_blob_sas",

@@ -102,10 +102,23 @@ def get_cached_user_delegation_key(
                 _USER_DELEGATION_KEYS.move_to_end(cache_key)
                 return delegation_key
 
-        expires_at = current_time + timedelta(hours=2)
+        expires_at = current_time + max(
+            timedelta(hours=2), min_remaining + timedelta(minutes=5)
+        )
         delegation_key = blob_service_client.get_user_delegation_key(
             current_time - timedelta(minutes=5), expires_at
         )
+        signed_expiry = getattr(delegation_key, "signed_expiry", None)
+        if isinstance(signed_expiry, str):
+            signed_expiry = datetime.fromisoformat(
+                signed_expiry.replace("Z", "+00:00")
+            )
+        if isinstance(signed_expiry, datetime):
+            expires_at = signed_expiry
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= current_time + min_remaining:
+            raise ValueError("Delegation key does not outlive the read token.")
         _USER_DELEGATION_KEYS[cache_key] = (delegation_key, expires_at)
         _USER_DELEGATION_KEYS.move_to_end(cache_key)
         while len(_USER_DELEGATION_KEYS) > _USER_DELEGATION_KEY_CACHE_SIZE:
@@ -288,32 +301,116 @@ def unsigned_internal_blob_url(url: Optional[str]) -> Optional[str]:
     return url or None
 
 
-def sign_internal_blob_url(url: Optional[str], minutes: int = 60):
+def project_blob_prefix(project_id: str) -> str:
+    """Return upstream's existing project-owned Blob partition."""
+    if not isinstance(project_id, str) or not project_id:
+        raise ValueError("A project id is required for Blob signing.")
+    from .metadata import MetadataUtils
+
+    return MetadataUtils.hash_string(project_id)
+
+
+def _signing_blob_target(
+    url: str, required_blob_prefix: Optional[str]
+) -> Optional[Tuple[str, str]]:
+    candidate = urlparse(url)
+    configured = urlparse(os.environ.get("BLOB_ACCOUNT_URL", ""))
+    azure_host = (
+        (candidate.hostname or "")
+        .lower()
+        .endswith(
+            (
+                ".blob.core.windows.net",
+                ".blob.core.usgovcloudapi.net",
+                ".blob.core.chinacloudapi.cn",
+                ".blob.core.cloudapi.de",
+            )
+        )
+    )
+    if not configured.hostname:
+        if azure_host or required_blob_prefix:
+            raise ValueError("BLOB_ACCOUNT_URL is required for Blob signing.")
+        return None
+    if (
+        configured.scheme not in {"http", "https"}
+        or configured.username
+        or configured.password
+        or configured.query
+        or configured.fragment
+    ):
+        raise ValueError("BLOB_ACCOUNT_URL is not an account endpoint.")
+
+    def endpoint(parsed) -> tuple:
+        return (
+            parsed.scheme.lower(),
+            (parsed.hostname or "").lower(),
+            parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
+        )
+
+    if endpoint(candidate) != endpoint(configured):
+        if azure_host or required_blob_prefix:
+            raise ValueError("Blob URL is outside configured storage.")
+        return None
+    if candidate.username or candidate.password or candidate.fragment:
+        raise ValueError("Blob URL must not contain userinfo or a fragment.")
+    parts = [unquote(part) for part in candidate.path.lstrip("/").split("/")]
+    account_path = configured.path.strip("/")
+    if account_path:
+        if "/" in account_path or not parts or parts.pop(0) != account_path:
+            raise ValueError("Blob URL has a different path-style account.")
+    if len(parts) < 2:
+        raise ValueError("Blob URL is missing its container or blob name.")
+    container, blob = parts[0], "/".join(parts[1:])
+    if container != os.environ.get("BLOB_CONTAINER", "data"):
+        raise ValueError("Blob URL has a different container.")
+    if (
+        not blob
+        or "\\" in blob
+        or any(part in {"", ".", ".."} for part in blob.split("/"))
+    ):
+        raise ValueError("Blob URL has an invalid blob path.")
+    if required_blob_prefix is not None:
+        prefix = required_blob_prefix.strip("/")
+        if not prefix or not blob.startswith(f"{prefix}/"):
+            raise ValueError("Blob URL is outside the authorized project.")
+    return container, blob
+
+
+def sign_internal_blob_url(
+    url: Optional[str],
+    minutes: int = 60,
+    required_blob_prefix: Optional[str] = None,
+) -> Optional[str]:
     """Return ``url`` with a fresh read-only token when it is internal.
 
     Only blobs in the app's own storage account and ``BLOB_CONTAINER`` are
     signed, with any old query replaced by a token scoped to that one blob.
-    Anything else (provider URLs, other accounts or containers) is returned
-    untouched. An account key (Azurite, dev) signs directly; otherwise the
-    app identity's cached user delegation key does.
+    Foreign Azure storage or out-of-project URLs fail before signing.
+    Provider URLs pass through only without a required project prefix.
     """
     if not url:
         return url
-    client = _internal_blob_client(url)
-    if client is None:
+    if not isinstance(minutes, int) or not 0 < minutes <= 60:
+        raise ValueError("Read tokens must last between 1 and 60 minutes.")
+    target = _signing_blob_target(url, required_blob_prefix)
+    if target is None:
         return url
-    from .blob_sas import DELEGATION_KEY_MARGIN, blob_read_sas
+    from .blob_sas import blob_read_sas
 
-    container_name, blob_name = split_blob_url(blob_url_without_query(url))
-    if container_name != os.environ.get("BLOB_CONTAINER", "data"):
-        return url
-    blob_name = unquote(blob_name)
+    client = get_app_blob_service_client()
+    container_name, blob_name = target
     credential = getattr(client, "credential", None)
     account_key = getattr(credential, "account_key", None)
     user_delegation_key = None
+    # Azure must never use an account key, including during transition.
+    if urlparse(client.url).scheme == "https":
+        client = get_blob_service_client(
+            account_url=os.environ["BLOB_ACCOUNT_URL"]
+        )
+        account_key = None
     if not account_key:
         user_delegation_key = get_cached_user_delegation_key(
-            client, min_remaining=DELEGATION_KEY_MARGIN
+            client, min_remaining=timedelta(minutes=minutes + 5)
         )
     token = blob_read_sas(
         account_name=client.account_name,
@@ -354,30 +451,36 @@ _MODEL_DOWNLOAD_FIELDS = ("labelsUrl", "trainingZipUrl", "inferenceZipUrl")
 _ARTIFACT_DOWNLOAD_FIELDS = ("trainingZipUrl", "inferenceZipUrl", "zipUrl")
 
 
-def _sign_fields(item: dict, fields) -> None:
+def _sign_fields(item: dict, fields, prefix: str) -> None:
     for field in fields:
         if item.get(field):
-            item[field] = sign_internal_blob_url(item[field])
+            item[field] = sign_internal_blob_url(
+                item[field], required_blob_prefix=prefix
+            )
 
 
-def sign_project_details_urls(project: dict) -> dict:
+def sign_project_details_urls(project: dict, project_id: str) -> dict:
     """Sign blob URLs in a project-details dict in place and return it.
 
     Covers layer previews and label downloads, and each model's label and
     zip downloads. Stored values are never written back; callers sign the
     response copy only.
     """
+    prefix = project_blob_prefix(project_id)
     for layer in project.get("imageLayer") or []:
         for field in _PREVIEW_FIELDS:
             if layer.get(field):
                 layer[field] = [
-                    sign_internal_blob_url(url) for url in layer[field]
+                    sign_internal_blob_url(url, required_blob_prefix=prefix)
+                    for url in layer[field]
                 ]
-        _sign_fields(layer, _LAYER_DOWNLOAD_FIELDS)
+        _sign_fields(layer, _LAYER_DOWNLOAD_FIELDS, prefix)
         for model in layer.get("models") or []:
-            _sign_fields(model, _MODEL_DOWNLOAD_FIELDS)
+            _sign_fields(model, _MODEL_DOWNLOAD_FIELDS, prefix)
             if isinstance(model.get("artifacts"), dict):
-                _sign_fields(model["artifacts"], _ARTIFACT_DOWNLOAD_FIELDS)
+                _sign_fields(
+                    model["artifacts"], _ARTIFACT_DOWNLOAD_FIELDS, prefix
+                )
     return project
 
 

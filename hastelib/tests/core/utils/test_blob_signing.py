@@ -8,8 +8,8 @@ from urllib.parse import quote
 from hastegeo.core.utils.blob import (
     blob_url_without_query,
     clear_blob_client_caches,
-    sign_label_project_urls,
     sign_internal_blob_url,
+    sign_label_project_urls,
     sign_titiler_tile_url,
     unsigned_internal_blob_url,
 )
@@ -54,6 +54,7 @@ class TestSignInternalBlobUrl(unittest.TestCase):
         self.client = _identity_client()
         for target in (
             "hastegeo.core.utils.blob.get_app_blob_service_client",
+            "hastegeo.core.utils.blob.get_blob_service_client",
             "hastegeo.core.utils.blob.get_cached_user_delegation_key",
         ):
             patcher = patch(target)
@@ -88,28 +89,87 @@ class TestSignInternalBlobUrl(unittest.TestCase):
         self.assertIsNone(kwargs["account_key"])
         self.assertIsNotNone(kwargs["user_delegation_key"])
 
-    def test_external_and_other_container_pass_through(self):
+    def test_external_passes_through_but_foreign_container_is_refused(self):
         external = "https://provider.example.com/a.tif?token=1"
         other = f"{ACCOUNT_URL}/other/a.tif?sv=1"
         self.assertEqual(sign_internal_blob_url(external), external)
-        self.assertEqual(sign_internal_blob_url(other), other)
+        with self.assertRaises(ValueError):
+            sign_internal_blob_url(other)
         self.generate.assert_not_called()
 
-    def test_other_account_passes_through(self):
+    def test_other_account_is_refused(self):
         url = "https://other.blob.core.windows.net/data/a.tif"
-        self.assertEqual(sign_internal_blob_url(url), url)
+        with self.assertRaises(ValueError):
+            sign_internal_blob_url(url)
 
-    def test_account_key_credential_signs_with_key(self):
+    def test_azure_account_key_never_signs_read_tokens(self):
         self.client.credential = MagicMock(account_key="k")
         sign_internal_blob_url(BLOB_URL)
-        self.assertEqual(self.generate.call_args.kwargs["account_key"], "k")
+        self.assertIsNone(self.generate.call_args.kwargs["account_key"])
+
+    def test_project_prefix_is_required_and_checked_before_signing(self):
+        for url in (
+            BLOB_URL,
+            f"{ACCOUNT_URL}/data/p10/post.tif",
+            f"{ACCOUNT_URL}/data/p1/%2e%2e/p2/post.tif",
+            "https://provider.example.com/a.tif",
+        ):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                sign_internal_blob_url(url, required_blob_prefix="p2")
+        self.generate.assert_not_called()
+        signed = sign_internal_blob_url(BLOB_URL, required_blob_prefix="p1")
+        self.assertIn("sig=fresh", signed)
+
+    def test_equivalent_https_port_and_encoded_blob_name(self):
+        signed = sign_internal_blob_url(
+            f"{ACCOUNT_URL}:443/data/p1/a%20b.tif",
+            required_blob_prefix="p1",
+        )
+        self.assertIn("sig=fresh", signed)
+        self.assertEqual(
+            self.generate.call_args.kwargs["blob_name"], "p1/a b.tif"
+        )
+
+    def test_rejects_url_userinfo_and_invalid_lifetime(self):
+        with self.assertRaises(ValueError):
+            sign_internal_blob_url(
+                "https://user@acct.blob.core.windows.net/data/p1/a.tif"
+            )
+        with self.assertRaises(ValueError):
+            sign_internal_blob_url(BLOB_URL, minutes=61)
+        self.generate.assert_not_called()
+
+    def test_azurite_keeps_local_key_signing_and_validates_account_path(self):
+        emulator = "http://azurite:10000/devstoreaccount1"
+        self.client.url = emulator
+        self.client.account_name = "devstoreaccount1"
+        self.client.credential = MagicMock(account_key="emulator-key")
+        self.client.get_blob_client.side_effect = (
+            lambda container, blob: MagicMock(
+                url=f"{emulator}/{container}/{blob}"
+            )
+        )
+        with patch.dict(os.environ, {"BLOB_ACCOUNT_URL": emulator}):
+            signed = sign_internal_blob_url(
+                f"{emulator}/data/p1/post.tif", required_blob_prefix="p1"
+            )
+            self.assertIn("sig=fresh", signed)
+            self.assertEqual(
+                self.generate.call_args.kwargs["account_key"], "emulator-key"
+            )
+            with self.assertRaises(ValueError):
+                sign_internal_blob_url(
+                    "http://azurite:10000/another-account/data/p1/post.tif",
+                    required_blob_prefix="p1",
+                )
+        self.assertEqual(self.generate.call_count, 1)
 
 
 class TestSignTilerUrls(unittest.TestCase):
     def setUp(self):
         patcher = patch(
             "hastegeo.core.utils.blob.sign_internal_blob_url",
-            side_effect=lambda url: (
+            side_effect=lambda url, **kwargs: (
                 f"{url}?sig=fresh" if "acct" in url else url
             ),
         )
@@ -157,7 +217,7 @@ class TestSignTilerUrls(unittest.TestCase):
                 {},
             ]
         }
-        result = sign_project_details_urls(project)
+        result = sign_project_details_urls(project, "project-1")
         signed = f"{BLOB_URL}?sig=fresh"
         layer = result["imageLayer"][0]
         self.assertEqual(layer["preEventPreviewUrls"], [signed])

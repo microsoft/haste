@@ -13,15 +13,10 @@ from urllib.parse import unquote, urlparse
 import yaml
 from azure.core import MatchConditions
 from azure.core.exceptions import ResourceExistsError
-from azure.storage.blob import BlobClient  # type: ignore
-from azure.storage.blob import (
-    BlobSasPermissions,
-    generate_blob_sas,
-)
+from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 from hastegeo.core.utils.blob import (
     get_blob_service_client,
     get_cached_user_delegation_key,
-    split_blob_url,
 )
 from hastegeo.core.utils.blob_sas import DELEGATION_KEY_MARGIN, blob_read_sas
 from hastegeo.core.utils.logs import Logger
@@ -126,21 +121,20 @@ class AzureBlobArtifactStorage(AbstractArtifactStorage):
         """
 
         if artifact_path:
-            # Optionally, only store the blobname in the metadata
-            # and use the container_client and blob name to get the blob client
-            # It's a cleaner separation of metaphors
-            blob_client = BlobClient.from_blob_url(artifact_path)
-            container_name, blob_name = split_blob_url(artifact_path)
-            blob_name = unquote(blob_name)
+            blob_name = self.resolve_artifact_path(artifact_path)
         else:
             blob_name = self.get_file_path(
                 identifier, extra_partition_keys=extra_partition_keys
             )
-            blob_client = self.container_client.get_blob_client(blob_name)
-            container_name = self.container_client.container_name
+        if self.partition_key and not blob_name.startswith(
+            f"{self.partition_key}/"
+        ):
+            raise ValueError("Artifact is outside the configured project.")
+        blob_client = self.container_client.get_blob_client(blob_name)
+        container_name = self.container_client.container_name
 
         if not include_sas:
-            return str(blob_client.url)
+            return str(blob_client.url).split("?", 1)[0]
 
         # One blob, read-only, one hour: these URLs reach clients, so the
         # token must be worth no more than the object it points at.

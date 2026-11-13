@@ -109,6 +109,26 @@ class TestBlobServiceClientCache(unittest.TestCase):
         self.assertEqual(clients[0].get_user_delegation_key.call_count, 2)
         self.assertEqual(clients[-1].get_user_delegation_key.call_count, 1)
 
+    def test_actual_delegation_expiry_must_cover_the_read_token(self):
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        client = MagicMock(url="https://account.test")
+        key = client.get_user_delegation_key.return_value
+        key.signed_expiry = (now + timedelta(minutes=59)).isoformat()
+        with self.assertRaises(ValueError):
+            get_cached_user_delegation_key(
+                client, now=now, min_remaining=timedelta(minutes=65)
+            )
+        key.signed_expiry = (now + timedelta(hours=2)).isoformat()
+        self.assertIs(
+            get_cached_user_delegation_key(
+                client, now=now, min_remaining=timedelta(minutes=65)
+            ),
+            key,
+        )
+        self.assertEqual(client.get_user_delegation_key.call_count, 2)
+
 
 class TestAppBlobServiceClient(unittest.TestCase):
     @patch("hastegeo.core.utils.blob.get_blob_service_client")

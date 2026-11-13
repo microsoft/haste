@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import logging
+from copy import deepcopy
 
 import numpy as np
 import rasterio
@@ -15,13 +16,52 @@ from ..models.projects import (
     LabelingImagery,
     LabelProject,
 )
-from ..utils.blob import sign_internal_blob_url, unsigned_internal_blob_url
+from ..utils.blob import (
+    project_blob_prefix,
+    sign_internal_blob_url,
+    unsigned_internal_blob_url,
+)
 from ..utils.gdal_security import harden_gdal
 from ..utils.metadata import MetadataUtils
 
 # Harden GDAL drivers before any rasterio read (GDAL CVE compensating
 # control — docs/known-vulnerabilities.md Root Cause C).
 harden_gdal()
+
+
+def materialize_label_project_urls(
+    label_project: dict, image_layer: ImageLayer, titiler_endpoint: str
+) -> dict:
+    """Rebuild response-only tile URLs from the authoritative image layer."""
+    for field in ("projectId", "imageLayerId"):
+        if label_project.get(field) != getattr(image_layer, field):
+            raise ValueError(
+                "Label project does not belong to the image layer."
+            )
+    result = deepcopy(label_project)
+    imagery = result.get("imagery")
+    if not isinstance(imagery, dict):
+        return result
+    prefix = project_blob_prefix(image_layer.projectId)
+
+    def tile_url(source: str | None) -> str:
+        signed = sign_internal_blob_url(source, required_blob_prefix=prefix)
+        if not signed:
+            return ""
+        encoded = requests.utils.quote(signed, safe="")
+        return (
+            f"{titiler_endpoint}cog/tiles/WebMercatorQuad/"
+            f"{{z}}/{{x}}/{{y}}?scale=1&url={encoded}"
+        )
+
+    imagery["preEventTileUrl"] = tile_url(
+        image_layer.preEventProcessedImageryUrl
+    )
+    imagery["postEventTileUrl"] = tile_url(
+        image_layer.postEventProcessedImageryUrl
+    )
+    imagery["tileUrl"] = imagery["postEventTileUrl"]
+    return result
 
 
 class LabelTaskGenerator:
@@ -87,7 +127,10 @@ class LabelTaskGenerator:
         """Generate task files."""
         self.logger.info("Generating task file")
         with rasterio.open(
-            sign_internal_blob_url(self.input_image_fn_post_event)
+            sign_internal_blob_url(
+                self.input_image_fn_post_event,
+                required_blob_prefix=project_blob_prefix(self.partition_key),
+            )
         ) as f:
             bounds = shapely.geometry.box(*f.bounds)
             geom = shapely.geometry.mapping(bounds)
