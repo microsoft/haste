@@ -1,6 +1,13 @@
 # Design: Identity-Only Blob Access
 
-## Current behavior
+## Contents
+
+- [Baseline behavior](#baseline-behavior)
+- [Target behavior](#target-behavior)
+- [Risks](#risks)
+- [Rollout](#rollout)
+
+## Baseline behavior
 
 | Path | With connection string | Without it |
 |---|---|---|
@@ -46,8 +53,52 @@ per-blob token is minted when a URL is handed out:
   visualizer responses sign at response time. Signing replaces any older query,
   so legacy stored URLs that carry a policy token keep working after the policy
   is deleted.
-- Only blobs in the app's own account and data container are signed; provider
-  and other-account URLs pass through unchanged.
+- Only blobs in the app's own account and data container are signed.
+  Project-owned links must also match the server-derived project hash prefix.
+  A foreign Azure account/container or out-of-project link fails before signing.
+  Supported external provider URLs pass through unchanged outside project-owned
+  response materialization.
+- Label-project imagery is client-editable, not an authorization source.
+  Rebuild tile sources from the loaded ImageLayer and configured TiTiler endpoint,
+  after checking the project/layer linkage. Preserve upstream's existing storage
+  layout; do not introduce Community partner prefixes.
+
+### Ephemeral Functions storage
+
+Remove the Azure Files `/data` mount and its account-key lookup. Functions use
+`/tmp` only for disposable scratch and local log copies; Blob remains durable
+storage and Application Insights remains the operational log sink.
+
+Multipart upload state must live in Blob staged blocks, not local chunk files.
+Validate the first chunk's declared format before staging; account for all
+staged blocks when enforcing size limits and finalize only when all expected
+blocks exist. Retries and requests handled by another instance must work without
+the first instance's filesystem. Retain the File account/share for rollback and
+inspection; do not delete data.
+
+### Storage posture and RBAC
+
+The shared worker identity gets Blob Data Contributor on the application data
+container and Blob Delegator on its account. Keep the system-assigned Functions
+host roles and TiTiler isolation unchanged. Deploy replacement assignments under
+new deterministic IDs; do not change a role definition on an existing assignment.
+Incremental deployment retains old account-level Owner assignments, so inspect
+and explicitly retire those exact grants after access validation. Retire the
+obsolete File-account Blob Owner grant separately, without deleting File data.
+
+Anonymous Blob access is denied explicitly. Shared Key flags remain compatibility
+gates (`allowMainSharedKeyAccess` and `allowFileSharedKeyAccess`, initially true).
+An initial deployment does not disable accounts. After separately approved
+cutovers, persist false values in the environment's IaC parameter source and
+verify that subsequent deployments keep them false.
+
+### Candidate deployment
+
+Permit an explicit maintainer-dispatched candidate package attestation on a
+repository branch for development validation only. Verify the build workflow,
+event, source SHA/ref, checksums and attestation before Azure login. Non-main
+deployments may target only dev1. Production continues to require main-signed
+packages. Runtime-wheel publishing conditions do not change.
 
 ### Long sessions
 
@@ -81,14 +132,19 @@ by blob path.
 
 ## Rollout
 
-1. Merge code; the setting is still present, so behavior is unchanged except the
-   token shape.
-2. Remove `BLOB_CONNECTION_STRING` from the deployment config; deploy to dev1;
-   exercise upload, imagery, labeling, training, inference, downloads and
-   publishing.
-3. Repeat for dev2, then production.
-4. Delete the stored policy, then disable shared-key access on the data account
-   in a separate change, one environment at a time.
+1. Validate the attested dev1 candidate before merging. Apply prerequisite roles
+   only with approval; drain existing multipart uploads before scratch cutover.
+2. Deploy compatible packages through Actions. Only after publication succeeds,
+   remove the obsolete Blob connection setting and existing HASTE File mount.
+   Exercise upload, imagery, labeling, training, inference, downloads and publishing.
+3. After review and dev1 acceptance, merge and promote main through dev1, dev2,
+   then production, with approval for each stage.
+4. Retire legacy policies/roles and disable Shared Key only in separately approved
+   stages, one eligible account at a time. Retained File storage has its own gate.
 
-Rollback: re-add the setting (code still honors it) and re-enable shared-key
-access.
+Before each live stage, record nonsecret package/image/mount/RBAC rollback
+metadata. Restoring a key-dependent version after disablement requires explicit
+approval to re-enable Shared Key. Revoke the legacy policy only after consumers
+are migrated; code rollback does not automatically restore revoked tokens.
+
+See [rollout.md](rollout.md) for separate compatibility and disablement gates.

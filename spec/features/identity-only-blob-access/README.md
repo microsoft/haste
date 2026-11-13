@@ -1,11 +1,19 @@
 # Feature: Identity-Only Blob Access
 
-**Status:** in-review
+**Status:** in-progress
 **Author:** HASTE engineering team
 **Date:** 2026-10-27
 **Target Release:** next
 **Priority:** P1
 **Work Item:** —
+
+## Contents
+
+- [Summary](#summary)
+- [Motivation](#motivation)
+- [Success Criteria](#success-criteria)
+- [Out of Scope](#out-of-scope)
+- [HASTE Components Affected](#haste-components-affected)
 
 ## Summary
 
@@ -43,22 +51,37 @@ storage account.
       setting removed.
 - [ ] Shared-key access can then be disabled on the data storage account
       (separate, gated change).
+- [ ] Signing is constrained to the requested project's storage prefix and
+      labeling tiles are rebuilt from authoritative image-layer records.
+- [ ] Functions use ephemeral scratch, with durable chunk uploads in Blob and
+      no key-backed Azure Files mount.
+- [ ] Candidate packages can be deployed to development with verified
+      provenance, without permitting non-main production deployments.
 
 ## Out of Scope
 
-- The Azure Files account backing the Functions `/data` mount, which needs a key.
 - Batch account key and communication-service connection string.
 - The Batch auto-storage account.
+- Community-specific partner tenancy and private-network provisioning.
+- Deleting retained Azure Files data or disabling keys without a consumer audit.
 
 ## HASTE Components Affected
 
 | Component | Impact |
 |---|---|
 | `hastelib/.../utils/blob_sas.py` | New helper that mints blob-scoped read tokens |
-| `hastelib/.../utils/blob.py` | Byte-range and download helpers fall back to the identity |
-| `hastelib/.../data_layer/azure_blob_storage_data_layer.py` | Uses the helper; stops creating the container policy |
+| `hastelib/.../utils/blob.py` | Identity reads, project-scoped signing and delegation-key lifetime/cache |
+| `hastelib/.../data_layer/azure_blob_storage_data_layer.py` | Unsigned metadata locations and durable multipart Blob staging; no stored policy |
 | `hastelib/.../artifact_storage/azure_blob_artifact_storage.py` | Same |
-| `infra/modules/functions.bicep`, `.github/scripts/deploy_apps.sh` | Stop setting `BLOB_CONNECTION_STRING` |
+| `hastelib/.../processors/labels.py`, `loading.py`, `visualizer.py` | Trusted response-only URL materialization |
+| `hastelib/.../processors/uploader.py` | Bounded remote chunk state, finalization and cancellation |
+| `ui/src/util/tileCredentialRefresh.js` | In-place refresh with malformed-response rejection |
+| `infra/modules/{storage,functionApp,functions}.bicep`, `.github/scripts/deploy_apps.sh` | Keyless app settings, scratch/mount reconciliation, staged account flags and RBAC |
+| `.github/workflows/{deploy-apps,gdal-runtime-build}.yml` | Attested development candidates; main-only production trust |
 
 Related: [design.md](design.md),
 [ADR-0008](../../architecture/decisions/0008-identity-only-blob-access.md).
+
+Execution: [plan.md](plan.md), [user-stories.md](user-stories.md),
+[impact-analysis.md](impact-analysis.md), [test-plan.md](test-plan.md),
+[rollout.md](rollout.md).

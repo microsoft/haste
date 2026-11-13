@@ -4,6 +4,13 @@
 **Date:** 2026-10-27
 **Deciders:** HASTE maintainers
 
+## Contents
+
+- [Context](#context)
+- [Options Considered](#options-considered)
+- [Decision](#decision)
+- [Consequences](#consequences)
+
 ## Context
 
 The API and queue apps receive the storage account key through
@@ -39,4 +46,11 @@ emulator. Disable shared-key access on the data account afterwards.
 - Tokens are shorter-lived, so stored URLs are kept unsigned and signed when
   served; anything else must read by path or go through the proxy.
 - Deployment config no longer needs the account key.
-- The Azure Files mount keeps its key; this decision does not cover it.
+- Functions use ephemeral scratch rather than the key-backed Azure Files
+  mount; multipart chunks are staged durably in Blob across requests.
+- Signing requires the trusted project's storage prefix; client-editable
+  label imagery is replaced by server-derived image-layer sources.
+- A development-only candidate attestation path permits pre-merge testing.
+  Production still requires verified packages from main.
+- File resources are retained. Shared Key disablement is a separately approved
+  operation after consumer and restart/persistence validation.
