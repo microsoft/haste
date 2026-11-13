@@ -75,6 +75,12 @@ param batchPoolSubnetName string = 'batch-subnet'
 @description('Shared hub batch-subnet resource id where the SHARED multi-tenant pools are VNet-injected. Set for shared-pool envs (dev/demo) so this env storage allowlists that subnet; empty for single-tenant prod. See spec/features/batch-compute-expansion/networking.md.')
 param sharedBatchSubnetId string = ''
 
+@description('Allow Shared Key on application storage until keyless compatibility is validated.')
+param allowMainSharedKeyAccess bool = true
+
+@description('Allow Shared Key on retained File storage until every File-key consumer is retired.')
+param allowFileSharedKeyAccess bool = true
+
 @description('Training container image (tag included).')
 param trainingImage string = 'hastetraining:1.4.1'
 
@@ -278,6 +284,8 @@ module storage 'modules/storage.bicep' = {
     functionsSubnetName: functionsSubnetName
     batchSubnetName: batchPoolSubnetName
     sharedBatchSubnetId: sharedBatchSubnetId
+    allowMainSharedKeyAccess: allowMainSharedKeyAccess
+    allowFileSharedKeyAccess: allowFileSharedKeyAccess
     tags: tags
   }
   dependsOn: [
@@ -333,7 +341,6 @@ module functions 'modules/functions.bicep' = {
     functionTitilerName: functionTitilerName
     functionQueueName: functionQueueName
     storageAccountName: storageAccountName
-    fileStorageAccountName: fileStorageAccountName
     titilerStorageAccountName: storage.outputs.titilerStorageAccountName
     umiResourceId: identity.outputs.resourceId
     vnetName: vnetName

@@ -374,8 +374,6 @@ deploy_function() {
             "METADATA_STORAGE_TYPE=blob" \
             "ARTIFACT_STORAGE_TYPE=blob" \
             "RUNNER_TYPE=azure_batch" \
-            "TEMP_DATA_PATH=/data" \
-            "DATA_PATH=/data" \
             "TITILER_ENDPOINT=/api/titiler/" \
             "QUEUE_ACCOUNT_URL=https://${STORAGE_ACCOUNT}.queue.core.windows.net" \
             "BLOB_ACCOUNT_URL=https://${STORAGE_ACCOUNT}.blob.core.windows.net" \
@@ -502,6 +500,23 @@ deploy_function() {
     # connection string left behind by earlier deployments, only once code
     # that no longer needs it is running.
     if [ "${SET_APPSETTINGS:-true}" = "true" ]; then
+        az functionapp config appsettings set \
+            --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" \
+            --settings "TEMP_DATA_PATH=/tmp" "DATA_PATH=/tmp" \
+            --output none
+        # Clear only the retired HASTE mount, never the share or unrelated mounts.
+        local OLD_MOUNT
+        OLD_MOUNT=$(az webapp config storage-account list \
+            --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" \
+            --output json | jq -r '.data.mountPath // empty')
+        if [ "$OLD_MOUNT" = "/data" ]; then
+            az webapp config storage-account delete \
+                --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" \
+                --custom-id data --output none
+        elif [ -n "$OLD_MOUNT" ]; then
+            echo "ERROR: Unexpected HASTE data mount path; refusing removal." >&2
+            return 1
+        fi
         az functionapp config appsettings delete --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" \
             --setting-names BLOB_CONNECTION_STRING \
             --output none

@@ -1,8 +1,8 @@
 """Pin TiTiler's identity and storage isolation in the compiled template."""
 
 import json
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -63,7 +63,7 @@ class TestTitilerLeastPrivilege(unittest.TestCase):
     def test_titiler_drops_shared_identity_mount_and_delegator(self) -> None:
         parameters = self.parameters(self.titiler)
         self.assertIs(parameters["attachSharedIdentity"]["value"], False)
-        self.assertIs(parameters["mountDataShare"]["value"], False)
+        self.assertNotIn("mountDataShare", parameters)
         self.assertIs(parameters["grantBlobDelegator"]["value"], False)
 
     def test_api_and_queue_keep_their_defaults(self) -> None:
@@ -73,7 +73,6 @@ class TestTitilerLeastPrivilege(unittest.TestCase):
                 for name in (
                     "hostStorageAccountName",
                     "attachSharedIdentity",
-                    "mountDataShare",
                     "grantBlobDelegator",
                 ):
                     self.assertNotIn(name, parameters)
@@ -98,7 +97,60 @@ class TestTitilerLeastPrivilege(unittest.TestCase):
         )
         # Always deployed, so turning the mount off removes an old one.
         self.assertNotIn("condition", mount)
-        self.assertIn("mountDataShare", json.dumps(mount["properties"]))
+        self.assertEqual(mount["properties"], {})
+        self.assertNotIn("listKeys(", json.dumps(self.app_template))
+
+    def test_storage_key_disablements_remain_separate_compatibility_gates(
+        self,
+    ) -> None:
+        parameters = self.storage_template["parameters"]
+        for name in ("allowMainSharedKeyAccess", "allowFileSharedKeyAccess"):
+            self.assertIs(parameters[name]["defaultValue"], True)
+            self.assertIs(self.main["parameters"][name]["defaultValue"], True)
+        accounts = _of_type(
+            self.storage_template, "Microsoft.Storage/storageAccounts"
+        )
+        for account in accounts:
+            self.assertIs(
+                account["properties"]["allowBlobPublicAccess"], False
+            )
+        main = next(
+            account
+            for account in accounts
+            if account["name"] == "[parameters('storageAccountName')]"
+        )
+        self.assertEqual(
+            main["properties"]["allowSharedKeyAccess"],
+            "[parameters('allowMainSharedKeyAccess')]",
+        )
+        self.assertIs(main["properties"]["allowCrossTenantReplication"], False)
+        self.assertIs(main["properties"]["defaultToOAuthAuthentication"], True)
+
+    def test_worker_grants_do_not_recreate_legacy_blob_owners(self) -> None:
+        assignments = _of_type(
+            self.storage_template, "Microsoft.Authorization/roleAssignments"
+        )
+        self.assertEqual(len(assignments), 2)
+        contributor = next(
+            role
+            for role in assignments
+            if "blobDataContributor" in role["name"]
+        )
+        self.assertIn("containers", contributor["scope"])
+        delegator = next(
+            role for role in assignments if "blobDelegator" in role["name"]
+        )
+        self.assertIn("storageAccountName", delegator["scope"])
+        self.assertNotIn(
+            "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
+            json.dumps(self.storage_template),
+        )
+        self.assertTrue(
+            _of_type(
+                self.storage_template,
+                "Microsoft.Storage/storageAccounts/fileServices/shares",
+            )
+        )
 
     def test_titiler_storage_is_identity_only_and_private(self) -> None:
         account = next(

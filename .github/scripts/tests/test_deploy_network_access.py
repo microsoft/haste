@@ -197,6 +197,8 @@ class TestDeployNetworkAccess(unittest.TestCase):
         component: str = "titiler",
         apim_subnet: str = SUBNET,
         fail_removals: int = 0,
+        mounts: dict | None = None,
+        fail_mount_removal: bool = False,
         **environment: str,
     ) -> tuple[subprocess.CompletedProcess[str], list[str], dict]:
         state = {
@@ -206,6 +208,8 @@ class TestDeployNetworkAccess(unittest.TestCase):
             "defaults": defaults or {"main": None, "scm": None},
             "rules": rules or {"main": [], "scm": []},
             "failRemovals": fail_removals,
+            "mounts": mounts or {},
+            "failMountRemoval": fail_mount_removal,
         }
         with tempfile.TemporaryDirectory() as directory:
             state_file = Path(directory) / "state.json"
@@ -476,6 +480,69 @@ class TestDeployNetworkAccess(unittest.TestCase):
         self.assertFalse(any("access-restriction" in call for call in calls))
         self.assertTrue(any(call.startswith("func ") for call in calls))
         self.assertEqual(final["defaults"], {"main": None, "scm": None})
+
+    def test_scratch_cutover_removes_only_haste_mount_after_publish(
+        self,
+    ) -> None:
+        result, calls, final = self.run_deploy(
+            component="funcqueue",
+            mounts={
+                "data": {"mountPath": "/data"},
+                "other": {"mountPath": "/other"},
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        publish = calls.index(self.publish_line(calls))
+        scratch = next(
+            i for i, call in enumerate(calls) if "TEMP_DATA_PATH=/tmp" in call
+        )
+        removal = next(
+            i
+            for i, call in enumerate(calls)
+            if call.startswith("webapp config storage-account delete")
+        )
+        key_removal = next(
+            i
+            for i, call in enumerate(calls)
+            if "--setting-names BLOB_CONNECTION_STRING" in call
+        )
+        self.assertLess(publish, scratch)
+        self.assertLess(scratch, removal)
+        self.assertLess(removal, key_removal)
+        self.assertEqual(final["mounts"], {"other": {"mountPath": "/other"}})
+
+    def test_failed_publish_preserves_mount_and_blob_setting(self) -> None:
+        result, calls, final = self.run_deploy(
+            component="funcqueue",
+            mounts={"data": {"mountPath": "/data"}},
+            FUNC_EXIT="1",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("data", final["mounts"])
+        self.assertFalse(any("TEMP_DATA_PATH=/tmp" in call for call in calls))
+        self.assertFalse(
+            any(
+                "--setting-names BLOB_CONNECTION_STRING" in call
+                for call in calls
+            )
+        )
+
+    def test_mount_removal_failure_fails_without_removing_blob_setting(
+        self,
+    ) -> None:
+        result, calls, final = self.run_deploy(
+            component="funcqueue",
+            mounts={"data": {"mountPath": "/data"}},
+            fail_mount_removal=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("data", final["mounts"])
+        self.assertFalse(
+            any(
+                "--setting-names BLOB_CONNECTION_STRING" in call
+                for call in calls
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 // Functions storage account (Standard_LRS) + premium file storage with a `data`
-// share, both locked to the env subnets, plus Storage Blob Data Owner for the UMI.
+// share, both locked to the env subnets. The UMI gets container-scoped Blob Data
+// Contributor and account-scoped delegation only; retire legacy Owner grants
+// explicitly after verifying the replacement roles (incremental IaC retains them).
 // (Replaces create_storage and the storage-rule portion of networking.)
 
 @description('Azure region.')
@@ -35,9 +37,19 @@ param sharedBatchSubnetId string = ''
 @description('Resource tags.')
 param tags object = {}
 
-var blobDataOwnerRoleId = subscriptionResourceId(
+@description('Compatibility gate: set false only after keyless application validation.')
+param allowMainSharedKeyAccess bool = true
+
+@description('Compatibility gate: set false only after retiring all File-key consumers.')
+param allowFileSharedKeyAccess bool = true
+
+var blobDataContributorRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
-  'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+  'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+)
+var blobDelegatorRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  'db58b8e5-c6ad-4a2a-8342-4190687cbf4a'
 )
 
 var defaultSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, defaultSubnetName)
@@ -54,7 +66,10 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   kind: 'StorageV2'
   properties: {
     accessTier: 'Hot'
-    allowSharedKeyAccess: true
+    allowSharedKeyAccess: allowMainSharedKeyAccess
+    allowBlobPublicAccess: false
+    allowCrossTenantReplication: false
+    defaultToOAuthAuthentication: true
     minimumTlsVersion: 'TLS1_2'
     supportsHttpsTrafficOnly: true
     networkAcls: {
@@ -96,7 +111,8 @@ resource fileStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
   kind: 'FileStorage'
   properties: {
-    allowSharedKeyAccess: true
+    allowSharedKeyAccess: allowFileSharedKeyAccess
+    allowBlobPublicAccess: false
     minimumTlsVersion: 'TLS1_2'
     supportsHttpsTrafficOnly: true
     networkAcls: {
@@ -169,23 +185,26 @@ resource blobShare 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' =
 resource dataContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
   parent: blobShare
   name: 'data'
+  properties: {
+    publicAccess: 'None'
+  }
 }
 
-resource umiBlobOwnerOnStorage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, umiPrincipalId, 'blobDataOwner')
-  scope: storageAccount
+resource umiBlobContributorOnData 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(dataContainer.id, umiPrincipalId, 'blobDataContributor')
+  scope: dataContainer
   properties: {
-    roleDefinitionId: blobDataOwnerRoleId
+    roleDefinitionId: blobDataContributorRoleId
     principalId: umiPrincipalId
     principalType: 'ServicePrincipal'
   }
 }
 
-resource umiBlobOwnerOnFileStorage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(fileStorageAccount.id, umiPrincipalId, 'blobDataOwner')
-  scope: fileStorageAccount
+resource umiBlobDelegatorOnStorage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, umiPrincipalId, 'blobDelegator')
+  scope: storageAccount
   properties: {
-    roleDefinitionId: blobDataOwnerRoleId
+    roleDefinitionId: blobDelegatorRoleId
     principalId: umiPrincipalId
     principalType: 'ServicePrincipal'
   }
