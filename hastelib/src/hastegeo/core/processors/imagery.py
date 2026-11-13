@@ -364,10 +364,8 @@ class ImageryPostProcessor:
             self.config.get_metadata_types().IMAGERY_CONFIG.value,
             data_format="yaml",
         )
-        filename_pattern = (
-            rf"{MetadataUtils.hash_string(self.image_data.projectId)}/(.*)\?+"
-        )
-        plain_url_pattern = r"(.*)\?+"
+        filename_pattern = rf"{MetadataUtils.hash_string(self.image_data.projectId)}/([^?]+)(?:\?.*)?$"
+        plain_url_pattern = r"([^?]+)(?:\?.*)?$"
         imagery_input_files = {
             "config": {
                 "http_url": extract_from_url(
@@ -651,5 +649,6 @@ class ImageryPostProcessor:
                 identifier=filename,
                 extra_partition_keys=f"{self.image_data.preprocessJob.taskId}",
                 data_format=os.path.splitext(filename)[1].strip("."),
+                include_sas=False,
             )
         return url

@@ -178,6 +178,7 @@ class ArtifactProcessor:
                                 "filename"
                             ],
                             extra_partition_keys=zip_task_id,
+                            include_sas=False,
                         )
                     )
                     self.model_artifacts.trainingZipSize = manifest_data[
@@ -191,6 +192,7 @@ class ArtifactProcessor:
                                 "filename"
                             ],
                             extra_partition_keys=zip_task_id,
+                            include_sas=False,
                         )
                     )
                     self.model_artifacts.inferenceZipSize = manifest_data[

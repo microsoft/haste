@@ -100,6 +100,20 @@ class UnifiedDataLayer:
             total_chunks=total_chunks,
         )
 
+    def get_chunk_upload_state(
+        self, identifier, data_type, data_format="tif", total_chunks=None
+    ) -> dict:
+        return self.data_layer.get_chunk_upload_state(
+            identifier, data_type, data_format, total_chunks
+        )
+
+    def discard_chunk_upload(
+        self, identifier, data_type, data_format="tif", total_chunks=None
+    ) -> bool:
+        return self.data_layer.discard_chunk_upload(
+            identifier, data_type, data_format, total_chunks
+        )
+
     def update(
         self,
         identifier,
@@ -211,6 +225,7 @@ class UnifiedDataLayer:
         data_format="json",
         extra_partition_keys=None,
         check_exists=True,
+        include_sas=True,
     ):
         return self.data_layer.get_file_remote_path(
             identifier,
@@ -218,6 +233,7 @@ class UnifiedDataLayer:
             data_format=data_format,
             extra_partition_keys=extra_partition_keys,
             check_exists=check_exists,
+            include_sas=include_sas,
         )
 
     def get_base_url(self):

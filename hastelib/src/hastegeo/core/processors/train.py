@@ -345,13 +345,11 @@ class TrainPostprocessor(BaseTrainProcessor):
 
     def _create_experiment_config(self):
         experiment_input_files = {}
-        filename_pattern = (
-            rf"{MetadataUtils.hash_string(self.model_data.projectId)}/(.*)\?+"
-        )
+        filename_pattern = rf"{MetadataUtils.hash_string(self.model_data.projectId)}/([^?]+)(?:\?.*)?$"
         # NOTE: SAS token is not needed if using Managed Identity but this is very blob specific
         #  - so these may need to be methods in the data layer classes
         # including the SAS token results in batch job failing to download the blob with an InvalidAuthenticationInfo error
-        plain_url_pattern = r"(.*)\?+"
+        plain_url_pattern = r"([^?]+)(?:\?.*)?$"
         # Save the aliased labels as a geojson file to feed to the batch job
         labels_geojson = convert_json_to_geojson(
             self.label_project.model_dump(by_alias=True)
@@ -366,6 +364,7 @@ class TrainPostprocessor(BaseTrainProcessor):
             self.model_data.modelId,
             self.config.get_metadata_types().TRAIN_LABELS.value,
             data_format="geojson",
+            include_sas=False,
         )
         self.model_data.labelsUrl = labels_filepath
 

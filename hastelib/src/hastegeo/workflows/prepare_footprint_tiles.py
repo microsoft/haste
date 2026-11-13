@@ -348,7 +348,7 @@ def store_artifacts(
             artifact_name=artifact_name, src_path=local_path
         )
         urls[artifact_name] = storage.get_download_url(
-            identifier=artifact_name
+            identifier=artifact_name, include_sas=False
         )
         logger.info("Stored artifact %s", artifact_name)
     return urls

@@ -520,9 +520,9 @@ class FootprintTilesPreprocessor:
     def _create_job_config(self) -> Dict[str, Dict[str, str]]:
         """Write the workflow config and describe the task input files."""
         filename_pattern = (
-            rf"{MetadataUtils.hash_string(self.project_id)}/(.*)\?+"
+            rf"{MetadataUtils.hash_string(self.project_id)}/([^?]+)(?:\?.*)?$"
         )
-        plain_url_pattern = r"(.*)\?+"
+        plain_url_pattern = r"([^?]+)(?:\?.*)?$"
 
         footprints_url = self.image_layer.buildingFootprintsUrl
         if not footprints_url:

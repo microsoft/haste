@@ -78,6 +78,29 @@ class TestExecuteImagePreprocessConfigDict(unittest.TestCase):
         self.assertIn("user_building_footprints_url", cfg)
         self.assertIsNone(cfg["user_building_footprints_url"])
 
+    def test_batch_input_filename_supports_unsigned_and_legacy_urls(self):
+        from hastegeo.core.utils.metadata import MetadataUtils
+
+        prefix = MetadataUtils.hash_string("proj-1")
+        base = (
+            f"https://account.blob.core.windows.net/data/{prefix}/config.yaml"
+        )
+        for suffix in ("", "?sig=legacy"):
+            with self.subTest(suffix=suffix):
+                processor = self._build_processor(user_url=None)
+                processor._update_imagery_progress = MagicMock()
+                processor.image_data.dict.return_value = {}
+                processor.storage.get_file_remote_path.return_value = (
+                    base + suffix
+                )
+                processor.runner.add_task.return_value = ("job-1", "task-1")
+                processor._execute_image_preprocess()
+                inputs = processor.runner.add_task.call_args.kwargs[
+                    "resource_files_for_upload"
+                ]
+                self.assertEqual(inputs["config"]["http_url"], base)
+                self.assertEqual(inputs["config"]["file_path"], "config.yaml")
+
 
 if __name__ == "__main__":
     unittest.main()

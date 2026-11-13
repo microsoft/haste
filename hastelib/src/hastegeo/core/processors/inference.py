@@ -545,7 +545,9 @@ class InferencePostprocessor(BaseInferenceProcessor):
         )
         urls = {
             field: storage.get_download_url(
-                identifier=name, extra_partition_keys=namespace
+                identifier=name,
+                extra_partition_keys=namespace,
+                include_sas=False,
             )
             for field, name in names.items()
         }
@@ -570,15 +572,13 @@ class InferencePostprocessor(BaseInferenceProcessor):
             )
 
         inference_input_files = {}
-        filename_pattern = (
-            rf"{MetadataUtils.hash_string(self.model_data.projectId)}/(.*)\?+"
-        )
+        filename_pattern = rf"{MetadataUtils.hash_string(self.model_data.projectId)}/([^?]+)(?:\?.*)?$"
         # NOTE: SAS token is not needed if using Managed Identity but this is very blob specific
         #  - so these may need to be methods in the data layer classes
         # if SAS token is included then batch job fails to download the blob with an InvalidAuthenticationInfo error
         # NOTE: One cleaner way to build inference resource files could be to make the bda code responsible for
         # downloading the files, and this download runs on the batch container.
-        plain_url_pattern = r"(.*)\?+"
+        plain_url_pattern = r"([^?]+)(?:\?.*)?$"
 
         raw_fn = f"inputs/{extract_from_url(self.image_layer.postEventMosaicCogImageryUrl, filename_pattern)}"
         inference_input_files["raw_cog_image"] = {

@@ -3,7 +3,6 @@
 import hashlib
 import json
 import logging
-import os
 from threading import Lock
 
 import yaml
@@ -25,6 +24,9 @@ _INITIALIZED_CONTAINERS_LOCK = Lock()
 
 
 class AzureBlobStorageDataLayer(AbstractDataLayer):
+    _UPLOAD_COMPLETE = "haste_upload_complete"
+    _UPLOAD_TOTAL_CHUNKS = "haste_upload_total_chunks"
+
     def __init__(
         self,
         account_url,
@@ -107,6 +109,7 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
         data_format="json",
         extra_partition_keys=None,
         check_exists=True,
+        include_sas=True,
     ):
         blob_name = self.get_file_path(
             identifier,
@@ -121,6 +124,8 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
         # ``list_identifiers``) — the token is signed locally for this blob,
         # so building the URL needs no request.
         if not check_exists or blob_client.exists():
+            if not include_sas:
+                return str(blob_client.url).split("?", 1)[0]
             account_key = self.account_key
             user_delegation_key = self.user_delegation_key
             if self.identity_blob_service_client is not None:
@@ -200,22 +205,88 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
         data_format="tif",
         chunk_id=None,
     ):
-        blob_name = self.get_file_path(
-            identifier=identifier, data_type=data_type, data_format=data_format
+        self.validate_data_input(data, data_file_path)
+        if data_file_path:
+            with open(data_file_path, "rb") as chunk_file:
+                data = chunk_file.read()
+        if not isinstance(data, (bytes, bytearray)):
+            raise ValueError("Chunk data must be bytes.")
+        if chunk_id is None or int(chunk_id) < 0:
+            raise ValueError("chunk_id must be a non-negative integer.")
+        blob_client = self._chunk_blob_client(
+            identifier, data_type, data_format
         )
-        blob_client = self.container_client.get_blob_client(blob_name)
+        blob_client.stage_block(
+            block_id=self._block_id(int(chunk_id)),
+            data=bytes(data),
+            length=len(data),
+        )
+        return str(blob_client.url)
 
-        block_id = hashlib.sha256(str(chunk_id).encode()).hexdigest()
-        with open(data_file_path, "rb") as data:
-            blob_client.stage_block(
-                block_id=block_id,
-                data=data,
-                length=os.path.getsize(data_file_path),
+    @staticmethod
+    def _block_id(chunk_id: int) -> str:
+        return hashlib.sha256(str(chunk_id).encode()).hexdigest()
+
+    def _chunk_blob_client(self, identifier, data_type, data_format):
+        return self.container_client.get_blob_client(
+            self.get_file_path(identifier, data_type, data_format)
+        )
+
+    def get_chunk_upload_state(
+        self, identifier, data_type, data_format="tif", total_chunks=None
+    ) -> dict:
+        if total_chunks is None or not 0 < int(total_chunks) <= 2048:
+            raise ValueError("total_chunks must be between 1 and 2048.")
+        total_chunks = int(total_chunks)
+        client = self._chunk_blob_client(identifier, data_type, data_format)
+        try:
+            properties = client.get_blob_properties()
+            metadata = properties.metadata or {}
+            if metadata.get(self._UPLOAD_COMPLETE) == "true":
+                if metadata.get(self._UPLOAD_TOTAL_CHUNKS) != str(
+                    total_chunks
+                ):
+                    raise ValueError(
+                        "Completed upload has a different chunk count."
+                    )
+                return {
+                    "complete": True,
+                    "committed": [],
+                    "missing": [],
+                    "unexpected": [],
+                    "total_size": properties.size or 0,
+                    "output_url": self.get_file_remote_path(
+                        identifier, data_type, data_format, include_sas=False
+                    ),
+                }
+        except ResourceNotFoundError:
+            pass
+        try:
+            committed, uncommitted = client.get_block_list(
+                block_list_type="all"
             )
-
-        return self.get_file_remote_path(
-            identifier=identifier, data_type=data_type, data_format=data_format
-        )
+        except ResourceNotFoundError:
+            committed, uncommitted = [], []
+        expected = {
+            self._block_id(index): index for index in range(total_chunks)
+        }
+        sizes = {
+            expected[block.id]: int(block.size or 0)
+            for block in uncommitted
+            if block.id in expected
+        }
+        return {
+            "complete": False,
+            "committed": [block.id for block in committed],
+            "missing": [
+                index for index in range(total_chunks) if index not in sizes
+            ],
+            "unexpected": [
+                block.id for block in uncommitted if block.id not in expected
+            ],
+            "total_size": sum(sizes.values()),
+            "output_url": None,
+        }
 
     def finalize_save(
         self,
@@ -225,19 +296,45 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
         data_file_path=None,
         total_chunks=None,
     ):
-        blob_name = self.get_file_path(
-            identifier=identifier, data_type=data_type, data_format=data_format
+        state = self.get_chunk_upload_state(
+            identifier, data_type, data_format, total_chunks
         )
-        blob_client = self.container_client.get_blob_client(blob_name)
-
-        block_id_list = []
-        for i in range(total_chunks):
-            block_id = hashlib.sha256(str(i).encode()).hexdigest()
-            block_id_list.append(BlobBlock(block_id=block_id))
-        blob_client.commit_block_list(block_id_list)
+        if state["complete"]:
+            return state["output_url"]
+        if state["missing"] or state["unexpected"]:
+            raise ValueError("Upload has missing or unexpected staged chunks.")
+        client = self._chunk_blob_client(identifier, data_type, data_format)
+        client.commit_block_list(
+            [
+                BlobBlock(block_id=self._block_id(index))
+                for index in range(int(total_chunks))
+            ],
+            metadata={
+                self._UPLOAD_COMPLETE: "true",
+                self._UPLOAD_TOTAL_CHUNKS: str(total_chunks),
+            },
+        )
         return self.get_file_remote_path(
-            identifier=identifier, data_type=data_type, data_format=data_format
+            identifier, data_type, data_format, include_sas=False
         )
+
+    def discard_chunk_upload(
+        self, identifier, data_type, data_format="tif", total_chunks=None
+    ) -> bool:
+        state = self.get_chunk_upload_state(
+            identifier, data_type, data_format, total_chunks
+        )
+        if state["complete"]:
+            return False
+        client = self._chunk_blob_client(identifier, data_type, data_format)
+        if state["committed"]:
+            client.commit_block_list(
+                [BlobBlock(block_id=value) for value in state["committed"]]
+            )
+        else:
+            client.commit_block_list([])
+            client.delete_blob(delete_snapshots="include")
+        return True
 
     def update(
         self,

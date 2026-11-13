@@ -14,6 +14,90 @@ from hastegeo.core.data_layer.azure_blob_storage_data_layer import (
 
 
 class TestAzureBlobStorageDataLayerLoad(unittest.TestCase):
+    def test_unsigned_path_does_not_request_a_delegation_key(self) -> None:
+        self.blob_client.url = "https://account.test/data/file.tif"
+        self.assertEqual(
+            self.layer.get_file_remote_path("file", include_sas=False),
+            self.blob_client.url,
+        )
+
+    def test_stage_bytes_without_local_disk(self) -> None:
+        self.blob_client.url = "https://account.test/data/file.tif"
+        result = self.layer.save_chunk(
+            "file", "raw", data=b"chunk", chunk_id=0
+        )
+        self.assertEqual(result, self.blob_client.url)
+        self.blob_client.stage_block.assert_called_once_with(
+            block_id=self.layer._block_id(0), data=b"chunk", length=5
+        )
+
+    def test_remote_state_reports_missing_blocks_and_total_size(self) -> None:
+        self.blob_client.get_blob_properties.side_effect = (
+            ResourceNotFoundError()
+        )
+        self.blob_client.get_block_list.return_value = (
+            [],
+            [SimpleNamespace(id=self.layer._block_id(1), size=7)],
+        )
+        state = self.layer.get_chunk_upload_state(
+            "file", "raw", total_chunks=2
+        )
+        self.assertEqual(state["missing"], [0])
+        self.assertEqual(state["total_size"], 7)
+        self.assertFalse(state["complete"])
+
+    def test_finalize_refuses_missing_blocks(self) -> None:
+        self.layer.get_chunk_upload_state = Mock(
+            return_value={"complete": False, "missing": [0], "unexpected": []}
+        )
+        with self.assertRaises(ValueError):
+            self.layer.finalize_save("file", "raw", total_chunks=2)
+        self.blob_client.commit_block_list.assert_not_called()
+
+    def test_completed_retry_does_not_commit_again(self) -> None:
+        self.layer.get_chunk_upload_state = Mock(
+            return_value={
+                "complete": True,
+                "output_url": "https://account/file",
+            }
+        )
+        self.assertEqual(
+            self.layer.finalize_save("file", "raw", total_chunks=2),
+            "https://account/file",
+        )
+        self.blob_client.commit_block_list.assert_not_called()
+
+    def test_finalize_commits_all_blocks_in_index_order_with_durable_state(
+        self,
+    ) -> None:
+        self.blob_client.url = "https://account.test/data/file.tif"
+        self.blob_client.get_blob_properties.side_effect = (
+            ResourceNotFoundError()
+        )
+        self.blob_client.get_block_list.return_value = (
+            [],
+            [
+                SimpleNamespace(id=self.layer._block_id(index), size=7)
+                for index in (1, 0)
+            ],
+        )
+        self.assertEqual(
+            self.layer.finalize_save("file", "raw", total_chunks=2),
+            self.blob_client.url,
+        )
+        commit = self.blob_client.commit_block_list.call_args
+        self.assertEqual(
+            [block.id for block in commit.args[0]],
+            [self.layer._block_id(index) for index in (0, 1)],
+        )
+        self.assertEqual(
+            commit.kwargs["metadata"],
+            {
+                "haste_upload_complete": "true",
+                "haste_upload_total_chunks": "2",
+            },
+        )
+
     def test_load_all_scopes_initial_listing_to_partition_and_type(
         self,
     ) -> None:
