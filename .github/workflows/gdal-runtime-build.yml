@@ -20,6 +20,8 @@ on:
       - ".github/scripts/check_gdal_hardening.py"
       - ".github/scripts/tests/test_gdal_hardening_guard.py"
       - ".github/scripts/tests/test_deploy_network_access.py"
+      - ".github/scripts/validate_function_package_run.py"
+      - ".github/scripts/tests/test_validate_function_package_run.py"
       - "api/titilerfuncapi/**"
       - "hastelib/src/hastegeo/__init__.py"
       - "hastelib/src/hastegeo/core/processors/uploader.py"
@@ -73,6 +75,8 @@ on:
       - ".github/scripts/check_gdal_hardening.py"
       - ".github/scripts/tests/test_gdal_hardening_guard.py"
       - ".github/scripts/tests/test_deploy_network_access.py"
+      - ".github/scripts/validate_function_package_run.py"
+      - ".github/scripts/tests/test_validate_function_package_run.py"
       - "api/titilerfuncapi/**"
       - "hastelib/src/hastegeo/__init__.py"
       - "hastelib/src/hastegeo/core/processors/uploader.py"
@@ -108,6 +112,12 @@ on:
       - ".github/workflows/deploy-apps.yml"
       - ".github/workflows/gdal-runtime-build.yml"
   workflow_dispatch:
+    inputs:
+      candidate_dev1:
+        description: "Attest tested Function packages for a non-main dev1 candidate. Does not publish runtime wheels."
+        required: false
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -535,6 +545,37 @@ jobs:
           path: ${{ runner.temp }}/haste-function-packages
 
       - name: Attest Function App package artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ runner.temp }}/haste-function-packages/*.zip
+
+  attest-dev1-candidate:
+    needs:
+      - target-image-smoke
+      - function-packages
+      - vulnerability-scan
+      - training-base-smoke
+      - publisher-unit
+    if: >-
+      github.repository == 'microsoft/haste' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.candidate_dev1 &&
+      startsWith(github.ref, 'refs/heads/') &&
+      github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: dev1
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Download tested candidate Function packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-function-packages-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-function-packages
+
+      - name: Attest dev1 candidate packages only
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: ${{ runner.temp }}/haste-function-packages/*.zip
