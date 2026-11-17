@@ -104,6 +104,24 @@ test("refreshes on visible when the scheduled refresh time is due", async () => 
   controller.dispose();
 });
 
+test("malformed imagery is rejected even before map layers are created", () => {
+  const original = {
+    imagery: { preEventTileUrl: "old-pre", postEventTileUrl: "old-post" },
+    unsavedEdits: true,
+  };
+  for (const imagery of [
+    {},
+    { preEventTileUrl: 1, postEventTileUrl: "new-post" },
+    { preEventTileUrl: "", postEventTileUrl: {} },
+  ]) {
+    const dataRef = { current: original };
+    assert.throws(() =>
+      applyTileCredentialUpdate({ dataRef, nextData: { imagery } })
+    );
+    assert.strictEqual(dataRef.current, original);
+  }
+});
+
 test("updates existing layers without replacing unsaved state", () => {
   const unsavedLabels = [{ id: "unsaved-label" }];
   const validationSelections = new Set(["building-7"]);

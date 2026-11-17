@@ -40,7 +40,12 @@ export function shouldRefreshCredentialsOnVisibility(
 // Pre-event imagery is optional, so a missing URL is an empty one.
 function requireImageryUrls(nextData) {
   const imagery = nextData?.imagery;
-  if (!imagery || typeof imagery !== "object") {
+  if (
+    !imagery ||
+    (imagery.preEventTileUrl != null &&
+      typeof imagery.preEventTileUrl !== "string") ||
+    typeof imagery.postEventTileUrl !== "string"
+  ) {
     throw new Error("The imagery credential response is incomplete.");
   }
   return {

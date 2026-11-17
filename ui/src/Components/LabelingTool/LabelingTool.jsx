@@ -408,6 +408,7 @@ LabelingTool.propTypes = {
     imageLayer: PropType.object.isRequired,
     eventTypes: PropType.array,
     primaryClasses: PropType.array,
+    tileCredentialExpiresAt: PropType.string,
   }).isRequired,
   signal: PropType.shape({
     aborted: PropType.bool,
