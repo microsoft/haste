@@ -35,3 +35,26 @@ These run in the runtime build workflow, inside each target base image:
 | No caller control over GDAL configuration | Configuration audit test plus TiTiler negative tests |
 | Driver and VSI inventory | Published manifest plus the live report |
 | No deployment relaxes the restrictions | Guard test plus deployed app-settings scan |
+
+## Security rebuild
+
+- Verify source and upstream patch hashes, reject missing or modified patches,
+  and exercise the patched OpenSSL security regression tests.
+- Confirm actual SQLite build options and whether the SQLite command-line
+  shell is present in the shipped wheels, Function packages and worker images.
+- Verify the manifest and SBOM record the exact source versions and applied
+  patch identities. Run both existing blocking vulnerability scans.
+- Compare a review-only OpenSSL proposal with the original scan. Reject wrong
+  runtime builds, changed patch evidence, or suppression of unrelated findings;
+  the SQLite CLI finding must remain visible.
+- Test separately declared candidate and published builds, including mixed
+  consumer versions, unpublished assets and downgrade attempts.
+- Run all existing native, GDAL hardening, target-image, package, provenance,
+  license and functional smoke tests against the candidate.
+
+The first candidate built successfully and passed the upstream OpenSSL
+regression recipes, runtime/binding smoke tests and Function/imageryprep
+target-image smokes. Its SBOM scan still reported the SQLite CLI advisory and
+five version-based OpenSSL matches. The initial training smoke exposed a
+candidate-versus-published wheel mismatch; the selection fix requires a new
+complete CI run. The artifact scan must also run independently of SBOM failure.

@@ -69,6 +69,13 @@ def _manifest(args: argparse.Namespace) -> int:
         == "YES",
         "probes_permissive": native.probes(permissive=True),
     }
+    if args.patch_report:
+        patches = json.loads(
+            Path(args.patch_report).read_text(encoding="utf-8")
+        )
+        if not isinstance(patches, list) or not patches:
+            raise ValueError("OpenSSL patch report must contain applied patches")
+        manifest["openssl_patches"] = patches
     Path(args.output).write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -101,6 +108,7 @@ def main(argv: list[str]) -> int:
     )
     manifest.add_argument("--library", required=True)
     manifest.add_argument("--output", required=True)
+    manifest.add_argument("--patch-report")
 
     args = parser.parse_args(argv)
     if args.command == "manifest":
