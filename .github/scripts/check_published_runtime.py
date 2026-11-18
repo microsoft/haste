@@ -39,17 +39,41 @@ def locked_candidate(text: str) -> int:
     return build_number(matches[0])
 
 
+def locked_assets(text: str, published: int) -> dict[str, str]:
+    result = {}
+    for raw in text.splitlines():
+        fields = raw.split("#", 1)[0].split()
+        if not fields:
+            continue
+        if len(fields) != 2:
+            raise ValueError("Invalid published runtime asset lock")
+        digest, filename = fields
+        if (
+            not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or "/" in filename
+            or "\\" in filename
+            or filename in result
+            or not re.search(rf"\+haste\.{published}-", filename)
+        ):
+            raise ValueError("Invalid published runtime asset lock")
+        result[filename] = f"sha256:{digest}"
+    if len(result) != len(WHEELS):
+        raise ValueError("Expected exactly six published runtime wheel hashes")
+    return result
+
+
 def validate_pins(
     requirements: dict[str, str],
     published: int,
     candidate: int,
     base_published: int,
+    expected_assets: dict[str, str],
     assets: list[dict],
 ) -> None:
     if published < base_published or candidate < published:
         raise ValueError("Runtime build cannot precede the published baseline")
     available = {
-        asset["name"]
+        asset["name"]: asset.get("digest")
         for asset in assets
         if asset.get("state") == "uploaded"
         and re.fullmatch(r"sha256:[0-9a-f]{64}", asset.get("digest") or "")
@@ -82,9 +106,12 @@ def validate_pins(
                 rf"\+haste\.{published}-", filename, re.IGNORECASE
             ):
                 raise ValueError(f"{path}: inconsistent runtime build")
-            if filename not in available:
+            if (
+                filename not in expected_assets
+                or available.get(filename) != expected_assets[filename]
+            ):
                 raise ValueError(
-                    f"{path}: unpublished runtime asset {filename}"
+                    f"{path}: missing or changed runtime asset {filename}"
                 )
             if name in found:
                 raise ValueError(f"{path}: duplicate runtime distribution")
@@ -146,6 +173,12 @@ def main() -> None:
         published,
         candidate,
         base_published_build(),
+        locked_assets(
+            (ROOT / "native/gdal-runtime/published-assets.lock").read_text(
+                encoding="utf-8"
+            ),
+            published,
+        ),
         release["assets"],
     )
     print(

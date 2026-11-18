@@ -1,0 +1,8 @@
+# SHA-256 and filename of each currently published runtime wheel.
+# These public artifact checksums are not credentials.
+3777891dfe20ebc2bce1ea3bce8604a4bddbcb2beb2a312b31a972c24e45b537 fiona-1.10.1+haste.1-cp311-cp311-manylinux_2_28_x86_64.whl # pragma: allowlist secret
+268ef89f5c2be7ed044fcaf5d333e655fd79d4774eabe61d83b0acca800f0b6e gdal-3.13.3+haste.1-cp311-cp311-manylinux_2_28_x86_64.whl # pragma: allowlist secret
+516df39d8a4b24ca049a14334f2974c2c4c1a36d57af14ae8e296f4be4f0da9b haste_gdal_runtime-3.13.3+haste.1-py3-none-manylinux_2_28_x86_64.whl # pragma: allowlist secret
+a9101ba9887b967ba940232f6879729d6ab075435308c2a08eb986a64a926009 pyogrio-0.13.0+haste.1-cp311-cp311-manylinux_2_28_x86_64.whl # pragma: allowlist secret
+b873fd5f55fc86bcb2bf1c9d02aa015d97ca433803409cadc7340694dde268e4 pyproj-3.7.2+haste.1-cp311-cp311-manylinux_2_28_x86_64.whl # pragma: allowlist secret
+628e933bcfbeb3ea53232a8e982950773e53057ab8f1917d96bf6a3e011d5e9b rasterio-1.4.4+haste.1-cp311-cp311-manylinux_2_28_x86_64.whl # pragma: allowlist secret

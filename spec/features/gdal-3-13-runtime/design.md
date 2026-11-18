@@ -282,8 +282,9 @@ The candidate build number and published consumer build number are separate,
 explicit values. While a new runtime is under review, consumer requirements
 continue to name the last published wheel set. A consistency guard verifies
 that every consumer uses that set and that a candidate does not precede it.
-Switch consumers only after the new six-wheel set has been approved, published
-immutably and verified as available.
+The guard also compares all published wheel digests with the checked-in
+published-asset lock. Switch consumers only after the new six-wheel set has
+been approved, published immutably and verified as available.
 
 Both inventory and artifact scans remain blocking. A version-based match may
 be excepted only after review establishes the exact patch or non-applicability
