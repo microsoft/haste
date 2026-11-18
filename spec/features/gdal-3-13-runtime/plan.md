@@ -28,6 +28,7 @@ Validation for every phase: `backend-validation`. New native dependencies:
 | Verify SQLite advisories and OpenSSL backport provenance | `backend-dev`, `security` | upstream sources and patch application checked; applicability review pending |
 | Build and test a new candidate while consumers retain published pins | `backend-dev` | candidate compiled and passed native and image smokes; training fix and full CI rerun pending |
 | Review scanner findings and any narrowly scoped exception | `security`, `security-validation` | pending human approval |
+| Produce review-only OpenSSL scan comparison without changing blocking scans | `backend-dev` | locally verified; CI validation pending |
 | Approve and publish the immutable runtime, then update consumers separately | `backend-dev` | pending explicit approval |
 
 ## Status and next steps (2026-10-19)

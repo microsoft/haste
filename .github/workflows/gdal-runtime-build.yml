@@ -454,6 +454,68 @@ jobs:
           severity-cutoff: medium
           output-format: table
 
+  openssl-scan-proposal:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout candidate source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Download candidate runtime bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: haste-gdal-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/haste-gdal-runtime/dist
+
+      - name: Capture unmodified SBOM scan for comparison
+        uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
+        with:
+          sbom: ${{ runner.temp }}/haste-gdal-runtime/dist/bom.cdx.json
+          grype-version: "0.97.1"
+          fail-build: false
+          add-cpes-if-none: true
+          output-format: json
+          output-file: ${{ runner.temp }}/openssl-proposal-baseline.json
+
+      - name: Generate and test review-only proposal
+        env:
+          GRYPE_DB_AUTO_UPDATE: "false"
+        run: |
+          set -euo pipefail
+          python native/gdal-runtime/prepare_openssl_scan_proposal.py \
+            --artifact-dir "$RUNNER_TEMP/haste-gdal-runtime/dist" \
+            --output "$RUNNER_TEMP/openssl-proposal.yaml"
+          grype="$RUNNER_TOOL_CACHE/grype/0.97.1/x64/grype"
+          test -x "$grype"
+          status=0
+          "$grype" -c "$RUNNER_TEMP/openssl-proposal.yaml" \
+            --add-cpes-if-none --fail-on medium -o json \
+            --file "$RUNNER_TEMP/openssl-proposal-scan.json" \
+            "sbom:$RUNNER_TEMP/haste-gdal-runtime/dist/bom.cdx.json" || status=$?
+          if [[ "$status" != "2" ]]; then
+            echo "::error::SQLite must remain a blocking finding; Grype exited $status."
+            exit 1
+          fi
+          python native/gdal-runtime/prepare_openssl_scan_proposal.py \
+            --compare-baseline "$RUNNER_TEMP/openssl-proposal-baseline.json" \
+            --compare-proposal "$RUNNER_TEMP/openssl-proposal-scan.json"
+
+      - name: Upload review-only proposal and scan evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: openssl-scan-proposal-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/openssl-proposal.yaml
+            ${{ runner.temp }}/openssl-proposal-baseline.json
+            ${{ runner.temp }}/openssl-proposal-scan.json
+          if-no-files-found: error
+          retention-days: 7
+
   training-base-smoke:
     needs: build
     runs-on: ubuntu-latest

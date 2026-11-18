@@ -44,6 +44,9 @@ These run in the runtime build workflow, inside each target base image:
   shell is present in the shipped wheels, Function packages and worker images.
 - Verify the manifest and SBOM record the exact source versions and applied
   patch identities. Run both existing blocking vulnerability scans.
+- Compare a review-only OpenSSL proposal with the original scan. Reject wrong
+  runtime builds, changed patch evidence, or suppression of unrelated findings;
+  the SQLite CLI finding must remain visible.
 - Test separately declared candidate and published builds, including mixed
   consumer versions, unpublished assets and downgrade attempts.
 - Run all existing native, GDAL hardening, target-image, package, provenance,
