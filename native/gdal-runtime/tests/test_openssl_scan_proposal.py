@@ -117,6 +117,7 @@ class OpenSslScanProposalTests(unittest.TestCase):
         self.assertEqual(blocking.count("fail-build: true"), 2)
         self.assertNotIn("openssl-proposal.yaml", blocking)
         self.assertIn("fail-build: false", shadow)
+        self.assertIn('grype-version: "v0.97.1"', shadow)
         self.assertIn("--compare-baseline", shadow)
         self.assertIn("--compare-proposal", shadow)
 
