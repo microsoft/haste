@@ -54,7 +54,9 @@ policy revocation or Shared Key disablement is claimed. Those remain gated.
   settings drift check passes. Azure what-if and live deployment remain unrun.
 - UI refresh and visualizer suites pass (37 tests); changed-file lint and the
   Vite build pass with reused, non-lockfile-exact dependencies.
-- Runtime source tests pass after updating SQLite to 3.54.1. The native
-  vulnerability scan remains a gate: an SQLite CLI advisory has no fixed
-  release, and the OpenSSL vendor's fixed release has not yet shipped.
-  Findings have not been suppressed.
+- Runtime source tests pass with the existing published runtime pin. A
+  prospective SQLite 3.54.1 source was verified, but adopting it also requires
+  a coordinated native build and published consumer wheels. The vulnerability
+  scan remains a gate: an SQLite CLI advisory has no fixed release, and the
+  OpenSSL vendor's fixed release has not yet shipped. Findings have not been
+  suppressed.
