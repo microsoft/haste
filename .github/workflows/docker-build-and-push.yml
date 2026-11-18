@@ -46,8 +46,10 @@ jobs:
           filters: |
             training:
               - 'docker/training/**'
+              - 'docker/common/**'
             imageryprep:
               - 'docker/imageryprep/**'
+              - 'docker/common/**'
             hastelib:
               - 'hastelib/**'
 

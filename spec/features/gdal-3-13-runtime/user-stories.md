@@ -166,6 +166,19 @@ Then the guard test fails and names the file and the option
 
 ---
 
+### US-009: Avoid an unused SQLite shell in worker images
+
+**As a** Security Reviewer,
+**I want** worker images to avoid shipping an unused SQLite command-line shell,
+**So that** shell-specific recovery behavior is not exposed on the runtime PATH.
+
+**Acceptance Criteria:**
+
+- Known shell executables are removed from final worker images; an unexpected
+  shell on PATH fails the build.
+- SQLite libraries, Python SQLite and existing geospatial workflows still work.
+- Image evidence does not automatically suppress the runtime SBOM finding.
+
 ## Agent Assignment Map
 
 | Story | Implementing Agent | Validating Agent | Notes |
@@ -177,3 +190,4 @@ Then the guard test fails and names the file and the option
 | US-005 | `backend-dev` | `backend-validation` | Coordinate with the TiTiler route-surface work |
 | US-006 | `backend-dev` | `backend-validation` | |
 | US-007 | `backend-dev` | `backend-validation` | |
+| US-009 | `backend-dev` | `backend-validation` | `security` audits findings; `security-validation` confirms |
