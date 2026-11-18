@@ -23,6 +23,7 @@ class AbstractArtifactStorage(ABC):
         identifier: str = None,
         artifact_path=None,
         extra_partition_keys=None,
+        include_sas: bool = True,
     ):
         pass
 

@@ -41,6 +41,7 @@ class LocalFileSystemArtifactStorage(AbstractArtifactStorage):
         identifier=None,
         artifact_path=None,
         extra_partition_keys=None,
+        include_sas: bool = True,
     ):
         if artifact_path:
             return f"file://{artifact_path}"
