@@ -22,3 +22,14 @@
 
 Deploying a Function App from a branch without this change reinstalls the
 old dependencies. Rebase before deploying once this lands.
+
+## Security rebuild staging
+
+Keep all consumers pinned to the previously published runtime while the next
+candidate is built and reviewed. After explicit security and publication
+approval, publish the complete verified runtime and binding set through the
+protected workflow. Verify the immutable assets exist before a separate
+consumer-pin change references them. Deployment remains separately approved.
+
+Do not treat an unreviewed scanner exception as a fix. If a finding cannot be
+fixed or proven inapplicable with approved evidence, publication remains blocked.

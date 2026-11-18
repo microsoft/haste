@@ -166,6 +166,22 @@ Then the guard test fails and names the file and the option
 
 ---
 
+### US-008: Stage native security rebuilds safely
+
+**As a** Security Reviewer,
+**I want** a reproducible security-patched candidate while existing consumers
+continue using published wheels,
+**So that** the runtime can be reviewed and released without breaking deployments.
+
+**Acceptance Criteria:**
+
+- Source archives and upstream patches are pinned and verified before build.
+- Candidate patch identities are recorded in the manifest and SBOM.
+- Consumers remain pinned to an existing, complete published wheel set until
+  the new set is explicitly approved and published.
+- Security findings remain blocking unless a narrowly scoped exception has
+  evidence and explicit security approval.
+
 ## Agent Assignment Map
 
 | Story | Implementing Agent | Validating Agent | Notes |
@@ -177,3 +193,4 @@ Then the guard test fails and names the file and the option
 | US-005 | `backend-dev` | `backend-validation` | Coordinate with the TiTiler route-surface work |
 | US-006 | `backend-dev` | `backend-validation` | |
 | US-007 | `backend-dev` | `backend-validation` | |
+| US-008 | `backend-dev` | `backend-validation` | `security` audits findings; `security-validation` confirms |

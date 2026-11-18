@@ -11,6 +11,7 @@
 - [VRT and virtual file system policy](#vrt-and-virtual-file-system-policy)
 - [Consumers](#consumers)
 - [Publishing and supply chain](#publishing-and-supply-chain)
+- [Staged security rebuild](#staged-security-rebuild)
 - [Open questions](#open-questions)
 
 ## Overview
@@ -35,6 +36,9 @@ The runtime wheel also carries:
   caller-supplied policy.
 
 ## Runtime composition
+
+The table describes the previously published runtime; the staged security
+candidate is described separately below and does not change consumer pins.
 
 | Component | Version | Source | Notes |
 |---|---|---|---|
@@ -266,6 +270,33 @@ number. They happen:
 
 - when a vendored component or GDAL patch release has a security fix;
 - otherwise on a fixed cadence.
+
+## Staged security rebuild
+
+The candidate updates the locked SQLite source to 3.54.1 and applies
+checksum-verified OpenSSL 3.5 backports from upstream. The SBOM must retain the
+actual source version and identify each applied patch; a patched build must not
+be represented as an unreleased upstream version.
+
+The candidate build number and published consumer build number are separate,
+explicit values. While a new runtime is under review, consumer requirements
+continue to name the last published wheel set. A consistency guard verifies
+that every consumer uses that set and that a candidate does not precede it.
+Switch consumers only after the new six-wheel set has been approved, published
+immutably and verified as available.
+
+Both inventory and artifact scans remain blocking. A version-based match may
+be excepted only after review establishes the exact patch or non-applicability
+in every affected artifact. Exceptions require explicit security approval,
+precise scope and a documented removal condition. Until then the unresolved
+finding blocks publication.
+
+The currently published runtime wheel contains `libsqlite3` but no member
+named `sqlite3`. This is not sufficient to establish the SQLite CLI finding's
+applicability to Function packages, worker images, renamed executables or
+application workflows. The candidate CI records archive member names and
+base-image PATH observations for security review; those observations are not
+an automatic exception.
 
 ## Open questions
 
