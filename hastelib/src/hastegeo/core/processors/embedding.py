@@ -210,10 +210,8 @@ class EmbeddingPostprocessor:
         return self.model_data
 
     def _create_embedding_config(self):
-        filename_pattern = (
-            rf"{MetadataUtils.hash_string(self.model_data.projectId)}/(.*)\?+"
-        )
-        plain_url_pattern = r"(.*)\?+"
+        filename_pattern = rf"{MetadataUtils.hash_string(self.model_data.projectId)}/([^?]+)(?:\?.*)?$"
+        plain_url_pattern = r"([^?]+)(?:\?.*)?$"
 
         imagery_url = self.image_layer.postEventMosaicCogImageryUrl
         footprints_url = self.image_layer.buildingFootprintsUrl
@@ -326,6 +324,7 @@ class EmbeddingPostprocessor:
             identifier=filename,
             extra_partition_keys=f"{self.model_data.embeddingJob.taskId}",
             data_format=os.path.splitext(filename)[1].strip("."),
+            include_sas=False,
         )
 
     def _get_friendly_logs(self):

@@ -15,6 +15,8 @@ import {
 } from "./validationConfig.js";
 import { loadValidationMapData } from "./loadValidationMapData.js";
 import { loadImagery } from "../LabelingTool/LabelingToolHelper.js";
+import { useTileCredentialRefresh } from "../../util/useTileCredentialRefresh.js";
+import TileCredentialRefreshMessage from "../OtherComponents/TileCredentialRefreshMessage.jsx";
 import { shouldIgnoreShortcut } from "../keyboardShortcuts.js";
 import "../../assets/css/labels.css";
 import "../../assets/css/drawingToolbar.css";
@@ -99,7 +101,26 @@ const BuildingValidation = () => {
   // poking at Azure Maps internals.
   const preTileUrlRef = useRef(null);
   const postTileUrlRef = useRef(null);
-  // De-dupe set: URLs we've already requested. Prevents thrashing the
+  const layerDataRef = useRef(null);
+  // Tile URLs carry read tokens that expire; refresh them in place without
+  // touching labels or the current selection.
+  const {
+    tileRefreshFailed,
+    startTileCredentialRefresh,
+    retryTileCredentialRefresh,
+  } = useTileCredentialRefresh({
+    projectId,
+    imageLayerId,
+    dataRef: layerDataRef,
+    layerBindings: [
+      { layerRef: preImageryRef, imageryKey: "preEventTileUrl" },
+      { layerRef: postImageryRef, imageryKey: "postEventTileUrl" },
+    ],
+    onApplied: (data) => {
+      preTileUrlRef.current = data.imagery?.preEventTileUrl || null;
+      postTileUrlRef.current = data.imagery?.postEventTileUrl || null;
+    },
+  });  // De-dupe set: URLs we've already requested. Prevents thrashing the
   // tile server when the user walks back and forth across buildings.
   const prefetchedTilesRef = useRef(new Set());
 
@@ -260,6 +281,8 @@ const BuildingValidation = () => {
       resolveSampleSize,
     });
     setSampleSize(configuredSample);
+    layerDataRef.current = layerData || null;
+    startTileCredentialRefresh(layerData);
 
     const existingLabels = validationData?.labels || {};
     setLabels(existingLabels);
@@ -686,6 +709,10 @@ const BuildingValidation = () => {
       className={`${styles.root} building-validation-page`}
       data-map-ready={isDatasourceReady ? "true" : "false"}
     >
+      <TileCredentialRefreshMessage
+        visible={tileRefreshFailed}
+        onRetry={retryTileCredentialRefresh}
+      />
       {/* Back button — shares the Interactive Labeler navigation surface. */}
       <div className="labeling-tool-surface labeling-navigation-controls">
         <Button

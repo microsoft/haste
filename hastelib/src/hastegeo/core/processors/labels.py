@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import logging
+from copy import deepcopy
 
 import numpy as np
 import rasterio
@@ -15,6 +16,7 @@ from ..models.projects import (
     LabelingImagery,
     LabelProject,
 )
+from ..utils.blob import sign_project_raster_url, unsigned_internal_blob_url
 from ..utils.gdal_security import harden_gdal
 from ..utils.metadata import MetadataUtils
 
@@ -23,12 +25,52 @@ from ..utils.metadata import MetadataUtils
 harden_gdal()
 
 
+def materialize_label_project_urls(
+    label_project: dict,
+    image_layer: ImageLayer,
+    titiler_endpoint: str,
+    storage_type: str = "blob",
+) -> dict:
+    """Rebuild response-only tile URLs from the authoritative image layer."""
+    for field in ("projectId", "imageLayerId"):
+        if label_project.get(field) != getattr(image_layer, field):
+            raise ValueError(
+                "Label project does not belong to the image layer."
+            )
+    result = deepcopy(label_project)
+    imagery = result.get("imagery")
+    if not isinstance(imagery, dict):
+        return result
+
+    def tile_url(source: str | None) -> str:
+        signed = sign_project_raster_url(
+            source, image_layer.projectId, storage_type
+        )
+        if not signed:
+            return ""
+        encoded = requests.utils.quote(signed, safe="")
+        return (
+            f"{titiler_endpoint}cog/tiles/WebMercatorQuad/"
+            f"{{z}}/{{x}}/{{y}}?scale=1&url={encoded}"
+        )
+
+    imagery["preEventTileUrl"] = tile_url(
+        image_layer.preEventProcessedImageryUrl
+    )
+    imagery["postEventTileUrl"] = tile_url(
+        image_layer.postEventProcessedImageryUrl
+    )
+    imagery["tileUrl"] = imagery["postEventTileUrl"]
+    return result
+
+
 class LabelTaskGenerator:
     def __init__(self, image_data: ImageLayer, config: Config = None):
         self.logger = logging.getLogger(__name__)
         if config is None:
             config = Config()
         self.partition_key = image_data.projectId
+        self.storage_type = config.storage_type
         self.experiment_name = MetadataUtils.generate_id()
         self.experiment_dir = config.TEMP_DIR
         self.input_image_fn = (
@@ -76,6 +118,7 @@ class LabelTaskGenerator:
     def get_xyz_url(self, imagery_url: str) -> str:
         """Generate XYZ URL for the url of a TIF file."""
         xyz_url = ""
+        imagery_url = unsigned_internal_blob_url(imagery_url)
         if imagery_url:
             urlencoded_imagery_url = requests.utils.quote(imagery_url, safe="")
             xyz_url = f"{self.titiler_endpoint}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}?scale=1&url={urlencoded_imagery_url}"
@@ -84,7 +127,13 @@ class LabelTaskGenerator:
     def generate_task_files(self):
         """Generate task files."""
         self.logger.info("Generating task file")
-        with rasterio.open(self.input_image_fn_post_event) as f:
+        with rasterio.open(
+            sign_project_raster_url(
+                self.input_image_fn_post_event,
+                self.partition_key,
+                self.storage_type,
+            )
+        ) as f:
             bounds = shapely.geometry.box(*f.bounds)
             geom = shapely.geometry.mapping(bounds)
             if f.crs.to_epsg() != 4326:

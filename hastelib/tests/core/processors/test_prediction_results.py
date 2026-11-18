@@ -359,6 +359,7 @@ class TestPredictionResults(ResultsTestCase):
             self.assertEqual(payload.defaultUnknownThreshold, 0)
             self.assertEqual(payload.buildingCount, 2)
             self.assertTrue(payload.predictionsReady)
+            self.assertTrue(payload.tileCredentialExpiresAt)
             self.assertTrue(
                 payload.predictionAttrsUrl.startswith("/api/GetModelArtifact?")
             )

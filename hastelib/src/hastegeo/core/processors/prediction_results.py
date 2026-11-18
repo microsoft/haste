@@ -254,10 +254,14 @@ class PredictionResultsProcessor:
                 ).n
             fields.update(
                 gpkgUrl=storage.get_download_url(
-                    identifier=gpkg_name, extra_partition_keys=namespace
+                    identifier=gpkg_name,
+                    extra_partition_keys=namespace,
+                    include_sas=False,
                 ),
                 predictionAttrsUrl=storage.get_download_url(
-                    identifier=attrs_name, extra_partition_keys=namespace
+                    identifier=attrs_name,
+                    extra_partition_keys=namespace,
+                    include_sas=False,
                 ),
                 predictedBuildingCount=count,
             )
@@ -275,9 +279,11 @@ class PredictionResultsProcessor:
             "predictedAt": model.predictedAt,
             "predictionRevision": model.predictionRevision,
             "gpkgUrl": artifact_api_url(model, "gpkg") if raw_ready else None,
-            "predictionAttrsUrl": artifact_api_url(model, "prediction_attrs")
-            if raw_ready and model.predictionAttrsUrl
-            else None,
+            "predictionAttrsUrl": (
+                artifact_api_url(model, "prediction_attrs")
+                if raw_ready and model.predictionAttrsUrl
+                else None
+            ),
             "predictionsReady": readiness["ready"],
             "predictionsReadiness": readiness,
             "rawPredictionsReady": raw_ready,
@@ -311,14 +317,16 @@ class PredictionResultsProcessor:
             **raw,
             **cls.response(model, layer),
             **selected.descriptor(),
-            "gpkgUrl": prediction_source_url(model, selected, "gpkg")
-            if selected.gpkgUrl
-            else None,
-            "predictionAttrsUrl": prediction_source_url(
-                model, selected, "prediction_attrs"
-            )
-            if selected.predictionAttrsUrl
-            else None,
+            "gpkgUrl": (
+                prediction_source_url(model, selected, "gpkg")
+                if selected.gpkgUrl
+                else None
+            ),
+            "predictionAttrsUrl": (
+                prediction_source_url(model, selected, "prediction_attrs")
+                if selected.predictionAttrsUrl
+                else None
+            ),
             "buildingCount": selected.buildingCount,
             "predictionsReady": readiness["ready"],
             "predictionsReadiness": readiness,

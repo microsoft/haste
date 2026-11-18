@@ -1,7 +1,7 @@
 // One Flex Consumption Python function app with: per-app plan, App Insights
 // linked to Log Analytics, system (+ optional shared user-assigned) identity,
-// VNet integration, identity-based AzureWebJobsStorage, the optional /data
-// file-share mount, the blob/queue role grants for its system identity on its
+// VNet integration, identity-based AzureWebJobsStorage, ephemeral scratch,
+// the blob/queue role grants for its system identity on its
 // host storage account, and the inbound network baseline for its main and SCM
 // sites. (Reproduces one iteration of create_function_app.)
 
@@ -20,20 +20,20 @@ param alwaysReadyCount int
 @description('Functions storage account name.')
 param storageAccountName string
 
+@description('Premium File account retained for the legacy compatibility phase.')
+param fileStorageAccountName string
+
+@description('Keep the legacy data mount until a compatible package has been deployed.')
+param mountDataShare bool = false
+
 @description('Storage account holding the app host state (AzureWebJobsStorage, host keys) and deployment package. The app system identity is granted data roles on this account only. Defaults to the shared functions account.')
 param hostStorageAccountName string = storageAccountName
-
-@description('Premium file storage account name (mounted at /data).')
-param fileStorageAccountName string
 
 @description('User-assigned managed identity resource id.')
 param umiResourceId string
 
 @description('Attach the shared user-assigned identity. It holds data-plane roles on the shared storage accounts, so apps that must not reach that data leave it off.')
 param attachSharedIdentity bool = true
-
-@description('Mount the shared premium file share at /data (account-key based). When false, any existing mount is removed.')
-param mountDataShare bool = true
 
 @description('Grant Storage Blob Delegator on the host storage account (needed to mint user-delegation SAS).')
 param grantBlobDelegator bool = true

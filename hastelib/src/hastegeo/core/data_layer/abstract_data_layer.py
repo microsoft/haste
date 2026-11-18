@@ -235,6 +235,7 @@ class AbstractDataLayer(ABC):
         data_format="json",
         extra_partition_keys=None,
         check_exists=True,
+        include_sas=True,
     ):
         """Build a remotely accessible path when the backend supports one."""
         raise NotImplementedError(

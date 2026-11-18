@@ -92,6 +92,7 @@ class LocalFileSystemDataLayer(AbstractDataLayer):
         data_format="json",
         extra_partition_keys=None,
         check_exists=True,
+        include_sas=True,
     ):
         """Get the remote path for a file (same as local path for filesystem layer).
 

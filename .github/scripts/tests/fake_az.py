@@ -78,6 +78,12 @@ def main(args: list[str]) -> int:
         print(json.dumps(_config(state)))
     elif command.startswith("functionapp show"):
         print(json.dumps({"properties": {"httpsOnly": state["httpsOnly"]}}))
+    elif command == "webapp config storage-account list":
+        print(json.dumps(state.get("mounts", {})))
+    elif command == "webapp config storage-account delete":
+        if state.get("failMountRemoval"):
+            return 1
+        state["mounts"].pop(_option(args, "--custom-id"), None)
     elif command == "functionapp config access-restriction add":
         rule = {
             "name": _option(args, "--rule-name"),

@@ -179,6 +179,16 @@ class LabelingWorkspaceProcessor:
         ):
             raise FileNotFoundError("Labeling workspace records do not match")
         label_project = await self._load_label_project(image_layer)
+        from .labels import materialize_label_project_urls
+
+        signed_label = await asyncio.to_thread(
+            materialize_label_project_urls,
+            label_project.model_dump(mode="json"),
+            image_layer,
+            self.config.titiler_endpoint,
+            self.config.storage_type,
+        )
+        label_project = LabelProject(**signed_label)
         return LabelingWorkspace(
             labelProject=label_project,
             imageLayer=LabelingImageLayer(

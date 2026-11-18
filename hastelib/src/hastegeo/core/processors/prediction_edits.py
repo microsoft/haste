@@ -207,10 +207,14 @@ class PredictionEditsProcessor(PredictionResultsProcessor):
                 entry = EditedPredictionVersion(
                     version=version,
                     gpkgUrl=storage.get_download_url(
-                        identifier=gpkg_name, extra_partition_keys=namespace
+                        identifier=gpkg_name,
+                        extra_partition_keys=namespace,
+                        include_sas=False,
                     ),
                     predictionAttrsUrl=storage.get_download_url(
-                        identifier=attrs_name, extra_partition_keys=namespace
+                        identifier=attrs_name,
+                        extra_partition_keys=namespace,
+                        include_sas=False,
                     ),
                     sourcePredictionRevision=request.predictionRevision,
                     sourceGpkgUrl=model.gpkgUrl,

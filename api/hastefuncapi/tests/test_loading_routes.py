@@ -5,7 +5,8 @@ import json
 import os
 import unittest
 from contextlib import redirect_stderr
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
+from urllib.parse import quote
 
 import azure.functions as func
 from hastegeo.core.models.loading import (
@@ -90,6 +91,7 @@ class TestLabelingWorkspaceRoute(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn("tileCredentialExpiresAt", response_json(response))
         self.assertEqual(response_json(response)["eventTypes"], ["Wildfire"])
         self.assertEqual(
             response_json(response)["imageLayer"]["imageLayerId"], LAYER_ID
@@ -164,6 +166,70 @@ class TestLabelingWorkspaceRoute(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response_json(response)["error"]["code"], "NOT_FOUND")
         self.assertNotIn("private path", response.get_body().decode("utf-8"))
+
+
+class TestLegacyLabelTileMaterialization(unittest.IsolatedAsyncioTestCase):
+    async def test_tiles_use_authoritative_layer_not_label_project_urls(
+        self,
+    ) -> None:
+        labels = Mock()
+        layers = Mock()
+        labels.load_all_from_partition.return_value = [
+            {
+                "projectId": PROJECT_ID,
+                "imageLayerId": LAYER_ID,
+                "labelprojectId": "labels-1",
+                "imagery": {
+                    "postEventTileUrl": "https://foreign.example/caller-chosen",
+                },
+                "labels": [{"properties": {"primaryClass": "Damaged"}}],
+            }
+        ]
+        source = "https://account.blob.core.windows.net/data/trusted/post.tif"
+        layers.load.return_value = {
+            "projectId": PROJECT_ID,
+            "imageLayerId": LAYER_ID,
+            "postEventProcessedImageryUrl": source,
+        }
+        types = function_app.config.get_metadata_types()
+
+        def processor(**kwargs) -> Mock:
+            self.assertEqual(kwargs["partition_key"], PROJECT_ID)
+            return (
+                labels if kwargs["data_type"] == types.LABELS.value else layers
+            )
+
+        with patch.object(
+            function_app, "MetadataProcessor", side_effect=processor
+        ), patch(
+            "hastegeo.core.processors.labels.sign_project_raster_url",
+            side_effect=lambda url, *_args: (
+                f"{url}?sig=fresh" if url else ""
+            ),
+        ):
+            response = await function_app.GetLayerLabelingToolData(
+                make_request(
+                    {"projectId": PROJECT_ID, "imageLayerId": LAYER_ID}
+                )
+            )
+        self.assertEqual(response.status_code, 200)
+        body = response_json(response)
+        self.assertIn(
+            quote(f"{source}?sig=fresh", safe=""),
+            body["imagery"]["postEventTileUrl"],
+        )
+        self.assertEqual(
+            body["labels"][0]["properties"]["primaryClass"], "Damaged"
+        )
+        self.assertIn(
+            "caller-chosen",
+            labels.load_all_from_partition.return_value[0]["imagery"][
+                "postEventTileUrl"
+            ],
+        )
+        layers.load.assert_called_once_with(LAYER_ID)
+        labels.save.assert_not_called()
+        layers.save.assert_not_called()
 
 
 class TestActiveJobsRoute(unittest.IsolatedAsyncioTestCase):

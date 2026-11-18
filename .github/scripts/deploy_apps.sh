@@ -352,13 +352,6 @@ deploy_function() {
             size_settings+=("HASTE_MAX_IMAGERY_DOWNLOAD_BYTES=$HASTE_MAX_IMAGERY_DOWNLOAD_BYTES")
         fi
 
-        # Get storage account connection string with error handling
-        echo "Retrieving storage account connection string..."
-        BLOB_CONNECTION_STRING=$(az storage account show-connection-string --name "$STORAGE_ACCOUNT" --resource-group "$RESOURCE_GROUP" --query connectionString -o tsv) || {
-            echo "ERROR: Failed to retrieve storage account connection string. Ensure service principal has 'Storage Account Key Operator Service Role' or 'Reader and Data Access' role on storage account '$STORAGE_ACCOUNT'." >&2
-            exit 1
-        }
-
         # Get batch account key with error handling
         echo "Retrieving batch account key..."
         AZURE_BATCH_ACCOUNT_KEY=$(az batch account keys list --name "$BATCH_ACCOUNT" --resource-group "$SHARED_RESOURCE_GROUP" --query "primary" -o tsv) || {
@@ -381,13 +374,10 @@ deploy_function() {
             "METADATA_STORAGE_TYPE=blob" \
             "ARTIFACT_STORAGE_TYPE=blob" \
             "RUNNER_TYPE=azure_batch" \
-            "TEMP_DATA_PATH=/data" \
-            "DATA_PATH=/data" \
             "TITILER_ENDPOINT=/api/titiler/" \
             "QUEUE_ACCOUNT_URL=https://${STORAGE_ACCOUNT}.queue.core.windows.net" \
             "BLOB_ACCOUNT_URL=https://${STORAGE_ACCOUNT}.blob.core.windows.net" \
             "BLOB_CONTAINER=data" \
-            "BLOB_CONNECTION_STRING=$BLOB_CONNECTION_STRING" \
             "AZURE_BATCH_ACCOUNT_NAME=$BATCH_ACCOUNT" \
             "AZURE_BATCH_URL=https://${BATCH_ACCOUNT}.${LOCATION}.batch.azure.com" \
             "AZURE_BATCH_ACCOUNT_KEY=$AZURE_BATCH_ACCOUNT_KEY" \
@@ -430,7 +420,6 @@ deploy_function() {
             "${gdal_settings[@]}" \
             --output none
     fi
-
     # TiTiler reads HASTE imagery only from this storage host (plus its
     # built-in public open-data hosts). Mirrors functions.bicep; without it
     # HASTE imagery tiles fail closed.
@@ -506,6 +495,32 @@ deploy_function() {
         --output none
     az functionapp restart --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP"
     forget_gdal_runtime_pending_app "$FUNCTION_NAME"
+
+    # Blob and queue access is identity-based. Drop the account-key
+    # connection string left behind by earlier deployments, only once code
+    # that no longer needs it is running.
+    if [ "${SET_APPSETTINGS:-true}" = "true" ]; then
+        az functionapp config appsettings set \
+            --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" \
+            --settings "TEMP_DATA_PATH=/tmp" "DATA_PATH=/tmp" \
+            --output none
+        # Clear only the retired HASTE mount, never the share or unrelated mounts.
+        local OLD_MOUNT
+        OLD_MOUNT=$(az webapp config storage-account list \
+            --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" \
+            --output json | jq -r '.data.mountPath // empty')
+        if [ "$OLD_MOUNT" = "/data" ]; then
+            az webapp config storage-account delete \
+                --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" \
+                --custom-id data --output none
+        elif [ -n "$OLD_MOUNT" ]; then
+            echo "ERROR: Unexpected HASTE data mount path; refusing removal." >&2
+            return 1
+        fi
+        az functionapp config appsettings delete --name "$FUNCTION_NAME" --resource-group "$RESOURCE_GROUP" \
+            --setting-names BLOB_CONNECTION_STRING \
+            --output none
+    fi
 
     # Record the wheel this app actually installed. Nothing else on the app
     # says which hastegeo it is running -- the wheel is pinned into

@@ -54,6 +54,7 @@ class AzureDataLakeDataLayer(AbstractDataLayer):
         data_format="json",
         extra_partition_keys=None,
         check_exists=True,
+        include_sas=True,
     ):
         file_name = self.get_file_path(
             identifier, data_type, data_format, extra_partition_keys

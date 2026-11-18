@@ -50,6 +50,7 @@ class UnifiedArtifactStorage:
         identifier=None,
         artifact_path=None,
         extra_partition_keys=None,
+        include_sas: bool = True,
     ):
         """
         Get the download URL for the artifact.
@@ -66,6 +67,7 @@ class UnifiedArtifactStorage:
             identifier=identifier,
             artifact_path=artifact_path,
             extra_partition_keys=extra_partition_keys,
+            include_sas=include_sas,
         )
 
     def fetch_artifact(

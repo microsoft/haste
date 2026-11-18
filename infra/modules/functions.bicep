@@ -17,8 +17,11 @@ param functionQueueName string
 @description('Functions storage account name.')
 param storageAccountName string
 
-@description('Premium file storage account name.')
+@description('Premium File account retained during the legacy compatibility phase.')
 param fileStorageAccountName string
+
+@description('Cut over only after compatible API and queue packages are deployed and validated.')
+param keylessAppCutover bool = false
 
 @description('TiTiler host storage account name (its AzureWebJobsStorage and deployment package).')
 param titilerStorageAccountName string
@@ -151,8 +154,7 @@ param publishBlobContainer string = ''
 @description('Resource tags.')
 param tags object = {}
 
-// Storage account (env RG) — used to derive the blob/queue URLs and the
-// key-based BLOB_CONNECTION_STRING that hastegeo's utils/blob.py path requires.
+// Storage account (env RG) — used to derive the blob and queue URLs.
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
   name: storageAccountName
 }
@@ -179,9 +181,8 @@ var titilerGdalHardeningSettings = concat(gdalHardeningSettings, [
 
 // Application settings shared by the api and queues apps. hastegeo's Config()
 // (instantiated at import time) reads these, so they must be present or the
-// worker cannot index function_app.py. Storage/queue access is identity-based
-// (BLOB_ACCOUNT_URL + role grants); only BLOB_CONNECTION_STRING, the Batch key,
-// and the ACS string are key-based (per ADR: no Key Vault, deploy-time values).
+// worker cannot index function_app.py. The legacy storage key remains only
+// until a compatible package has been deployed and cutover explicitly enabled.
 var appConfigSettings = concat(gdalHardeningSettings, [
   { name: 'env', value: 'prod' }
   { name: 'DEVELOPMENT_MODE', value: developmentMode ? 'true' : 'false' }
@@ -196,16 +197,12 @@ var appConfigSettings = concat(gdalHardeningSettings, [
   { name: 'METADATA_STORAGE_TYPE', value: 'blob' }
   { name: 'ARTIFACT_STORAGE_TYPE', value: 'blob' }
   { name: 'RUNNER_TYPE', value: 'azure_batch' }
-  { name: 'TEMP_DATA_PATH', value: '/data' }
-  { name: 'DATA_PATH', value: '/data' }
+  { name: 'TEMP_DATA_PATH', value: keylessAppCutover ? '/tmp' : '/data' }
+  { name: 'DATA_PATH', value: keylessAppCutover ? '/tmp' : '/data' }
   { name: 'TITILER_ENDPOINT', value: '/api/titiler/' }
   { name: 'BLOB_CONTAINER', value: 'data' }
   { name: 'BLOB_ACCOUNT_URL', value: storageAccount.properties.primaryEndpoints.blob }
   { name: 'QUEUE_ACCOUNT_URL', value: storageAccount.properties.primaryEndpoints.queue }
-  {
-    name: 'BLOB_CONNECTION_STRING'
-    value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
-  }
   { name: 'AZURE_BATCH_ACCOUNT_NAME', value: batchAccountName }
   { name: 'AZURE_BATCH_URL', value: 'https://${batchAccountName}.${batchAccountLocation}.batch.azure.com' }
   { name: 'AZURE_BATCH_ACCOUNT_KEY', value: batchAccountKey }
@@ -250,6 +247,11 @@ var appConfigSettings = concat(gdalHardeningSettings, [
   { name: 'PUBLISH_STORAGE_ACCOUNT_URL', value: publishStorageAccountUrl }
   { name: 'PUBLISH_BLOB_CONTAINER', value: publishBlobContainer }
   { name: 'PUBLISH_EXPLORER_RENDER_ENABLED', value: publishExplorerRenderEnabled ? 'true' : 'false' }
+], keylessAppCutover ? [] : [
+  {
+    name: 'BLOB_CONNECTION_STRING'
+    value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
+  }
 ])
 
 module apiApp 'functionApp.bicep' = {
@@ -261,6 +263,7 @@ module apiApp 'functionApp.bicep' = {
     alwaysReadyCount: 10
     storageAccountName: storageAccountName
     fileStorageAccountName: fileStorageAccountName
+    mountDataShare: !keylessAppCutover
     umiResourceId: umiResourceId
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
@@ -291,13 +294,13 @@ module titilerApp 'functionApp.bicep' = {
     alwaysReadyCount: 5
     storageAccountName: storageAccountName
     fileStorageAccountName: fileStorageAccountName
+    mountDataShare: false
     umiResourceId: umiResourceId
     // Least privilege: TiTiler reads imagery only through the SAS URLs it is
     // given, so it keeps its host state in its own account and gets no
     // shared identity, no /data mount and no rights on the shared accounts.
     hostStorageAccountName: titilerStorageAccountName
     attachSharedIdentity: false
-    mountDataShare: false
     grantBlobDelegator: false
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
@@ -331,6 +334,7 @@ module queueApp 'functionApp.bicep' = {
     alwaysReadyCount: 1
     storageAccountName: storageAccountName
     fileStorageAccountName: fileStorageAccountName
+    mountDataShare: !keylessAppCutover
     umiResourceId: umiResourceId
     vnetName: vnetName
     functionsSubnetName: functionsSubnetName
