@@ -446,6 +446,7 @@ jobs:
           output-format: table
 
       - name: Scan built wheel artifacts for known vulnerabilities
+        if: ${{ !cancelled() }}
         uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
         with:
           path: ${{ runner.temp }}/haste-gdal-runtime/dist
