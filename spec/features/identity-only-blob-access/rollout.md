@@ -26,6 +26,11 @@ Persist approved false values in each environment's IaC parameter source before
 reapplying infrastructure. Application-only deploys neither apply these account
 flags nor create prerequisite RBAC grants.
 
+`keylessAppCutover` defaults to false so prerequisite provisioning keeps legacy
+settings and mounts. Set and persist it to true only after compatible API and
+queue packages have been deployed and validated. Reapplying IaC with the
+default after an app-only cutover would restore legacy credentials and mounts.
+
 Before each stage, capture nonsecret package/image/config/role rollback metadata.
 Never copy account keys into public docs or session artifacts. Retain File data.
 Restoring key-dependent code after disablement requires explicit authorization

@@ -81,6 +81,9 @@ param allowMainSharedKeyAccess bool = true
 @description('Allow Shared Key on retained File storage until every File-key consumer is retired.')
 param allowFileSharedKeyAccess bool = true
 
+@description('Set true only after compatible API and queue packages are deployed and validated; persist true for subsequent redeployments.')
+param keylessAppCutover bool = false
+
 @description('Training container image (tag included).')
 param trainingImage string = 'hastetraining:1.4.1'
 
@@ -341,6 +344,8 @@ module functions 'modules/functions.bicep' = {
     functionTitilerName: functionTitilerName
     functionQueueName: functionQueueName
     storageAccountName: storageAccountName
+    fileStorageAccountName: fileStorageAccountName
+    keylessAppCutover: keylessAppCutover
     titilerStorageAccountName: storage.outputs.titilerStorageAccountName
     umiResourceId: identity.outputs.resourceId
     vnetName: vnetName

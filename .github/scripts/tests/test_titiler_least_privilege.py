@@ -63,7 +63,7 @@ class TestTitilerLeastPrivilege(unittest.TestCase):
     def test_titiler_drops_shared_identity_mount_and_delegator(self) -> None:
         parameters = self.parameters(self.titiler)
         self.assertIs(parameters["attachSharedIdentity"]["value"], False)
-        self.assertNotIn("mountDataShare", parameters)
+        self.assertIs(parameters["mountDataShare"]["value"], False)
         self.assertIs(parameters["grantBlobDelegator"]["value"], False)
 
     def test_api_and_queue_keep_their_defaults(self) -> None:
@@ -97,8 +97,24 @@ class TestTitilerLeastPrivilege(unittest.TestCase):
         )
         # Always deployed, so turning the mount off removes an old one.
         self.assertNotIn("condition", mount)
-        self.assertEqual(mount["properties"], {})
-        self.assertNotIn("listKeys(", json.dumps(self.app_template))
+        self.assertIn("parameters('mountDataShare')", mount["properties"])
+        self.assertIn("listKeys(", mount["properties"])
+        self.assertIn("createObject()", mount["properties"])
+
+    def test_api_and_queue_mounts_wait_for_cutover(self) -> None:
+        self.assertIs(
+            self.main["parameters"]["keylessAppCutover"]["defaultValue"],
+            False,
+        )
+        for module in self.others:
+            with self.subTest(app=module["name"]):
+                self.assertIn(
+                    "keylessAppCutover",
+                    self.parameters(module)["mountDataShare"]["value"],
+                )
+        settings = self.parameters(self.others[0])["appSettings"]["value"]
+        self.assertIn("keylessAppCutover", settings)
+        self.assertIn("BLOB_CONNECTION_STRING", settings)
 
     def test_storage_key_disablements_remain_separate_compatibility_gates(
         self,

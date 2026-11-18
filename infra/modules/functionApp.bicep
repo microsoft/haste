@@ -20,6 +20,12 @@ param alwaysReadyCount int
 @description('Functions storage account name.')
 param storageAccountName string
 
+@description('Premium File account retained for the legacy compatibility phase.')
+param fileStorageAccountName string
+
+@description('Keep the legacy data mount until a compatible package has been deployed.')
+param mountDataShare bool = false
+
 @description('Storage account holding the app host state (AzureWebJobsStorage, host keys) and deployment package. The app system identity is granted data roles on this account only. Defaults to the shared functions account.')
 param hostStorageAccountName string = storageAccountName
 
@@ -86,6 +92,10 @@ var mainSiteRestrictions = [
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
   name: hostStorageAccountName
+}
+
+resource fileStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: fileStorageAccountName
 }
 
 resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' existing = {
@@ -205,7 +215,17 @@ resource site 'Microsoft.Web/sites@2023-12-01' = {
 resource storageMount 'Microsoft.Web/sites/config@2023-12-01' = {
   parent: site
   name: 'azurestorageaccounts'
-  properties: {}
+  properties: mountDataShare
+    ? {
+        data: {
+          type: 'AzureFiles'
+          accountName: fileStorageAccountName
+          shareName: 'data'
+          mountPath: '/data'
+          accessKey: fileStorageAccount.listKeys().keys[0].value
+        }
+      }
+    : {}
 }
 
 resource siteBlobOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = {

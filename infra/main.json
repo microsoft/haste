@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "14499457157226267081"
+      "templateHash": "2436520011704638772"
     }
   },
   "parameters": {
@@ -141,6 +141,13 @@
       "defaultValue": true,
       "metadata": {
         "description": "Allow Shared Key on retained File storage until every File-key consumer is retired."
+      }
+    },
+    "keylessAppCutover": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Set true only after compatible API and queue packages are deployed and validated; persist true for subsequent redeployments."
       }
     },
     "trainingImage": {
@@ -1465,6 +1472,12 @@
           "storageAccountName": {
             "value": "[variables('storageAccountName')]"
           },
+          "fileStorageAccountName": {
+            "value": "[variables('fileStorageAccountName')]"
+          },
+          "keylessAppCutover": {
+            "value": "[parameters('keylessAppCutover')]"
+          },
           "titilerStorageAccountName": {
             "value": "[reference('storage').outputs.titilerStorageAccountName.value]"
           },
@@ -1586,7 +1599,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.45.15.27210",
-              "templateHash": "17549835530734620450"
+              "templateHash": "17955178940562446161"
             }
           },
           "parameters": {
@@ -1618,6 +1631,19 @@
               "type": "string",
               "metadata": {
                 "description": "Functions storage account name."
+              }
+            },
+            "fileStorageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Premium File account retained during the legacy compatibility phase."
+              }
+            },
+            "keylessAppCutover": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Cut over only after compatible API and queue packages are deployed and validated."
               }
             },
             "titilerStorageAccountName": {
@@ -1939,6 +1965,12 @@
                   "storageAccountName": {
                     "value": "[parameters('storageAccountName')]"
                   },
+                  "fileStorageAccountName": {
+                    "value": "[parameters('fileStorageAccountName')]"
+                  },
+                  "mountDataShare": {
+                    "value": "[not(parameters('keylessAppCutover'))]"
+                  },
                   "umiResourceId": {
                     "value": "[parameters('umiResourceId')]"
                   },
@@ -1958,7 +1990,7 @@
                     "value": false
                   },
                   "appSettings": {
-                    "value": "[concat(concat(variables('gdalHardeningSettings'), createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', '/tmp'), createObject('name', 'DATA_PATH', 'value', '/tmp'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer')), createObject('name', 'PUBLISH_EXPLORER_RENDER_ENABLED', 'value', if(parameters('publishExplorerRenderEnabled'), 'true', 'false')))), createArray(createObject('name', 'HASTE_MAX_UPLOAD_BYTES', 'value', string(parameters('maxUploadBytes'))), createObject('name', 'PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES', 'value', string(parameters('publishAssessmentMaxTotalBytes'))), createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionApiName'), 0, min(32, length(parameters('functionApiName'))))))))]"
+                    "value": "[concat(concat(variables('gdalHardeningSettings'), createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', if(parameters('keylessAppCutover'), '/tmp', '/data')), createObject('name', 'DATA_PATH', 'value', if(parameters('keylessAppCutover'), '/tmp', '/data')), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer')), createObject('name', 'PUBLISH_EXPLORER_RENDER_ENABLED', 'value', if(parameters('publishExplorerRenderEnabled'), 'true', 'false'))), if(parameters('keylessAppCutover'), createArray(), createArray(createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage))))), createArray(createObject('name', 'HASTE_MAX_UPLOAD_BYTES', 'value', string(parameters('maxUploadBytes'))), createObject('name', 'PUBLISH_ASSESSMENT_MAX_TOTAL_BYTES', 'value', string(parameters('publishAssessmentMaxTotalBytes'))), createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionApiName'), 0, min(32, length(parameters('functionApiName'))))))))]"
                   },
                   "tags": {
                     "value": "[parameters('tags')]"
@@ -1971,7 +2003,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.45.15.27210",
-                      "templateHash": "16941543044873371879"
+                      "templateHash": "2389631396240411883"
                     }
                   },
                   "parameters": {
@@ -2003,6 +2035,19 @@
                       "type": "string",
                       "metadata": {
                         "description": "Functions storage account name."
+                      }
+                    },
+                    "fileStorageAccountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Premium File account retained for the legacy compatibility phase."
+                      }
+                    },
+                    "mountDataShare": {
+                      "type": "bool",
+                      "defaultValue": false,
+                      "metadata": {
+                        "description": "Keep the legacy data mount until a compatible package has been deployed."
                       }
                     },
                     "hostStorageAccountName": {
@@ -2197,7 +2242,7 @@
                       "type": "Microsoft.Web/sites/config",
                       "apiVersion": "2023-12-01",
                       "name": "[format('{0}/{1}', parameters('name'), 'azurestorageaccounts')]",
-                      "properties": {},
+                      "properties": "[if(parameters('mountDataShare'), createObject('data', createObject('type', 'AzureFiles', 'accountName', parameters('fileStorageAccountName'), 'shareName', 'data', 'mountPath', '/data', 'accessKey', listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('fileStorageAccountName')), '2023-05-01').keys[0].value)), createObject())]",
                       "dependsOn": [
                         "[resourceId('Microsoft.Web/sites', parameters('name'))]"
                       ]
@@ -2288,6 +2333,12 @@
                   "storageAccountName": {
                     "value": "[parameters('storageAccountName')]"
                   },
+                  "fileStorageAccountName": {
+                    "value": "[parameters('fileStorageAccountName')]"
+                  },
+                  "mountDataShare": {
+                    "value": false
+                  },
                   "umiResourceId": {
                     "value": "[parameters('umiResourceId')]"
                   },
@@ -2334,7 +2385,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.45.15.27210",
-                      "templateHash": "16941543044873371879"
+                      "templateHash": "2389631396240411883"
                     }
                   },
                   "parameters": {
@@ -2366,6 +2417,19 @@
                       "type": "string",
                       "metadata": {
                         "description": "Functions storage account name."
+                      }
+                    },
+                    "fileStorageAccountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Premium File account retained for the legacy compatibility phase."
+                      }
+                    },
+                    "mountDataShare": {
+                      "type": "bool",
+                      "defaultValue": false,
+                      "metadata": {
+                        "description": "Keep the legacy data mount until a compatible package has been deployed."
                       }
                     },
                     "hostStorageAccountName": {
@@ -2560,7 +2624,7 @@
                       "type": "Microsoft.Web/sites/config",
                       "apiVersion": "2023-12-01",
                       "name": "[format('{0}/{1}', parameters('name'), 'azurestorageaccounts')]",
-                      "properties": {},
+                      "properties": "[if(parameters('mountDataShare'), createObject('data', createObject('type', 'AzureFiles', 'accountName', parameters('fileStorageAccountName'), 'shareName', 'data', 'mountPath', '/data', 'accessKey', listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('fileStorageAccountName')), '2023-05-01').keys[0].value)), createObject())]",
                       "dependsOn": [
                         "[resourceId('Microsoft.Web/sites', parameters('name'))]"
                       ]
@@ -2654,6 +2718,12 @@
                   "storageAccountName": {
                     "value": "[parameters('storageAccountName')]"
                   },
+                  "fileStorageAccountName": {
+                    "value": "[parameters('fileStorageAccountName')]"
+                  },
+                  "mountDataShare": {
+                    "value": "[not(parameters('keylessAppCutover'))]"
+                  },
                   "umiResourceId": {
                     "value": "[parameters('umiResourceId')]"
                   },
@@ -2673,7 +2743,7 @@
                     "value": false
                   },
                   "appSettings": {
-                    "value": "[concat(concat(variables('gdalHardeningSettings'), createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', '/tmp'), createObject('name', 'DATA_PATH', 'value', '/tmp'), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer')), createObject('name', 'PUBLISH_EXPLORER_RENDER_ENABLED', 'value', if(parameters('publishExplorerRenderEnabled'), 'true', 'false')))), createArray(createObject('name', 'HASTE_MAX_IMAGERY_DOWNLOAD_BYTES', 'value', string(parameters('maxImageryDownloadBytes'))), createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionQueueName'), 0, min(32, length(parameters('functionQueueName'))))))))]"
+                    "value": "[concat(concat(variables('gdalHardeningSettings'), createArray(createObject('name', 'env', 'value', 'prod'), createObject('name', 'DEVELOPMENT_MODE', 'value', if(parameters('developmentMode'), 'true', 'false')), createObject('name', 'IMAGE_QUEUE_NAME', 'value', 'image-layers-queue'), createObject('name', 'INFERENCE_QUEUE_NAME', 'value', 'inference-queue'), createObject('name', 'STATS_QUEUE_NAME', 'value', 'stats-queue'), createObject('name', 'TRAIN_QUEUE_NAME', 'value', 'train-queue'), createObject('name', 'ZIP_QUEUE_NAME', 'value', 'zip-queue'), createObject('name', 'EMBEDDING_QUEUE_NAME', 'value', 'embedding-queue'), createObject('name', 'PUBLISH_QUEUE_NAME', 'value', 'publish-queue'), createObject('name', 'IMAGERY_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'METADATA_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'ARTIFACT_STORAGE_TYPE', 'value', 'blob'), createObject('name', 'RUNNER_TYPE', 'value', 'azure_batch'), createObject('name', 'TEMP_DATA_PATH', 'value', if(parameters('keylessAppCutover'), '/tmp', '/data')), createObject('name', 'DATA_PATH', 'value', if(parameters('keylessAppCutover'), '/tmp', '/data')), createObject('name', 'TITILER_ENDPOINT', 'value', '/api/titiler/'), createObject('name', 'BLOB_CONTAINER', 'value', 'data'), createObject('name', 'BLOB_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'QUEUE_ACCOUNT_URL', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.queue), createObject('name', 'AZURE_BATCH_ACCOUNT_NAME', 'value', parameters('batchAccountName')), createObject('name', 'AZURE_BATCH_URL', 'value', format('https://{0}.{1}.batch.azure.com', parameters('batchAccountName'), parameters('batchAccountLocation'))), createObject('name', 'AZURE_BATCH_ACCOUNT_KEY', 'value', parameters('batchAccountKey')), createObject('name', 'AZURE_BATCH_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_IMAGERYPREP_DOCKER_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('imageryprepImage'))), createObject('name', 'AZURE_BATCH_OUTPUT_CONTAINER_URL', 'value', format('{0}data', reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').primaryEndpoints.blob)), createObject('name', 'AZURE_BATCH_TRAINING_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_ID', 'value', parameters('batchPoolName')), createObject('name', 'AZURE_BATCH_REGISTRY_SERVER', 'value', parameters('acrLoginServer')), createObject('name', 'AZURE_BATCH_REGISTRY_IMAGE', 'value', format('{0}/{1}', parameters('acrLoginServer'), parameters('trainingImage'))), createObject('name', 'AZURE_BATCH_REGISTRY_IDENTITY_RESOURCE_ID', 'value', parameters('umiResourceId')), createObject('name', 'STATIC_APP_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'STATIC_APP_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'STATIC_APP_NAME', 'value', parameters('staticWebAppName')), createObject('name', 'STATIC_APP_DOMAIN', 'value', parameters('staticAppDomain')), createObject('name', 'EMAIL_CONNECTION_STRING', 'value', parameters('emailConnectionString')), createObject('name', 'EMAIL_SENDER', 'value', format('DoNotReply@{0}', parameters('emailSenderDomain'))), createObject('name', 'AZURE_BATCH_TRAINING_POOL_IDS', 'value', parameters('trainingPoolIds')), createObject('name', 'AZURE_BATCH_INFERENCE_POOL_IDS', 'value', parameters('inferencePoolIds')), createObject('name', 'AZURE_BATCH_IMAGERYPREP_POOL_IDS', 'value', parameters('imageryprepPoolIds')), createObject('name', 'AZURE_BATCH_USE_SAS', 'value', if(parameters('useSas'), 'true', 'false')), createObject('name', 'AZURE_BATCH_MANAGE_POOLS', 'value', if(parameters('managePools'), 'true', 'false')), createObject('name', 'PUBLISHING_ENABLED', 'value', if(parameters('publishingEnabled'), 'true', 'false')), createObject('name', 'PC_PROVIDER_ENABLED', 'value', if(parameters('pcProviderEnabled'), 'true', 'false')), createObject('name', 'PC_GEOCATALOG_URL', 'value', parameters('pcGeocatalogUrl')), createObject('name', 'PC_EXPLORER_URL', 'value', parameters('pcExplorerUrl')), createObject('name', 'PC_INGESTION_SOURCE', 'value', parameters('pcIngestionSource')), createObject('name', 'PC_COLLECTION_PREFIX', 'value', parameters('pcCollectionPrefix')), createObject('name', 'PC_PUBLISHING_LICENSE', 'value', parameters('pcPublishingLicense')), createObject('name', 'PUBLISHING_ORGANIZATION_NAME', 'value', parameters('publishingOrganizationName')), createObject('name', 'PUBLISHING_ORGANIZATION_URL', 'value', parameters('publishingOrganizationUrl')), createObject('name', 'PUBLISH_STORAGE_ACCOUNT_URL', 'value', parameters('publishStorageAccountUrl')), createObject('name', 'PUBLISH_BLOB_CONTAINER', 'value', parameters('publishBlobContainer')), createObject('name', 'PUBLISH_EXPLORER_RENDER_ENABLED', 'value', if(parameters('publishExplorerRenderEnabled'), 'true', 'false'))), if(parameters('keylessAppCutover'), createArray(), createArray(createObject('name', 'BLOB_CONNECTION_STRING', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage))))), createArray(createObject('name', 'HASTE_MAX_IMAGERY_DOWNLOAD_BYTES', 'value', string(parameters('maxImageryDownloadBytes'))), createObject('name', 'AzureFunctionsWebHost__hostId', 'value', toLower(substring(parameters('functionQueueName'), 0, min(32, length(parameters('functionQueueName'))))))))]"
                   },
                   "tags": {
                     "value": "[parameters('tags')]"
@@ -2686,7 +2756,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.45.15.27210",
-                      "templateHash": "16941543044873371879"
+                      "templateHash": "2389631396240411883"
                     }
                   },
                   "parameters": {
@@ -2718,6 +2788,19 @@
                       "type": "string",
                       "metadata": {
                         "description": "Functions storage account name."
+                      }
+                    },
+                    "fileStorageAccountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Premium File account retained for the legacy compatibility phase."
+                      }
+                    },
+                    "mountDataShare": {
+                      "type": "bool",
+                      "defaultValue": false,
+                      "metadata": {
+                        "description": "Keep the legacy data mount until a compatible package has been deployed."
                       }
                     },
                     "hostStorageAccountName": {
@@ -2912,7 +2995,7 @@
                       "type": "Microsoft.Web/sites/config",
                       "apiVersion": "2023-12-01",
                       "name": "[format('{0}/{1}', parameters('name'), 'azurestorageaccounts')]",
-                      "properties": {},
+                      "properties": "[if(parameters('mountDataShare'), createObject('data', createObject('type', 'AzureFiles', 'accountName', parameters('fileStorageAccountName'), 'shareName', 'data', 'mountPath', '/data', 'accessKey', listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('fileStorageAccountName')), '2023-05-01').keys[0].value)), createObject())]",
                       "dependsOn": [
                         "[resourceId('Microsoft.Web/sites', parameters('name'))]"
                       ]

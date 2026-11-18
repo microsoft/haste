@@ -65,15 +65,20 @@ per-blob token is minted when a URL is handed out:
 
 ### Ephemeral Functions storage
 
-Remove the Azure Files `/data` mount and its account-key lookup. Functions use
-`/tmp` only for disposable scratch and local log copies; Blob remains durable
-storage and Application Insights remains the operational log sink.
+After a compatible package is deployed and validated, explicitly enable
+`keylessAppCutover` to remove the Azure Files `/data` mount and connection
+string. The default retains legacy settings during prerequisite provisioning.
+Persist the enabled flag so a later IaC deployment cannot restore legacy
+settings. Functions then use `/tmp` for disposable scratch and local log copies;
+Blob remains durable storage and Application Insights is the operational log sink.
 
 Multipart upload state must live in Blob staged blocks, not local chunk files.
 Validate the first chunk's declared format before staging; account for all
 staged blocks when enforcing size limits and finalize only when all expected
 blocks exist. Retries and requests handled by another instance must work without
-the first instance's filesystem. Retain the File account/share for rollback and
+the first instance's filesystem. Serialize staging, commit and cancellation with
+a lease on the destination blob, and pass the lease to each write so an expired
+holder cannot modify the upload. Retain the File account/share for rollback and
 inspection; do not delete data.
 
 ### Storage posture and RBAC
