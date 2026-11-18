@@ -41,3 +41,20 @@ Use existing approved tooling/CI; do not install dependencies from blocked feeds
 
 No live validation, IaC what-if, candidate dispatch, identity-grant retirement,
 policy revocation or Shared Key disablement is claimed. Those remain gated.
+
+## Review follow-up evidence
+
+- The native Python suite ran with 936 passes and 36 failures. All failing
+  test identities and messages are present in the recorded main baseline;
+  this run had fewer environment-dependent failures than that baseline.
+- Artifact interface, local raster, authoritative signing and upload regression
+  tests pass. An isolated Azurite container verified cancellation racing
+  completion, incomplete-upload cleanup and rejection of a stale lease.
+- The IaC isolation/cutover suite passes, Bicep compiles and environment
+  settings drift check passes. Azure what-if and live deployment remain unrun.
+- UI refresh and visualizer suites pass (37 tests); changed-file lint and the
+  Vite build pass with reused, non-lockfile-exact dependencies.
+- Runtime source tests pass after updating SQLite to 3.54.1. The native
+  vulnerability scan remains a gate: an SQLite CLI advisory has no fixed
+  release, and the OpenSSL vendor's fixed release has not yet shipped.
+  Findings have not been suppressed.
