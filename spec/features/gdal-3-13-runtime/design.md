@@ -285,6 +285,9 @@ that every consumer uses that set and that a candidate does not precede it.
 The guard also compares all published wheel digests with the checked-in
 published-asset lock. Switch consumers only after the new six-wheel set has
 been approved, published immutably and verified as available.
+Candidate training smoke tests explicitly substitute the new build number in
+the exact pinned wheel filenames and use only files from the candidate bundle;
+they reject mixed source builds, missing wheels and downgrades.
 
 Both inventory and artifact scans remain blocking. A version-based match may
 be excepted only after review establishes the exact patch or non-applicability

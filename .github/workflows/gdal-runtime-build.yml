@@ -485,7 +485,8 @@ jobs:
           TRAINING_ENV: ${{ runner.temp }}/haste-gdal-runtime/training-env.yml
         run: |
           python .github/scripts/prepare_training_runtime_env.py \
-            docker/training/env/env.yml "$WHEEL_DIR" "$TRAINING_ENV"
+            docker/training/env/env.yml "$WHEEL_DIR" "$TRAINING_ENV" \
+            --candidate-build "$(python native/gdal-runtime/fetch_sources.py --print-build)"
 
       - name: Smoke-test the full Python 3.11 training environment
         env:
