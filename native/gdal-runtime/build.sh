@@ -105,8 +105,14 @@ cmake --build "$WORK/libjpeg-build" --parallel "$JOBS"
 cmake --install "$WORK/libjpeg-build"
 
 extract openssl
+OPENSSL_SOURCE="$(find "$WORK" -maxdepth 1 -type d -name 'openssl-*' -print -quit)"
+test -n "$OPENSSL_SOURCE"
+python3 "$ROOT/apply_openssl_patches.py" \
+  --source-dir "$OPENSSL_SOURCE" \
+  --cache-dir "$SOURCES/openssl-patches" \
+  --report "$WORK/openssl-patches.json"
 (
-  cd "$WORK"/openssl-*/
+  cd "$OPENSSL_SOURCE"
   ./Configure linux-x86_64 shared no-tests no-apps no-docs no-module \
     no-legacy no-engine no-dso no-autoload-config --libdir=lib \
     --prefix="$PREFIX" --openssldir="$PREFIX/ssl"
@@ -298,6 +304,7 @@ cp -a "$PREFIX/share/proj/." \
 PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" \
   "$PYTHON" -m haste_gdal_runtime manifest \
     --library "$PREFIX/lib/libgdal.so" \
+    --patch-report "$WORK/openssl-patches.json" \
     --output "$BUILD_ROOT/package/haste_gdal_runtime/manifest.json"
 python3 "$ROOT/verify_build_manifest.py" \
   "$BUILD_ROOT/package/haste_gdal_runtime/manifest.json"

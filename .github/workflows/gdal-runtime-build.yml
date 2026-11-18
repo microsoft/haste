@@ -20,6 +20,8 @@ on:
       - ".github/scripts/check_gdal_hardening.py"
       - ".github/scripts/tests/test_gdal_hardening_guard.py"
       - ".github/scripts/tests/test_deploy_network_access.py"
+      - ".github/scripts/check_published_runtime.py"
+      - ".github/scripts/tests/test_check_published_runtime.py"
       - "api/titilerfuncapi/**"
       - "hastelib/src/hastegeo/__init__.py"
       - "hastelib/src/hastegeo/core/processors/uploader.py"
@@ -73,6 +75,8 @@ on:
       - ".github/scripts/check_gdal_hardening.py"
       - ".github/scripts/tests/test_gdal_hardening_guard.py"
       - ".github/scripts/tests/test_deploy_network_access.py"
+      - ".github/scripts/check_published_runtime.py"
+      - ".github/scripts/tests/test_check_published_runtime.py"
       - "api/titilerfuncapi/**"
       - "hastelib/src/hastegeo/__init__.py"
       - "hastelib/src/hastegeo/core/processors/uploader.py"
@@ -120,6 +124,7 @@ jobs:
       - name: Checkout source without persisted credentials
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python
@@ -130,6 +135,11 @@ jobs:
       - name: Run native runtime unit tests
         working-directory: native/gdal-runtime
         run: python -m unittest discover -s tests -v
+
+      - name: Verify published consumer wheels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python .github/scripts/check_published_runtime.py
 
       - name: Check repository GDAL hardening configuration
         run: python .github/scripts/check_gdal_hardening.py
@@ -157,6 +167,11 @@ jobs:
         env:
           BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
         run: bash native/gdal-runtime/build.sh
+
+      - name: Run OpenSSL security regression tests
+        env:
+          BUILD_ROOT: ${{ runner.temp }}/haste-gdal-runtime
+        run: bash native/gdal-runtime/test_openssl_backports.sh
 
       - name: Validate the complete runtime release bundle
         env:
@@ -266,6 +281,12 @@ jobs:
             --mount "type=bind,source=$SMOKE_WHEEL_DIR,target=/smoke-wheels,readonly" \
             "$SMOKE_IMAGE" -ec '
               cd /tmp
+              if command -v sqlite3 >/dev/null 2>&1; then
+                echo "Base-image sqlite3: $(command -v sqlite3)"
+                sqlite3 --version
+              else
+                echo "Base-image sqlite3 is not on PATH"
+              fi
               python -m pip install \
                 --isolated \
                 --no-index \
@@ -372,6 +393,21 @@ jobs:
             --wheel-dir "$RUNNER_TEMP/haste-gdal-runtime/dist" \
             --output-dir "$RUNNER_TEMP/haste-function-packages"
 
+      - name: Inventory SQLite names in candidate archives
+        run: |
+          python native/gdal-runtime/inspect_sqlite_archives.py \
+            --directory "$RUNNER_TEMP/haste-gdal-runtime/dist" \
+            --directory "$RUNNER_TEMP/haste-function-packages" \
+            --output "$RUNNER_TEMP/sqlite-archive-evidence.json"
+
+      - name: Upload SQLite archive evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sqlite-archive-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/sqlite-archive-evidence.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload build-once Function App packages
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -470,6 +506,12 @@ jobs:
             --env WHEEL_DIR \
             mcr.microsoft.com/azureml/curated/minimal-py312-cuda12.4-inference@sha256:171ee0f9b43d2295c0266c55b2974d1ab300ca2dbec081bdd0fb2604f75644b3 \
             -ec '
+              if command -v sqlite3 >/dev/null 2>&1; then
+                echo "Training base-image sqlite3: $(command -v sqlite3)"
+                sqlite3 --version
+              else
+                echo "Training base-image sqlite3 is not on PATH"
+              fi
               apt-get update
               apt-get install -y --no-install-recommends libgl1-mesa-glx
               /opt/miniconda/bin/conda env create --yes \

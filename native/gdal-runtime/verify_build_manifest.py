@@ -6,6 +6,8 @@ import json
 import sys
 from pathlib import Path
 
+from apply_openssl_patches import PATCH_LOCK, load_patches
+
 EXPECTED_DRIVERS = {
     "COG",
     "GTiff",
@@ -24,7 +26,9 @@ EXPECTED_DRIVERS = {
 }
 
 
-def validate(manifest: dict[str, object]) -> list[str]:
+def validate(
+    manifest: dict[str, object], expected_patches: list[dict] | None = None
+) -> list[str]:
     errors = []
     if manifest.get("gdal_release") != "3.13.3":
         errors.append(
@@ -38,6 +42,11 @@ def validate(manifest: dict[str, object]) -> list[str]:
         )
     if manifest.get("vrt_raw_band_compiled") is not False:
         errors.append("VRTRawRasterBand is compiled into libgdal")
+    if (
+        expected_patches is not None
+        and manifest.get("openssl_patches") != expected_patches
+    ):
+        errors.append("OpenSSL patch evidence differs from the patch lock")
 
     drivers = set(manifest.get("drivers", []))
     if drivers != EXPECTED_DRIVERS:
@@ -64,7 +73,7 @@ def main(argv: list[str]) -> int:
         print("usage: verify_build_manifest.py MANIFEST.json", file=sys.stderr)
         return 2
     manifest = json.loads(Path(argv[0]).read_text(encoding="utf-8"))
-    errors = validate(manifest)
+    errors = validate(manifest, load_patches(PATCH_LOCK))
     if errors:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)
