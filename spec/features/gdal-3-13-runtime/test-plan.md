@@ -48,3 +48,10 @@ These run in the runtime build workflow, inside each target base image:
   consumer versions, unpublished assets and downgrade attempts.
 - Run all existing native, GDAL hardening, target-image, package, provenance,
   license and functional smoke tests against the candidate.
+
+The first candidate built successfully and passed the upstream OpenSSL
+regression recipes, runtime/binding smoke tests and Function/imageryprep
+target-image smokes. Its SBOM scan still reported the SQLite CLI advisory and
+five version-based OpenSSL matches. The initial training smoke exposed a
+candidate-versus-published wheel mismatch; the selection fix requires a new
+complete CI run. The artifact scan must also run independently of SBOM failure.

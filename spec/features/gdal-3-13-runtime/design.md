@@ -296,11 +296,10 @@ precise scope and a documented removal condition. Until then the unresolved
 finding blocks publication.
 
 The currently published runtime wheel contains `libsqlite3` but no member
-named `sqlite3`. This is not sufficient to establish the SQLite CLI finding's
-applicability to Function packages, worker images, renamed executables or
-application workflows. The candidate CI records archive member names and
-base-image PATH observations for security review; those observations are not
-an automatic exception.
+named `sqlite3`. Candidate CI found no such member in its wheels or Function
+ZIPs, but did observe SQLite 3.53.4 on the imageryprep base image's PATH. These
+observations do not establish reachability through HASTE workflows or identify
+all executables in final worker images; they are not an automatic exception.
 
 ## Open questions
 
