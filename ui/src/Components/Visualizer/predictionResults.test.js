@@ -8,7 +8,7 @@ import { PMTiles } from "pmtiles";
 import { normalizeAttrs, indexById, classifyAll } from "./predictionClassify.js";
 import {
   buildRawGpkgUrl, buildVisualizerResultsUrl, canViewResults, DEFAULT_THRESHOLD,
-  DEFAULT_UNKNOWN_THRESHOLD, describeFootprintStatus, hasRasterLayer, pickTileLayers,
+  DEFAULT_UNKNOWN_THRESHOLD, describeFootprintStatus, hasRasterLayer, pickTileLayers, validateTileRefresh,
   predictionRenderKey, protectedArtifactEndpoint, readinessDetail, sameTileSource,
   resolveFootprintStatus, resolvePredictionArtifacts, stableTileUrl, visualizerLayerOptions,
   visualizerSceneKey,
@@ -336,4 +336,23 @@ test("tile refresh only applies to the same prediction source", () => {
     "predictedDamageLayer", "postDisasterImagery", "preDisasterImagery", "predictionsLayer",
   ].sort());
   assert.equal(picked.predictionsLayer, null);
+});
+
+test("tile refresh rejects incomplete and invalid layers before applying", () => {
+  const current = {
+    preDisasterImagery: { url: "/pre" },
+    postDisasterImagery: { url: "/post" },
+    predictedDamageLayer: { url: "/damage" },
+    predictionsLayer: null,
+  };
+  assert.throws(() => validateTileRefresh(current, { predictionVersion: 0 }));
+  for (const invalid of [null, { url: "" }, { url: "   " }, { url: 3 }]) {
+    assert.throws(() => validateTileRefresh(current, { ...current, postDisasterImagery: invalid }));
+  }
+  assert.throws(() => validateTileRefresh(current, { ...current, predictionsLayer: { url: "" } }));
+  assert.deepEqual(validateTileRefresh(current, { ...current, predictedDamageLayer: null }), {
+    ...current, predictedDamageLayer: null,
+  });
+  const absent = { ...current, preDisasterImagery: { url: "" } };
+  assert.equal(validateTileRefresh(absent, { ...absent, preDisasterImagery: null }).preDisasterImagery, null);
 });

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { buildUrl } from "../../util/api";
 import { createTileCredentialRefreshController } from "../../util/tileCredentialRefresh";
-import { buildVisualizerResultsUrl, pickTileLayers, sameTileSource } from "./predictionResults.js";
+import { buildVisualizerResultsUrl, sameTileSource, validateTileRefresh } from "./predictionResults.js";
 import { requestPredictionJson } from "./predictionHttp.js";
 
 /**
@@ -28,7 +28,7 @@ export default function useVisualizerTileRefresh(ids, results, applierRef) {
       ),
       applyCredentials: (next) => {
         if (!sameTileSource(results, next)) throw new Error("The prediction source changed.");
-        const layers = pickTileLayers(next);
+        const layers = validateTileRefresh(results, next);
         // Apply to the live layers first so a failure reaches the retry path.
         if (!applierRef?.current) throw new Error("The maps are not ready.");
         applierRef.current(layers);

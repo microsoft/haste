@@ -141,6 +141,23 @@ export function pickTileLayers(results) {
   return picked;
 }
 
+export function validateTileRefresh(current, next) {
+  for (const key of TILE_LAYER_KEYS) {
+    if (!Object.hasOwn(next || {}, key)) {
+      throw new Error("The tile credential response is incomplete.");
+    }
+    const layer = next[key];
+    const imagery = key === "preDisasterImagery" || key === "postDisasterImagery";
+    const wasPresent = typeof current?.[key]?.url === "string" && !!current[key].url.trim();
+    if (layer === null && (!imagery || !wasPresent)) continue;
+    if (!layer || typeof layer !== "object" || typeof layer.url !== "string"
+        || (!layer.url.trim() && (!imagery || wasPresent))) {
+      throw new Error("The tile credential response contains an invalid layer.");
+    }
+  }
+  return pickTileLayers(next);
+}
+
 export function visualizerSceneKey(results, routeKey = "") {
   if (!results) return "";
   const stable = (imagery) => (imagery ? { ...imagery, url: stableTileUrl(imagery.url) } : imagery);

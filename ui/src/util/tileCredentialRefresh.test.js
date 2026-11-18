@@ -113,6 +113,8 @@ test("malformed imagery is rejected even before map layers are created", () => {
     {},
     { preEventTileUrl: 1, postEventTileUrl: "new-post" },
     { preEventTileUrl: "", postEventTileUrl: {} },
+    { postEventTileUrl: "" },
+    { postEventTileUrl: "   " },
   ]) {
     const dataRef = { current: original };
     assert.throws(() =>

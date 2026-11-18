@@ -44,7 +44,8 @@ function requireImageryUrls(nextData) {
     !imagery ||
     (imagery.preEventTileUrl != null &&
       typeof imagery.preEventTileUrl !== "string") ||
-    typeof imagery.postEventTileUrl !== "string"
+    typeof imagery.postEventTileUrl !== "string" ||
+    !imagery.postEventTileUrl.trim()
   ) {
     throw new Error("The imagery credential response is incomplete.");
   }
