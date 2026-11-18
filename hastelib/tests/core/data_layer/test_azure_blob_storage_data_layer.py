@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 import json
+import threading
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from azure.core.exceptions import ResourceNotFoundError
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from hastegeo.core.data_layer.azure_blob_storage_data_layer import (
     _INITIALIZED_CONTAINERS,
     AzureBlobStorageDataLayer,
@@ -28,7 +29,10 @@ class TestAzureBlobStorageDataLayerLoad(unittest.TestCase):
         )
         self.assertEqual(result, self.blob_client.url)
         self.blob_client.stage_block.assert_called_once_with(
-            block_id=self.layer._block_id(0), data=b"chunk", length=5
+            block_id=self.layer._block_id(0),
+            data=b"chunk",
+            length=5,
+            lease=None,
         )
 
     def test_remote_state_reports_missing_blocks_and_total_size(self) -> None:
@@ -97,6 +101,88 @@ class TestAzureBlobStorageDataLayerLoad(unittest.TestCase):
                 "haste_upload_total_chunks": "2",
             },
         )
+
+    def test_cancellation_waits_for_completed_upload_and_preserves_it(
+        self,
+    ) -> None:
+        lock = threading.Lock()
+        committing = threading.Event()
+        contested = threading.Event()
+        proceed = threading.Event()
+        completed = threading.Event()
+        errors = []
+        client = self.blob_client
+        client.url = "https://account.test/data/file.tif"
+        client.exists.return_value = True
+        client.get_blob_properties.side_effect = lambda: SimpleNamespace(
+            metadata=(
+                {
+                    "haste_upload_complete": "true",
+                    "haste_upload_total_chunks": "1",
+                }
+                if completed.is_set()
+                else {}
+            ),
+            size=7,
+        )
+        client.get_block_list.return_value = (
+            [],
+            [SimpleNamespace(id=self.layer._block_id(0), size=7)],
+        )
+
+        def acquire(**_kwargs):
+            if not lock.acquire(blocking=False):
+                contested.set()
+                error = HttpResponseError("lease held")
+                error.error_code = "LeaseAlreadyPresent"
+                raise error
+            lease = Mock()
+            lease.release.side_effect = lock.release
+            return lease
+
+        def commit(_blocks, **kwargs):
+            self.assertIsNotNone(kwargs["lease"])
+            committing.set()
+            if not proceed.wait(5):
+                raise TimeoutError("commit was not released")
+            completed.set()
+
+        client.acquire_lease.side_effect = acquire
+        client.commit_block_list.side_effect = commit
+
+        def finalize():
+            try:
+                with self.layer.chunk_upload_lock("file", "raw") as lease:
+                    self.layer.finalize_save(
+                        "file", "raw", total_chunks=1, lease=lease
+                    )
+            except Exception as error:
+                errors.append(error)
+
+        def cancel():
+            try:
+                with self.layer.chunk_upload_lock("file", "raw") as lease:
+                    self.assertFalse(
+                        self.layer.discard_chunk_upload(
+                            "file", "raw", total_chunks=1, lease=lease
+                        )
+                    )
+            except Exception as error:
+                errors.append(error)
+
+        first = threading.Thread(target=finalize)
+        first.start()
+        self.assertTrue(committing.wait(5))
+        second = threading.Thread(target=cancel)
+        second.start()
+        self.assertTrue(contested.wait(5))
+        proceed.set()
+        first.join(5)
+        second.join(5)
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertEqual(errors, [])
+        client.delete_blob.assert_not_called()
+        client.commit_block_list.assert_called_once()
 
     def test_load_all_scopes_initial_listing_to_partition_and_type(
         self,

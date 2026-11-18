@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 import io
 import unittest
+from contextlib import nullcontext
 from unittest.mock import Mock, patch
 
 from hastegeo.core.config import Config
@@ -27,6 +28,7 @@ class TestBlobUploadStaging(unittest.TestCase):
         config.DATA_DIR = None
         config.TEMP_DIR = "/tmp"
         self.storage = Mock()
+        self.storage.chunk_upload_lock.return_value = nullcontext("lease-id")
         with patch(
             "hastegeo.core.processors.uploader.UnifiedDataLayer",
             return_value=self.storage,
@@ -46,6 +48,12 @@ class TestBlobUploadStaging(unittest.TestCase):
         )
         self.assertEqual(
             self.storage.save_chunk.call_args.kwargs["data"], TIFF
+        )
+        self.assertEqual(
+            self.storage.save_chunk.call_args.kwargs["lease"], "lease-id"
+        )
+        self.assertEqual(
+            self.storage.finalize_save.call_args.kwargs["lease"], "lease-id"
         )
         self.storage.finalize_save.assert_called_once()
 
@@ -80,6 +88,10 @@ class TestBlobUploadStaging(unittest.TestCase):
         ), self.assertRaises(ValueError):
             self.uploader.save_chunk(0, io.BytesIO(TIFF), "file1", 2)
         self.storage.discard_chunk_upload.assert_called_once()
+        self.assertEqual(
+            self.storage.discard_chunk_upload.call_args.kwargs["lease"],
+            "lease-id",
+        )
 
     def test_cancel_discards_remote_upload(self) -> None:
         result = self.uploader.save_chunk(

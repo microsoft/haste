@@ -73,6 +73,7 @@ class UnifiedDataLayer:
         data_file_path=None,
         data_format="tif",
         chunk_id=None,
+        lease=None,
     ):
         path = self.data_layer.save_chunk(
             identifier=identifier,
@@ -81,6 +82,7 @@ class UnifiedDataLayer:
             data_file_path=data_file_path,
             data_format=data_format,
             chunk_id=chunk_id,
+            **({"lease": lease} if lease is not None else {}),
         )
         return str(path)
 
@@ -91,6 +93,7 @@ class UnifiedDataLayer:
         data_format="tif",
         data_file_path=None,
         total_chunks=None,
+        lease=None,
     ):
         return self.data_layer.finalize_save(
             identifier=identifier,
@@ -98,6 +101,7 @@ class UnifiedDataLayer:
             data_format=data_format,
             data_file_path=data_file_path,
             total_chunks=total_chunks,
+            **({"lease": lease} if lease is not None else {}),
         )
 
     def get_chunk_upload_state(
@@ -108,10 +112,20 @@ class UnifiedDataLayer:
         )
 
     def discard_chunk_upload(
-        self, identifier, data_type, data_format="tif", total_chunks=None
+        self,
+        identifier,
+        data_type,
+        data_format="tif",
+        total_chunks=None,
+        lease=None,
     ) -> bool:
         return self.data_layer.discard_chunk_upload(
-            identifier, data_type, data_format, total_chunks
+            identifier, data_type, data_format, total_chunks, lease=lease
+        )
+
+    def chunk_upload_lock(self, identifier, data_type, data_format="tif"):
+        return self.data_layer.chunk_upload_lock(
+            identifier, data_type, data_format
         )
 
     def update(

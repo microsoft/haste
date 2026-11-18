@@ -3,10 +3,16 @@
 import hashlib
 import json
 import logging
+import time
+from contextlib import contextmanager
 from threading import Lock
 
 import yaml
-from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
+from azure.core.exceptions import (
+    HttpResponseError,
+    ResourceExistsError,
+    ResourceNotFoundError,
+)
 from azure.storage.blob import BlobBlock  # type: ignore
 
 from ..utils.blob import (
@@ -204,6 +210,7 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
         data_file_path=None,
         data_format="tif",
         chunk_id=None,
+        lease=None,
     ):
         self.validate_data_input(data, data_file_path)
         if data_file_path:
@@ -220,6 +227,7 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
             block_id=self._block_id(int(chunk_id)),
             data=bytes(data),
             length=len(data),
+            lease=lease,
         )
         return str(blob_client.url)
 
@@ -231,6 +239,36 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
         return self.container_client.get_blob_client(
             self.get_file_path(identifier, data_type, data_format)
         )
+
+    @contextmanager
+    def chunk_upload_lock(self, identifier, data_type, data_format="tif"):
+        client = self._chunk_blob_client(identifier, data_type, data_format)
+        try:
+            client.get_blob_properties()
+        except ResourceNotFoundError:
+            try:
+                client.upload_blob(b"", overwrite=False)
+            except ResourceExistsError:
+                pass
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                lease = client.acquire_lease(lease_duration=60)
+                break
+            except HttpResponseError as error:
+                if (
+                    getattr(error, "error_code", None) != "LeaseAlreadyPresent"
+                    or time.monotonic() >= deadline
+                ):
+                    raise
+                time.sleep(0.25)
+        try:
+            yield lease
+        finally:
+            try:
+                lease.release()
+            except ResourceNotFoundError:
+                pass
 
     def get_chunk_upload_state(
         self, identifier, data_type, data_format="tif", total_chunks=None
@@ -295,6 +333,7 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
         data_format="tif",
         data_file_path=None,
         total_chunks=None,
+        lease=None,
     ):
         state = self.get_chunk_upload_state(
             identifier, data_type, data_format, total_chunks
@@ -313,13 +352,19 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
                 self._UPLOAD_COMPLETE: "true",
                 self._UPLOAD_TOTAL_CHUNKS: str(total_chunks),
             },
+            lease=lease,
         )
         return self.get_file_remote_path(
             identifier, data_type, data_format, include_sas=False
         )
 
     def discard_chunk_upload(
-        self, identifier, data_type, data_format="tif", total_chunks=None
+        self,
+        identifier,
+        data_type,
+        data_format="tif",
+        total_chunks=None,
+        lease=None,
     ) -> bool:
         state = self.get_chunk_upload_state(
             identifier, data_type, data_format, total_chunks
@@ -329,11 +374,12 @@ class AzureBlobStorageDataLayer(AbstractDataLayer):
         client = self._chunk_blob_client(identifier, data_type, data_format)
         if state["committed"]:
             client.commit_block_list(
-                [BlobBlock(block_id=value) for value in state["committed"]]
+                [BlobBlock(block_id=value) for value in state["committed"]],
+                lease=lease,
             )
         else:
-            client.commit_block_list([])
-            client.delete_blob(delete_snapshots="include")
+            client.commit_block_list([], lease=lease)
+            client.delete_blob(delete_snapshots="include", lease=lease)
         return True
 
     def update(

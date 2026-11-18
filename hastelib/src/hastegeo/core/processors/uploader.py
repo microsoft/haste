@@ -62,12 +62,15 @@ class FileUploader:
         # if action equals cancel clean up the chunks and return
         if action and action.lower() == "cancel":
             if self.use_blob_staging:
-                self.storage.discard_chunk_upload(
-                    identifier=f"{self.default_name_prefix}_{file_id}",
-                    data_type=self.config.get_metadata_types().RAW_IMAGERY.value,
-                    data_format=data_format,
-                    total_chunks=total_chunks,
-                )
+                kwargs = {
+                    "identifier": f"{self.default_name_prefix}_{file_id}",
+                    "data_type": self.config.get_metadata_types().RAW_IMAGERY.value,
+                    "data_format": data_format,
+                }
+                with self.storage.chunk_upload_lock(**kwargs) as lease:
+                    self.storage.discard_chunk_upload(
+                        **kwargs, total_chunks=total_chunks, lease=lease
+                    )
             else:
                 for i in range(total_chunks):
                     self.delete_chunk(f"{file_id}_chunk_{i}")
@@ -174,22 +177,28 @@ class FileUploader:
             "data_format": data_format,
             "total_chunks": total_chunks,
         }
-        state = self.storage.get_chunk_upload_state(**kwargs)
-        if not state["complete"]:
-            self.storage.save_chunk(
-                identifier=kwargs["identifier"],
-                data_type=kwargs["data_type"],
-                data_format=data_format,
-                data=data,
-                chunk_id=chunk_number,
-            )
+        with self.storage.chunk_upload_lock(
+            kwargs["identifier"], kwargs["data_type"], data_format
+        ) as lease:
             state = self.storage.get_chunk_upload_state(**kwargs)
-            if state["total_size"] > max_bytes or state["unexpected"]:
-                self.storage.discard_chunk_upload(**kwargs)
-                raise ValueError("Upload exceeds size or chunk limits.")
-            if not state["missing"]:
-                state["output_url"] = self.storage.finalize_save(**kwargs)
-                state["complete"] = True
+            if not state["complete"]:
+                self.storage.save_chunk(
+                    identifier=kwargs["identifier"],
+                    data_type=kwargs["data_type"],
+                    data_format=data_format,
+                    data=data,
+                    chunk_id=chunk_number,
+                    lease=lease,
+                )
+                state = self.storage.get_chunk_upload_state(**kwargs)
+                if state["total_size"] > max_bytes or state["unexpected"]:
+                    self.storage.discard_chunk_upload(**kwargs, lease=lease)
+                    raise ValueError("Upload exceeds size or chunk limits.")
+                if not state["missing"]:
+                    state["output_url"] = self.storage.finalize_save(
+                        **kwargs, lease=lease
+                    )
+                    state["complete"] = True
         statuses = self.config.get_status_types()
         return FileUploadRequest(
             projectId=self.project_id,
