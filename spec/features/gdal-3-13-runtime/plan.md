@@ -21,6 +21,14 @@
 Validation for every phase: `backend-validation`. New native dependencies:
 `security` audits them and `security-validation` confirms.
 
+## SQLite worker shell mitigation
+
+| Task | Agent | Status |
+|---|---|---|
+| Verify worker use and remove known SQLite shell paths without deleting libraries | `backend-dev` | in progress |
+| Build and exercise both final worker images | `backend-dev` | pending |
+| Assess image inventory and remaining SBOM finding | `security`, `security-validation` | pending |
+
 ## Status and next steps (2026-10-19)
 
 What exists:

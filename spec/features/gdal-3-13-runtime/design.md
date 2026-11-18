@@ -11,6 +11,7 @@
 - [VRT and virtual file system policy](#vrt-and-virtual-file-system-policy)
 - [Consumers](#consumers)
 - [Publishing and supply chain](#publishing-and-supply-chain)
+- [Worker SQLite CLI](#worker-sqlite-cli)
 - [Open questions](#open-questions)
 
 ## Overview
@@ -266,6 +267,20 @@ number. They happen:
 
 - when a vendored component or GDAL patch release has a security fix;
 - otherwise on a fixed cadence.
+
+## Worker SQLite CLI
+
+The worker images do not invoke the SQLite command-line shell in supported
+HASTE workflows. Remove known shell executables from the final imageryprep and
+training images after environment setup, while retaining SQLite libraries and
+Python's `sqlite3` module. Fail the image build if another `sqlite3` executable
+remains on the runtime PATH. Verify both geospatial and Python database
+operations after removal.
+
+This mitigates exposure to shell-only behavior in worker images; it does not
+change the SQLite library version, remove the source-inventory scan finding,
+or prove absence of renamed executables. Runtime SBOM triage and image
+vulnerability scans remain separate controls.
 
 ## Open questions
 
