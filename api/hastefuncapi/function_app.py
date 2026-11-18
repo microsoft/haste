@@ -1783,6 +1783,7 @@ async def GetLayerLabelingToolData(req: func.HttpRequest) -> func.HttpResponse:
             match_label_projects,
             image_layer,
             config.titiler_endpoint,
+            config.storage_type,
         )
         match_label_projects[
             "tileCredentialExpiresAt"

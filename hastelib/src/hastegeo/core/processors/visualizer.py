@@ -10,11 +10,7 @@ from ..models.prediction_edits import PredictionSelectionRequest
 from ..models.prediction_results import ResultsRequest
 from ..models.projects import ImageLayer, LabelProject, Model, Project
 from ..models.visualizer import Imagery, Visualizer
-from ..utils.blob import (
-    project_blob_prefix,
-    sign_internal_blob_url,
-    unsigned_internal_blob_url,
-)
+from ..utils.blob import sign_project_raster_url, unsigned_internal_blob_url
 from ..utils.blob_sas import read_token_expires_at
 from ..utils.prediction_readiness import artifact_api_url
 from .metadata import MetadataProcessor
@@ -37,14 +33,13 @@ def build_visualizer(
     *,
     version: int | None = None,
     prediction_revision: str | None = None,
+    storage_type: str = "blob",
 ) -> Visualizer:
     bounds = labels.features[0].bbox or [] if labels.features else []
 
     def raster(url: str | None, colormap: str = "") -> Imagery:
         url = unsigned_internal_blob_url(url)
-        signed = sign_internal_blob_url(
-            url, required_blob_prefix=project_blob_prefix(project.projectId)
-        )
+        signed = sign_project_raster_url(url, project.projectId, storage_type)
         tile_url = (
             f"{titiler_endpoint}cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}"
             f"?scale=1&url={quote(signed, safe='')}"
@@ -171,4 +166,5 @@ class VisualizerProcessor(PredictionResultsProcessor):
             self.config.titiler_endpoint,
             version=getattr(request, "version", None),
             prediction_revision=getattr(request, "predictionRevision", None),
+            storage_type=self.config.storage_type,
         )

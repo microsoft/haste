@@ -16,11 +16,7 @@ from ..models.projects import (
     LabelingImagery,
     LabelProject,
 )
-from ..utils.blob import (
-    project_blob_prefix,
-    sign_internal_blob_url,
-    unsigned_internal_blob_url,
-)
+from ..utils.blob import sign_project_raster_url, unsigned_internal_blob_url
 from ..utils.gdal_security import harden_gdal
 from ..utils.metadata import MetadataUtils
 
@@ -30,7 +26,10 @@ harden_gdal()
 
 
 def materialize_label_project_urls(
-    label_project: dict, image_layer: ImageLayer, titiler_endpoint: str
+    label_project: dict,
+    image_layer: ImageLayer,
+    titiler_endpoint: str,
+    storage_type: str = "blob",
 ) -> dict:
     """Rebuild response-only tile URLs from the authoritative image layer."""
     for field in ("projectId", "imageLayerId"):
@@ -42,10 +41,11 @@ def materialize_label_project_urls(
     imagery = result.get("imagery")
     if not isinstance(imagery, dict):
         return result
-    prefix = project_blob_prefix(image_layer.projectId)
 
     def tile_url(source: str | None) -> str:
-        signed = sign_internal_blob_url(source, required_blob_prefix=prefix)
+        signed = sign_project_raster_url(
+            source, image_layer.projectId, storage_type
+        )
         if not signed:
             return ""
         encoded = requests.utils.quote(signed, safe="")
@@ -70,6 +70,7 @@ class LabelTaskGenerator:
         if config is None:
             config = Config()
         self.partition_key = image_data.projectId
+        self.storage_type = config.storage_type
         self.experiment_name = MetadataUtils.generate_id()
         self.experiment_dir = config.TEMP_DIR
         self.input_image_fn = (
@@ -127,9 +128,10 @@ class LabelTaskGenerator:
         """Generate task files."""
         self.logger.info("Generating task file")
         with rasterio.open(
-            sign_internal_blob_url(
+            sign_project_raster_url(
                 self.input_image_fn_post_event,
-                required_blob_prefix=project_blob_prefix(self.partition_key),
+                self.partition_key,
+                self.storage_type,
             )
         ) as f:
             bounds = shapely.geometry.box(*f.bounds)

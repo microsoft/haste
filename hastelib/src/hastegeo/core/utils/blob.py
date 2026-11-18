@@ -310,6 +310,30 @@ def project_blob_prefix(project_id: str) -> str:
     return MetadataUtils.hash_string(project_id)
 
 
+def sign_project_raster_url(
+    url: Optional[str], project_id: str, storage_type: str
+) -> Optional[str]:
+    """Keep local filesystem sources local; validate all remote sources."""
+    import ntpath
+
+    if url and storage_type == "local":
+        parsed = urlparse(url)
+        path = parsed.path if parsed.scheme.lower() == "file" else url
+        is_file_url = parsed.scheme.lower() == "file" and (
+            not parsed.netloc or re.fullmatch(r"[A-Za-z]:", parsed.netloc)
+        )
+        is_path = (
+            (not parsed.scheme or re.fullmatch(r"[A-Za-z]", parsed.scheme))
+            and (os.path.isabs(url) or ntpath.isabs(url))
+            and not url.startswith(("//", "\\\\"))
+        )
+        if (is_file_url or is_path) and not path.lower().startswith("/vsi"):
+            return url
+    return sign_internal_blob_url(
+        url, required_blob_prefix=project_blob_prefix(project_id)
+    )
+
+
 def _signing_blob_target(
     url: str, required_blob_prefix: Optional[str]
 ) -> Optional[Tuple[str, str]]:

@@ -10,6 +10,7 @@ from hastegeo.core.utils.blob import (
     clear_blob_client_caches,
     sign_internal_blob_url,
     sign_label_project_urls,
+    sign_project_raster_url,
     sign_titiler_tile_url,
     unsigned_internal_blob_url,
 )
@@ -101,6 +102,15 @@ class TestSignInternalBlobUrl(unittest.TestCase):
         url = "https://other.blob.core.windows.net/data/a.tif"
         with self.assertRaises(ValueError):
             sign_internal_blob_url(url)
+
+    def test_local_mode_does_not_bypass_remote_or_gdal_virtual_sources(self):
+        for value in (
+            "https://other.blob.core.windows.net/data/p1/post.tif",
+            "/vsicurl/https://other.example/post.tif",
+            "//remote/share/post.tif",
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                sign_project_raster_url(value, "project", "local")
 
     def test_azure_account_key_never_signs_read_tokens(self):
         self.client.credential = MagicMock(account_key="k")

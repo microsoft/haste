@@ -186,6 +186,7 @@ class LabelingWorkspaceProcessor:
             label_project.model_dump(mode="json"),
             image_layer,
             self.config.titiler_endpoint,
+            self.config.storage_type,
         )
         label_project = LabelProject(**signed_label)
         return LabelingWorkspace(

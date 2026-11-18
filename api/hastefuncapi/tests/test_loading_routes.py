@@ -202,8 +202,8 @@ class TestLegacyLabelTileMaterialization(unittest.IsolatedAsyncioTestCase):
         with patch.object(
             function_app, "MetadataProcessor", side_effect=processor
         ), patch(
-            "hastegeo.core.processors.labels.sign_internal_blob_url",
-            side_effect=lambda url, **kwargs: (
+            "hastegeo.core.processors.labels.sign_project_raster_url",
+            side_effect=lambda url, *_args: (
                 f"{url}?sig=fresh" if url else ""
             ),
         ):
