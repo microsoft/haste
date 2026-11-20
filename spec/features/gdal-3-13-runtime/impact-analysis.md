@@ -109,8 +109,8 @@ does not rule out a modified shell or an embedded archive.
 
 The imageryprep and training base images contain a SQLite 3.53.4 CLI on PATH.
 The tracked source search found no direct `.recover` invocation. Final worker
-images built with both mitigations, process traces from supported workflows,
-and operator confirmation of off-repository automation are still needed.
+images built with both mitigations and process traces from supported workflows
+are still needed.
 Report inherited image layers separately from the merged filesystem. Keep
 both vulnerability scans blocking; do not infer worker-image applicability
 from the runtime archive result.
