@@ -10,6 +10,7 @@ CLI_PATHS = (
     "opt/conda/envs/bda/bin/sqlite3",
     "usr/bin/sqlite3",
     "usr/local/bin/sqlite3",
+    "opt/nvidia/nsight-compute/2024.1.1/host/target-linux-x64/sqlite3",
 )
 
 

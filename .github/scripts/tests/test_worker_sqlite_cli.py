@@ -58,6 +58,23 @@ class WorkerSqliteCliTests(unittest.TestCase):
             ), self.assertRaisesRegex(RuntimeError, "unexpected sqlite3"):
                 worker.remove_worker_sqlite_cli(Path(directory))
 
+    def test_removes_off_path_nsight_shell_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nsight = (
+                root
+                / "opt/nvidia/nsight-compute/2024.1.1/host/target-linux-x64"
+            )
+            nsight.mkdir(parents=True)
+            shell = nsight / "sqlite3"
+            shell.write_bytes(b"shell")
+            library = nsight / "libsqlite3.so"
+            library.write_bytes(b"library")
+            with patch.object(worker.shutil, "which", return_value=None):
+                worker.remove_worker_sqlite_cli(root)
+            self.assertFalse(shell.exists())
+            self.assertTrue(library.is_file())
+
     def test_relative_root_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "absolute"):
             worker.remove_worker_sqlite_cli(Path("relative"))
