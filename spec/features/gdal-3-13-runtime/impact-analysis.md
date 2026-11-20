@@ -102,13 +102,18 @@ reachability through a HASTE workflow.
 The published runtime wheel was inspected with its release SHA-256 verified:
 it contains `libsqlite3` and has no member named `sqlite3`. This alone does
 not prove that other packages or images lack the executable, or that a renamed
-executable cannot be present. Candidate archive inspection also found no
-member named `sqlite3` in the six wheels or Function ZIPs. The imageryprep
-base image does include a SQLite 3.53.4 command-line executable on PATH.
-Whether HASTE invokes the affected recovery workflow and whether final worker
-images include other copies remain separate review questions. Both vulnerability
-scans remain blocking until the evidence and any proposed exception receive
-explicit security approval.
+executable cannot be present. Inspection of the six candidate wheels and four
+packaged ZIPs verified their SHA-256 digests and found no named CLI, direct
+CLI symlink, or ELF/PE binary with the expected shell markers. This heuristic
+does not rule out a modified shell or an embedded archive.
+
+The imageryprep and training base images contain a SQLite 3.53.4 CLI on PATH.
+The tracked source search found no direct `.recover` invocation. Final worker
+images built with both mitigations, process traces from supported workflows,
+and operator confirmation of off-repository automation are still needed.
+Report inherited image layers separately from the merged filesystem. Keep
+both vulnerability scans blocking; do not infer worker-image applicability
+from the runtime archive result.
 
 Sources: [OpenSSL advisory](https://openssl-library.org/news/secadv/20261110.txt)
 and [SQLite CLI advisory](https://github.com/advisories/GHSA-2h5x-4qp8-353h).

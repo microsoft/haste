@@ -393,7 +393,7 @@ jobs:
             --wheel-dir "$RUNNER_TEMP/haste-gdal-runtime/dist" \
             --output-dir "$RUNNER_TEMP/haste-function-packages"
 
-      - name: Inventory SQLite names in candidate archives
+      - name: Inventory SQLite CLI evidence in candidate archives
         run: |
           python native/gdal-runtime/inspect_sqlite_archives.py \
             --directory "$RUNNER_TEMP/haste-gdal-runtime/dist" \
