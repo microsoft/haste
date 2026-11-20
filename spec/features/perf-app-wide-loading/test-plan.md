@@ -4,6 +4,7 @@
 
 - [Test Strategy](#test-strategy)
 - [Regression Matrix](#regression-matrix)
+- [Projects Cancellation Regressions](#projects-cancellation-regressions)
 - [CXL-01 Browser Regressions](#cxl-01-browser-regressions)
 - [Performance Matrix](#performance-matrix)
 - [Sign-Off](#sign-off)
@@ -43,6 +44,42 @@
 | JOBS-01 | Dashboard has multiple projects | One compact Active Jobs request |
 | JOBS-02 | Active Jobs poll is hidden or in flight | No new request |
 | JOBS-03 | Matching Active Jobs ETag | Existing jobs retained after `304` |
+
+## Projects Cancellation Regressions
+
+The colocated spec tool mounts the real Projects component, row/card controls,
+Fluent UI, and route-loading CSS in React StrictMode. Two additional scenarios
+mount real Home and Projects without StrictMode to check inherited controls on
+route entry. It uses isolated local HTTP fixtures and its own temporary Vite
+cache. It never calls Dev1 or changes production authentication.
+
+```bash
+NODE_PATH=/path/to/playwright/node_modules node --test \
+	spec/features/perf-app-wide-loading/tools/projects_cancellation.test.cjs
+```
+
+Use an existing external Playwright installation with its Chromium browser.
+Optional `PROJECTS_OUTPUT_DIR` writes desktop/mobile screenshots outside the
+repository; `PROJECTS_UI_ROOT` selects a different checkout for baseline checks.
+The test server and browser close at the end of the run.
+
+| Scenario | Required Evidence |
+|---|---|
+| Home to Projects with a pending or failed read, without StrictMode | Dashboard Help and tour clear on entry; success or Retry installs Projects controls without global loading writes |
+| Five interrupted visits followed by return | Signals abort, actual HTTP reads close, no abandoned global loader writes, fresh read succeeds |
+| Obsolete success/failure with non-cooperative transport | Destination header, tour, and explicit-action overlay remain intact; neither the new pending loader nor its successful data is replaced |
+| HTTP failure, malformed response, and Retry | Local errors are visible, each retry gets a fresh read, success renders content |
+| Shared country-data request across navigation | Departed consumer does not cancel the transfer; next consumer receives the result with one network fetch |
+| Empty list | Successful empty state with no retained loader or error |
+| Preference save followed by navigation | User-setting write remains un-aborted and its stored setting updates |
+| Post-delete row and card refresh | Both callers retain an awaitable refresh; action overlay remains until the refresh completes, with no duplicate visible loader |
+
+Actual abort assertions observe browser request failure and server stream
+closure, not Playwright `route.abort()`. Separate deferred promises intentionally
+ignore abort to verify stale-result guards. Expected simulated failure logs are
+allowed; unhandled page exceptions fail the tests. Responsive loading/error
+screenshots supplement these assertions; no backend latency improvement is
+inferred from local fixture timings.
 
 ## CXL-01 Browser Regressions
 
