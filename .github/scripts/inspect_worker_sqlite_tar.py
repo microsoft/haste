@@ -9,14 +9,18 @@ from pathlib import Path, PurePosixPath
 
 def main() -> None:
     control = hashlib.sha256(Path(sys.argv[1]).read_bytes()).digest()
-    markers = (b"sqlite> ", b".recover")
+    markers = (b"sqlite> ",)
     overlap = max(map(len, markers)) - 1
     names = {"sqlite3", "sqlite3.exe"}
     findings: list[str] = []
     with tarfile.open(fileobj=sys.stdin.buffer, mode="r|*") as archive:
         for member in archive:
-            if PurePosixPath(member.name).name.casefold() in names or (
-                (member.issym() or member.islnk())
+            is_link = member.issym() or member.islnk()
+            if (
+                (member.isfile() or is_link)
+                and PurePosixPath(member.name).name.casefold() in names
+            ) or (
+                is_link
                 and PurePosixPath(member.linkname).name.casefold() in names
             ):
                 findings.append(member.name)

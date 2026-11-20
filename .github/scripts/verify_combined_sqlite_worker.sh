@@ -10,7 +10,6 @@ mkdir -p "$evidence"
   grep -Fx '7f6b2e18f1489af5ea08bb635d86da81cb462c21176bdb2f802b1066c62ca394  haste_gdal_runtime-3.13.3+haste.2-py3-none-manylinux_2_28_x86_64.whl' SHA256SUMS
 )
 cp "$wheels/SHA256SUMS" "$evidence/"
-cp native/gdal-runtime/inspect_sqlite_archives.py "$RUNNER_TEMP/"
 cp .github/scripts/prepare_training_runtime_env.py "$RUNNER_TEMP/"
 cd worker-source
 git rev-parse HEAD | tee "$evidence/worker-source.txt"
@@ -51,21 +50,15 @@ cleanup() {
 }
 trap cleanup EXIT
 docker cp -L "$base_container:/opt/miniconda/bin/sqlite3" "$RUNNER_TEMP/base-sqlite3"
-python - "$RUNNER_TEMP" <<'PY'
-import sys
-import zipfile
-from pathlib import Path
-
-root = Path(sys.argv[1])
-sys.path.insert(0, str(root))
-from inspect_sqlite_archives import inspect_archive
-
-path = root / "positive-control.zip"
-with zipfile.ZipFile(path, "w") as archive:
-    archive.write(root / "base-sqlite3", "renamed-shell")
-assert inspect_archive(path)["sqlite_shell_fingerprint_matches"] == ["renamed-shell"]
-print("Renamed-shell positive control detected in the actual worker base binary")
-PY
+cp "$RUNNER_TEMP/base-sqlite3" "$RUNNER_TEMP/renamed-shell"
+set +e
+tar -C "$RUNNER_TEMP" -cf - renamed-shell |
+  python "$GITHUB_WORKSPACE/.github/scripts/inspect_worker_sqlite_tar.py" \
+    "$RUNNER_TEMP/base-sqlite3" > "$evidence/positive-control.json"
+control_status=$?
+set -e
+test "$control_status" -eq 1
+grep -Fx '{"merged_filesystem_cli_matches": ["renamed-shell"]}' "$evidence/positive-control.json"
 
 docker build --file "$RUNNER_TEMP/worker.Dockerfile" --tag sqlite-worker-evidence .
 docker image inspect --format '{{.Id}} {{.Config.User}} {{json .RootFS.Layers}}' \
