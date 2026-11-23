@@ -97,7 +97,7 @@ reachability through a HASTE workflow.
 |---|---|---|
 | SQLite library | Multiple reported memory-safety and denial-of-service findings affect versions before 3.54.0 | Build 3.54.1 from an upstream-verified archive and run geospatial compatibility tests |
 | SQLite CLI | CVE-2026-119586 affects `.recover` output replay; SQLite identifies a trunk fix but no fixed release was identified | Inventory the candidate archives and target images; security review must assess actual exposure |
-| OpenSSL | Five reported issues involve QUIC, AES-GCM-SIV and EC key generation | Apply hash-locked upstream 3.5-branch fixes and regression tests; preserve the real source version in the SBOM |
+| OpenSSL | Reported issues involve QUIC, AES-GCM-SIV, EC key generation, TLS, PEM and certificate verification | Apply hash-locked upstream 3.5-branch fixes and regression tests; preserve the real source version in the SBOM |
 
 The published runtime wheel was inspected with its release SHA-256 verified:
 it contains `libsqlite3` and has no member named `sqlite3`. This alone does
@@ -121,6 +121,11 @@ imagery and training workflows remain to be tested. Report inherited image
 layers separately from the merged filesystem. Keep both vulnerability scans
 blocking; do not infer worker-image applicability from the runtime archive
 result.
+
+The current vulnerability database also reports CVE-2026-84786 and
+CVE-2026-95690. Their upstream fix proposals are still open, so these two
+findings remain visible and blocking; they are not included in the patched
+OpenSSL exceptions.
 
 Sources: [OpenSSL advisory](https://openssl-library.org/news/secadv/20261110.txt)
 and [SQLite CLI advisory](https://github.com/advisories/GHSA-2h5x-4qp8-353h).

@@ -112,7 +112,7 @@ def main() -> None:
             json.loads(args.compare_baseline.read_text(encoding="utf-8")),
             json.loads(args.compare_result.read_text(encoding="utf-8")),
         )
-        print("Only the six candidate-specific findings were excepted")
+        print("Only the verified candidate-specific findings were excepted")
         return
     if not args.artifact_dir or not args.output:
         parser.error("--artifact-dir and --output are required")

@@ -26,6 +26,11 @@ FIXES = {
     "CVE-2026-95691": "f6244675833e097c2429a40d1b206d95385bd42f",  # pragma: allowlist secret
     "CVE-2026-95692": "257a3427aa0ef8d9dd2ef5b3e2d1c021a221b116",  # pragma: allowlist secret
     "CVE-2026-107496": "a0051cfe699bf5a047bc1c4faef65f80f7987366",  # pragma: allowlist secret
+    "CVE-2026-107493": "c8f6d04f8e6d40b1bf83334e4a2ec9daf5943a3d",  # pragma: allowlist secret
+    "CVE-2026-35190": "9491b0d9cc7950af1f3dc89499bd5433b9cd4f43",  # pragma: allowlist secret
+    "CVE-2026-124709": "f3acb0a3328046741479482c51cec815839e1b05",  # pragma: allowlist secret
+    "CVE-2026-121482": "468c287cf451a834b370b69ab321b8ffdfac23aa",  # pragma: allowlist secret
+    "CVE-2026-107494": "734c6cd7444bdbf589bfec917e47598c1b21ddd3",  # pragma: allowlist secret
 }
 
 
@@ -164,7 +169,7 @@ def main() -> None:
             json.loads(args.compare_baseline.read_text(encoding="utf-8")),
             json.loads(args.compare_proposal.read_text(encoding="utf-8")),
         )
-        print("Review-only proposal changes only the five OpenSSL findings")
+        print("Review-only proposal changes only verified OpenSSL findings")
         return
     if not args.artifact_dir or not args.output:
         parser.error("--artifact-dir and --output are required")

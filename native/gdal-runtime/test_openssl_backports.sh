@@ -20,7 +20,7 @@ python3 "$ROOT/apply_openssl_patches.py" \
   ./Configure linux-x86_64 no-shared no-docs no-module \
     no-legacy no-engine no-dso no-autoload-config
   make -j"$JOBS"
-  make test TESTS='test_evp_extra test_evp test_ec test_quic_stream'
+  make test TESTS='test_evp_extra test_evp test_ec test_quic_stream test_quic_radix test_cmsapi test_x509_check_cert_pkey'
 )
 
 cc -Wall -Wextra -Werror \

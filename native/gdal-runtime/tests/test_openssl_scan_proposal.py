@@ -48,11 +48,11 @@ class OpenSslScanProposalTests(unittest.TestCase):
             "ignore:\n  - vulnerability: CVE-2026-85091\n",
         )
 
-    def test_proposal_only_adds_five_specific_openssl_rules(self):
+    def test_proposal_only_adds_locked_openssl_rules(self):
         text = self.build()
         self.assertIn("REVIEW-ONLY", text)
-        self.assertEqual(text.count("name: openssl"), 5)
-        self.assertEqual(text.count("version: 3.5.9"), 5)
+        self.assertEqual(text.count("name: openssl"), len(proposal.FIXES))
+        self.assertEqual(text.count("version: 3.5.9"), len(proposal.FIXES))
         self.assertIn("CVE-2026-85091", text)
         self.assertNotIn("CVE-2026-119586", text)
 

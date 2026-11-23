@@ -298,7 +298,7 @@ finding blocks publication.
 The inventory gate generates a temporary Grype configuration only after
 validating the exact runtime bundle, SBOM, source lock and OpenSSL patch
 identities. It also checks that the SQLite recovery shell and recovery symbols
-are absent from the candidate wheels. The five patched OpenSSL findings and
+are absent from the candidate wheels. The patched OpenSSL findings and
 the SQLite shell-only finding are scoped to this verified inventory. The gate
 compares the unmodified scan with the scoped scan and rejects any other change;
 the artifact scan remains independent and blocking. The SBOM retains actual

@@ -64,15 +64,18 @@ class CandidateScanTests(unittest.TestCase):
         sqlite = match(
             "sqlite", "pkg:generic/sqlite@3.54.1", candidate.SQLITE_CVE
         )
-        other = match("other", "pkg:generic/example@1", "CVE-2000-0001")
-        baseline = {"matches": [*fixes, sqlite, other]}
+        other = [
+            match("openssl", "pkg:generic/openssl@3.5.9", cve)
+            for cve in ("CVE-2026-84786", "CVE-2026-95690")
+        ]
+        baseline = {"matches": [*fixes, sqlite, *other]}
         candidate.compare_scans(
-            baseline, {"matches": [other], "ignoredMatches": [*fixes, sqlite]}
+            baseline, {"matches": other, "ignoredMatches": [*fixes, sqlite]}
         )
         for result in (
-            {"matches": [], "ignoredMatches": [*fixes, sqlite, other]},
-            {"matches": [other], "ignoredMatches": fixes},
-            {"matches": [sqlite, other], "ignoredMatches": fixes},
+            {"matches": [], "ignoredMatches": [*fixes, sqlite, *other]},
+            {"matches": other, "ignoredMatches": fixes},
+            {"matches": [sqlite, *other], "ignoredMatches": fixes},
         ):
             with self.subTest(result=result), self.assertRaises(ValueError):
                 candidate.compare_scans(baseline, result)
