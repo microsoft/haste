@@ -55,6 +55,13 @@ ENV GDAL_DRIVER_PATH=disable
 ENV GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR
 ENV CPL_VSIL_CURL_HEADER_FILE_KVP_ENABLED=NO
 
+COPY docker/common/remove_worker_sqlite_cli.py /tmp/remove_worker_sqlite_cli.py
+COPY docker/common/verify_worker_sqlite.py /tmp/verify_worker_sqlite.py
+RUN python /tmp/remove_worker_sqlite_cli.py --image-root / \
+    && rm -f /tmp/remove_worker_sqlite_cli.py \
+    && python /tmp/verify_worker_sqlite.py \
+    && rm -f /tmp/verify_worker_sqlite.py
+
 # Fail the build unless every GDAL binding runs on the one shared runtime.
 RUN python -c "from hastegeo.core.utils.gdal_security import harden_gdal; harden_gdal(); \
     import fiona, pyogrio, rasterio; from osgeo import gdal; \

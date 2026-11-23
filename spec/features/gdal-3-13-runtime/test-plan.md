@@ -25,6 +25,15 @@ These run in the runtime build workflow, inside each target base image:
 | TiTiler | Tiles render with the VRT driver registered (disabling it breaks reprojection); tiles, including reprojected sources, through the app; negative tests for inline VRT, `vrt://`, remote VRT documents (raw band, Python pixel function, local or internal sources) and `/vsi` paths |
 | Guards | Dependency pins come only from the runtime set and match everywhere; forbidden GDAL settings are rejected across infrastructure, scripts, Dockerfiles and app settings |
 
+## Worker SQLite CLI mitigation
+
+- Test that only the exact known SQLite CLI paths are removed; preserve SQLite
+  libraries and fail if an unexpected CLI remains on PATH.
+- Build both final worker images and verify no `sqlite3` executable resolves on
+  PATH, while Python SQLite and the existing GDAL/GeoPackage smoke tests work.
+- Treat image inventory as evidence for review, not as an automatic SBOM
+  exception or proof about renamed executables.
+
 ## Deployment evidence
 
 | Criterion | Evidence |
