@@ -30,9 +30,7 @@ class SqliteArchiveInspectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "runtime.whl"
             with zipfile.ZipFile(path, "w") as archive:
-                archive.writestr(
-                    "off-path/tool", b"\x7fELF sqlite> \x00.recover"
-                )
+                archive.writestr("off-path/tool", b"\x7fELF sqlite> \x00")
                 archive.writestr("docs.txt", b"sqlite> .recover")
                 archive.writestr("libsqlite3.so", b"\x7fELF .recover")
             with mock.patch.object(inspect_sqlite_archives, "CHUNK_SIZE", 5):

@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 CLI_NAMES = {"sqlite3", "sqlite3.exe"}
-SHELL_MARKERS = (b"sqlite> ", b".recover")
+SHELL_MARKERS = (b"sqlite> ",)
 CHUNK_SIZE = 1024 * 1024
 
 

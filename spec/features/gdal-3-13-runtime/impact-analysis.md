@@ -96,7 +96,7 @@ reachability through a HASTE workflow.
 | Area | Finding | Candidate and review gate |
 |---|---|---|
 | SQLite library | Multiple reported memory-safety and denial-of-service findings affect versions before 3.54.0 | Build 3.54.1 from an upstream-verified archive and run geospatial compatibility tests |
-| SQLite CLI | CVE-2026-119586 affects `.recover` output replay; no fixed release was identified in the advisory | Inventory the candidate archives and target images; security review must assess actual exposure |
+| SQLite CLI | CVE-2026-119586 affects `.recover` output replay; SQLite identifies a trunk fix but no fixed release was identified | Inventory the candidate archives and target images; security review must assess actual exposure |
 | OpenSSL | Five reported issues involve QUIC, AES-GCM-SIV and EC key generation | Apply hash-locked upstream 3.5-branch fixes and regression tests; preserve the real source version in the SBOM |
 
 The published runtime wheel was inspected with its release SHA-256 verified:
@@ -107,13 +107,20 @@ packaged ZIPs verified their SHA-256 digests and found no named CLI, direct
 CLI symlink, or ELF/PE binary with the expected shell markers. This heuristic
 does not rule out a modified shell or an embedded archive.
 
+SQLite identifies [check-in d684ccc9ec](https://sqlite.org/src/info/d684ccc9ec4e41d8)
+as sufficient to block this attack; it modifies the recovery extension, not
+the SQLite core library. The source archive includes that extension in
+`shell.c`, whereas the candidate runtime ships the shared library, not the
+shell. This does not mean the upstream fix was applied to the candidate.
+
 The imageryprep and training base images contain a SQLite 3.53.4 CLI on PATH.
-The tracked source search found no direct `.recover` invocation. Final worker
-images built with both mitigations, process traces from supported workflows,
-and operator confirmation of off-repository automation are still needed.
-Report inherited image layers separately from the merged filesystem. Keep
-both vulnerability scans blocking; do not infer worker-image applicability
-from the runtime archive result.
+The tracked source search found no direct `.recover` invocation. Combined
+worker-image checks found no shell in either merged filesystem and traced
+the entrypoints and targeted integration tests without a CLI launch. Full
+imagery and training workflows remain to be tested. Report inherited image
+layers separately from the merged filesystem. Keep both vulnerability scans
+blocking; do not infer worker-image applicability from the runtime archive
+result.
 
 Sources: [OpenSSL advisory](https://openssl-library.org/news/secadv/20261110.txt)
 and [SQLite CLI advisory](https://github.com/advisories/GHSA-2h5x-4qp8-353h).
