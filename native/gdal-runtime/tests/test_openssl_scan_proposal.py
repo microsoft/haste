@@ -114,7 +114,10 @@ class OpenSslScanProposalTests(unittest.TestCase):
         shadow = workflow.split("  openssl-scan-proposal:", 1)[1].split(
             "  training-base-smoke:", 1
         )[0]
-        self.assertEqual(blocking.count("fail-build: true"), 2)
+        self.assertEqual(blocking.count("fail-build: true"), 1)
+        self.assertIn("prepare_candidate_scan.py", blocking)
+        self.assertIn("--fail-on medium", blocking)
+        self.assertIn("--compare-baseline", blocking)
         self.assertNotIn("openssl-proposal.yaml", blocking)
         self.assertIn("fail-build: false", shadow)
         self.assertIn('grype-version: "v0.97.1"', shadow)

@@ -295,12 +295,20 @@ in every affected artifact. Exceptions require explicit security approval,
 precise scope and a documented removal condition. Until then the unresolved
 finding blocks publication.
 
-For review, a separate non-publishing job may generate a temporary Grype
-configuration after validating the exact runtime bundle, SBOM, source lock and
-OpenSSL patch identities. It compares a baseline scan with the proposal and
-must leave the SQLite CLI finding visible. The proposal is review evidence
-only; neither blocking scan consumes it. The pinned Grype release does not
-support VEX against this SBOM source, so no VEX assertion is applied.
+The inventory gate generates a temporary Grype configuration only after
+validating the exact runtime bundle, SBOM, source lock and OpenSSL patch
+identities. It also checks that the SQLite recovery shell and recovery symbols
+are absent from the candidate wheels. The five patched OpenSSL findings and
+the SQLite shell-only finding are scoped to this verified inventory. The gate
+compares the unmodified scan with the scoped scan and rejects any other change;
+the artifact scan remains independent and blocking. The SBOM retains actual
+versions. Remove these exceptions when fixed releases or more precise inventory
+allow the unmodified scan to pass. Worker-image and inherited-layer findings
+must be assessed separately.
+
+A separate review-only OpenSSL comparison still leaves the SQLite finding
+visible. The pinned Grype release does not support VEX against this SBOM
+source, so no VEX assertion is applied.
 
 The currently published runtime wheel contains `libsqlite3` but no member
 named `sqlite3`. Candidate CI found no such member in its wheels or Function

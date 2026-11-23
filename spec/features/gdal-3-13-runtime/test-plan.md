@@ -47,6 +47,10 @@ These run in the runtime build workflow, inside each target base image:
 - Compare a review-only OpenSSL proposal with the original scan. Reject wrong
   runtime builds, changed patch evidence, or suppression of unrelated findings;
   the SQLite CLI finding must remain visible.
+- Verify the separate blocking inventory scan applies its six candidate-only
+  exceptions only after bundle, SBOM, patch and SQLite shell checks pass.
+  Compare the unmodified and scoped scan results and reject any unrelated
+  change; keep the artifact scan independent and blocking.
 - Test separately declared candidate and published builds, including mixed
   consumer versions, unpublished assets and downgrade attempts.
 - Run all existing native, GDAL hardening, target-image, package, provenance,

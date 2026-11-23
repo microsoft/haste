@@ -16,18 +16,24 @@ from verify_build_manifest import validate  # noqa: E402
 
 
 class OpenSslPatchTests(unittest.TestCase):
-    def test_artifact_scan_runs_after_inventory_failure_without_waiving_it(self):
+    def test_artifact_scan_runs_after_inventory_failure_without_waiving_it(
+        self,
+    ):
         workflow = (
-            ROOT.parents[1] / ".github" / "workflows" / "gdal-runtime-build.yml"
+            ROOT.parents[1]
+            / ".github"
+            / "workflows"
+            / "gdal-runtime-build.yml"
         ).read_text(encoding="utf-8")
         inventory = workflow.split(
-            "- name: Scan the CycloneDX inventory for known vulnerabilities",
+            "- name: Validate evidence and enforce the candidate SBOM scan",
             1,
         )[1].split("- name: Scan built wheel artifacts", 1)[0]
         artifact = workflow.split(
             "- name: Scan built wheel artifacts for known vulnerabilities", 1
         )[1].split("\n  training-base-smoke:", 1)[0]
-        self.assertIn("fail-build: true", inventory)
+        self.assertIn("--fail-on medium", inventory)
+        self.assertIn('exit "$status"', inventory)
         self.assertNotIn("continue-on-error", inventory)
         self.assertIn("if: ${{ !cancelled() }}", artifact)
         self.assertIn("fail-build: true", artifact)
