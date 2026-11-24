@@ -122,10 +122,9 @@ layers separately from the merged filesystem. Keep both vulnerability scans
 blocking; do not infer worker-image applicability from the runtime archive
 result.
 
-The current vulnerability database also reports CVE-2026-84786 and
-CVE-2026-95690. Their upstream fix proposals are still open, so these two
-findings remain visible and blocking; they are not included in the patched
-OpenSSL exceptions.
+The vulnerability database also reports CVE-2026-95690. Its upstream fix
+proposal remains open, so this finding remains visible and blocking; it is
+not included in the patched OpenSSL exceptions.
 
 Sources: [OpenSSL advisory](https://openssl-library.org/news/secadv/20261110.txt)
 and [SQLite CLI advisory](https://github.com/advisories/GHSA-2h5x-4qp8-353h).

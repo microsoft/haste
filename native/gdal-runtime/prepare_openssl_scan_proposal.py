@@ -31,6 +31,7 @@ FIXES = {
     "CVE-2026-124709": "f3acb0a3328046741479482c51cec815839e1b05",  # pragma: allowlist secret
     "CVE-2026-121482": "468c287cf451a834b370b69ab321b8ffdfac23aa",  # pragma: allowlist secret
     "CVE-2026-107494": "734c6cd7444bdbf589bfec917e47598c1b21ddd3",  # pragma: allowlist secret
+    "CVE-2026-84786": "1ad851363d5b8588b0d40edcc045fd633e93f0c2",  # pragma: allowlist secret
 }
 
 

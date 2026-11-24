@@ -59,6 +59,7 @@ class OpenSslPatchTests(unittest.TestCase):
                 "CVE-2026-124709",
                 "CVE-2026-121482",
                 "CVE-2026-107494",
+                "CVE-2026-84786",
             },
         )
 

@@ -66,7 +66,7 @@ class CandidateScanTests(unittest.TestCase):
         )
         other = [
             match("openssl", "pkg:generic/openssl@3.5.9", cve)
-            for cve in ("CVE-2026-84786", "CVE-2026-95690")
+            for cve in ("CVE-2026-95690", "CVE-2000-0001")
         ]
         baseline = {"matches": [*fixes, sqlite, *other]}
         candidate.compare_scans(
