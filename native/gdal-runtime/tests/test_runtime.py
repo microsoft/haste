@@ -374,6 +374,12 @@ class LockTests(unittest.TestCase):
                             json.dumps(
                                 {
                                     "gdal_release": "3.13.3",
+                                    "openssl_patches": [
+                                        {
+                                            "cve": "CVE-2026-88823",
+                                            "commit": "test-commit",
+                                        }
+                                    ],
                                     "binding_versions": {
                                         "osgeo.gdal": "1.0",
                                         "rasterio": "1.0",
@@ -385,7 +391,19 @@ class LockTests(unittest.TestCase):
                             ),
                         )
             manifest = root / "manifest.json"
-            manifest.write_text('{"gdal_release":"3.13.3"}\n')
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "gdal_release": "3.13.3",
+                        "openssl_patches": [
+                            {
+                                "cve": "CVE-2026-88823",
+                                "commit": "test-commit",
+                            }
+                        ],
+                    }
+                )
+            )
 
             outputs = create_supply_chain.generate(
                 source_lock,
@@ -409,6 +427,15 @@ class LockTests(unittest.TestCase):
         self.assertEqual(len(outputs), 4)
         self.assertEqual(bom["bomFormat"], "CycloneDX")
         self.assertEqual(len(bom["components"]), 8)
+        patch_evidence = next(
+            item["value"]
+            for item in bom["metadata"]["properties"]
+            if item["name"] == "gdal_runtime.openssl_patches"
+        )
+        self.assertEqual(
+            json.loads(patch_evidence),
+            [{"cve": "CVE-2026-88823", "commit": "test-commit"}],
+        )
         self.assertEqual(
             artifact_manifest["binding_versions"]["pyogrio"], "1.0"
         )

@@ -86,3 +86,45 @@ that.
 | Package size or cold start grows on Flex Consumption | Measured. The minimal driver set should shrink packages compared with today's several copies. |
 | HASTE now owns patching of vendored native libraries | Scheduled rebuilds, SBOM vulnerability gate, documented owner |
 | The Functions worker's glibc is undocumented | `manylinux_2_28` baseline, proven by the self-check on a dev deployment |
+
+## Native security rebuild
+
+The vulnerability scanner identifies SQLite 3.53.4 and OpenSSL 3.5.9 in the
+published runtime inventory. These findings do not by themselves establish
+reachability through a HASTE workflow.
+
+| Area | Finding | Candidate and review gate |
+|---|---|---|
+| SQLite library | Multiple reported memory-safety and denial-of-service findings affect versions before 3.54.0 | Build 3.54.1 from an upstream-verified archive and run geospatial compatibility tests |
+| SQLite CLI | CVE-2026-119586 affects `.recover` output replay; SQLite identifies a trunk fix but no fixed release was identified | Inventory the candidate archives and target images; security review must assess actual exposure |
+| OpenSSL | Reported issues involve QUIC, AES-GCM-SIV, EC key generation, TLS, PEM and certificate verification | Apply hash-locked upstream 3.5-branch fixes and regression tests; preserve the real source version in the SBOM |
+
+The published runtime wheel was inspected with its release SHA-256 verified:
+it contains `libsqlite3` and has no member named `sqlite3`. This alone does
+not prove that other packages or images lack the executable, or that a renamed
+executable cannot be present. Inspection of the six candidate wheels and four
+packaged ZIPs verified their SHA-256 digests and found no named CLI, direct
+CLI symlink, or ELF/PE binary with the expected shell markers. This heuristic
+does not rule out a modified shell or an embedded archive.
+
+SQLite identifies [check-in d684ccc9ec](https://sqlite.org/src/info/d684ccc9ec4e41d8)
+as sufficient to block this attack; it modifies the recovery extension, not
+the SQLite core library. The source archive includes that extension in
+`shell.c`, whereas the candidate runtime ships the shared library, not the
+shell. This does not mean the upstream fix was applied to the candidate.
+
+The imageryprep and training base images contain a SQLite 3.53.4 CLI on PATH.
+The tracked source search found no direct `.recover` invocation. Combined
+worker-image checks found no shell in either merged filesystem and traced
+the entrypoints and targeted integration tests without a CLI launch. Full
+imagery and training workflows remain to be tested. Report inherited image
+layers separately from the merged filesystem. Keep both vulnerability scans
+blocking; do not infer worker-image applicability from the runtime archive
+result.
+
+The vulnerability database also reports CVE-2026-95690. Its upstream fix
+proposal remains open, so this finding remains visible and blocking; it is
+not included in the patched OpenSSL exceptions.
+
+Sources: [OpenSSL advisory](https://openssl-library.org/news/secadv/20261110.txt)
+and [SQLite CLI advisory](https://github.com/advisories/GHSA-2h5x-4qp8-353h).

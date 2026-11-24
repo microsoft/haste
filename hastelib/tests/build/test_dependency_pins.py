@@ -110,7 +110,16 @@ class GdalPinConsistencyTests(unittest.TestCase):
         lock = _read("native/gdal-runtime/sources.lock")
         build_match = re.search(r"(?m)^HASTE_GDAL_BUILD\s+(\d+)\s*$", lock)
         self.assertIsNotNone(build_match)
-        expected_build = build_match.group(1)
+        candidate_build = build_match.group(1)
+        expected_build = _read(
+            "native/gdal-runtime/published-build.txt"
+        ).strip()
+        self.assertRegex(expected_build, r"^[1-9]\d*$")
+        self.assertGreaterEqual(
+            int(candidate_build),
+            int(expected_build),
+            "A candidate cannot precede the published consumer build.",
+        )
         all_bindings = {
             "gdal",
             "rasterio",
